@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "ingress",
+    "rdf",
+    ".",
+]
+
+[package]
+name = "datalog"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ingress = { path = "ingress" }
