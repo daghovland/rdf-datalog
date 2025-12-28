@@ -11,7 +11,7 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc, Duration};
 use rust_decimal::Decimal;
 use ordered_float::OrderedFloat;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct IriReference(pub String);
 
 impl fmt::Display for IriReference {
@@ -23,7 +23,7 @@ impl fmt::Display for IriReference {
 mod namespaces;
 pub use namespaces::*;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RdfResource {
     Iri(IriReference),
     AnonymousBlankNode(u32),
@@ -44,7 +44,7 @@ impl fmt::Display for RdfResource {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RdfLiteral {
     LiteralString(String),
     BooleanLiteral(bool),
@@ -79,7 +79,7 @@ impl fmt::Display for RdfLiteral {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum GraphElement {
     NodeOrEdge(RdfResource),
     GraphLiteral(RdfLiteral),
@@ -94,7 +94,7 @@ impl fmt::Display for GraphElement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum PrefixDeclaration {
     PrefixDefinition { name: String, iri: IriReference },
 }
@@ -107,7 +107,7 @@ impl PrefixDeclaration {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum OntologyVersion {
     UnNamedOntology,
     NamedOntology(IriReference),

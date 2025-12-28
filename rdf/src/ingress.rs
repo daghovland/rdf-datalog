@@ -5,7 +5,7 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-use ingress::{GraphElement, RdfResource, RdfLiteral, Namespaces};
+pub(crate) use ::ingress::{GraphElement, RdfLiteral, XSD_INT, XSD_INTEGER, XSD_NON_NEGATIVE_INTEGER, XSD_BOOLEAN};
 use std::fmt;
 use num_bigint::BigInt;
 
@@ -104,9 +104,9 @@ pub fn try_get_non_negative_integer_literal(gel: &GraphElement) -> Option<BigInt
             RdfLiteral::TypedLiteral { type_iri, literal } => {
                 let tp = type_iri.to_string();
                 if [
-                    Namespaces::XSD_INT.to_string(),
-                    Namespaces::XSD_INTEGER.to_string(),
-                    Namespaces::XSD_NON_NEGATIVE_INTEGER.to_string(),
+                    XSD_INT.to_string(),
+                    XSD_INTEGER.to_string(),
+                    XSD_NON_NEGATIVE_INTEGER.to_string(),
                 ]
                 .contains(&tp)
                 {
@@ -127,7 +127,7 @@ pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
         GraphElement::GraphLiteral(res) => match res {
             RdfLiteral::BooleanLiteral(nn) => Some(*nn),
             RdfLiteral::TypedLiteral { type_iri, literal } => {
-                if type_iri.to_string() == Namespaces::XSD_BOOLEAN {
+                if type_iri.to_string() == XSD_BOOLEAN {
                     match literal.as_str() {
                         "true" => Some(true),
                         "false" => Some(false),

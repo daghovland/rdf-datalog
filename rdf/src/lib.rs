@@ -5,7 +5,7 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-use ingress::{GraphElement, RdfResource, RdfLiteral};
+use ::ingress::{GraphElement, RdfResource, RdfLiteral, IriReference};
 use std::collections::HashMap;
 
 pub mod ingress;
@@ -47,7 +47,7 @@ impl GraphElementManager {
         }
     }
 
-    pub fn get_named_resource(&self, resource_id: GraphElementId) -> Option<&ingress::IriReference> {
+    pub fn get_named_resource(&self, resource_id: GraphElementId) -> Option<&IriReference> {
         match self.get_resource(resource_id) {
             Some(RdfResource::Iri(i)) => Some(i),
             _ => None,

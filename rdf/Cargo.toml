@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 ingress = { path = "../ingress" }
+num-bigint = "0.4"
