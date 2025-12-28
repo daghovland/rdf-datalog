@@ -9,7 +9,9 @@ use ingress::{GraphElement, RdfResource, RdfLiteral};
 use std::collections::HashMap;
 
 pub mod ingress;
+pub mod quadtable;
 pub use crate::ingress::*;
+pub use crate::quadtable::*;
 
 pub struct GraphElementManager {
     pub resource_map: HashMap<GraphElement, GraphElementId>,
