@@ -20,10 +20,8 @@ impl fmt::Display for IriReference {
     }
 }
 
-pub struct Namespaces;
-impl Namespaces {
-    pub const RDF_TYPE: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-}
+mod namespaces;
+pub use namespaces::*;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub enum RdfResource {
@@ -35,7 +33,7 @@ impl fmt::Display for RdfResource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RdfResource::Iri(iri) => {
-                if iri.0 == Namespaces::RDF_TYPE {
+                if iri.0 == RDF_TYPE {
                     write!(f, "a")
                 } else {
                     write!(f, "<{}>", iri)
