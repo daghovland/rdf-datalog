@@ -5,7 +5,7 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-use ::ingress::{GraphElement, RdfResource, RdfLiteral, IriReference};
+pub use ::ingress::{GraphElement, RdfResource, RdfLiteral, IriReference};
 use std::collections::HashMap;
 
 pub mod ingress;
@@ -128,3 +128,48 @@ impl GraphElementManager {
         }
     }
 }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_graph_element_manager_initialization() {
+            let manager = GraphElementManager::new(100);
+            assert_eq!(manager.resource_count, 0);
+            assert!(manager.resource_list.is_empty());
+        }
+
+        #[test]
+        fn test_add_and_get_resource() {
+            let mut manager = GraphElementManager::new(10);
+            let iri = IriReference("http://example.org/test".to_string());
+            let res = RdfResource::Iri(iri.clone());
+            
+            let id = manager.add_node_resource(res);
+            assert_eq!(id, 0);
+            
+            let retrieved = manager.get_named_resource(id).unwrap();
+            assert_eq!(retrieved.0, "http://example.org/test");
+        }
+
+        #[test]
+        fn test_duplicate_resource_returns_same_id() {
+            let mut manager = GraphElementManager::new(10);
+            let res1 = RdfResource::Iri(IriReference("same".to_string()));
+            let res2 = RdfResource::Iri(IriReference("same".to_string()));
+            
+            let id1 = manager.add_node_resource(res1);
+            let id2 = manager.add_node_resource(res2);
+            
+            assert_eq!(id1, id2);
+            assert_eq!(manager.resource_count, 1);
+        }
+
+        #[test]
+        #[should_panic(expected = "Resource Id out of range")]
+        fn test_get_out_of_bounds_panics() {
+            let manager = GraphElementManager::new(10);
+            manager.get_graph_element(99);
+        }
+    }
