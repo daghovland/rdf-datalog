@@ -5,17 +5,18 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-pub use ::ingress::{GraphElement, RdfResource, RdfLiteral, IriReference};
-use std::collections::HashMap;
-
+pub mod datastore;
 pub mod ingress;
 pub mod quadtable;
 pub mod query;
-pub mod datastore;
+
+pub use crate::datastore::Datastore;
 pub use crate::ingress::*;
-pub use crate::quadtable::*;
-pub use crate::query::*;
-pub use crate::datastore::*;
+pub use crate::quadtable::QuadTable;
+pub use crate::query::{get_default_graph_pattern, QuadPattern, Term};
+pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource};
+
+use std::collections::HashMap;
 
 pub struct GraphElementManager {
     pub resource_map: HashMap<GraphElement, GraphElementId>,

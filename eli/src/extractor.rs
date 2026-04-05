@@ -254,9 +254,38 @@ fn sub_class_axiom_normalization(axiom: &ClassAxiom) -> Vec<Formula> {
             result.extend(concept_negative_occurrence_normalization(sub));
             result
         }
-        ClassAxiom::DisjointClasses(_, _) => todo!("DisjointClasses normalization"),
-        ClassAxiom::EquivalentClasses(_, _) => todo!("EquivalentClasses normalization"),
-        ClassAxiom::DisjointUnion(_, _, exprs) => {
+        ClassAxiom::DisjointClasses(_, classes) => {
+            // DisjointClasses(C1 ... Cn) -> Ci ⊓ Cj ⊑ ⊥ for all i != j
+            classes
+                .iter()
+                .enumerate()
+                .flat_map(|(i, c1)| {
+                    classes.iter().skip(i + 1).flat_map(move |c2| {
+                        let axiom = ClassAxiom::SubClassOf(
+                            vec![],
+                            ClassExpression::ObjectIntersectionOf(vec![c1.clone(), c2.clone()]),
+                            ClassExpression::ClassName(FullIri(IriReference(
+                                "http://www.w3.org/2002/07/owl#Nothing".to_owned(),
+                            ))),
+                        );
+                        sub_class_axiom_normalization(&axiom)
+                    })
+                })
+                .collect()
+        }
+        ClassAxiom::EquivalentClasses(_, classes) => {
+            // EquivalentClasses(C1 ... Cn) -> Ci ⊑ Cj for all i != j
+            classes
+                .iter()
+                .flat_map(|a| {
+                    classes.iter().filter(move |b| *b != a).flat_map(move |b| {
+                        let axiom = ClassAxiom::SubClassOf(vec![], a.clone(), b.clone());
+                        sub_class_axiom_normalization(&axiom)
+                    })
+                })
+                .collect()
+        }
+        ClassAxiom::DisjointUnion(_, _, _) => {
             log::warn!("Invalid OWL 2 RL: DisjointUnion not allowed");
             vec![]
         }
@@ -285,15 +314,47 @@ pub fn eli_axiom_extractor(axiom: &ClassAxiom) -> Option<Vec<Formula>> {
             // A ≡ B ↔ A ⊑ B ∧ B ⊑ A
             let pairs: Vec<Formula> = classes
                 .iter()
-                .flat_map(|a| {
-                    classes.iter().filter(move |b| *b != a).filter_map(move |b| {
-                        let axiom = ClassAxiom::SubClassOf(vec![], a.clone(), b.clone());
-                        eli_axiom_extractor(&axiom)
+                .enumerate()
+                .flat_map(|(i, a)| {
+                    classes.iter().skip(i + 1).flat_map(move |b| {
+                        let a1 = ClassAxiom::SubClassOf(vec![], a.clone(), b.clone());
+                        let a2 = ClassAxiom::SubClassOf(vec![], b.clone(), a.clone());
+                        [eli_axiom_extractor(&a1), eli_axiom_extractor(&a2)]
+                            .into_iter()
+                            .flatten()
+                            .flatten()
                     })
                 })
-                .flatten()
                 .collect();
-            if pairs.is_empty() { None } else { Some(pairs) }
+            if pairs.is_empty() {
+                None
+            } else {
+                Some(pairs)
+            }
+        }
+        ClassAxiom::DisjointClasses(_, classes) => {
+            // DisjointClasses(C1 ... Cn) -> Ci ⊓ Cj ⊑ ⊥
+            let disjoints: Vec<Formula> = classes
+                .iter()
+                .enumerate()
+                .flat_map(|(i, c1)| {
+                    classes.iter().skip(i + 1).flat_map(move |c2| {
+                        let axiom = ClassAxiom::SubClassOf(
+                            vec![],
+                            ClassExpression::ObjectIntersectionOf(vec![c1.clone(), c2.clone()]),
+                            ClassExpression::ClassName(FullIri(IriReference(
+                                "http://www.w3.org/2002/07/owl#Nothing".to_owned(),
+                            ))),
+                        );
+                        eli_axiom_extractor(&axiom).into_iter().flatten()
+                    })
+                })
+                .collect();
+            if disjoints.is_empty() {
+                None
+            } else {
+                Some(disjoints)
+            }
         }
         _ => None,
     }

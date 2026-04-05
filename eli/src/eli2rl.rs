@@ -217,15 +217,15 @@ fn get_at_most_one_normalized_rule(
     let same_as_iri = IriReference(OWL_SAME_AS.to_owned());
     let same_as = ObjectPropertyExpression::NamedObjectProperty(FullIri(same_as_iri));
     let not_same_as = RuleAtom::NotPattern(get_obj_prop_pattern(resources, &same_as, "Y1", "Y2"));
-    let body: Vec<RuleAtom> = sub_conjunction
+    let p1 = get_obj_prop_pattern(resources, prop, "X", "Y1");
+    let p2 = get_obj_prop_pattern(resources, prop, "X", "Y2");
+    let mut body: Vec<RuleAtom> = sub_conjunction
         .iter()
         .map(|cls| RuleAtom::PositivePattern(get_type_pattern(resources, "X", cls)))
-        .chain([
-            RuleAtom::PositivePattern(get_obj_prop_pattern(resources, prop, "X", "Y1")),
-            RuleAtom::PositivePattern(get_obj_prop_pattern(resources, prop, "X", "Y2")),
-            not_same_as,
-        ])
         .collect();
+    body.push(RuleAtom::PositivePattern(p1));
+    body.push(RuleAtom::PositivePattern(p2));
+    body.push(not_same_as);
     vec![Rule {
         head: RuleHead::NormalHead(get_obj_prop_pattern(resources, &same_as, "Y1", "Y2")),
         body,

@@ -9,10 +9,12 @@ Contact: hovlanddag@gmail.com
 //! Translation of OWL 2 axioms to datalog rules, implementing Section 4.3 of
 //! <https://www.w3.org/TR/owl2-profiles/#OWL_2_RL>.
 
-use dag_rdf::{GraphElementManager, RdfResource, Term};
+pub mod equality;
+
+use dag_rdf::{GraphElementId, GraphElementManager, RdfResource, Term};
 use dag_rdf::query::get_default_graph_pattern;
 use datalog::types::{Rule, RuleAtom, RuleHead};
-use ingress::{IriReference, RDF_TYPE, OWL_SAME_AS};
+use ingress::{IriReference, OWL_SAME_AS, RDF_TYPE};
 use owl_ontology::{
     Axiom, ClassAxiom, ClassExpression, DataPropertyAxiom, FullIri, ObjectPropertyAxiom,
     ObjectPropertyExpression, Ontology,
@@ -20,18 +22,18 @@ use owl_ontology::{
 
 // ── Resource helpers ──────────────────────────────────────────────────────────
 
-fn rdf_type_id(resources: &mut GraphElementManager) -> dag_rdf::GraphElementId {
+fn rdf_type_id(resources: &mut GraphElementManager) -> GraphElementId {
     resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned())))
 }
 
-fn iri_id(resources: &mut GraphElementManager, iri_str: &str) -> dag_rdf::GraphElementId {
-    resources.add_node_resource(RdfResource::Iri(IriReference(iri_str.to_owned())))
+fn owl_same_as_id(resources: &mut GraphElementManager) -> GraphElementId {
+    resources.add_node_resource(RdfResource::Iri(IriReference(OWL_SAME_AS.to_owned())))
 }
 
 fn type_pattern(
     resources: &mut GraphElementManager,
     var: &str,
-    class_id: dag_rdf::GraphElementId,
+    class_id: GraphElementId,
 ) -> dag_rdf::QuadPattern {
     get_default_graph_pattern(
         Term::Variable(var.to_owned()),
@@ -76,7 +78,7 @@ fn get_obj_prop_pattern(
 fn get_class_expression_ids(
     resources: &mut GraphElementManager,
     expr: &ClassExpression,
-) -> Vec<dag_rdf::GraphElementId> {
+) -> Vec<GraphElementId> {
     match expr {
         ClassExpression::ClassName(FullIri(iri)) =>
             vec![resources.add_node_resource(RdfResource::Iri(iri.clone()))],
@@ -105,7 +107,6 @@ fn object_property_domain(
     let Some(body_quad) = get_obj_prop_pattern(resources, prop, "x", "y") else {
         return vec![];
     };
-    let rdf_type = rdf_type_id(resources);
     get_class_expression_ids(resources, domain)
         .into_iter()
         .map(|cls_id| Rule {
@@ -282,8 +283,11 @@ fn owl_axiom2datalog(resources: &mut GraphElementManager, axiom: &Axiom) -> Vec<
 
 /// Translate a full OWL 2 ontology into a set of datalog rules.
 pub fn owl2datalog(resources: &mut GraphElementManager, ontology: &Ontology) -> Vec<Rule> {
-    ontology
+    let mut rules: Vec<Rule> = ontology
         .all_axioms()
-        .flat_map(|axiom| owl_axiom2datalog(resources, axiom))
-        .collect()
+        .flat_map(|axiom| owl_axiom2datalog(resources, &axiom))
+        .collect();
+
+    rules.extend(equality::get_equality_axioms(resources));
+    rules
 }
