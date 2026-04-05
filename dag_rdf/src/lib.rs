@@ -10,8 +10,12 @@ use std::collections::HashMap;
 
 pub mod ingress;
 pub mod quadtable;
+pub mod query;
+pub mod datastore;
 pub use crate::ingress::*;
 pub use crate::quadtable::*;
+pub use crate::query::*;
+pub use crate::datastore::*;
 
 pub struct GraphElementManager {
     pub resource_map: HashMap<GraphElement, GraphElementId>,
@@ -22,12 +26,20 @@ pub struct GraphElementManager {
 }
 
 impl GraphElementManager {
+    /// Creates a new manager with the default graph pre-populated at ID 0,
+    /// matching DagSemTools behaviour where `defaultGraphElementId = 0`.
     pub fn new(init_rdf_size: u32) -> Self {
         let init_resources = std::cmp::max(10, (init_rdf_size / 10) as usize);
+        let default_graph =
+            GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(DEFAULT_GRAPH_IRI.to_string())));
+        let mut resource_map = HashMap::with_capacity(init_resources);
+        let mut resource_list = Vec::with_capacity(init_resources);
+        resource_map.insert(default_graph.clone(), DEFAULT_GRAPH_ELEMENT_ID);
+        resource_list.push(default_graph);
         GraphElementManager {
-            resource_map: HashMap::with_capacity(init_resources),
-            resource_list: Vec::with_capacity(init_resources),
-            resource_count: 0,
+            resource_map,
+            resource_list,
+            resource_count: 1, // 0 is the default graph
             anon_resource_count: 0,
             anon_resource_map: HashMap::new(),
         }
@@ -135,9 +147,10 @@ impl GraphElementManager {
 
         #[test]
         fn test_graph_element_manager_initialization() {
+            // ID 0 is reserved for the default graph, so resource_count starts at 1.
             let manager = GraphElementManager::new(100);
-            assert_eq!(manager.resource_count, 0);
-            assert!(manager.resource_list.is_empty());
+            assert_eq!(manager.resource_count, 1);
+            assert_eq!(manager.resource_list.len(), 1);
         }
 
         #[test]
@@ -145,10 +158,11 @@ impl GraphElementManager {
             let mut manager = GraphElementManager::new(10);
             let iri = IriReference("http://example.org/test".to_string());
             let res = RdfResource::Iri(iri.clone());
-            
+
+            // First user resource is ID 1 (ID 0 = default graph).
             let id = manager.add_node_resource(res);
-            assert_eq!(id, 0);
-            
+            assert_eq!(id, 1);
+
             let retrieved = manager.get_named_resource(id).unwrap();
             assert_eq!(retrieved.0, "http://example.org/test");
         }
@@ -158,12 +172,12 @@ impl GraphElementManager {
             let mut manager = GraphElementManager::new(10);
             let res1 = RdfResource::Iri(IriReference("same".to_string()));
             let res2 = RdfResource::Iri(IriReference("same".to_string()));
-            
+
             let id1 = manager.add_node_resource(res1);
             let id2 = manager.add_node_resource(res2);
-            
+
             assert_eq!(id1, id2);
-            assert_eq!(manager.resource_count, 1);
+            assert_eq!(manager.resource_count, 2); // default graph + "same"
         }
 
         #[test]

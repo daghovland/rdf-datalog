@@ -220,4 +220,9 @@ impl QuadTable {
         self.get_quads_with_object_predicate(object, predicate)
             .filter(move |q| q.triple_id == id)
     }
+
+    /// Iterate over all quads in insertion order.
+    pub fn get_all_quads(&self) -> impl Iterator<Item = Quad> + '_ {
+        self.quad_list.iter().copied()
+    }
 }

@@ -6,12 +6,19 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 pub(crate) use ::ingress::{GraphElement, RdfLiteral, XSD_INT, XSD_INTEGER, XSD_NON_NEGATIVE_INTEGER, XSD_BOOLEAN};
+pub use ::ingress::{RdfResource, IriReference};
 use std::fmt;
 use num_bigint::BigInt;
 
 pub type GraphElementId = u32;
 pub type TripleListIndex = usize;
 pub type QuadListIndex = usize;
+
+/// The IRI used for the default (unnamed) graph, matching DagSemTools convention.
+pub const DEFAULT_GRAPH_IRI: &str = "urn:x-arq:DefaultGraph";
+
+/// The element ID reserved for the default graph. Always 0, pre-populated in GraphElementManager.
+pub const DEFAULT_GRAPH_ELEMENT_ID: GraphElementId = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Triple {

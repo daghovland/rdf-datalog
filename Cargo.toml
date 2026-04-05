@@ -1,5 +1,5 @@
 [workspace]
-members = ["ingress", "dag_rdf", "."]
+members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "."]
 
 [package]
 name = "dagalog"

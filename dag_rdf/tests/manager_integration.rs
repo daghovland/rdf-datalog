@@ -26,5 +26,6 @@ fn test_iri_filtering() {
     manager.add_node_resource(RdfResource::Iri(IriReference("http://b.com".to_string())));
     
     let iris = manager.get_iri_resource_ids();
-    assert_eq!(iris.len(), 2, "Should only find the 2 IRI resources");
+    // 2 explicitly added IRIs + 1 for the default graph pre-populated at ID 0
+    assert_eq!(iris.len(), 3, "Should find 2 user IRI resources plus the default graph IRI");
 }
