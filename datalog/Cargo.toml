@@ -1,0 +1,8 @@
+[package]
+name = "datalog"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+log = "0.4"

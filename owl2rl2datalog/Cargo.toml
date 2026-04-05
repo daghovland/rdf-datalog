@@ -1,0 +1,12 @@
+[package]
+name = "owl2rl2datalog"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ingress = { path = "../ingress" }
+dag-rdf = { path = "../dag_rdf" }
+datalog = { path = "../datalog" }
+owl-ontology = { path = "../owl_ontology" }
+eli = { path = "../eli" }
+log = "0.4"

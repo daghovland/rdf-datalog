@@ -1,0 +1,11 @@
+[package]
+name = "eli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ingress = { path = "../ingress" }
+dag-rdf = { path = "../dag_rdf" }
+datalog = { path = "../datalog" }
+owl-ontology = { path = "../owl_ontology" }
+log = "0.4"
