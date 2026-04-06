@@ -6,12 +6,11 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use std::collections::HashMap;
-use dag_rdf::{GraphElementId, Quad, QuadPattern, QuadTable, Term};
 use crate::types::{
-    PartialRule, PartialRuleMatch, QuadWildcard, ResourceOrWildcard, Rule, RuleAtom, RuleHead,
-    Substitution,
+    PartialRule, PartialRuleMatch, QuadWildcard, ResourceOrWildcard, Rule, RuleAtom, Substitution,
 };
+use dag_rdf::{GraphElementId, Quad, QuadPattern, QuadTable, Term};
+use std::collections::HashMap;
 
 pub fn empty_substitution() -> Substitution {
     HashMap::new()
@@ -37,7 +36,10 @@ pub fn wildcard_quad_pattern(quad: &QuadPattern) -> Vec<QuadWildcard> {
     fn expand(term: &Term) -> Vec<ResourceOrWildcard> {
         match term {
             Term::Variable(_) => vec![ResourceOrWildcard::Wildcard],
-            Term::Resource(r) => vec![ResourceOrWildcard::Resource(*r), ResourceOrWildcard::Wildcard],
+            Term::Resource(r) => vec![
+                ResourceOrWildcard::Resource(*r),
+                ResourceOrWildcard::Wildcard,
+            ],
         }
     }
     let graphs = expand(&quad.graph);
@@ -96,7 +98,11 @@ pub fn get_substitution(
 ) -> Option<Substitution> {
     match term {
         Term::Resource(r) => {
-            if *r == resource { Some(sub) } else { None }
+            if *r == resource {
+                Some(sub)
+            } else {
+                None
+            }
         }
         Term::Variable(v) => match sub.get(v) {
             Some(&r) if r == resource => Some(sub),
@@ -111,7 +117,11 @@ pub fn get_substitution(
 }
 
 /// Try to build a complete substitution for `fact` matching `pattern`.
-pub fn get_substitutions(sub: Substitution, fact: &Quad, pattern: &QuadPattern) -> Option<Substitution> {
+pub fn get_substitutions(
+    sub: Substitution,
+    fact: &Quad,
+    pattern: &QuadPattern,
+) -> Option<Substitution> {
     get_substitution(fact.triple_id, &pattern.graph, sub)
         .and_then(|s| get_substitution(fact.subject, &pattern.subject, s))
         .and_then(|s| get_substitution(fact.predicate, &pattern.predicate, s))
@@ -172,52 +182,83 @@ pub fn evaluate_pattern<'a>(
     );
 
     let quads: Vec<Quad> = match (&mg, &ms, &mp, &mo) {
-        (Term::Resource(g), Term::Resource(s), Term::Variable(_), Term::Variable(_)) =>
-            rdf.get_quads_with_id_subject(*g, *s).collect(),
-        (Term::Resource(g), Term::Variable(_), Term::Resource(p), Term::Variable(_)) =>
-            rdf.get_quads_with_id_predicate(*g, *p).collect(),
-        (Term::Resource(g), Term::Variable(_), Term::Variable(_), Term::Resource(o)) =>
-            rdf.get_quads_with_id_object(*g, *o).collect(),
-        (Term::Resource(g), Term::Resource(s), Term::Resource(p), Term::Variable(_)) =>
-            rdf.get_quads_with_id_subject_predicate(*g, *s, *p).collect(),
-        (Term::Resource(g), Term::Variable(_), Term::Resource(p), Term::Resource(o)) =>
-            rdf.get_quads_with_id_object_predicate(*g, *o, *p).collect(),
-        (Term::Resource(g), Term::Resource(s), Term::Resource(p), Term::Resource(o)) => {
-            let quad = Quad { triple_id: *g, subject: *s, predicate: *p, obj: *o };
-            if rdf.contains(&quad) { vec![quad] } else { vec![] }
+        (Term::Resource(g), Term::Resource(s), Term::Variable(_), Term::Variable(_)) => {
+            rdf.get_quads_with_id_subject(*g, *s).collect()
         }
-        (Term::Resource(g), Term::Resource(s), Term::Variable(_), Term::Resource(o)) =>
-            rdf.get_quads_with_id_subject_object(*g, *s, *o).collect(),
-        (Term::Resource(g), Term::Variable(_), Term::Variable(_), Term::Variable(_)) =>
-            rdf.get_graph(*g).collect(),
-        (Term::Variable(_), Term::Resource(s), Term::Variable(_), Term::Variable(_)) =>
-            rdf.get_quads_with_subject(*s).collect(),
-        (Term::Variable(_), Term::Variable(_), Term::Resource(p), Term::Variable(_)) =>
-            rdf.get_quads_with_predicate(*p).collect(),
-        (Term::Variable(_), Term::Variable(_), Term::Variable(_), Term::Resource(o)) =>
-            rdf.get_quads_with_object(*o).collect(),
-        (Term::Variable(_), Term::Resource(s), Term::Resource(p), Term::Variable(_)) =>
-            rdf.get_quads_with_subject_predicate(*s, *p).collect(),
-        (Term::Variable(_), Term::Variable(_), Term::Resource(p), Term::Resource(o)) =>
-            rdf.get_quads_with_object_predicate(*o, *p).collect(),
-        (Term::Variable(_), Term::Resource(s), Term::Resource(p), Term::Resource(o)) =>
-            rdf.get_quads_with_subject_predicate(*s, *p).filter(|q| q.obj == *o).collect(),
-        (Term::Variable(_), Term::Resource(s), Term::Variable(_), Term::Resource(o)) =>
-            rdf.get_quads_with_subject_object(*s, *o).collect(),
-        (Term::Variable(_), Term::Variable(_), Term::Variable(_), Term::Variable(_)) =>
-            rdf.get_all_quads().collect(),
+        (Term::Resource(g), Term::Variable(_), Term::Resource(p), Term::Variable(_)) => {
+            rdf.get_quads_with_id_predicate(*g, *p).collect()
+        }
+        (Term::Resource(g), Term::Variable(_), Term::Variable(_), Term::Resource(o)) => {
+            rdf.get_quads_with_id_object(*g, *o).collect()
+        }
+        (Term::Resource(g), Term::Resource(s), Term::Resource(p), Term::Variable(_)) => rdf
+            .get_quads_with_id_subject_predicate(*g, *s, *p)
+            .collect(),
+        (Term::Resource(g), Term::Variable(_), Term::Resource(p), Term::Resource(o)) => {
+            rdf.get_quads_with_id_object_predicate(*g, *o, *p).collect()
+        }
+        (Term::Resource(g), Term::Resource(s), Term::Resource(p), Term::Resource(o)) => {
+            let quad = Quad {
+                triple_id: *g,
+                subject: *s,
+                predicate: *p,
+                obj: *o,
+            };
+            if rdf.contains(&quad) {
+                vec![quad]
+            } else {
+                vec![]
+            }
+        }
+        (Term::Resource(g), Term::Resource(s), Term::Variable(_), Term::Resource(o)) => {
+            rdf.get_quads_with_id_subject_object(*g, *s, *o).collect()
+        }
+        (Term::Resource(g), Term::Variable(_), Term::Variable(_), Term::Variable(_)) => {
+            rdf.get_graph(*g).collect()
+        }
+        (Term::Variable(_), Term::Resource(s), Term::Variable(_), Term::Variable(_)) => {
+            rdf.get_quads_with_subject(*s).collect()
+        }
+        (Term::Variable(_), Term::Variable(_), Term::Resource(p), Term::Variable(_)) => {
+            rdf.get_quads_with_predicate(*p).collect()
+        }
+        (Term::Variable(_), Term::Variable(_), Term::Variable(_), Term::Resource(o)) => {
+            rdf.get_quads_with_object(*o).collect()
+        }
+        (Term::Variable(_), Term::Resource(s), Term::Resource(p), Term::Variable(_)) => {
+            rdf.get_quads_with_subject_predicate(*s, *p).collect()
+        }
+        (Term::Variable(_), Term::Variable(_), Term::Resource(p), Term::Resource(o)) => {
+            rdf.get_quads_with_object_predicate(*o, *p).collect()
+        }
+        (Term::Variable(_), Term::Resource(s), Term::Resource(p), Term::Resource(o)) => rdf
+            .get_quads_with_subject_predicate(*s, *p)
+            .filter(|q| q.obj == *o)
+            .collect(),
+        (Term::Variable(_), Term::Resource(s), Term::Variable(_), Term::Resource(o)) => {
+            rdf.get_quads_with_subject_object(*s, *o).collect()
+        }
+        (Term::Variable(_), Term::Variable(_), Term::Variable(_), Term::Variable(_)) => {
+            rdf.get_all_quads().collect()
+        }
     };
 
-    let pattern = QuadPattern { graph: mg, subject: ms, predicate: mp, object: mo };
-    Box::new(quads.into_iter().filter_map(move |q| get_substitutions(sub.clone(), &q, &pattern)))
+    let pattern = QuadPattern {
+        graph: mg,
+        subject: ms,
+        predicate: mp,
+        object: mo,
+    };
+    Box::new(
+        quads
+            .into_iter()
+            .filter_map(move |q| get_substitutions(sub.clone(), &q, &pattern)),
+    )
 }
 
 /// Evaluate all positive body atoms of a partial rule match, returning all
 /// complete substitutions.
-pub fn evaluate_positive(
-    rdf: &QuadTable,
-    rule_match: &PartialRuleMatch,
-) -> Vec<Substitution> {
+pub fn evaluate_positive(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
     let positive_patterns: Vec<QuadPattern> = rule_match
         .partial_rule
         .rule
@@ -240,10 +281,7 @@ pub fn evaluate_positive(
 }
 
 /// Full evaluation: positive atoms first, then filter by negated atoms.
-pub fn evaluate(
-    rdf: &QuadTable,
-    rule_match: &PartialRuleMatch,
-) -> Vec<Substitution> {
+pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
     let not_patterns: Vec<QuadPattern> = rule_match
         .partial_rule
         .rule
@@ -263,9 +301,9 @@ pub fn evaluate(
 
     pos.into_iter()
         .filter(|sub| {
-            not_patterns.iter().all(|np| {
-                evaluate_pattern(rdf, np, sub.clone()).next().is_none()
-            })
+            not_patterns
+                .iter()
+                .all(|np| evaluate_pattern(rdf, np, sub.clone()).next().is_none())
         })
         .collect()
 }
@@ -279,9 +317,10 @@ pub fn get_partial_matches(rule: &Rule) -> HashMap<QuadWildcard, Vec<PartialRule
             _ => continue,
         };
         for wc in wildcard_quad_pattern(pattern) {
-            map.entry(wc)
-                .or_default()
-                .push(PartialRule { rule: rule.clone(), match_pattern: pattern.clone() });
+            map.entry(wc).or_default().push(PartialRule {
+                rule: rule.clone(),
+                match_pattern: pattern.clone(),
+            });
         }
     }
     map
@@ -305,7 +344,10 @@ pub fn merge_partial_match_maps(
 pub fn get_matches_for_rule(fact: &Quad, partial_rule: &PartialRule) -> Vec<PartialRuleMatch> {
     let sub = get_substitutions(empty_substitution(), fact, &partial_rule.match_pattern);
     match sub {
-        Some(s) => vec![PartialRuleMatch { partial_rule: partial_rule.clone(), substitution: s }],
+        Some(s) => vec![PartialRuleMatch {
+            partial_rule: partial_rule.clone(),
+            substitution: s,
+        }],
         None => vec![],
     }
 }

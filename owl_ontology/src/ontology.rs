@@ -6,8 +6,8 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
+use crate::axioms::{Annotation, Axiom, Entity, FullIri};
 use ingress::{IriReference, OntologyVersion, PrefixDeclaration};
-use crate::axioms::{Annotation, Axiom, Class, Declaration, Entity, FullIri, Individual};
 
 /// An OWL 2 ontology.
 pub struct Ontology {
@@ -24,14 +24,19 @@ impl Ontology {
         annotations: Vec<Annotation>,
         axioms: Vec<Axiom>,
     ) -> Self {
-        Ontology { directly_imports_documents, version, annotations, axioms }
+        Ontology {
+            directly_imports_documents,
+            version,
+            annotations,
+            axioms,
+        }
     }
 
     /// All axioms including built-in OWL 2 declarations.
     pub fn all_axioms(&self) -> impl Iterator<Item = Axiom> + '_ {
         let user: Vec<Axiom> = self.axioms.clone();
         let built_in = Self::built_in_declarations();
-        user.into_iter().chain(built_in.into_iter())
+        user.into_iter().chain(built_in)
     }
 
     pub fn try_get_ontology_iri(&self) -> Option<&IriReference> {

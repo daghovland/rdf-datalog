@@ -13,14 +13,19 @@ Contact: hovlanddag@gmail.com
 //! - POST /sparql  application/x-www-form-urlencoded  query=<encoded>
 //! - POST /sparql  application/sparql-query           raw SPARQL body
 
+use crate::{
+    AppState,
+    negotiate::{SelectFormat, negotiate_select_format},
+    serialize::sparql_json::to_sparql_json,
+    service_desc::service_description_turtle,
+};
 use axum::{
     extract::{Query as AxumQuery, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use sparql_parser::{ParserContext, execute, parse_query};
 use std::collections::HashMap;
-use sparql_parser::{parse_query, ParserContext, execute};
-use crate::{AppState, negotiate::{negotiate_select_format, SelectFormat}, serialize::sparql_json::to_sparql_json, service_desc::service_description_turtle};
 
 /// GET /sparql?query=<url-encoded SPARQL>
 ///
@@ -34,14 +39,17 @@ pub async fn sparql_get(
     // Service Description: no query param
     if !params.contains_key("query") {
         let accept = headers.get("accept").and_then(|v| v.to_str().ok());
-        let wants_rdf = accept.map(|a| a.contains("text/turtle") || a.contains("application/rdf")).unwrap_or(false);
+        let wants_rdf = accept
+            .map(|a| a.contains("text/turtle") || a.contains("application/rdf"))
+            .unwrap_or(false);
         if wants_rdf || accept.is_none() {
             let turtle = service_description_turtle(&state.config.base_iri);
             return (
                 StatusCode::OK,
                 [("content-type", "text/turtle; charset=utf-8")],
                 turtle,
-            ).into_response();
+            )
+                .into_response();
         }
         return (StatusCode::BAD_REQUEST, "Missing query parameter").into_response();
     }
@@ -67,7 +75,9 @@ pub async fn sparql_post(
     let query_str: String = if content_type.contains("application/sparql-query") {
         match String::from_utf8(body.to_vec()) {
             Ok(s) => s,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in query body").into_response(),
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in query body").into_response();
+            }
         }
     } else if content_type.contains("application/x-www-form-urlencoded") {
         let body_str = match String::from_utf8(body.to_vec()) {
@@ -77,11 +87,17 @@ pub async fn sparql_post(
         // Parse form-encoded: find query= parameter
         let query_val = body_str.split('&').find_map(|part| {
             let (k, v) = part.split_once('=')?;
-            if k == "query" { Some(v.replace('+', " ")) } else { None }
+            if k == "query" {
+                Some(v.replace('+', " "))
+            } else {
+                None
+            }
         });
         match query_val {
             Some(q) => urlencoding_decode(&q),
-            None => return (StatusCode::BAD_REQUEST, "Missing 'query' in form body").into_response(),
+            None => {
+                return (StatusCode::BAD_REQUEST, "Missing 'query' in form body").into_response();
+            }
         }
     } else {
         return (StatusCode::BAD_REQUEST, "Unsupported Content-Type").into_response();
@@ -91,7 +107,9 @@ pub async fn sparql_post(
 }
 
 async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState) -> Response {
-    let mut ctx = ParserContext { prefixes: HashMap::new() };
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,
         Err(e) => {
@@ -100,10 +118,14 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
     };
 
     let store = state.store.read().await;
-    let result = match execute(&query, &*store) {
+    let result = match execute(&query, &store) {
         Ok(r) => r,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution error: {}", e)).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Execution error: {}", e),
+            )
+                .into_response();
         }
     };
 
@@ -113,18 +135,26 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
             let body = to_sparql_json(&result);
             (
                 StatusCode::OK,
-                [("content-type", "application/sparql-results+json; charset=utf-8")],
+                [(
+                    "content-type",
+                    "application/sparql-results+json; charset=utf-8",
+                )],
                 body,
-            ).into_response()
+            )
+                .into_response()
         }
         SelectFormat::SparqlXml | SelectFormat::Csv => {
             // Fall back to JSON for now
             let body = to_sparql_json(&result);
             (
                 StatusCode::OK,
-                [("content-type", "application/sparql-results+json; charset=utf-8")],
+                [(
+                    "content-type",
+                    "application/sparql-results+json; charset=utf-8",
+                )],
                 body,
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }

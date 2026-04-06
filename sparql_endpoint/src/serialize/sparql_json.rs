@@ -9,23 +9,27 @@ Contact: hovlanddag@gmail.com
 //! Serializer for `application/sparql-results+json`
 //! Spec: https://www.w3.org/TR/sparql11-results-json/
 
-use dag_rdf::{GraphElement, RdfResource, RdfLiteral};
+use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
+use serde_json::{Value, json};
 use sparql_parser::SelectResult;
-use serde_json::{json, Value};
 
 /// Serialize a `SelectResult` as a SPARQL JSON result document.
 pub fn to_sparql_json(result: &SelectResult) -> String {
     let vars: Vec<Value> = result.variables.iter().map(|v| json!(v)).collect();
 
-    let bindings: Vec<Value> = result.rows.iter().map(|row| {
-        let mut binding = serde_json::Map::new();
-        for var in &result.variables {
-            if let Some(element) = row.get(var) {
-                binding.insert(var.clone(), graph_element_to_json(element));
+    let bindings: Vec<Value> = result
+        .rows
+        .iter()
+        .map(|row| {
+            let mut binding = serde_json::Map::new();
+            for var in &result.variables {
+                if let Some(element) = row.get(var) {
+                    binding.insert(var.clone(), graph_element_to_json(element));
+                }
             }
-        }
-        Value::Object(binding)
-    }).collect();
+            Value::Object(binding)
+        })
+        .collect();
 
     let doc = json!({
         "head": { "vars": vars },

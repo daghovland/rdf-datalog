@@ -37,10 +37,15 @@ async fn test_post_raw_body_iri_object() {
 
     assert_eq!(resp.status(), 200);
     let ct = resp.headers()["content-type"].to_str().unwrap();
-    assert!(ct.contains("application/sparql-results+json"), "unexpected content-type: {ct}");
+    assert!(
+        ct.contains("application/sparql-results+json"),
+        "unexpected content-type: {ct}"
+    );
 
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
-    let bindings = body["results"]["bindings"].as_array().expect("bindings array");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
     assert_eq!(bindings.len(), 1);
     common::assert_binding_contains(bindings, "person", "uri", "http://example.org/bob");
 }
@@ -78,7 +83,9 @@ async fn test_post_form_multi_triple_join() {
 
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
-    let bindings = body["results"]["bindings"].as_array().expect("bindings array");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
 
     assert_eq!(bindings.len(), 2, "expected 2 rows, got: {bindings:#?}");
 

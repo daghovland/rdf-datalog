@@ -6,8 +6,8 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
+use crate::ingress::{GraphElementId, Quad, QuadListIndex, Triple, TripleListIndex};
 use std::collections::HashMap;
-use crate::ingress::{Quad, Triple, GraphElementId, QuadListIndex, TripleListIndex};
 
 pub struct QuadTable {
     pub quad_list: Vec<Quad>,
@@ -16,8 +16,10 @@ pub struct QuadTable {
     pub triple_index: HashMap<Triple, QuadListIndex>,
     pub triple_id_index: HashMap<GraphElementId, Vec<QuadListIndex>>,
     pub predicate_index: HashMap<GraphElementId, Vec<QuadListIndex>>,
-    pub subject_predicate_index: HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
-    pub object_predicate_index: HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
+    pub subject_predicate_index:
+        HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
+    pub object_predicate_index:
+        HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
 }
 
 impl QuadTable {
@@ -42,14 +44,14 @@ impl QuadTable {
     pub fn add_triple_id_index(&mut self, id: GraphElementId, triple_index: QuadListIndex) {
         self.triple_id_index
             .entry(id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(triple_index);
     }
 
     pub fn add_predicate_index(&mut self, predicate: GraphElementId, triple_index: QuadListIndex) {
         self.predicate_index
             .entry(predicate)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(triple_index);
     }
 
@@ -61,9 +63,9 @@ impl QuadTable {
     ) {
         self.subject_predicate_index
             .entry(subject)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(predicate)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(triple_index);
     }
 
@@ -75,12 +77,15 @@ impl QuadTable {
     ) {
         self.object_predicate_index
             .entry(object)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(predicate)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(triple_index);
     }
 
+    // The Entry API cannot be used here: inserting via Entry holds a mutable
+    // borrow on four_keys_index across calls to self.add_*_index methods.
+    #[allow(clippy::map_entry)]
     pub fn add_quad(&mut self, quad: Quad) {
         if !self.four_keys_index.contains_key(&quad) {
             let current_index = self.quad_count;
@@ -88,7 +93,7 @@ impl QuadTable {
             self.add_object_predicate_index(quad.obj, quad.predicate, current_index);
             self.add_predicate_index(quad.predicate, current_index);
             self.add_triple_id_index(quad.triple_id, current_index);
-            
+
             self.quad_list.push(quad);
             self.four_keys_index.insert(quad, current_index);
             self.quad_count += 1;
@@ -99,7 +104,10 @@ impl QuadTable {
         self.four_keys_index.contains_key(q)
     }
 
-    pub fn get_quads_with_subject(&self, subject: GraphElementId) -> impl Iterator<Item = Quad> + '_ {
+    pub fn get_quads_with_subject(
+        &self,
+        subject: GraphElementId,
+    ) -> impl Iterator<Item = Quad> + '_ {
         self.subject_predicate_index
             .get(&subject)
             .into_iter()
@@ -117,7 +125,10 @@ impl QuadTable {
             .map(|&idx| self.get_quad_list_entry(idx))
     }
 
-    pub fn get_quads_with_predicate(&self, predicate: GraphElementId) -> impl Iterator<Item = Quad> + '_ {
+    pub fn get_quads_with_predicate(
+        &self,
+        predicate: GraphElementId,
+    ) -> impl Iterator<Item = Quad> + '_ {
         self.predicate_index
             .get(&predicate)
             .into_iter()
@@ -164,7 +175,8 @@ impl QuadTable {
         subject: GraphElementId,
         object: GraphElementId,
     ) -> impl Iterator<Item = Quad> + '_ {
-        self.get_quads_with_subject(subject).filter(move |q| q.obj == object)
+        self.get_quads_with_subject(subject)
+            .filter(move |q| q.obj == object)
     }
 
     pub fn get_quads_with_id_subject(
@@ -172,7 +184,8 @@ impl QuadTable {
         id: GraphElementId,
         subject: GraphElementId,
     ) -> impl Iterator<Item = Quad> + '_ {
-        self.get_quads_with_subject(subject).filter(move |q| q.triple_id == id)
+        self.get_quads_with_subject(subject)
+            .filter(move |q| q.triple_id == id)
     }
 
     pub fn get_quads_with_id_predicate(
@@ -180,7 +193,8 @@ impl QuadTable {
         id: GraphElementId,
         predicate: GraphElementId,
     ) -> impl Iterator<Item = Quad> + '_ {
-        self.get_quads_with_predicate(predicate).filter(move |q| q.triple_id == id)
+        self.get_quads_with_predicate(predicate)
+            .filter(move |q| q.triple_id == id)
     }
 
     pub fn get_quads_with_id_object(
@@ -188,7 +202,8 @@ impl QuadTable {
         id: GraphElementId,
         object: GraphElementId,
     ) -> impl Iterator<Item = Quad> + '_ {
-        self.get_quads_with_object(object).filter(move |q| q.triple_id == id)
+        self.get_quads_with_object(object)
+            .filter(move |q| q.triple_id == id)
     }
 
     pub fn get_quads_with_id_subject_predicate(

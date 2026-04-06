@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Format ────────────────────────────────────────────────────────────────
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+  # ── Lint (clippy) ─────────────────────────────────────────────────────────
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Tests ─────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace

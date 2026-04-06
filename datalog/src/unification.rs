@@ -10,9 +10,9 @@ Contact: hovlanddag@gmail.com
 //!
 //! The method names follow <https://ojs.aaai.org/index.php/AAAI/article/view/9409>.
 
-use std::collections::HashMap;
-use dag_rdf::{GraphElementId, QuadPattern, Term};
 use crate::types::{Rule, RuleAtom, RuleHead};
+use dag_rdf::{GraphElementId, QuadPattern, Term};
+use std::collections::HashMap;
 
 // ── Term / pattern unifiability ──────────────────────────────────────────────
 
@@ -24,7 +24,10 @@ fn variable_constant_unifiable(
 ) -> bool {
     let canonical = variable_map.get(var).map(|s| s.as_str()).unwrap_or(var);
     match constant_map.get(canonical) {
-        None => { constant_map.insert(canonical.to_owned(), resource); true }
+        None => {
+            constant_map.insert(canonical.to_owned(), resource);
+            true
+        }
         Some(&r) => r == resource,
     }
 }
@@ -36,10 +39,12 @@ fn terms_unifiable(
     variable_map: &mut HashMap<String, String>,
 ) -> bool {
     match (t1, t2) {
-        (Term::Variable(v), Term::Resource(r)) =>
-            variable_constant_unifiable(v, *r, constant_map, variable_map),
-        (Term::Resource(r), Term::Variable(v)) =>
-            variable_constant_unifiable(v, *r, constant_map, variable_map),
+        (Term::Variable(v), Term::Resource(r)) => {
+            variable_constant_unifiable(v, *r, constant_map, variable_map)
+        }
+        (Term::Resource(r), Term::Variable(v)) => {
+            variable_constant_unifiable(v, *r, constant_map, variable_map)
+        }
         (Term::Resource(r1), Term::Resource(r2)) => r1 == r2,
         (Term::Variable(v1), Term::Variable(v2)) => {
             variable_map.insert(v1.clone(), v2.clone());
@@ -82,7 +87,7 @@ impl PatternEdge {
 /// with `head_pattern`. The edge is negative if the body atom is negated.
 pub fn depending_rules(rules: &[Rule], head_pattern: &QuadPattern) -> Vec<PatternEdge> {
     let mut result = Vec::new();
-    'outer: for rule in rules {
+    for rule in rules {
         let mut has_negative = false;
         let mut has_match = false;
         for atom in &rule.body {

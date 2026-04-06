@@ -5,11 +5,11 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-use std::fmt;
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use num_bigint::BigInt;
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc, Duration};
-use rust_decimal::Decimal;
 use ordered_float::OrderedFloat;
+use rust_decimal::Decimal;
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct IriReference(pub String);
@@ -56,8 +56,14 @@ pub enum RdfLiteral {
     DateTimeLiteral(DateTime<Utc>),
     TimeLiteral(NaiveTime),
     DateLiteral(NaiveDate),
-    LangLiteral { lang: String, literal: String },
-    TypedLiteral { type_iri: IriReference, literal: String },
+    LangLiteral {
+        lang: String,
+        literal: String,
+    },
+    TypedLiteral {
+        type_iri: IriReference,
+        literal: String,
+    },
 }
 
 impl fmt::Display for RdfLiteral {
@@ -74,7 +80,9 @@ impl fmt::Display for RdfLiteral {
             RdfLiteral::TimeLiteral(t) => write!(f, "TimeLiteral({:?})", t),
             RdfLiteral::DateLiteral(d) => write!(f, "DateLiteral({:?})", d),
             RdfLiteral::LangLiteral { lang, literal } => write!(f, "{}@{}", lang, literal),
-            RdfLiteral::TypedLiteral { type_iri, literal } => write!(f, "{}^^{}", literal, type_iri),
+            RdfLiteral::TypedLiteral { type_iri, literal } => {
+                write!(f, "{}^^{}", literal, type_iri)
+            }
         }
     }
 }
@@ -111,7 +119,10 @@ impl PrefixDeclaration {
 pub enum OntologyVersion {
     UnNamedOntology,
     NamedOntology(IriReference),
-    VersionedOntology { ontology_iri: IriReference, version_iri: IriReference },
+    VersionedOntology {
+        ontology_iri: IriReference,
+        version_iri: IriReference,
+    },
 }
 
 impl OntologyVersion {

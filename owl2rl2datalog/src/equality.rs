@@ -6,8 +6,8 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use dag_rdf::{GraphElementManager, RdfResource, Term};
 use dag_rdf::query::get_default_graph_pattern;
+use dag_rdf::{GraphElementManager, RdfResource, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
 use ingress::{IriReference, OWL_SAME_AS};
 

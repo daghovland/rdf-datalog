@@ -5,10 +5,12 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
-pub(crate) use ::ingress::{GraphElement, RdfLiteral, XSD_INT, XSD_INTEGER, XSD_NON_NEGATIVE_INTEGER, XSD_BOOLEAN};
-pub use ::ingress::{RdfResource, IriReference};
-use std::fmt;
+pub(crate) use ::ingress::{
+    GraphElement, RdfLiteral, XSD_BOOLEAN, XSD_INT, XSD_INTEGER, XSD_NON_NEGATIVE_INTEGER,
+};
+pub use ::ingress::{IriReference, RdfResource};
 use num_bigint::BigInt;
+use std::fmt;
 
 pub type GraphElementId = u32;
 pub type TripleListIndex = usize;

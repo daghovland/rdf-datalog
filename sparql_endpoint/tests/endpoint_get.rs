@@ -18,7 +18,8 @@ async fn test_get_single_literal() {
     "#;
     let server = common::TestServer::start(turtle).await;
 
-    let sparql = "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
+    let sparql =
+        "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
     let resp = server
         .client
         .get(server.sparql_url())
@@ -29,10 +30,15 @@ async fn test_get_single_literal() {
 
     assert_eq!(resp.status(), 200);
     let ct = resp.headers()["content-type"].to_str().unwrap();
-    assert!(ct.contains("application/sparql-results+json"), "unexpected content-type: {ct}");
+    assert!(
+        ct.contains("application/sparql-results+json"),
+        "unexpected content-type: {ct}"
+    );
 
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
-    let bindings = body["results"]["bindings"].as_array().expect("bindings array");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
     assert_eq!(bindings.len(), 1);
     common::assert_binding_contains(bindings, "name", "literal", "Alice");
 }
@@ -58,10 +64,18 @@ async fn test_get_no_results() {
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
 
     let vars = body["head"]["vars"].as_array().expect("head.vars array");
-    assert!(vars.iter().any(|v| v == "x"), "head.vars should contain 'x'");
+    assert!(
+        vars.iter().any(|v| v == "x"),
+        "head.vars should contain 'x'"
+    );
 
-    let bindings = body["results"]["bindings"].as_array().expect("bindings array");
-    assert!(bindings.is_empty(), "expected empty bindings, got: {bindings:?}");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+    assert!(
+        bindings.is_empty(),
+        "expected empty bindings, got: {bindings:?}"
+    );
 }
 
 /// Test case 5 — malformed query returns 400; server stays alive afterwards.

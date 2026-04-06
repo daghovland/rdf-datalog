@@ -6,8 +6,8 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
+use crate::ingress::{DEFAULT_GRAPH_ELEMENT_ID, GraphElementId};
 use std::fmt;
-use crate::ingress::{GraphElementId, DEFAULT_GRAPH_ELEMENT_ID};
 
 /// A term in a query pattern — either a concrete resource ID or a named variable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -67,8 +67,8 @@ pub fn get_default_graph_pattern(subject: Term, predicate: Term, object: Term) -
     }
 }
 
-use std::collections::HashMap;
 use crate::datastore::Datastore;
+use std::collections::HashMap;
 
 pub struct QueryExecutor<'a> {
     pub datastore: &'a Datastore,
@@ -105,7 +105,9 @@ impl<'a> QueryExecutor<'a> {
     }
 
     pub fn execute_bgp(&self, patterns: &[QuadPattern]) -> Vec<Binding> {
-        let mut results = vec![Binding { map: HashMap::new() }];
+        let mut results = vec![Binding {
+            map: HashMap::new(),
+        }];
 
         for pattern in patterns {
             let mut next_results = Vec::new();
@@ -122,21 +124,29 @@ impl<'a> QueryExecutor<'a> {
                     let mut possible = true;
 
                     if let Term::Variable(v) = &pattern.graph {
-                        if !self.bind_var(&mut new_binding, v, quad.triple_id) { possible = false; }
+                        if !self.bind_var(&mut new_binding, v, quad.triple_id) {
+                            possible = false;
+                        }
                     }
                     if possible {
                         if let Term::Variable(v) = &pattern.subject {
-                            if !self.bind_var(&mut new_binding, v, quad.subject) { possible = false; }
+                            if !self.bind_var(&mut new_binding, v, quad.subject) {
+                                possible = false;
+                            }
                         }
                     }
                     if possible {
                         if let Term::Variable(v) = &pattern.predicate {
-                            if !self.bind_var(&mut new_binding, v, quad.predicate) { possible = false; }
+                            if !self.bind_var(&mut new_binding, v, quad.predicate) {
+                                possible = false;
+                            }
                         }
                     }
                     if possible {
                         if let Term::Variable(v) = &pattern.object {
-                            if !self.bind_var(&mut new_binding, v, quad.obj) { possible = false; }
+                            if !self.bind_var(&mut new_binding, v, quad.obj) {
+                                possible = false;
+                            }
                         }
                     }
 

@@ -6,9 +6,9 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
+use dag_rdf::{GraphElementId, QuadPattern, Term};
 use std::collections::HashMap;
 use std::fmt;
-use dag_rdf::{GraphElementId, QuadPattern, Term};
 
 /// A position in a wildcard pattern — either a specific resource or a wildcard
 /// matching any resource. Used in the rule-index for fast lookup.
@@ -68,8 +68,12 @@ impl RuleAtom {
             RuleAtom::PositivePattern(p) | RuleAtom::NotPattern(p) => p.get_variables(),
             RuleAtom::NotEqualsAtom(t1, t2) => {
                 let mut vars = vec![];
-                if let Term::Variable(v) = t1 { vars.push(v.as_str()); }
-                if let Term::Variable(v) = t2 { vars.push(v.as_str()); }
+                if let Term::Variable(v) = t1 {
+                    vars.push(v.as_str());
+                }
+                if let Term::Variable(v) = t2 {
+                    vars.push(v.as_str());
+                }
                 vars
             }
         }

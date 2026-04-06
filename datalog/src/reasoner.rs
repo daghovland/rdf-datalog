@@ -6,8 +6,6 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use std::collections::HashMap;
-use dag_rdf::{Datastore, QuadTable};
 use crate::datalog::{
     apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate,
     get_matches_for_rule, get_partial_matches, is_fact, is_safe_rule, merge_partial_match_maps,
@@ -15,6 +13,8 @@ use crate::datalog::{
 };
 use crate::stratifier::RulePartitioner;
 use crate::types::{PartialRule, QuadWildcard, Rule, RuleHead};
+use dag_rdf::{Datastore, QuadTable};
+use std::collections::HashMap;
 
 // ── DatalogProgram ────────────────────────────────────────────────────────────
 
@@ -39,17 +39,11 @@ impl DatalogProgram {
     pub fn add_rule(&mut self, rule: Rule) {
         is_safe_rule(&rule);
         let new_map = get_partial_matches(&rule);
-        self.rule_map = merge_partial_match_maps(vec![
-            std::mem::take(&mut self.rule_map),
-            new_map,
-        ]);
+        self.rule_map = merge_partial_match_maps(vec![std::mem::take(&mut self.rule_map), new_map]);
         self.rules.push(rule);
     }
 
-    fn get_rules_for_fact(
-        &self,
-        fact: &dag_rdf::Quad,
-    ) -> Vec<crate::types::PartialRuleMatch> {
+    fn get_rules_for_fact(&self, fact: &dag_rdf::Quad) -> Vec<crate::types::PartialRuleMatch> {
         wildcard_quad_pattern(&constant_quad_pattern(fact))
             .iter()
             .filter_map(|wc| self.rule_map.get(wc))
@@ -62,11 +56,11 @@ impl DatalogProgram {
         self.rules
             .iter()
             .filter(|r| is_fact(r))
-            .filter_map(|r| match &r.head {
+            .map(|r| match &r.head {
                 RuleHead::Contradiction => {
                     panic!("Contradiction in facts — inconsistency detected. Aborting.")
                 }
-                RuleHead::NormalHead(p) => Some(apply_substitution_quad(&empty_substitution(), p)),
+                RuleHead::NormalHead(p) => apply_substitution_quad(&empty_substitution(), p),
             })
             .collect()
     }

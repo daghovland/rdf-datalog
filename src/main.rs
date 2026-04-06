@@ -1,13 +1,10 @@
-
-
-use dag_rdf::{Datastore};
+use dag_rdf::Datastore;
 use owl_ontology::Ontology;
-use ingress;
 use owl2rl2datalog::owl2datalog;
-use turtle_parser::parse_turtle;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
+use turtle_parser::parse_turtle;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -28,11 +25,16 @@ fn main() {
 
     println!("Parsed {} triples.", datastore.named_graphs.quad_count);
 
-    // Now we need an Ontology object. 
+    // Now we need an Ontology object.
     // Usually, we'd have an RDF-to-Ontology translator.
     // In DagSemTools, there's a translator that builds the Ontology from the Datastore.
     // For now, let's just create an empty ontology to see if it links up.
-    let ontology = Ontology::new(vec![], ingress::OntologyVersion::UnNamedOntology, vec![], vec![]);
+    let ontology = Ontology::new(
+        vec![],
+        ingress::OntologyVersion::UnNamedOntology,
+        vec![],
+        vec![],
+    );
     let rules = owl2datalog(&mut datastore.resources, &ontology);
 
     println!("Generated {} Datalog rules.", rules.len());

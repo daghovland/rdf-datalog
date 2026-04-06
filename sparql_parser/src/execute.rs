@@ -33,7 +33,14 @@ pub struct SelectResult {
 /// Returns an error string for unsupported query forms.
 pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, String> {
     match query {
-        Query::Select { projection, where_clause, limit, offset, distinct, .. } => {
+        Query::Select {
+            projection,
+            where_clause,
+            limit,
+            offset,
+            distinct,
+            ..
+        } => {
             let variables = projection_variables(projection);
             let patterns = collect_bgp_patterns(where_clause)?;
             let solutions = eval_bgp(&patterns, datastore);
@@ -50,7 +57,11 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
 
             if let Some(off) = offset {
                 let off = *off as usize;
-                if off < rows.len() { rows = rows[off..].to_vec(); } else { rows.clear(); }
+                if off < rows.len() {
+                    rows = rows[off..].to_vec();
+                } else {
+                    rows.clear();
+                }
             }
             if let Some(lim) = limit {
                 rows.truncate(*lim as usize);
@@ -147,10 +158,22 @@ fn eval_triple_pattern(
     let mut new_solutions = Vec::new();
 
     // Use the dag_rdf QueryExecutor via quads_matching
-    let g = match &quad_pattern.graph { DagTerm::Resource(id) => Some(*id), _ => None };
-    let s = match &quad_pattern.subject { DagTerm::Resource(id) => Some(*id), _ => None };
-    let p = match &quad_pattern.predicate { DagTerm::Resource(id) => Some(*id), _ => None };
-    let o = match &quad_pattern.object { DagTerm::Resource(id) => Some(*id), _ => None };
+    let g = match &quad_pattern.graph {
+        DagTerm::Resource(id) => Some(*id),
+        _ => None,
+    };
+    let s = match &quad_pattern.subject {
+        DagTerm::Resource(id) => Some(*id),
+        _ => None,
+    };
+    let p = match &quad_pattern.predicate {
+        DagTerm::Resource(id) => Some(*id),
+        _ => None,
+    };
+    let o = match &quad_pattern.object {
+        DagTerm::Resource(id) => Some(*id),
+        _ => None,
+    };
 
     for quad in datastore.quads_matching(g, s, p, o) {
         let mut new_sub = sub.clone();
@@ -160,8 +183,12 @@ fn eval_triple_pattern(
             ($term:expr, $val:expr) => {
                 if let Term::Variable(v) = $term {
                     match new_sub.get(v) {
-                        Some(&existing) if existing != $val => { ok = false; }
-                        _ => { new_sub.insert(v.clone(), $val); }
+                        Some(&existing) if existing != $val => {
+                            ok = false;
+                        }
+                        _ => {
+                            new_sub.insert(v.clone(), $val);
+                        }
                     }
                 }
             };

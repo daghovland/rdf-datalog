@@ -7,12 +7,12 @@ Contact: hovlanddag@gmail.com
 */
 
 pub mod axioms;
-pub mod extractor;
 pub mod eli2rl;
+pub mod extractor;
 
 pub use axioms::*;
-pub use extractor::eli_axiom_extractor;
 pub use eli2rl::generate_tbox_rl;
+pub use extractor::eli_axiom_extractor;
 
 use dag_rdf::GraphElementManager;
 use datalog::types::Rule;
@@ -21,6 +21,5 @@ use owl_ontology::ClassAxiom;
 /// Translate an OWL 2 class axiom into datalog rules via the ELI pathway.
 /// Returns `None` if the axiom is not ELI-expressible.
 pub fn owl2datalog(resources: &mut GraphElementManager, axiom: &ClassAxiom) -> Option<Vec<Rule>> {
-    eli_axiom_extractor(axiom)
-        .map(|formulas| generate_tbox_rl(resources, formulas))
+    eli_axiom_extractor(axiom).map(|formulas| generate_tbox_rl(resources, formulas))
 }

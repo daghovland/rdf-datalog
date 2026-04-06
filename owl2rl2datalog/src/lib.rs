@@ -11,10 +11,10 @@ Contact: hovlanddag@gmail.com
 
 pub mod equality;
 
-use dag_rdf::{GraphElementId, GraphElementManager, RdfResource, Term};
 use dag_rdf::query::get_default_graph_pattern;
+use dag_rdf::{GraphElementId, GraphElementManager, RdfResource, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
-use ingress::{IriReference, OWL_SAME_AS, RDF_TYPE};
+use ingress::{IriReference, RDF_TYPE};
 use owl_ontology::{
     Axiom, ClassAxiom, ClassExpression, DataPropertyAxiom, FullIri, ObjectPropertyAxiom,
     ObjectPropertyExpression, Ontology,
@@ -24,10 +24,6 @@ use owl_ontology::{
 
 fn rdf_type_id(resources: &mut GraphElementManager) -> GraphElementId {
     resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned())))
-}
-
-fn owl_same_as_id(resources: &mut GraphElementManager) -> GraphElementId {
-    resources.add_node_resource(RdfResource::Iri(IriReference(OWL_SAME_AS.to_owned())))
 }
 
 fn type_pattern(
@@ -66,8 +62,9 @@ fn get_obj_prop_pattern(
                 Term::Variable(object_var.to_owned()),
             ))
         }
-        ObjectPropertyExpression::InverseObjectProperty(inner) =>
-            get_obj_prop_pattern(resources, inner, object_var, subject_var),
+        ObjectPropertyExpression::InverseObjectProperty(inner) => {
+            get_obj_prop_pattern(resources, inner, object_var, subject_var)
+        }
         ObjectPropertyExpression::ObjectPropertyChain(_) => {
             log::warn!("Domain/range of property chain not supported");
             None
@@ -80,12 +77,16 @@ fn get_class_expression_ids(
     expr: &ClassExpression,
 ) -> Vec<GraphElementId> {
     match expr {
-        ClassExpression::ClassName(FullIri(iri)) =>
-            vec![resources.add_node_resource(RdfResource::Iri(iri.clone()))],
-        ClassExpression::AnonymousClass(id) =>
-            vec![resources.add_node_resource(RdfResource::AnonymousBlankNode(*id))],
-        ClassExpression::ObjectIntersectionOf(classes) =>
-            classes.iter().flat_map(|c| get_class_expression_ids(resources, c)).collect(),
+        ClassExpression::ClassName(FullIri(iri)) => {
+            vec![resources.add_node_resource(RdfResource::Iri(iri.clone()))]
+        }
+        ClassExpression::AnonymousClass(id) => {
+            vec![resources.add_node_resource(RdfResource::AnonymousBlankNode(*id))]
+        }
+        ClassExpression::ObjectIntersectionOf(classes) => classes
+            .iter()
+            .flat_map(|c| get_class_expression_ids(resources, c))
+            .collect(),
         ClassExpression::ObjectUnionOf(_) => {
             log::warn!("OWL 2 RL: Union in domain/range expression not supported");
             vec![]
@@ -174,14 +175,18 @@ fn object_property_axiom2datalog(
     axiom: &ObjectPropertyAxiom,
 ) -> Vec<Rule> {
     match axiom {
-        ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) =>
-            object_property_domain(resources, prop, domain),
-        ObjectPropertyAxiom::ObjectPropertyRange(prop, range) =>
-            object_property_range(resources, prop, range),
-        ObjectPropertyAxiom::SymmetricObjectProperty(_, prop) =>
-            symmetric_object_property(resources, prop),
-        ObjectPropertyAxiom::TransitiveObjectProperty(_, prop) =>
-            transitive_object_property(resources, prop),
+        ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) => {
+            object_property_domain(resources, prop, domain)
+        }
+        ObjectPropertyAxiom::ObjectPropertyRange(prop, range) => {
+            object_property_range(resources, prop, range)
+        }
+        ObjectPropertyAxiom::SymmetricObjectProperty(_, prop) => {
+            symmetric_object_property(resources, prop)
+        }
+        ObjectPropertyAxiom::TransitiveObjectProperty(_, prop) => {
+            transitive_object_property(resources, prop)
+        }
         _ => vec![],
     }
 }
@@ -220,8 +225,9 @@ fn data_property_range(
         Term::Variable("y".to_owned()),
     );
     let range_id = match range {
-        owl_ontology::DataRange::NamedDataRange(FullIri(dt_iri)) =>
-            resources.add_node_resource(RdfResource::Iri(dt_iri.clone())),
+        owl_ontology::DataRange::NamedDataRange(FullIri(dt_iri)) => {
+            resources.add_node_resource(RdfResource::Iri(dt_iri.clone()))
+        }
         _ => {
             log::warn!("Complex data ranges not yet supported");
             return vec![];
@@ -238,10 +244,12 @@ fn data_property_axiom2datalog(
     axiom: &DataPropertyAxiom,
 ) -> Vec<Rule> {
     match axiom {
-        DataPropertyAxiom::DataPropertyDomain(_, FullIri(iri), domain) =>
-            data_property_domain(resources, iri, domain),
-        DataPropertyAxiom::DataPropertyRange(_, FullIri(iri), range) =>
-            data_property_range(resources, iri, range),
+        DataPropertyAxiom::DataPropertyDomain(_, FullIri(iri), domain) => {
+            data_property_domain(resources, iri, domain)
+        }
+        DataPropertyAxiom::DataPropertyRange(_, FullIri(iri), range) => {
+            data_property_range(resources, iri, range)
+        }
         DataPropertyAxiom::SubDataPropertyOf(_, _, _) => {
             log::warn!("Data property hierarchy not implemented yet");
             vec![]
@@ -264,10 +272,7 @@ fn data_property_axiom2datalog(
 // ── Class axiom translations ──────────────────────────────────────────────────
 
 fn class_axiom2datalog(resources: &mut GraphElementManager, axiom: &ClassAxiom) -> Vec<Rule> {
-    match eli::owl2datalog(resources, axiom) {
-        Some(rules) => rules,
-        None => vec![],
-    }
+    eli::owl2datalog(resources, axiom).unwrap_or_default()
 }
 
 // ── Top-level ─────────────────────────────────────────────────────────────────

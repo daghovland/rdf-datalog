@@ -57,7 +57,8 @@ pub const OWL_MEMBERS: &str = "http://www.w3.org/2002/07/owl#members";
 pub const OWL_EQUIVALENT_PROPERTY: &str = "http://www.w3.org/2002/07/owl#equivalentProperty";
 pub const OWL_PROPERTY_DISJOINT_WITH: &str = "http://www.w3.org/2002/07/owl#propertyDisjointWith";
 pub const OWL_FUNCTIONAL_PROPERTY: &str = "http://www.w3.org/2002/07/owl#FunctionalProperty";
-pub const OWL_INVERSE_FUNCTIONAL_PROPERTY: &str = "http://www.w3.org/2002/07/owl#InverseFunctionalProperty";
+pub const OWL_INVERSE_FUNCTIONAL_PROPERTY: &str =
+    "http://www.w3.org/2002/07/owl#InverseFunctionalProperty";
 pub const OWL_REFLEXIVE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#ReflexiveProperty";
 pub const OWL_IRREFLEXIVE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#IrreflexiveProperty";
 pub const OWL_SYMMETRIC_PROPERTY: &str = "http://www.w3.org/2002/07/owl#SymmetricProperty";
@@ -65,7 +66,8 @@ pub const OWL_ASYMMETRIC_PROPERTY: &str = "http://www.w3.org/2002/07/owl#Asymmet
 pub const OWL_TRANSITIVE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#TransitiveProperty";
 pub const OWL_DISJOINT_WITH: &str = "http://www.w3.org/2002/07/owl#disjointWith";
 pub const OWL_DISJOINT_UNION_OF: &str = "http://www.w3.org/2002/07/owl#disjointUnionOf";
-pub const OWL_NEGATIVE_PROPERTY_ASSERTION: &str = "http://www.w3.org/2002/07/owl#NegativePropertyAssertion";
+pub const OWL_NEGATIVE_PROPERTY_ASSERTION: &str =
+    "http://www.w3.org/2002/07/owl#NegativePropertyAssertion";
 pub const OWL_OBJECT_INVERSE_OF: &str = "http://www.w3.org/2002/07/owl#inverseOf";
 pub const OWL_PROPERTY_CHAIN_AXIOM: &str = "http://www.w3.org/2002/07/owl#propertyChainAxiom";
 pub const OWL_RESTRICTION: &str = "http://www.w3.org/2002/07/owl#Restriction";
@@ -76,8 +78,10 @@ pub const OWL_ONE_OF: &str = "http://www.w3.org/2002/07/owl#oneOf";
 pub const OWL_SOME_VALUES_FROM: &str = "http://www.w3.org/2002/07/owl#someValuesFrom";
 pub const OWL_ALL_VALUES_FROM: &str = "http://www.w3.org/2002/07/owl#allValuesFrom";
 pub const OWL_HAS_VALUE: &str = "http://www.w3.org/2002/07/owl#hasValue";
-pub const OWL_MIN_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
-pub const OWL_MAX_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#maxQualifiedCardinality";
+pub const OWL_MIN_QUALIFIED_CARDINALITY: &str =
+    "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
+pub const OWL_MAX_QUALIFIED_CARDINALITY: &str =
+    "http://www.w3.org/2002/07/owl#maxQualifiedCardinality";
 pub const OWL_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#qualifiedCardinality";
 pub const OWL_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#cardinality";
 pub const OWL_MIN_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#minCardinality";

@@ -8,8 +8,8 @@ Contact: hovlanddag@gmail.com
 
 //! Rust representation of OWL 2, following <https://www.w3.org/TR/2012/REC-owl2-syntax-20121211>.
 
+use ingress::{GraphElement, IriReference};
 use num_bigint::BigInt;
-use ingress::{IriReference, GraphElement};
 
 /// A fully-qualified IRI (the only IRI form used in OWL 2 functional syntax).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -39,7 +39,12 @@ pub type Annotation = (AnnotationProperty, AnnotationValue);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnnotationAxiom {
-    AnnotationAssertion(Vec<Annotation>, AnnotationProperty, GraphElement, GraphElement),
+    AnnotationAssertion(
+        Vec<Annotation>,
+        AnnotationProperty,
+        GraphElement,
+        GraphElement,
+    ),
     SubAnnotationPropertyOf(Vec<Annotation>, AnnotationProperty, AnnotationProperty),
     AnnotationPropertyDomain(Vec<Annotation>, AnnotationProperty, Iri),
     AnnotationPropertyRange(Vec<Annotation>, AnnotationProperty, Iri),
@@ -102,10 +107,18 @@ pub enum ClassExpression {
 pub enum ObjectPropertyAxiom {
     ObjectPropertyDomain(ObjectPropertyExpression, ClassExpression),
     ObjectPropertyRange(ObjectPropertyExpression, ClassExpression),
-    SubObjectPropertyOf(Vec<Annotation>, SubPropertyExpression, ObjectPropertyExpression),
+    SubObjectPropertyOf(
+        Vec<Annotation>,
+        SubPropertyExpression,
+        ObjectPropertyExpression,
+    ),
     EquivalentObjectProperties(Vec<Annotation>, Vec<ObjectPropertyExpression>),
     DisjointObjectProperties(Vec<Annotation>, Vec<ObjectPropertyExpression>),
-    InverseObjectProperties(Vec<Annotation>, ObjectPropertyExpression, ObjectPropertyExpression),
+    InverseObjectProperties(
+        Vec<Annotation>,
+        ObjectPropertyExpression,
+        ObjectPropertyExpression,
+    ),
     FunctionalObjectProperty(Vec<Annotation>, ObjectPropertyExpression),
     InverseFunctionalObjectProperty(Vec<Annotation>, ObjectPropertyExpression),
     ReflexiveObjectProperty(Vec<Annotation>, ObjectPropertyExpression),
@@ -138,8 +151,18 @@ pub enum Assertion {
     SameIndividual(Vec<Annotation>, Vec<Individual>),
     DifferentIndividuals(Vec<Annotation>, Vec<Individual>),
     ClassAssertion(Vec<Annotation>, ClassExpression, Individual),
-    ObjectPropertyAssertion(Vec<Annotation>, ObjectPropertyExpression, Individual, Individual),
-    NegativeObjectPropertyAssertion(Vec<Annotation>, ObjectPropertyExpression, Individual, Individual),
+    ObjectPropertyAssertion(
+        Vec<Annotation>,
+        ObjectPropertyExpression,
+        Individual,
+        Individual,
+    ),
+    NegativeObjectPropertyAssertion(
+        Vec<Annotation>,
+        ObjectPropertyExpression,
+        Individual,
+        Individual,
+    ),
     DataPropertyAssertion(Vec<Annotation>, DataProperty, Individual, GraphElement),
     NegativeDataPropertyAssertion(Vec<Annotation>, DataProperty, Individual, GraphElement),
 }
@@ -163,7 +186,12 @@ pub enum Axiom {
     AxiomObjectPropertyAxiom(ObjectPropertyAxiom),
     AxiomDataPropertyAxiom(DataPropertyAxiom),
     AxiomDatatypeDefinition(Vec<Annotation>, Datatype, DataRange),
-    AxiomHasKey(Vec<Annotation>, ClassExpression, Vec<ObjectPropertyExpression>, Vec<DataProperty>),
+    AxiomHasKey(
+        Vec<Annotation>,
+        ClassExpression,
+        Vec<ObjectPropertyExpression>,
+        Vec<DataProperty>,
+    ),
     AxiomAssertion(Assertion),
     AxiomAnnotationAxiom(AnnotationAxiom),
 }

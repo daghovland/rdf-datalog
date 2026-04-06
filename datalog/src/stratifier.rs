@@ -13,9 +13,9 @@ Contact: hovlanddag@gmail.com
 //! Based on chapters on negation in Abiteboul, Hull, Vianu: "Foundations of
 //! Databases" (1995) and the rule-level variant from Motik et al.
 
+use crate::types::{Rule, RuleHead};
+use crate::unification::{PatternEdge, depending_rules};
 use std::collections::{HashMap, VecDeque};
-use crate::types::{Rule, RuleHead, RuleAtom};
-use crate::unification::{PatternEdge, depending_rules, intentional_rules, quad_patterns_unifiable};
 
 // ── OrderedRule ──────────────────────────────────────────────────────────────
 
@@ -56,11 +56,17 @@ impl RulePartitioner {
     pub fn new(rules: Vec<Rule>) -> Self {
         let rules: Vec<Rule> = {
             let mut seen = std::collections::HashSet::new();
-            rules.into_iter().filter(|r| seen.insert(r.clone())).collect()
+            rules
+                .into_iter()
+                .filter(|r| seen.insert(r.clone()))
+                .collect()
         };
 
-        let rule_index: HashMap<Rule, usize> =
-            rules.iter().enumerate().map(|(i, r)| (r.clone(), i)).collect();
+        let rule_index: HashMap<Rule, usize> = rules
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.clone(), i))
+            .collect();
 
         let mut ordered = create_ordered_rules(&rules);
 
@@ -91,7 +97,7 @@ impl RulePartitioner {
         }
     }
 
-    fn update_successor(&mut self, removed_idx: usize, edge: &PatternEdge) {
+    fn update_successor(&mut self, _removed_idx: usize, edge: &PatternEdge) {
         let dep_rule = edge.get_rule().clone();
         if let Some(&dep_idx) = self.rule_index.get(&dep_rule) {
             if matches!(edge, PatternEdge::NegativePatternEdge(_)) {
@@ -140,7 +146,9 @@ impl RulePartitioner {
     }
 
     fn topological_sort_finished(&self) -> bool {
-        self.ordered.iter().all(|o| o.output || o.num_predecessors == 0)
+        self.ordered
+            .iter()
+            .all(|o| o.output || o.num_predecessors == 0)
     }
 
     /// Find a cycle through rules that still have predecessors and return
@@ -153,7 +161,7 @@ impl RulePartitioner {
         // DFS from each candidate to find a cycle
         for &start in &candidates {
             let mut visited = vec![false; self.rules.len()];
-            let mut stack = vec![start];
+            let _stack = [start];
             let mut path = Vec::new();
             if self.dfs_cycle(start, &mut visited, &mut path) {
                 return Some(path);

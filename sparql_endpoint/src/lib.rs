@@ -20,10 +20,10 @@ pub mod serialize;
 pub mod server;
 pub mod service_desc;
 
+use dag_rdf::datastore::Datastore;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use dag_rdf::datastore::Datastore;
 
 /// Runtime configuration for the SPARQL endpoint.
 #[derive(Clone, Debug)]

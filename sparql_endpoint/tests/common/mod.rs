@@ -8,10 +8,10 @@ Contact: hovlanddag@gmail.com
 
 //! Shared helpers for sparql_endpoint integration tests.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use dag_rdf::datastore::Datastore;
 use sparql_endpoint::{Config, serve_on_listener};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use turtle_parser::parse_turtle;
 
 /// A running test server bound to a random loopback port.
@@ -92,4 +92,3 @@ pub fn assert_binding_contains(
         serde_json::Value::Array(bindings.to_vec())
     );
 }
-

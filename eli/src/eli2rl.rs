@@ -10,35 +10,45 @@ Contact: hovlanddag@gmail.com
 //!
 //! Algorithm 1 from <https://arxiv.org/abs/2008.02232>.
 
-use dag_rdf::{GraphElementManager, RdfResource, Term};
-use dag_rdf::query::get_default_graph_pattern;
-use datalog::types::{Rule, RuleAtom, RuleHead};
-use ingress::{IriReference, RDF_TYPE, OWL_SAME_AS};
-use owl_ontology::{Class, FullIri, Individual, ObjectPropertyExpression};
 use crate::axioms::{ComplexConcept, Formula, NormalizedConcept};
+use dag_rdf::query::get_default_graph_pattern;
+use dag_rdf::{GraphElementManager, RdfResource, Term};
+use datalog::types::{Rule, RuleAtom, RuleHead};
+use ingress::{IriReference, OWL_SAME_AS, RDF_TYPE};
+use owl_ontology::{Class, FullIri, Individual, ObjectPropertyExpression};
 
 // ── Pattern helpers ───────────────────────────────────────────────────────────
 
-fn get_type_pattern(resources: &mut GraphElementManager, var: &str, cls: &Class) -> dag_rdf::QuadPattern {
+fn get_type_pattern(
+    resources: &mut GraphElementManager,
+    var: &str,
+    cls: &Class,
+) -> dag_rdf::QuadPattern {
     let FullIri(class_iri) = cls;
     get_default_graph_pattern(
         Term::Variable(var.to_owned()),
-        Term::Resource(resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned())))),
+        Term::Resource(
+            resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned()))),
+        ),
         Term::Resource(resources.add_node_resource(RdfResource::Iri(class_iri.clone()))),
     )
 }
 
-fn get_anonymous_type_pattern(resources: &mut GraphElementManager, var: &str) -> dag_rdf::QuadPattern {
+fn get_anonymous_type_pattern(
+    resources: &mut GraphElementManager,
+    var: &str,
+) -> dag_rdf::QuadPattern {
     let anon = resources.create_unnamed_anon_resource();
     get_default_graph_pattern(
         Term::Variable(var.to_owned()),
-        Term::Resource(resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned())))),
+        Term::Resource(
+            resources.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned()))),
+        ),
         Term::Resource(anon),
     )
 }
 
 fn get_role_pattern(
-    resources: &mut GraphElementManager,
     role_id: dag_rdf::GraphElementId,
     subject_var: &str,
     object_var: &str,
@@ -57,10 +67,12 @@ fn get_role_value_pattern(
     individual: &Individual,
 ) -> dag_rdf::QuadPattern {
     let obj_id = match individual {
-        Individual::NamedIndividual(FullIri(iri)) =>
-            resources.add_node_resource(RdfResource::Iri(iri.clone())),
-        Individual::AnonymousIndividual(anon_id) =>
-            resources.get_or_create_named_anon_resource(format!("{}", anon_id)),
+        Individual::NamedIndividual(FullIri(iri)) => {
+            resources.add_node_resource(RdfResource::Iri(iri.clone()))
+        }
+        Individual::AnonymousIndividual(anon_id) => {
+            resources.get_or_create_named_anon_resource(format!("{}", anon_id))
+        }
     };
     get_default_graph_pattern(
         Term::Variable(subject_var.to_owned()),
@@ -78,16 +90,18 @@ fn get_obj_prop_pattern(
     match prop {
         ObjectPropertyExpression::NamedObjectProperty(FullIri(iri)) => {
             let role_id = resources.add_node_resource(RdfResource::Iri(iri.clone()));
-            get_role_pattern(resources, role_id, subject_var, object_var)
+            get_role_pattern(role_id, subject_var, object_var)
         }
         ObjectPropertyExpression::AnonymousObjectProperty(id) => {
             let role_id = resources.add_node_resource(RdfResource::AnonymousBlankNode(*id));
-            get_role_pattern(resources, role_id, subject_var, object_var)
+            get_role_pattern(role_id, subject_var, object_var)
         }
-        ObjectPropertyExpression::InverseObjectProperty(inner) =>
-            get_obj_prop_pattern(resources, inner, object_var, subject_var),
-        ObjectPropertyExpression::ObjectPropertyChain(_) =>
-            panic!("Property chain in existential not yet supported"),
+        ObjectPropertyExpression::InverseObjectProperty(inner) => {
+            get_obj_prop_pattern(resources, inner, object_var, subject_var)
+        }
+        ObjectPropertyExpression::ObjectPropertyChain(_) => {
+            panic!("Property chain in existential not yet supported")
+        }
     }
 }
 
@@ -106,10 +120,12 @@ fn get_obj_value_pattern(
             let role_id = resources.add_node_resource(RdfResource::AnonymousBlankNode(*id));
             get_role_value_pattern(resources, role_id, subject_var, individual)
         }
-        ObjectPropertyExpression::InverseObjectProperty(_) =>
-            panic!("Inverse ObjectHasValue not yet supported"),
-        ObjectPropertyExpression::ObjectPropertyChain(_) =>
-            panic!("Property chain in ObjectHasValue not yet supported"),
+        ObjectPropertyExpression::InverseObjectProperty(_) => {
+            panic!("Inverse ObjectHasValue not yet supported")
+        }
+        ObjectPropertyExpression::ObjectPropertyChain(_) => {
+            panic!("Property chain in ObjectHasValue not yet supported")
+        }
     }
 }
 
@@ -122,8 +138,9 @@ fn translate_eli(
     clause: usize,
 ) -> Vec<dag_rdf::QuadPattern> {
     match concept {
-        ComplexConcept::AtomicConcept(FullIri(iri)) =>
-            vec![get_type_pattern(resources, var_name, &FullIri(iri.clone()))],
+        ComplexConcept::AtomicConcept(FullIri(iri)) => {
+            vec![get_type_pattern(resources, var_name, &FullIri(iri.clone()))]
+        }
         ComplexConcept::Intersection(clauses) => clauses
             .iter()
             .enumerate()
@@ -133,7 +150,9 @@ fn translate_eli(
             let new_var = format!("{}_{}", var_name, clause);
             let role_triple = get_obj_prop_pattern(resources, role, var_name, &new_var);
             let concept_triples = translate_eli(resources, inner_concept, &new_var, 1);
-            std::iter::once(role_triple).chain(concept_triples).collect()
+            std::iter::once(role_triple)
+                .chain(concept_triples)
+                .collect()
         }
         ComplexConcept::Top => vec![],
     }
@@ -206,7 +225,10 @@ fn get_universal_normalized_rule(
         .map(|cls| RuleAtom::PositivePattern(get_type_pattern(resources, "X", cls)))
         .chain(std::iter::once(role_atom))
         .collect();
-    vec![Rule { head: RuleHead::NormalHead(type_head), body }]
+    vec![Rule {
+        head: RuleHead::NormalHead(type_head),
+        body,
+    }]
 }
 
 fn get_at_most_one_normalized_rule(
@@ -249,36 +271,55 @@ fn get_object_has_value_normalized_rule(
 
 fn generate_axiom_rl(resources: &mut GraphElementManager, formula: &Formula) -> Vec<Rule> {
     match formula {
-        Formula::DirectlyTranslatableConceptInclusion { subclass_disjunction, superclass_conjunction } => {
-            subclass_disjunction
-                .iter()
-                .flat_map(|sub| {
-                    superclass_conjunction
-                        .iter()
-                        .map(|sup| translate_simple_subclass(resources, sub, sup))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        }
-        Formula::NormalizedConceptInclusion { subclass_conjunction, superclass } => match superclass {
-            NormalizedConcept::Bottom =>
-                vec![translate_empty_intersection(resources, subclass_conjunction)],
-            NormalizedConcept::AtomicNamedConcept(cls) =>
-                get_atomic_normalized_rule(resources, subclass_conjunction, cls),
-            NormalizedConcept::AtomicAnonymousConcept =>
-                get_atomic_anonymous_normalized_rule(resources, subclass_conjunction),
-            NormalizedConcept::AllValuesFrom(prop, cls) =>
-                get_universal_normalized_rule(resources, subclass_conjunction, prop, cls),
-            NormalizedConcept::ObjectHasValue(prop, individual) =>
-                get_object_has_value_normalized_rule(resources, subclass_conjunction, prop, individual),
-            NormalizedConcept::AtMostOneValueFrom(prop) =>
-                get_at_most_one_normalized_rule(resources, subclass_conjunction, prop),
+        Formula::DirectlyTranslatableConceptInclusion {
+            subclass_disjunction,
+            superclass_conjunction,
+        } => subclass_disjunction
+            .iter()
+            .flat_map(|sub| {
+                superclass_conjunction
+                    .iter()
+                    .map(|sup| translate_simple_subclass(resources, sub, sup))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        Formula::NormalizedConceptInclusion {
+            subclass_conjunction,
+            superclass,
+        } => match superclass {
+            NormalizedConcept::Bottom => vec![translate_empty_intersection(
+                resources,
+                subclass_conjunction,
+            )],
+            NormalizedConcept::AtomicNamedConcept(cls) => {
+                get_atomic_normalized_rule(resources, subclass_conjunction, cls)
+            }
+            NormalizedConcept::AtomicAnonymousConcept => {
+                get_atomic_anonymous_normalized_rule(resources, subclass_conjunction)
+            }
+            NormalizedConcept::AllValuesFrom(prop, cls) => {
+                get_universal_normalized_rule(resources, subclass_conjunction, prop, cls)
+            }
+            NormalizedConcept::ObjectHasValue(prop, individual) => {
+                get_object_has_value_normalized_rule(
+                    resources,
+                    subclass_conjunction,
+                    prop,
+                    individual,
+                )
+            }
+            NormalizedConcept::AtMostOneValueFrom(prop) => {
+                get_at_most_one_normalized_rule(resources, subclass_conjunction, prop)
+            }
         },
     }
 }
 
 /// Translate a list of ELI formulas into datalog rules.
-pub fn generate_tbox_rl(resources: &mut GraphElementManager, formulas: impl IntoIterator<Item = Formula>) -> Vec<Rule> {
+pub fn generate_tbox_rl(
+    resources: &mut GraphElementManager,
+    formulas: impl IntoIterator<Item = Formula>,
+) -> Vec<Rule> {
     formulas
         .into_iter()
         .flat_map(|f| generate_axiom_rl(resources, &f))

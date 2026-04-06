@@ -6,20 +6,18 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-pub mod types;
 pub mod datalog;
-pub mod unification;
-pub mod stratifier;
 pub mod reasoner;
+pub mod stratifier;
+pub mod types;
+pub mod unification;
 
-pub use types::*;
 pub use datalog::{
-    empty_substitution, is_fact, is_safe_rule,
-    constant_quad_pattern, wildcard_quad_pattern,
-    get_substitutions, apply_substitution_quad,
-    evaluate_pattern, evaluate_positive, evaluate,
-    get_partial_matches, merge_partial_match_maps, get_matches_for_rule,
+    apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate, evaluate_pattern,
+    evaluate_positive, get_matches_for_rule, get_partial_matches, get_substitutions, is_fact,
+    is_safe_rule, merge_partial_match_maps, wildcard_quad_pattern,
 };
-pub use unification::{quad_patterns_unifiable, PatternEdge, depending_rules, intentional_rules};
-pub use stratifier::RulePartitioner;
 pub use reasoner::{DatalogProgram, evaluate_rules};
+pub use stratifier::RulePartitioner;
+pub use types::*;
+pub use unification::{PatternEdge, depending_rules, intentional_rules, quad_patterns_unifiable};

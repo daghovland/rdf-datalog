@@ -11,9 +11,9 @@ Contact: hovlanddag@gmail.com
 //! Normalization follows Section 4.2 of <https://arxiv.org/pdf/2008.02232> and
 //! the structural transformation in <https://www.ijcai.org/Proceedings/09/Papers/336.pdf>.
 
+use crate::axioms::{ComplexConcept, Formula, NormalizedConcept};
 use ingress::IriReference;
 use owl_ontology::{Class, ClassAxiom, ClassExpression, FullIri, ObjectPropertyExpression};
-use crate::axioms::{ComplexConcept, Formula, NormalizedConcept};
 
 /// Build a synthetic IRI to represent a complex concept (A_C in the paper).
 fn concept_representative(concept: &ClassExpression) -> Class {
@@ -91,9 +91,7 @@ fn sub_concept_some_values_from(
     )
 }
 
-fn concept_positive_occurrence_normalization(
-    concept: &ClassExpression,
-) -> Vec<Formula> {
+fn concept_positive_occurrence_normalization(concept: &ClassExpression) -> Vec<Formula> {
     let (pos, neg, mut formulas) = match concept {
         ClassExpression::ObjectComplementOf(inner) => (
             vec![],
@@ -127,34 +125,52 @@ fn concept_positive_occurrence_normalization(
         ),
         _ => {
             let repr = concept_representative(concept);
-            let (pos, neg, super_concepts): (Vec<ClassExpression>, Vec<ClassExpression>, Vec<NormalizedConcept>) =
-                match concept {
-                    ClassExpression::ClassName(cls) => (vec![], vec![], vec![NormalizedConcept::AtomicNamedConcept(cls.clone())]),
-                    ClassExpression::AnonymousClass(_) => (vec![], vec![], vec![NormalizedConcept::AtomicAnonymousConcept]),
-                    ClassExpression::ObjectUnionOf(_) => {
-                        log::warn!("Invalid OWL 2 RL: Union in superclass position not allowed");
-                        (vec![], vec![], vec![])
-                    }
-                    ClassExpression::ObjectAllValuesFrom(prop, inner) => (
-                        vec![],
-                        vec![inner.as_ref().clone()],
-                        vec![NormalizedConcept::AllValuesFrom(prop.clone(), concept_representative(inner))],
-                    ),
-                    ClassExpression::ObjectMaxCardinality(card, prop) if *card == 0u32.into() => {
-                        (vec![], vec![], vec![NormalizedConcept::Bottom])
-                    }
-                    ClassExpression::ObjectMaxCardinality(card, prop) if *card == 1u32.into() => {
-                        (vec![], vec![], vec![NormalizedConcept::AtMostOneValueFrom(prop.clone())])
-                    }
-                    ClassExpression::ObjectMaxCardinality(card, _) => {
-                        log::warn!("Invalid OWL 2 RL: ObjectMaxCardinality on superConcept only allowed with cardinality 0 or 1");
-                        (vec![], vec![], vec![])
-                    }
-                    _ => {
-                        log::warn!("Unhandled super-concept expression: {:?}", concept);
-                        (vec![], vec![], vec![])
-                    }
-                };
+            let (pos, neg, super_concepts): (
+                Vec<ClassExpression>,
+                Vec<ClassExpression>,
+                Vec<NormalizedConcept>,
+            ) = match concept {
+                ClassExpression::ClassName(cls) => (
+                    vec![],
+                    vec![],
+                    vec![NormalizedConcept::AtomicNamedConcept(cls.clone())],
+                ),
+                ClassExpression::AnonymousClass(_) => (
+                    vec![],
+                    vec![],
+                    vec![NormalizedConcept::AtomicAnonymousConcept],
+                ),
+                ClassExpression::ObjectUnionOf(_) => {
+                    log::warn!("Invalid OWL 2 RL: Union in superclass position not allowed");
+                    (vec![], vec![], vec![])
+                }
+                ClassExpression::ObjectAllValuesFrom(prop, inner) => (
+                    vec![],
+                    vec![inner.as_ref().clone()],
+                    vec![NormalizedConcept::AllValuesFrom(
+                        prop.clone(),
+                        concept_representative(inner),
+                    )],
+                ),
+                ClassExpression::ObjectMaxCardinality(card, _prop) if *card == 0u32.into() => {
+                    (vec![], vec![], vec![NormalizedConcept::Bottom])
+                }
+                ClassExpression::ObjectMaxCardinality(card, prop) if *card == 1u32.into() => (
+                    vec![],
+                    vec![],
+                    vec![NormalizedConcept::AtMostOneValueFrom(prop.clone())],
+                ),
+                ClassExpression::ObjectMaxCardinality(_card, _) => {
+                    log::warn!(
+                        "Invalid OWL 2 RL: ObjectMaxCardinality on superConcept only allowed with cardinality 0 or 1"
+                    );
+                    (vec![], vec![], vec![])
+                }
+                _ => {
+                    log::warn!("Unhandled super-concept expression: {:?}", concept);
+                    (vec![], vec![], vec![])
+                }
+            };
             let formulas = super_concepts
                 .into_iter()
                 .map(|sc| Formula::NormalizedConceptInclusion {
@@ -166,8 +182,12 @@ fn concept_positive_occurrence_normalization(
         }
     };
 
-    for p in &pos { formulas.extend(concept_positive_occurrence_normalization(p)); }
-    for n in &neg { formulas.extend(concept_negative_occurrence_normalization(n)); }
+    for p in &pos {
+        formulas.extend(concept_positive_occurrence_normalization(p));
+    }
+    for n in &neg {
+        formulas.extend(concept_negative_occurrence_normalization(n));
+    }
     formulas
 }
 
@@ -190,18 +210,25 @@ fn concept_negative_occurrence_normalization(concept: &ClassExpression) -> Vec<F
         ClassExpression::ObjectSomeValuesFrom(prop, inner) => {
             sub_concept_some_values_from(prop, inner, concept)
         }
-        ClassExpression::ObjectMinQualifiedCardinality(card, prop, inner) if *card == 1u32.into() => {
+        ClassExpression::ObjectMinQualifiedCardinality(card, prop, inner)
+            if *card == 1u32.into() =>
+        {
             sub_concept_some_values_from(prop, inner, concept)
         }
         ClassExpression::ObjectMinQualifiedCardinality(_, _, _) => {
-            log::warn!("Invalid OWL 2 RL: ObjectMinQualifiedCardinality only allowed with cardinality 1");
+            log::warn!(
+                "Invalid OWL 2 RL: ObjectMinQualifiedCardinality only allowed with cardinality 1"
+            );
             (vec![], vec![], vec![])
         }
         ClassExpression::ObjectComplementOf(inner) => (
             vec![inner.as_ref().clone()],
             vec![],
             vec![Formula::NormalizedConceptInclusion {
-                subclass_conjunction: vec![concept_representative(concept), concept_representative(inner)],
+                subclass_conjunction: vec![
+                    concept_representative(concept),
+                    concept_representative(inner),
+                ],
                 superclass: NormalizedConcept::Bottom,
             }],
         ),
@@ -238,8 +265,12 @@ fn concept_negative_occurrence_normalization(concept: &ClassExpression) -> Vec<F
         }
     };
 
-    for p in &pos { formulas.extend(concept_positive_occurrence_normalization(p)); }
-    for n in &neg { formulas.extend(concept_negative_occurrence_normalization(n)); }
+    for p in &pos {
+        formulas.extend(concept_positive_occurrence_normalization(p));
+    }
+    for n in &neg {
+        formulas.extend(concept_negative_occurrence_normalization(n));
+    }
     formulas
 }
 
@@ -303,10 +334,12 @@ pub fn eli_axiom_extractor(axiom: &ClassAxiom) -> Option<Vec<Formula>> {
             let sub_expr = flatten_option_list(sub_opts);
             let super_expr = eli_super_class_extractor(sup);
             match (sub_expr, super_expr) {
-                (Some(sub_e), Some(sup_e)) => Some(vec![Formula::DirectlyTranslatableConceptInclusion {
-                    subclass_disjunction: sub_e,
-                    superclass_conjunction: sup_e,
-                }]),
+                (Some(sub_e), Some(sup_e)) => {
+                    Some(vec![Formula::DirectlyTranslatableConceptInclusion {
+                        subclass_disjunction: sub_e,
+                        superclass_conjunction: sup_e,
+                    }])
+                }
                 _ => Some(sub_class_axiom_normalization(axiom)),
             }
         }
@@ -326,11 +359,7 @@ pub fn eli_axiom_extractor(axiom: &ClassAxiom) -> Option<Vec<Formula>> {
                     })
                 })
                 .collect();
-            if pairs.is_empty() {
-                None
-            } else {
-                Some(pairs)
-            }
+            if pairs.is_empty() { None } else { Some(pairs) }
         }
         ClassAxiom::DisjointClasses(_, classes) => {
             // DisjointClasses(C1 ... Cn) -> Ci ⊓ Cj ⊑ ⊥

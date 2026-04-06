@@ -6,12 +6,12 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
+use crate::AppState;
 use axum::{
     Router,
     routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
-use crate::AppState;
 
 /// Build the axum router with all SPARQL endpoint routes and CORS middleware.
 pub fn build_router(state: AppState) -> Router {
@@ -22,10 +22,7 @@ pub fn build_router(state: AppState) -> Router {
             axum::http::Method::POST,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([
-            axum::http::header::ACCEPT,
-            axum::http::header::CONTENT_TYPE,
-        ]);
+        .allow_headers([axum::http::header::ACCEPT, axum::http::header::CONTENT_TYPE]);
 
     Router::new()
         .route("/sparql", get(crate::query::sparql_get))

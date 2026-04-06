@@ -29,7 +29,10 @@ async fn test_default_accept_returns_sparql_json() {
 
     assert_eq!(resp.status(), 200);
     let ct = resp.headers()["content-type"].to_str().unwrap();
-    assert!(ct.contains("application/sparql-results+json"), "unexpected content-type: {ct}");
+    assert!(
+        ct.contains("application/sparql-results+json"),
+        "unexpected content-type: {ct}"
+    );
 }
 
 /// Explicit `Accept: application/sparql-results+json` → SPARQL JSON.
@@ -48,10 +51,15 @@ async fn test_explicit_json_accept() {
 
     assert_eq!(resp.status(), 200);
     let ct = resp.headers()["content-type"].to_str().unwrap();
-    assert!(ct.contains("application/sparql-results+json"), "unexpected content-type: {ct}");
+    assert!(
+        ct.contains("application/sparql-results+json"),
+        "unexpected content-type: {ct}"
+    );
 
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
-    let bindings = body["results"]["bindings"].as_array().expect("bindings array");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
     assert_eq!(bindings.len(), 1);
     common::assert_binding_contains(bindings, "name", "literal", "Alice");
 }
@@ -74,8 +82,14 @@ async fn test_service_description_turtle() {
     assert!(ct.contains("text/turtle"), "unexpected content-type: {ct}");
 
     let body = resp.text().await.expect("body must be text");
-    assert!(body.contains("sd:Service"), "service description must mention sd:Service");
-    assert!(body.contains("/sparql"), "service description must mention the endpoint IRI");
+    assert!(
+        body.contains("sd:Service"),
+        "service description must mention sd:Service"
+    );
+    assert!(
+        body.contains("/sparql"),
+        "service description must mention the endpoint IRI"
+    );
 }
 
 /// Missing query parameter without RDF Accept → 400.
