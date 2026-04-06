@@ -13,7 +13,7 @@ pub mod query;
 pub use crate::datastore::Datastore;
 pub use crate::ingress::*;
 pub use crate::quadtable::QuadTable;
-pub use crate::query::{get_default_graph_pattern, QuadPattern, Term};
+pub use crate::query::{QuadPattern, Term};
 pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource};
 
 use std::collections::HashMap;

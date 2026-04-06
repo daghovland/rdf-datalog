@@ -1,0 +1,13 @@
+[package]
+name = "sparql-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nom = "7.1"
+dag-rdf = { path = "../dag_rdf" }
+iri-string = "0.7"
+log = "0.4"
+
+[dev-dependencies]
+env_logger = "0.10"

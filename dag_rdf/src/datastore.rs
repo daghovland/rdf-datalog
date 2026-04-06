@@ -171,10 +171,40 @@ impl Datastore {
         self.reified_triples.get_quads_with_predicate(predicate)
     }
 
-    pub fn get_reified_triples_with_object(
+    pub fn quads_matching(
         &self,
-        object: GraphElementId,
-    ) -> impl Iterator<Item = Quad> + '_ {
-        self.reified_triples.get_quads_with_object(object)
+        graph: Option<GraphElementId>,
+        subject: Option<GraphElementId>,
+        predicate: Option<GraphElementId>,
+        object: Option<GraphElementId>,
+    ) -> Vec<Quad> {
+        match (graph, subject, predicate, object) {
+            (Some(g), Some(s), Some(p), Some(o)) => {
+                if self.named_graphs.contains(&Quad { triple_id: g, subject: s, predicate: p, obj: o }) {
+                    vec![Quad { triple_id: g, subject: s, predicate: p, obj: o }]
+                } else {
+                    vec![]
+                }
+            }
+            (Some(g), Some(s), Some(p), None) => self.named_graphs.get_quads_with_id_subject_predicate(g, s, p).collect(),
+            (Some(g), Some(s), None, Some(o)) => self.named_graphs.get_quads_with_id_subject_object(g, s, o).collect(),
+            (Some(g), None, Some(p), Some(o)) => self.named_graphs.get_quads_with_id_object_predicate(g, o, p).collect(),
+            (Some(g), Some(s), None, None) => self.named_graphs.get_quads_with_id_subject(g, s).collect(),
+            (Some(g), None, Some(p), None) => self.named_graphs.get_quads_with_id_predicate(g, p).collect(),
+            (Some(g), None, None, Some(o)) => self.named_graphs.get_quads_with_id_object(g, o).collect(),
+            (Some(g), None, None, None) => self.named_graphs.get_graph(g).collect(),
+            (None, Some(s), Some(p), Some(o)) => {
+               // This is tricky as we don't have a cross-graph subject-predicate-object index easily accessible that returns quads
+               // But we can iterate over all quads and filter, or if we assume it's small...
+               self.named_graphs.get_all_quads().filter(|q| q.subject == s && q.predicate == p && q.obj == o).collect()
+            }
+            (None, Some(s), Some(p), None) => self.named_graphs.get_quads_with_subject_predicate(s, p).collect(),
+            (None, Some(s), None, Some(o)) => self.named_graphs.get_quads_with_subject_object(s, o).collect(),
+            (None, None, Some(p), Some(o)) => self.named_graphs.get_quads_with_object_predicate(o, p).collect(),
+            (None, Some(s), None, None) => self.named_graphs.get_quads_with_subject(s).collect(),
+            (None, None, Some(p), None) => self.named_graphs.get_quads_with_predicate(p).collect(),
+            (None, None, None, Some(o)) => self.named_graphs.get_quads_with_object(o).collect(),
+            (None, None, None, None) => self.named_graphs.get_all_quads().collect(),
+        }
     }
 }

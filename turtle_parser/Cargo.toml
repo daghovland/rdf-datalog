@@ -1,0 +1,10 @@
+[package]
+name = "turtle-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+rio_turtle = "0.8"
+rio_api = "0.8"
+log = "0.4"
