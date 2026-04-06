@@ -22,30 +22,58 @@ cargo test test_add_and_get_resource
 cargo run
 ```
 
+## Planning and protocol documents
+
+- **`PLAN.md`** — full implementation roadmap (phases 1–8, crate mapping from DagSemTools, suggested order)
+- **`PROTOCOLS.md`** — W3C protocol compliance reference (SPARQL 1.1 Protocol, Graph Store HTTP Protocol, Service Description, VoID, content negotiation, CORS)
+
 ## Architecture
 
-This is a Rust workspace with three crates targeting RDF/datalog processing:
+Goal: fast RDF triplestore with native OWL-RL reasoning over datalog, plus a standards-compliant SPARQL HTTP endpoint.
 
 ```
-datalog (root, binary `dagalog`)
-├── ingress/          — RDF data types and vocabulary constants
-└── dag_rdf/          — Graph element storage and indexing
+dagalog (root binary)
+├── ingress/             — RDF data types and vocabulary constants
+├── dag_rdf/             — Graph element storage, quad indexing, Datastore
+├── datalog/             — Datalog engine (rules, stratifier, reasoner)
+├── owl_ontology/        — OWL 2 type hierarchy (axioms, ontology)
+├── eli/                 — EL profile → datalog (ELI2RL)
+├── owl2rl2datalog/      — OWL 2 RL → datalog (W3C spec §4.3)
+├── turtle_parser/       — Turtle/TriG parser (ANTLR4)      [planned]
+├── manchester_parser/   — OWL Manchester syntax (ANTLR4)   [planned]
+├── sparql_parser/       — SPARQL 1.1 parser (ANTLR4)       [planned]
+├── datalog_parser/      — Datalog rules parser (ANTLR4)    [planned]
+└── sparql_endpoint/     — HTTP SPARQL endpoint (axum)      [planned]
 ```
 
 ### `ingress` crate
-Defines the core RDF type hierarchy:
-- `IriReference` — newtype wrapper around `String` for IRIs
-- `RdfResource` — `Iri(IriReference)` or `AnonymousBlankNode(u32)`
-- `RdfLiteral` — typed literals (string, bool, decimal, float, integer, datetime, etc.)
-- `GraphElement` — union of `NodeOrEdge(RdfResource)` or `GraphLiteral(RdfLiteral)`
-- `PrefixDeclaration`, `OntologyVersion` — OWL/ontology metadata types
-- `namespaces.rs` — `&str` constants for all RDF/RDFS/OWL/XSD IRIs
+Core RDF type hierarchy: `IriReference`, `RdfResource`, `RdfLiteral`, `GraphElement`, `PrefixDeclaration`, `OntologyVersion`. Also exports all RDF/RDFS/OWL/XSD namespace constants from `namespaces.rs`.
 
 ### `dag_rdf` crate
-Builds on `ingress` to provide storage:
-- `GraphElementManager` (`lib.rs`) — interning store that maps `GraphElement` values to `GraphElementId` (`u32`). Deduplicates on insert; supports named and anonymous blank nodes.
-- `ingress.rs` (module inside dag_rdf) — index types: `Triple` (subject/predicate/object as IDs), `Quad` (adds `triple_id` for named graphs), resolved `TripleResource`/`QuadResource`, and helper functions `try_get_non_negative_integer_literal` / `try_get_bool_literal`.
-- `quadtable.rs` — `QuadTable`, a multi-index store for quads. Maintains indexes keyed by predicate, subject+predicate, object+predicate, triple_id, and the full quad for deduplication.
+Storage layer on top of `ingress`:
+- `GraphElementManager` — interning store: `GraphElement` → `GraphElementId` (`u32`). ID 0 is always the default graph (`urn:x-arq:DefaultGraph`), pre-populated on construction.
+- `QuadTable` — multi-index store for quads with indexes by predicate, subject+predicate, object+predicate, graph ID, and full-quad dedup.
+- `Datastore` — pairs two `QuadTable`s (`named_graphs` + `reified_triples`) with a `GraphElementManager`. The main data container passed through the whole pipeline.
+- `query.rs` — `Term` (Resource/Variable) and `QuadPattern`, plus `get_default_graph_pattern()` helper.
+
+### `datalog` crate
+Datalog evaluation engine:
+- `types.rs` — `Rule`, `RuleHead`, `RuleAtom`, `Substitution`, `QuadWildcard`, `PartialRule`
+- `datalog.rs` — `evaluate_pattern`, substitution building, `apply_substitution_quad`, wildcard expansion
+- `unification.rs` — `quad_patterns_unifiable`, `PatternEdge`, `depending_rules`, `intentional_rules`
+- `stratifier.rs` — `RulePartitioner`: topological sort with negation cycle detection (Kahn's algorithm)
+- `reasoner.rs` — `DatalogProgram` (naive forward-chaining materialisation), `evaluate_rules(rules, datastore)`
+
+### `owl_ontology` crate
+Pure OWL 2 data types: `ClassExpression`, `ObjectPropertyExpression`, `DataRange`, `Axiom` (and all variants), `Ontology`, `OntologyDocument`. No logic, just the type hierarchy from the W3C OWL 2 spec.
+
+### `eli` + `owl2rl2datalog` crates
+Two-stage OWL → datalog translation:
+1. `eli`: ELI class axioms → normalized `Formula`s → datalog `Rule`s (via `eli_axiom_extractor` + `generate_tbox_rl`)
+2. `owl2rl2datalog`: full OWL 2 RL ontology → `Vec<Rule>` via `owl2datalog(resources, ontology)`
+
+### `sparql_endpoint` crate (planned)
+`axum`-based HTTP server. See `PROTOCOLS.md` for the full specification of each endpoint. State is an `Arc<RwLock<Datastore>>`. See `PLAN.md` Phase 8 for the full implementation plan.
 
 ### Key design pattern
-All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs, not the actual values. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.
+All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.

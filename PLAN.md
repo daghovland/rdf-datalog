@@ -215,17 +215,150 @@ The root crate `dagalog` becomes the integration layer (mirrors `DagSemTools.Api
 
 ---
 
+## Phase 8 — `sparql_endpoint` HTTP server
+
+New crate `sparql_endpoint/` depending on `dag_rdf`, `datalog`, `sparql_parser`, `turtle_parser`.
+
+See `PROTOCOLS.md` for the full specification of each protocol.
+
+### Technology choices
+
+- **HTTP framework**: `axum` (tokio-based, ergonomic, composable)
+- **Async runtime**: `tokio`
+- **Serialization**: `serde` + `serde_json` for SPARQL JSON results; hand-written Turtle/N-Triples serializers (or `rio_turtle` crate)
+- **Content negotiation**: implemented via `axum`'s `TypedHeader` extractors and a custom `Accept` parser
+
+### Crate layout
+
+```
+sparql_endpoint/
+├── Cargo.toml
+└── src/
+    ├── lib.rs           — public App builder
+    ├── server.rs        — axum router, startup
+    ├── query.rs         — GET/POST /sparql (SELECT, ASK, CONSTRUCT, DESCRIBE)
+    ├── update.rs        — POST /sparql (SPARQL Update)
+    ├── graph_store.rs   — GET/PUT/POST/DELETE /rdf-graph-store
+    ├── service_desc.rs  — GET /sparql → Service Description (no query param)
+    ├── void.rs          — GET /.well-known/void
+    ├── negotiate.rs     — content negotiation helpers
+    └── serialize/
+        ├── sparql_json.rs   — application/sparql-results+json
+        ├── sparql_xml.rs    — application/sparql-results+xml
+        ├── turtle.rs        — text/turtle serializer
+        └── ntriples.rs      — application/n-triples serializer
+```
+
+### Endpoints to implement (in order)
+
+#### P0 — SPARQL 1.1 Protocol
+
+```
+GET  /sparql?query=<encoded>          — query (SELECT/ASK/CONSTRUCT/DESCRIBE)
+POST /sparql                          — query (form or direct body)
+POST /sparql                          — update (SPARQL Update, form or direct body)
+```
+
+Distinguishes query vs. update by Content-Type and/or `query=` vs. `update=` parameter.
+
+Response codes per spec:
+- `200 OK` — success
+- `400 Bad Request` — malformed query/update
+- `406 Not Acceptable` — no matching Accept type
+- `500 Internal Server Error` — execution failure
+
+#### P1 — SPARQL 1.1 Graph Store HTTP Protocol
+
+```
+GET    /rdf-graph-store?graph=<iri>   — fetch named graph
+GET    /rdf-graph-store?default       — fetch default graph
+PUT    /rdf-graph-store?graph=<iri>   — replace named graph
+POST   /rdf-graph-store?graph=<iri>   — merge into named graph
+DELETE /rdf-graph-store?graph=<iri>   — delete named graph
+HEAD   /rdf-graph-store?graph=<iri>   — headers only
+```
+
+#### P1 — SPARQL Service Description
+
+```
+GET /sparql               (no query param, or Accept: text/turtle)
+```
+
+Returns an RDF document (Turtle or N-Triples) describing endpoint capabilities.
+
+#### P2 — VoID description
+
+```
+GET /.well-known/void
+GET /void
+```
+
+Returns dataset statistics and metadata as RDF.
+
+### State management
+
+The endpoint needs shared mutable access to the `Datastore`. Two models:
+
+**Simple (single-writer):** wrap `Datastore` in `Arc<RwLock<Datastore>>`.
+- Reads (queries) acquire a read lock — concurrent.
+- Writes (updates, graph store PUT/POST/DELETE) acquire a write lock — exclusive.
+- Suitable for single-node deployments.
+
+**Advanced (future):** copy-on-write or MVCC — readers see a snapshot while a
+write transaction is in progress. Deferred until benchmarks show read/write
+contention is a bottleneck.
+
+### CORS
+
+All routes emit:
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Accept, Content-Type
+```
+Implement as an `axum` middleware layer (`tower_http::cors::CorsLayer`).
+
+### Configuration
+
+The `App` builder exposes:
+```rust
+pub struct Config {
+    pub bind_addr: std::net::SocketAddr,   // default 0.0.0.0:3030
+    pub base_iri: String,                   // used in Service Description
+    pub read_only: bool,                    // disable update endpoint
+    pub max_query_timeout_secs: u64,        // default 30
+}
+```
+
+### Example end-to-end usage (root crate)
+
+```rust
+let mut store = Datastore::new(1_000_000);
+turtle_parser::parse_file("data.ttl", &mut store)?;
+let rules = owl2rl2datalog::owl2datalog(&mut store.resources, &ontology);
+datalog::evaluate_rules(rules, &mut store);
+
+let config = sparql_endpoint::Config::default();
+sparql_endpoint::serve(Arc::new(RwLock::new(store)), config).await?;
+```
+
+---
+
 ## Suggested implementation order
 
-1. `dag_rdf`: add `query.rs` (Term, QuadPattern), `datastore.rs`, fix default graph ID
-2. `datalog` crate: types + `datalog.rs` module + `reasoner.rs` (naive materialise)
-3. `datalog` crate: `stratifier.rs` + `unification.rs`
-4. `owl_ontology` crate: pure data types
-5. `eli` crate
-6. `owl2rl2datalog` crate
+1. `dag_rdf`: add `query.rs` (Term, QuadPattern), `datastore.rs`, fix default graph ID ✓
+2. `datalog` crate: types + `datalog.rs` module + `reasoner.rs` (naive materialise) ✓
+3. `datalog` crate: `stratifier.rs` + `unification.rs` ✓
+4. `owl_ontology` crate: pure data types ✓
+5. `eli` crate ✓
+6. `owl2rl2datalog` crate ✓
 7. `turtle_parser` crate (needed for loading any real data)
-8. Wire up `dagalog` root for end-to-end reasoning
-9. `manchester_parser`, `sparql_parser`, `datalog_parser`
+8. `sparql_parser` crate (needed for query endpoint)
+9. Wire up `dagalog` root for end-to-end reasoning
+10. `sparql_endpoint` crate: P0 query endpoint (SELECT/ASK)
+11. `sparql_endpoint` crate: P0 update endpoint + P1 graph store
+12. `sparql_endpoint` crate: Service Description + VoID
+13. `manchester_parser`, `datalog_parser`
 
 ---
 

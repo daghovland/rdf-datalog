@@ -1,4 +1,4 @@
-use dag_rdf::{GraphElement, RdfResource, RdfLiteral, IriReference};
+use dag_rdf::GraphElement;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {

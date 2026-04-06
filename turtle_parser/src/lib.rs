@@ -1,7 +1,7 @@
-use dag_rdf::{Datastore, RdfLiteral, RdfResource, IriReference, Triple, GraphElement};
-use rio_api::model::{Term, Triple as RioTriple, NamedNode, BlankNode, Literal, Subject, Term as RioTerm};
+use dag_rdf::{Datastore, IriReference, RdfLiteral, RdfResource, Triple};
+use rio_api::model::{Literal, Subject, Term as RioTerm};
 use rio_api::parser::TriplesParser;
-use rio_turtle::{TurtleParser, TurtleError};
+use rio_turtle::{TurtleError, TurtleParser};
 use std::io::BufRead;
 
 pub fn parse_turtle<R: BufRead>(

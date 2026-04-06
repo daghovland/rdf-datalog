@@ -1,16 +1,18 @@
 pub mod ast;
+pub mod execute;
+pub use execute::{execute, SelectResult, SolutionRow};
 
+use crate::ast::*;
+use dag_rdf::{GraphElement, IriReference, RdfResource};
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case},
-    character::complete::{char, multispace0, multispace1, alphanumeric1},
+    character::complete::{alphanumeric1, char, multispace0, multispace1},
     combinator::{map, opt, recognize},
     multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded},
     IResult,
 };
-use crate::ast::*;
-use dag_rdf::{GraphElement, RdfResource, RdfLiteral, IriReference};
 
 use std::collections::HashMap;
 
@@ -104,7 +106,18 @@ fn parse_term<'a>(ctx: &ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str
 
 fn parse_iri(input: &str) -> IResult<&str, IriReference> {
     map(
-        delimited(char('<'), recognize(many0(alt((alphanumeric1, tag("/"), tag("."), tag(":"), tag("#"))))), char('>')),
-        |iri: &str| IriReference(iri.to_string())
+        delimited(
+            char('<'),
+            recognize(many0(alt((
+                alphanumeric1,
+                tag("/"), tag("."), tag(":"), tag("#"),
+                tag("-"), tag("_"), tag("@"), tag("?"),
+                tag("="), tag("&"), tag("+"), tag("%"),
+                tag("!"), tag("~"), tag("*"), tag("'"),
+                tag("("), tag(")"), tag(","), tag(";"),
+            )))),
+            char('>'),
+        ),
+        |iri: &str| IriReference(iri.to_string()),
     )(input)
 }
