@@ -1,5 +1,5 @@
 [workspace]
-members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle_parser", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "."]
+members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle_parser", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "."]
 
 [package]
 name = "dagalog"
@@ -12,4 +12,5 @@ dag-rdf = { path = "dag_rdf" }
 owl-ontology = { path = "owl_ontology" }
 owl2rl2datalog = { path = "owl2rl2datalog" }
 turtle-parser = { path = "turtle_parser" }
+rdf-owl-translator = { path = "rdf_owl_translator" }
 log = "0.4"

@@ -11,17 +11,18 @@ Each F# project becomes a Rust crate. Names are kept as close as possible:
 
 | DagSemTools project | Rust crate | Status |
 |---|---|---|
-| `Ingress` | `ingress` | Partially done |
-| `Rdf` | `dag_rdf` | Partially done |
-| `Datalog` | `datalog` | Not started |
-| `OwlOntology` | `owl_ontology` | Not started |
-| `OWL2RL2Datalog` | `owl2rl2datalog` | Not started |
-| `ELI` | `eli` | Not started |
-| `Turtle.Parser` | `turtle_parser` | Not started |
+| `Ingress` | `ingress` | Done |
+| `Rdf` | `dag_rdf` | Done |
+| `Datalog` | `datalog` | Done |
+| `OwlOntology` | `owl_ontology` | Done |
+| `OWL2RL2Datalog` | `owl2rl2datalog` | Done |
+| `ELI` | `eli` | Done |
+| `RdfOwlTranslator` | `rdf_owl_translator` | Done |
+| `Turtle.Parser` | `turtle_parser` | Done (uses rio_turtle) |
 | `Manchester.Parser` | `manchester_parser` | Not started |
-| `Sparql.Parser` | `sparql_parser` | Not started |
+| `Sparql.Parser` | `sparql_parser` | Done (nom-based) |
 | `Datalog.Parser` | `datalog_parser` | Not started |
-| `Api` | root crate `dagalog` | Stub only |
+| `Api` | root crate `dagalog` | Working (end-to-end) |
 | `AlcTableau`, `OWL2ALC` | `alc_tableau` | Deferred |
 
 ---
@@ -352,9 +353,9 @@ sparql_endpoint::serve(Arc::new(RwLock::new(store)), config).await?;
 4. `owl_ontology` crate: pure data types ✓
 5. `eli` crate ✓
 6. `owl2rl2datalog` crate ✓
-7. `turtle_parser` crate (needed for loading any real data)
-8. `sparql_parser` crate (needed for query endpoint)
-9. Wire up `dagalog` root for end-to-end reasoning
+7. `turtle_parser` crate (needed for loading any real data) ✓
+8. `sparql_parser` crate (needed for query endpoint) ✓
+9. Wire up `dagalog` root for end-to-end reasoning ✓ (via new `rdf_owl_translator` crate)
 10. `sparql_endpoint` crate: P0 query endpoint (SELECT/ASK)
 11. `sparql_endpoint` crate: P0 update endpoint + P1 graph store
 12. `sparql_endpoint` crate: Service Description + VoID
