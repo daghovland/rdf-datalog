@@ -6,8 +6,11 @@ edition = "2021"
 [dependencies]
 nom = "7.1"
 dag-rdf = { path = "../dag_rdf" }
+ingress = { path = "../ingress" }
 iri-string = "0.7"
 log = "0.4"
+num-bigint = "0.4"
+ordered-float = "4.2"
 
 [dev-dependencies]
 env_logger = "0.10"

@@ -1,87 +1,275 @@
+/*
+Copyright (C) 2025 Dag Hovland
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+Contact: hovlanddag@gmail.com
+*/
+
+//! SPARQL 1.2 query parser (nom-based).
+//!
+//! Supports:
+//! - SELECT (with DISTINCT, * projection, variable projection, LIMIT/OFFSET/ORDER BY)
+//! - Basic Graph Patterns (triple patterns)
+//! - FILTER (comparison operators, regex(), BOUND(), NOT EXISTS, EXISTS)
+//! - OPTIONAL
+//! - UNION
+//! - MINUS
+//! - PREFIX declarations
+//! - Literals: string, language-tagged, typed, numeric (integer, decimal), boolean
+//! - Blank node subjects/objects
+
 pub mod ast;
 pub mod execute;
 pub use execute::{execute, SelectResult, SolutionRow};
 
 use crate::ast::*;
-use dag_rdf::{GraphElement, IriReference, RdfResource};
+use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
+use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_INTEGER};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, tag_no_case},
-    character::complete::{alphanumeric1, char, multispace0, multispace1},
-    combinator::{map, opt, recognize},
-    multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded},
+    bytes::complete::{tag, tag_no_case, take_until, take_while, take_while1},
+    character::complete::{char, multispace0, multispace1},
+    combinator::{map, opt},
+    multi::{many0, separated_list0, separated_list1},
+    sequence::{delimited, pair, preceded, terminated, tuple},
     IResult,
 };
-
 use std::collections::HashMap;
 
 pub struct ParserContext {
     pub prefixes: HashMap<String, String>,
 }
 
-pub fn parse_query<'a>(input: &'a str, ctx: &mut ParserContext) -> IResult<&'a str, Query> {
+// ── Top-level entry point ────────────────────────────────────────────────────
+
+pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'a str, Query> {
     let (input, _) = multispace0(input)?;
-    let (input, _) = many0(parse_prefix(ctx))(input)?;
-    let (input, _) = multispace0(input)?;
+    // PREFIX declarations
+    let (mut input, _) = many0(parse_prefix(ctx))(input)?;
+    input = multispace0(input)?.0;
+
+    // Only SELECT is supported right now
     let (input, _) = tag_no_case("SELECT")(input)?;
     let (input, _) = multispace1(input)?;
 
-    let (input, projection) = separated_list0(
-        multispace1,
-        map(preceded(char('?'), alphanumeric1), |name: &str| {
-            ProjectionElement::Variable(name.to_string())
-        }),
-    )(input)?;
+    // DISTINCT keyword
+    let (input, distinct_opt) = opt(terminated(tag_no_case("DISTINCT"), multispace1))(input)?;
+    let distinct = distinct_opt.is_some();
 
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag_no_case("WHERE")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('{')(input)?;
+    // Projection: * or list of ?var
+    let (input, projection) = parse_projection(input)?;
     let (input, _) = multispace0(input)?;
 
-    let (input, patterns) = many0(parse_triple_pattern(ctx))(input)?;
+    // WHERE (optional keyword)
+    let (input, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(input)?;
 
+    // Group graph pattern
     let (input, _) = multispace0(input)?;
-    let (input, _) = char('}')(input)?;
+    let (input, where_clause) = parse_group_graph_pattern(ctx)(input)?;
     let (input, _) = multispace0(input)?;
 
-    let bgp = QueryComponent::BGP(patterns);
+    // Optional modifiers: GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
+    let (input, group_by) = parse_group_by(ctx)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, having) = parse_having(ctx)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, order_by) = parse_order_by(ctx)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, limit) = parse_limit_offset("LIMIT")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, offset) = parse_limit_offset("OFFSET")(input)?;
+    let (input, _) = multispace0(input)?;
 
     Ok((
         input,
         Query::Select {
             projection,
-            where_clause: vec![bgp],
-            group_by: vec![],
-            having: vec![],
-            order_by: vec![],
-            limit: None,
-            offset: None,
-            distinct: false,
+            where_clause,
+            group_by,
+            having,
+            order_by,
+            limit,
+            offset,
+            distinct,
         },
     ))
 }
+
+// ── Prefix ───────────────────────────────────────────────────────────────────
 
 fn parse_prefix<'a>(ctx: &mut ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, ()> + '_ {
     move |input| {
         let (input, _) = multispace0(input)?;
         let (input, _) = tag_no_case("PREFIX")(input)?;
         let (input, _) = multispace1(input)?;
-        let (input, prefix_name) = recognize(pair(alphanumeric1, char(':')))(input)?;
-        let (input, _) = multispace1(input)?;
-        let (input, iri) = parse_iri(input)?;
+        // prefix name: optional alphanumeric + colon (e.g. "foaf:", ":")
+        let (input, prefix_name) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
+        let (input, _) = char(':')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, iri) = parse_iri_ref(input)?;
         let (input, _) = opt(char('.'))(input)?;
-
-        ctx.prefixes
-            .insert(prefix_name[..prefix_name.len() - 1].to_string(), iri.0);
+        ctx.prefixes.insert(prefix_name.to_string(), iri.0);
         Ok((input, ()))
     }
 }
 
+// ── Projection ───────────────────────────────────────────────────────────────
+
+fn parse_projection(input: &str) -> IResult<&str, Vec<ProjectionElement>> {
+    alt((
+        // *
+        map(terminated(char('*'), multispace0), |_| {
+            vec![ProjectionElement::Star]
+        }),
+        // one or more ?var / (?expr AS ?var)
+        map(
+            many0(terminated(parse_projection_element, multispace0)),
+            |elems| elems,
+        ),
+    ))(input)
+}
+
+fn parse_projection_element(input: &str) -> IResult<&str, ProjectionElement> {
+    map(preceded(char('?'), parse_varname), |name| {
+        ProjectionElement::Variable(name)
+    })(input)
+}
+
+// ── Group Graph Pattern ───────────────────────────────────────────────────────
+
+fn parse_group_graph_pattern<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<QueryComponent>> + 'a {
+    move |input| {
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('{')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, components) = parse_group_graph_pattern_contents(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('}')(input)?;
+        Ok((input, components))
+    }
+}
+
+fn parse_group_graph_pattern_contents<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<QueryComponent>> + 'a {
+    move |input| {
+        let mut components: Vec<QueryComponent> = Vec::new();
+        let mut current_triples: Vec<TriplePattern> = Vec::new();
+        let mut remaining = input;
+
+        loop {
+            remaining = multispace0(remaining)?.0;
+
+            // Check for close brace — end of group
+            if remaining.starts_with('}') {
+                break;
+            }
+
+            // OPTIONAL
+            if remaining.to_ascii_uppercase().starts_with("OPTIONAL") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, inner) = preceded(
+                    pair(tag_no_case("OPTIONAL"), multispace0),
+                    parse_group_graph_pattern(ctx),
+                )(remaining)?;
+                components.push(QueryComponent::Optional(inner));
+                remaining = r;
+                continue;
+            }
+
+            // FILTER
+            if remaining.to_ascii_uppercase().starts_with("FILTER") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, expr) = parse_filter(ctx)(remaining)?;
+                components.push(QueryComponent::Filter(expr));
+                remaining = r;
+                continue;
+            }
+
+            // MINUS
+            if remaining.to_ascii_uppercase().starts_with("MINUS") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, inner) = preceded(
+                    pair(tag_no_case("MINUS"), multispace0),
+                    parse_group_graph_pattern(ctx),
+                )(remaining)?;
+                components.push(QueryComponent::Minus(inner));
+                remaining = r;
+                continue;
+            }
+
+            // BIND
+            if remaining.to_ascii_uppercase().starts_with("BIND") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, (expr, var)) = parse_bind(ctx)(remaining)?;
+                components.push(QueryComponent::Bind(expr, var));
+                remaining = r;
+                continue;
+            }
+
+            // VALUES
+            if remaining.to_ascii_uppercase().starts_with("VALUES") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, vals) = parse_values(ctx)(remaining)?;
+                components.push(vals);
+                remaining = r;
+                continue;
+            }
+
+            // Sub-group { ... } — could be a UNION
+            if remaining.starts_with('{') {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, left) = parse_group_graph_pattern(ctx)(remaining)?;
+                let r = multispace0(r)?.0;
+                // Check for UNION
+                if r.to_ascii_uppercase().starts_with("UNION") {
+                    let (r, _) = tag_no_case("UNION")(r)?;
+                    let (r, _) = multispace0(r)?;
+                    let (r, right) = parse_group_graph_pattern(ctx)(r)?;
+                    components.push(QueryComponent::Union(left, right));
+                    remaining = r;
+                } else {
+                    // Inline sub-group: flatten into current components
+                    components.extend(left);
+                    remaining = r;
+                }
+                continue;
+            }
+
+            // Triple pattern
+            match parse_triple_pattern(ctx)(remaining) {
+                Ok((r, tp)) => {
+                    current_triples.push(tp);
+                    remaining = r;
+                    // Consume optional dot
+                    remaining = multispace0(remaining)?.0;
+                    if remaining.starts_with('.') && !remaining.starts_with("..") {
+                        remaining = &remaining[1..];
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        flush_triples(&mut components, &mut current_triples);
+        Ok((remaining, components))
+    }
+}
+
+fn flush_triples(components: &mut Vec<QueryComponent>, triples: &mut Vec<TriplePattern>) {
+    if !triples.is_empty() {
+        components.push(QueryComponent::BGP(std::mem::take(triples)));
+    }
+}
+
+// ── Triple pattern ────────────────────────────────────────────────────────────
+
 fn parse_triple_pattern<'a>(
-    ctx: &ParserContext,
-) -> impl FnMut(&'a str) -> IResult<&'a str, TriplePattern> + '_ {
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, TriplePattern> + 'a {
     move |input| {
         let (input, _) = multispace0(input)?;
         let (input, subject) = parse_term(ctx)(input)?;
@@ -89,8 +277,6 @@ fn parse_triple_pattern<'a>(
         let (input, predicate) = parse_term(ctx)(input)?;
         let (input, _) = multispace1(input)?;
         let (input, object) = parse_term(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
-        let (input, _) = opt(char('.'))(input)?;
         let (input, _) = multispace0(input)?;
         Ok((
             input,
@@ -103,65 +289,603 @@ fn parse_triple_pattern<'a>(
     }
 }
 
-fn parse_term<'a>(ctx: &ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, Term> + '_ {
+// ── Term / literal parsing ───────────────────────────────────────────────────
+
+fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str, Term> + 'a {
     move |input| {
         alt((
-            map(preceded(char('?'), alphanumeric1), |name: &str| {
-                Term::Variable(name.to_string())
-            }),
-            map(parse_iri, |iri| {
+            // Variable
+            map(preceded(char('?'), parse_varname), Term::Variable),
+            // IRI in angle brackets
+            map(parse_iri_ref, |iri| {
                 Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri)))
             }),
+            // Prefixed name (prefix:local) — must come before bare terms
+            map(parse_prefixed_name(ctx), |iri| {
+                Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri)))
+            }),
+            // String literal with optional lang tag or datatype
+            map(parse_string_literal(ctx), |lit| {
+                Term::Constant(GraphElement::GraphLiteral(lit))
+            }),
+            // Numeric literal
+            map(parse_numeric_literal, |lit| {
+                Term::Constant(GraphElement::GraphLiteral(lit))
+            }),
+            // Boolean literal
+            map(parse_boolean_literal, |lit| {
+                Term::Constant(GraphElement::GraphLiteral(lit))
+            }),
+            // Blank node _:label
+            map(parse_blank_node, |id| {
+                Term::Constant(GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)))
+            }),
+        ))(input)
+    }
+}
+
+fn parse_varname(input: &str) -> IResult<&str, String> {
+    map(
+        take_while1(|c: char| c.is_alphanumeric() || c == '_'),
+        |s: &str| s.to_string(),
+    )(input)
+}
+
+fn parse_iri_ref(input: &str) -> IResult<&str, IriReference> {
+    map(
+        delimited(
+            char('<'),
+            take_while(|c: char| c != '>'),
+            char('>'),
+        ),
+        |iri: &str| IriReference(iri.to_string()),
+    )(input)
+}
+
+fn parse_prefixed_name<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, IriReference> + 'a {
+    move |input| {
+        // Match prefix_name : local_name
+        // prefix can be empty (just ":")
+        let (after_prefix, prefix) =
+            take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
+        let (after_colon, _) = char(':')(after_prefix)?;
+        // local name: alphanumeric, underscore, hyphen, dot (but not trailing dot), slash
+        let (after_local, local) =
+            take_while(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))(after_colon)?;
+
+        // Must not be an empty local + empty prefix (that would match nothing)
+        if prefix.is_empty() && local.is_empty() {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::TakeWhile1,
+            )));
+        }
+
+        // Reject keyword-like prefixes (FILTER, OPTIONAL, etc.)
+        let lower = prefix.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "filter" | "optional" | "union" | "minus" | "bind" | "values"
+                | "select" | "where" | "prefix" | "distinct" | "limit"
+                | "offset" | "group" | "order" | "having" | "construct"
+                | "describe" | "ask" | "not" | "exists" | "service"
+                | "graph" | "from" | "named" | "base"
+        ) {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+
+        let base = ctx
+            .prefixes
+            .get(prefix)
+            .cloned()
+            .unwrap_or_else(|| prefix.to_string() + ":");
+        Ok((after_local, IriReference(base + local)))
+    }
+}
+
+fn parse_string_literal<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, RdfLiteral> + 'a {
+    move |input| {
+        // Triple-quoted strings first, then single-quoted
+        let (input, value) = alt((
+            parse_triple_quoted_string,
+            parse_single_quoted_string,
+        ))(input)?;
+
+        // Optional language tag or datatype
+        if input.starts_with('@') {
+            let (input, _) = char('@')(input)?;
+            let (input, lang) =
+                take_while1(|c: char| c.is_alphanumeric() || c == '-')(input)?;
+            return Ok((input, RdfLiteral::LangLiteral { literal: value, lang: lang.to_string() }));
+        }
+        if input.starts_with("^^") {
+            let (input, _) = tag("^^")(input)?;
+            let (input, dt_iri) = alt((
+                parse_iri_ref,
+                parse_prefixed_name(ctx),
+            ))(input)?;
+            return Ok((input, RdfLiteral::TypedLiteral {
+                type_iri: dt_iri,
+                literal: value,
+            }));
+        }
+
+        Ok((input, RdfLiteral::LiteralString(value)))
+    }
+}
+
+fn parse_triple_quoted_string(input: &str) -> IResult<&str, String> {
+    // """..."""
+    let (input, _) = tag("\"\"\"")(input)?;
+    let (input, content) = take_until("\"\"\"")(input)?;
+    let (input, _) = tag("\"\"\"")(input)?;
+    Ok((input, content.to_string()))
+}
+
+fn parse_single_quoted_string(input: &str) -> IResult<&str, String> {
+    // "..." with basic escape handling
+    let (input, _) = char('"')(input)?;
+    let mut result = String::new();
+    let mut remaining = input;
+    loop {
+        let (r, chunk) = take_while(|c: char| c != '"' && c != '\\')(remaining)?;
+        result.push_str(chunk);
+        if r.starts_with('\\') {
+            let (r, _) = char('\\')(r)?;
+            let (_r, escaped) = take_while1(|_| true)(r)?;
+            let ch = match escaped.chars().next().unwrap_or('\\') {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '"' => '"',
+                '\\' => '\\',
+                other => other,
+            };
+            result.push(ch);
+            remaining = &escaped[1..];
+        } else {
+            remaining = r;
+            break;
+        }
+    }
+    let (remaining, _) = char('"')(remaining)?;
+    Ok((remaining, result))
+}
+
+fn parse_numeric_literal(input: &str) -> IResult<&str, RdfLiteral> {
+    // Optional sign
+    let (input, sign) = opt(alt((char('+'), char('-'))))(input)?;
+    // Integer or decimal
+    let (input, integer_part) = take_while1(|c: char| c.is_ascii_digit())(input)?;
+    let (input, frac) = opt(pair(char('.'), take_while1(|c: char| c.is_ascii_digit())))(input)?;
+
+    let sign_str = match sign {
+        Some('-') => "-",
+        _ => "",
+    };
+
+    // Produce TypedLiteral to match what turtle_parser produces from Turtle data
+    if let Some((_, frac_digits)) = frac {
+        let s = format!("{}{}.{}", sign_str, integer_part, frac_digits);
+        Ok((input, RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_DECIMAL.to_string()),
+            literal: s,
+        }))
+    } else {
+        let s = format!("{}{}", sign_str, integer_part);
+        Ok((input, RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_INTEGER.to_string()),
+            literal: s,
+        }))
+    }
+}
+
+fn parse_boolean_literal(input: &str) -> IResult<&str, RdfLiteral> {
+    alt((
+        map(tag("true"), |_| RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_BOOLEAN.to_string()),
+            literal: "true".to_string(),
+        }),
+        map(tag("false"), |_| RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_BOOLEAN.to_string()),
+            literal: "false".to_string(),
+        }),
+    ))(input)
+}
+
+fn parse_blank_node(input: &str) -> IResult<&str, u32> {
+    // _:label — we hash the label to a u32 (simple but deterministic within a parse)
+    let (input, _) = tag("_:")(input)?;
+    let (input, label) = take_while1(|c: char| c.is_alphanumeric() || c == '_')(input)?;
+    // Simple stable hash
+    let hash = label
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    Ok((input, hash | 0x8000_0000))
+}
+
+// ── FILTER ───────────────────────────────────────────────────────────────────
+
+fn parse_filter<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        let (input, _) = tag_no_case("FILTER")(input)?;
+        let (input, _) = multispace0(input)?;
+        parse_expression(ctx)(input)
+    }
+}
+
+fn parse_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| parse_or_expression(ctx)(input)
+}
+
+fn parse_or_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        let (input, left) = parse_and_expression(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, rest) = many0(preceded(
+            pair(tag("||"), multispace0),
+            parse_and_expression(ctx),
+        ))(input)?;
+        Ok((
+            input,
+            rest.into_iter().fold(left, |acc, r| {
+                Expression::Binary(Box::new(acc), BinaryOp::Or, Box::new(r))
+            }),
+        ))
+    }
+}
+
+fn parse_and_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        let (input, left) = parse_relational_expression(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, rest) = many0(preceded(
+            pair(tag("&&"), multispace0),
+            parse_relational_expression(ctx),
+        ))(input)?;
+        Ok((
+            input,
+            rest.into_iter().fold(left, |acc, r| {
+                Expression::Binary(Box::new(acc), BinaryOp::And, Box::new(r))
+            }),
+        ))
+    }
+}
+
+fn parse_relational_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        let (input, left) = parse_additive_expression(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, op_right) = opt(pair(
+            alt((
+                map(tag("!="), |_| BinaryOp::Ne),
+                map(tag("<="), |_| BinaryOp::Le),
+                map(tag(">="), |_| BinaryOp::Ge),
+                map(tag("<"), |_| BinaryOp::Lt),
+                map(tag(">"), |_| BinaryOp::Gt),
+                map(tag("="), |_| BinaryOp::Eq),
+            )),
+            preceded(multispace0, |i| parse_additive_expression(ctx)(i)),
+        ))(input)?;
+        Ok((
+            input,
+            match op_right {
+                Some((op, right)) => Expression::Binary(Box::new(left), op, Box::new(right)),
+                None => left,
+            },
+        ))
+    }
+}
+
+fn parse_additive_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        let (input, left) = parse_unary_expression(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, rest) = many0(pair(
+            alt((
+                map(char('+'), |_| BinaryOp::Add),
+                map(char('-'), |_| BinaryOp::Sub),
+            )),
+            preceded(multispace0, |i| parse_unary_expression(ctx)(i)),
+        ))(input)?;
+        Ok((
+            input,
+            rest.into_iter().fold(left, |acc, (op, r)| {
+                Expression::Binary(Box::new(acc), op, Box::new(r))
+            }),
+        ))
+    }
+}
+
+fn parse_unary_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        alt((
+            map(preceded(pair(char('!'), multispace0), |i| {
+                parse_primary_expression(ctx)(i)
+            }), |e| Expression::Unary(UnaryOp::Not, Box::new(e))),
+            map(preceded(pair(char('-'), multispace0), |i| {
+                parse_primary_expression(ctx)(i)
+            }), |e| Expression::Unary(UnaryOp::Minus, Box::new(e))),
+            |i| parse_primary_expression(ctx)(i),
+        ))(input)
+    }
+}
+
+fn parse_primary_expression<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        alt((
+            // Parenthesised expression
             map(
-                recognize(pair(opt(alphanumeric1), pair(char(':'), alphanumeric1))),
-                |prefixed: &str| {
-                    let parts: Vec<&str> = prefixed.split(':').collect();
-                    let prefix = parts[0];
-                    let local = parts[1];
-                    let expanded = ctx
-                        .prefixes
-                        .get(prefix)
-                        .cloned()
-                        .unwrap_or_else(|| prefix.to_string())
-                        + local;
-                    Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
-                        expanded,
-                    ))))
-                },
+                delimited(
+                    pair(char('('), multispace0),
+                    |i| parse_expression(ctx)(i),
+                    pair(multispace0, char(')')),
+                ),
+                |e| e,
+            ),
+            // NOT EXISTS
+            map(
+                preceded(
+                    tuple((tag_no_case("NOT"), multispace1, tag_no_case("EXISTS"), multispace0)),
+                    parse_group_graph_pattern(ctx),
+                ),
+                Expression::NotExists,
+            ),
+            // EXISTS
+            map(
+                preceded(
+                    pair(tag_no_case("EXISTS"), multispace0),
+                    parse_group_graph_pattern(ctx),
+                ),
+                Expression::Exists,
+            ),
+            // Function calls (regex, bound, str, lang, datatype, etc.)
+            |i| parse_function_call(ctx)(i),
+            // Variable
+            map(preceded(char('?'), parse_varname), Expression::Variable),
+            // Literal (constant)
+            map(
+                alt((
+                    map(parse_string_literal(ctx), |lit| {
+                        GraphElement::GraphLiteral(lit)
+                    }),
+                    map(parse_numeric_literal, |lit| GraphElement::GraphLiteral(lit)),
+                    map(parse_boolean_literal, |lit| GraphElement::GraphLiteral(lit)),
+                    map(parse_iri_ref, |iri| {
+                        GraphElement::NodeOrEdge(RdfResource::Iri(iri))
+                    }),
+                    map(parse_prefixed_name(ctx), |iri| {
+                        GraphElement::NodeOrEdge(RdfResource::Iri(iri))
+                    }),
+                )),
+                Expression::Constant,
             ),
         ))(input)
     }
 }
 
-fn parse_iri(input: &str) -> IResult<&str, IriReference> {
-    map(
-        delimited(
-            char('<'),
-            recognize(many0(alt((
-                alphanumeric1,
-                tag("/"),
-                tag("."),
-                tag(":"),
-                tag("#"),
-                tag("-"),
-                tag("_"),
-                tag("@"),
-                tag("?"),
-                tag("="),
-                tag("&"),
-                tag("+"),
-                tag("%"),
-                tag("!"),
-                tag("~"),
-                tag("*"),
-                tag("'"),
-                tag("("),
-                tag(")"),
-                tag(","),
-                tag(";"),
-            )))),
-            char('>'),
-        ),
-        |iri: &str| IriReference(iri.to_string()),
-    )(input)
+fn parse_function_call<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
+    move |input| {
+        // Function name: bare word (regex, bound, str, lang, ...) or IRI
+        let (input, fname) = alt((
+            map(
+                take_while1(|c: char| c.is_alphanumeric() || c == '_'),
+                |s: &str| s.to_string(),
+            ),
+            map(parse_iri_ref, |iri| iri.0),
+        ))(input)?;
+
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('(')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, args) = separated_list0(
+            pair(multispace0, pair(char(','), multispace0)),
+            |i| parse_expression(ctx)(i),
+        )(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char(')')(input)?;
+
+        Ok((input, Expression::FunctionCall(fname, args)))
+    }
+}
+
+// ── BIND ─────────────────────────────────────────────────────────────────────
+
+fn parse_bind<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, (Expression, String)> + 'a {
+    move |input| {
+        let (input, _) = tag_no_case("BIND")(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('(')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, expr) = parse_expression(ctx)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = tag_no_case("AS")(input)?;
+        let (input, _) = multispace1(input)?;
+        let (input, var) = preceded(char('?'), parse_varname)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char(')')(input)?;
+        Ok((input, (expr, var)))
+    }
+}
+
+// ── VALUES ───────────────────────────────────────────────────────────────────
+
+fn parse_values<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, QueryComponent> + 'a {
+    move |input| {
+        let (input, _) = tag_no_case("VALUES")(input)?;
+        let (input, _) = multispace1(input)?;
+
+        // Single variable: VALUES ?x { ... }
+        // Multiple: VALUES (?x ?y) { ... }
+        let (input, vars) = alt((
+            // Single variable
+            map(preceded(char('?'), parse_varname), |v| vec![v]),
+            // Multiple in parens
+            delimited(
+                pair(char('('), multispace0),
+                many0(terminated(
+                    preceded(char('?'), parse_varname),
+                    multispace0,
+                )),
+                char(')'),
+            ),
+        ))(input)?;
+
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('{')(input)?;
+        let (input, _) = multispace0(input)?;
+
+        // Rows
+        let (input, rows) = many0(parse_values_row(ctx, vars.len()))(input)?;
+
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('}')(input)?;
+
+        Ok((input, QueryComponent::Values(vars, rows)))
+    }
+}
+
+fn parse_values_row<'a>(
+    ctx: &'a ParserContext,
+    n_vars: usize,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Option<GraphElement>>> + 'a {
+    move |input| {
+        let (input, _) = multispace0(input)?;
+        if n_vars == 1 {
+            // Without parens for single var
+            let (input, val) = parse_values_value(ctx)(input)?;
+            let (input, _) = multispace0(input)?;
+            Ok((input, vec![val]))
+        } else {
+            let (input, _) = char('(')(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, vals) = separated_list0(
+                multispace1,
+                parse_values_value(ctx),
+            )(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = char(')')(input)?;
+            let (input, _) = multispace0(input)?;
+            Ok((input, vals))
+        }
+    }
+}
+
+fn parse_values_value<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Option<GraphElement>> + 'a {
+    move |input| {
+        alt((
+            map(tag_no_case("UNDEF"), |_| None),
+            map(parse_term(ctx), |t| match t {
+                Term::Constant(gel) => Some(gel),
+                Term::Variable(_) => None,
+            }),
+        ))(input)
+    }
+}
+
+// ── GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET ───────────────────────────
+
+fn parse_group_by<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
+    move |input| {
+        let (input, gb) = opt(preceded(
+            tuple((tag_no_case("GROUP"), multispace1, tag_no_case("BY"), multispace1)),
+            separated_list1(multispace1, |i| parse_expression(ctx)(i)),
+        ))(input)?;
+        Ok((input, gb.unwrap_or_default()))
+    }
+}
+
+fn parse_having<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
+    move |input| {
+        let (input, hv) = opt(preceded(
+            pair(tag_no_case("HAVING"), multispace1),
+            |i| parse_expression(ctx)(i),
+        ))(input)?;
+        Ok((input, hv.map(|e| vec![e]).unwrap_or_default()))
+    }
+}
+
+fn parse_order_by<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<OrderCondition>> + 'a {
+    move |input| {
+        let (input, ob) = opt(preceded(
+            tuple((tag_no_case("ORDER"), multispace1, tag_no_case("BY"), multispace1)),
+            separated_list1(multispace1, parse_order_condition(ctx)),
+        ))(input)?;
+        Ok((input, ob.unwrap_or_default()))
+    }
+}
+
+fn parse_order_condition<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, OrderCondition> + 'a {
+    move |input| {
+        alt((
+            map(
+                preceded(pair(tag_no_case("ASC"), multispace0), |i| {
+                    parse_expression(ctx)(i)
+                }),
+                |e| OrderCondition { expression: e, ascending: true },
+            ),
+            map(
+                preceded(pair(tag_no_case("DESC"), multispace0), |i| {
+                    parse_expression(ctx)(i)
+                }),
+                |e| OrderCondition { expression: e, ascending: false },
+            ),
+            map(|i| parse_expression(ctx)(i), |e| OrderCondition {
+                expression: e,
+                ascending: true,
+            }),
+        ))(input)
+    }
+}
+
+fn parse_limit_offset(keyword: &str) -> impl Fn(&str) -> IResult<&str, Option<u64>> + '_ {
+    move |input| {
+        let (input, val) = opt(preceded(
+            pair(tag_no_case(keyword), multispace1),
+            map(
+                take_while1(|c: char| c.is_ascii_digit()),
+                |s: &str| s.parse::<u64>().unwrap_or(0),
+            ),
+        ))(input)?;
+        Ok((input, val))
+    }
 }

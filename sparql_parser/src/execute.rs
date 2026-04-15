@@ -8,12 +8,15 @@ Contact: hovlanddag@gmail.com
 
 //! SPARQL query execution against a [`Datastore`].
 //!
-//! Translates the parser AST into [`QuadPattern`] queries and evaluates them
-//! via the index in `dag_rdf`.
+//! Supports BGP, FILTER (comparison/regex/BOUND), OPTIONAL, UNION, MINUS,
+//! DISTINCT, LIMIT, OFFSET.
 
-use crate::ast::{ProjectionElement, Query, QueryComponent, Term, TriplePattern};
+use crate::ast::{
+    BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern, UnaryOp,
+};
 use dag_rdf::query::get_default_graph_pattern;
-use dag_rdf::{Datastore, GraphElement, GraphElementId, QuadPattern, Term as DagTerm};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, QuadPattern, RdfLiteral, Term as DagTerm};
+use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER};
 use std::collections::HashMap;
 
 /// A single bound solution: variable name → concrete graph element.
@@ -28,9 +31,6 @@ pub struct SelectResult {
 }
 
 /// Execute a parsed SPARQL query against `datastore`.
-///
-/// Currently supports SELECT with basic graph patterns (BGP).
-/// Returns an error string for unsupported query forms.
 pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, String> {
     match query {
         Query::Select {
@@ -41,14 +41,14 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
             distinct,
             ..
         } => {
-            let variables = projection_variables(projection);
-            let patterns = collect_bgp_patterns(where_clause)?;
-            let solutions = eval_bgp(&patterns, datastore);
+            let variables = projection_variables(projection, where_clause, datastore);
+            let initial: Vec<PartialSub> = vec![HashMap::new()];
+            let mut solutions = eval_components(where_clause, initial, datastore);
 
             // Project
             let mut rows: Vec<SolutionRow> = solutions
-                .into_iter()
-                .map(|sub| project(&sub, &variables, datastore))
+                .iter()
+                .map(|sub| project(sub, &variables, datastore))
                 .collect();
 
             if *distinct {
@@ -74,21 +74,66 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
 
 // ── Projection ────────────────────────────────────────────────────────────────
 
-fn projection_variables(proj: &[ProjectionElement]) -> Vec<String> {
+fn projection_variables(
+    proj: &[ProjectionElement],
+    components: &[QueryComponent],
+    datastore: &Datastore,
+) -> Vec<String> {
+    // If star, collect all variables from the where clause
+    if proj.iter().any(|p| matches!(p, ProjectionElement::Star)) {
+        let mut vars: Vec<String> = Vec::new();
+        collect_vars_from_components(components, &mut vars);
+        vars.sort();
+        vars.dedup();
+        return vars;
+    }
     proj.iter()
         .filter_map(|p| match p {
             ProjectionElement::Variable(v) => Some(v.clone()),
-            ProjectionElement::Star => None, // handled separately if needed
             ProjectionElement::Expression(_, alias) => Some(alias.clone()),
+            ProjectionElement::Star => None,
         })
         .collect()
 }
 
-fn project(
-    sub: &HashMap<String, GraphElementId>,
-    variables: &[String],
-    datastore: &Datastore,
-) -> SolutionRow {
+fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<String>) {
+    for comp in components {
+        match comp {
+            QueryComponent::BGP(tps) => {
+                for tp in tps {
+                    collect_vars_from_term(&tp.subject, vars);
+                    collect_vars_from_term(&tp.predicate, vars);
+                    collect_vars_from_term(&tp.object, vars);
+                }
+            }
+            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
+                collect_vars_from_components(inner, vars);
+            }
+            QueryComponent::Union(left, right) => {
+                collect_vars_from_components(left, vars);
+                collect_vars_from_components(right, vars);
+            }
+            QueryComponent::Graph(_, inner) => {
+                collect_vars_from_components(inner, vars);
+            }
+            QueryComponent::Bind(_, alias) => {
+                vars.push(alias.clone());
+            }
+            QueryComponent::Filter(_) | QueryComponent::Values(_, _) => {}
+            QueryComponent::Service(_, inner, _) => {
+                collect_vars_from_components(inner, vars);
+            }
+        }
+    }
+}
+
+fn collect_vars_from_term(term: &Term, vars: &mut Vec<String>) {
+    if let Term::Variable(v) = term {
+        vars.push(v.clone());
+    }
+}
+
+fn project(sub: &PartialSub, variables: &[String], datastore: &Datastore) -> SolutionRow {
     variables
         .iter()
         .filter_map(|v| {
@@ -100,44 +145,159 @@ fn project(
         .collect()
 }
 
-// ── BGP pattern collection ────────────────────────────────────────────────────
+// ── Evaluation ────────────────────────────────────────────────────────────────
 
-fn collect_bgp_patterns(components: &[QueryComponent]) -> Result<Vec<TriplePattern>, String> {
-    let mut patterns = Vec::new();
+type PartialSub = HashMap<String, GraphElementId>;
+
+fn eval_components(
+    components: &[QueryComponent],
+    solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+) -> Vec<PartialSub> {
+    let mut current = solutions;
     for comp in components {
-        match comp {
-            QueryComponent::BGP(tps) => patterns.extend(tps.clone()),
-            QueryComponent::Graph(_, inner) => {
-                // Flatten named-graph patterns into the default graph for now
-                patterns.extend(collect_bgp_patterns(inner)?);
+        current = eval_component(comp, current, datastore);
+        if current.is_empty() {
+            break;
+        }
+    }
+    current
+}
+
+fn eval_component(
+    comp: &QueryComponent,
+    solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+) -> Vec<PartialSub> {
+    match comp {
+        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore),
+
+        QueryComponent::Filter(expr) => solutions
+            .into_iter()
+            .filter(|sub| eval_filter(expr, sub, datastore))
+            .collect(),
+
+        QueryComponent::Optional(inner) => {
+            let mut result = Vec::new();
+            for sub in solutions {
+                let extended = eval_components(inner, vec![sub.clone()], datastore);
+                if extended.is_empty() {
+                    result.push(sub);
+                } else {
+                    result.extend(extended);
+                }
             }
-            QueryComponent::Filter(_) => {} // filters not yet evaluated
-            other => {
-                return Err(format!("Unsupported query component: {:?}", other));
+            result
+        }
+
+        QueryComponent::Union(left, right) => {
+            let left_sols = eval_components(left, solutions.clone(), datastore);
+            let right_sols = eval_components(right, solutions, datastore);
+            let mut result = left_sols;
+            result.extend(right_sols);
+            result
+        }
+
+        QueryComponent::Minus(inner) => {
+            solutions
+                .into_iter()
+                .filter(|sub| {
+                    let minus_sols = eval_components(inner, vec![sub.clone()], datastore);
+                    minus_sols.is_empty()
+                        || minus_sols.iter().all(|ms| !compatible(sub, ms))
+                })
+                .collect()
+        }
+
+        QueryComponent::Graph(_, inner) => {
+            // Flatten named-graph patterns into the default graph for now
+            eval_components(inner, solutions, datastore)
+        }
+
+        QueryComponent::Bind(expr, alias) => solutions
+            .into_iter()
+            .filter_map(|mut sub| {
+                let val = eval_expression(expr, &sub, datastore)?;
+                sub.insert(alias.clone(), val);
+                Some(sub)
+            })
+            .collect(),
+
+        QueryComponent::Values(vars, rows) => {
+            let mut result = Vec::new();
+            for sub in solutions {
+                for row in rows {
+                    if vars.len() != row.len() {
+                        continue;
+                    }
+                    let mut new_sub = sub.clone();
+                    let mut ok = true;
+                    for (var, val_opt) in vars.iter().zip(row.iter()) {
+                        match val_opt {
+                            Some(gel) => {
+                                let Some(&id) = datastore.resources.resource_map.get(gel) else {
+                                    ok = false;
+                                    break;
+                                };
+                                match new_sub.get(var) {
+                                    Some(&existing) if existing != id => {
+                                        ok = false;
+                                        break;
+                                    }
+                                    _ => {
+                                        new_sub.insert(var.clone(), id);
+                                    }
+                                }
+                            }
+                            None => {} // UNDEF — leave unbound
+                        }
+                    }
+                    if ok {
+                        result.push(new_sub);
+                    }
+                }
+            }
+            result
+        }
+
+        QueryComponent::Service(_, inner, _) => {
+            // SERVICE not supported; return empty
+            let _ = inner;
+            Vec::new()
+        }
+    }
+}
+
+/// Two substitutions are compatible if they agree on all shared variables.
+fn compatible(a: &PartialSub, b: &PartialSub) -> bool {
+    for (var, &id_a) in a {
+        if let Some(&id_b) = b.get(var) {
+            if id_a != id_b {
+                return false;
             }
         }
     }
-    Ok(patterns)
+    true
 }
 
 // ── BGP evaluation ────────────────────────────────────────────────────────────
 
-/// A partial substitution during BGP evaluation: variable → interned ID.
-type PartialSub = HashMap<String, GraphElementId>;
-
-fn eval_bgp(patterns: &[TriplePattern], datastore: &Datastore) -> Vec<PartialSub> {
-    let mut solutions: Vec<PartialSub> = vec![HashMap::new()];
-
+fn eval_bgp(
+    patterns: &[TriplePattern],
+    solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+) -> Vec<PartialSub> {
+    let mut current = solutions;
     for pattern in patterns {
-        solutions = solutions
+        current = current
             .into_iter()
             .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore))
             .collect();
-        if solutions.is_empty() {
+        if current.is_empty() {
             break;
         }
     }
-    solutions
+    current
 }
 
 fn eval_triple_pattern(
@@ -157,7 +317,6 @@ fn eval_triple_pattern(
     let quad_pattern = triple_pattern_to_quad_pattern(tp, sub, datastore);
     let mut new_solutions = Vec::new();
 
-    // Use the dag_rdf QueryExecutor via quads_matching
     let g = match &quad_pattern.graph {
         DagTerm::Resource(id) => Some(*id),
         _ => None,
@@ -205,8 +364,6 @@ fn eval_triple_pattern(
     new_solutions
 }
 
-/// Translate a `TriplePattern` (with any already-bound variables substituted)
-/// into a `QuadPattern` in the default graph.
 fn triple_pattern_to_quad_pattern(
     tp: &TriplePattern,
     sub: &PartialSub,
@@ -225,15 +382,276 @@ fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) ->
             Some(&id) => DagTerm::Resource(id),
             None => DagTerm::Variable(v.clone()),
         },
-        Term::Constant(gel) => {
-            // Look up or insert the constant in the resource manager.
-            // We need a shared reference so we can only look up, not insert.
-            // Use the existing map for lookup; unknown constants yield no matches.
-            match datastore.resources.resource_map.get(gel) {
-                Some(&id) => DagTerm::Resource(id),
-                // Constant not in store → use a sentinel variable that will never bind
-                None => DagTerm::Variable(format!("__unknown_{:?}", gel)),
+        Term::Constant(gel) => match datastore.resources.resource_map.get(gel) {
+            Some(&id) => DagTerm::Resource(id),
+            None => DagTerm::Variable(format!("__unknown_{:?}", gel)),
+        },
+    }
+}
+
+// ── FILTER expression evaluation ──────────────────────────────────────────────
+
+fn eval_filter(expr: &Expression, sub: &PartialSub, datastore: &Datastore) -> bool {
+    eval_expression_bool(expr, sub, datastore).unwrap_or(false)
+}
+
+/// Evaluate an expression to a concrete GraphElement value.
+///
+/// Constants in the query (e.g. `"SPARQL"` in `regex(?x, "SPARQL")`) are
+/// returned directly — they need not exist in the datastore's resource map.
+fn eval_expression_value(
+    expr: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    match expr {
+        Expression::Variable(v) => {
+            let id = sub.get(v)?;
+            Some(datastore.resources.get_graph_element(*id).clone())
+        }
+        Expression::Constant(gel) => Some(gel.clone()),
+        Expression::FunctionCall(name, args) => eval_function_value(name, args, sub, datastore),
+        _ => None,
+    }
+}
+
+fn eval_function_value(
+    name: &str,
+    args: &[Expression],
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    let upper = name.to_ascii_uppercase();
+    match upper.as_str() {
+        "STR" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)))
+        }
+        "LANG" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) = el {
+                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(lang)))
+            } else {
+                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(String::new())))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn eval_expression_bool(
+    expr: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    match expr {
+        Expression::Binary(left, op, right) => {
+            match op {
+                BinaryOp::And => {
+                    let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
+                    let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                    Some(l && r)
+                }
+                BinaryOp::Or => {
+                    let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
+                    let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                    Some(l || r)
+                }
+                BinaryOp::Eq => {
+                    let l = eval_expression_value(left, sub, datastore)?;
+                    let r = eval_expression_value(right, sub, datastore)?;
+                    Some(l == r)
+                }
+                BinaryOp::Ne => {
+                    let l = eval_expression_value(left, sub, datastore)?;
+                    let r = eval_expression_value(right, sub, datastore)?;
+                    Some(l != r)
+                }
+                BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
+                    let l = eval_expression_value(left, sub, datastore)?;
+                    let r = eval_expression_value(right, sub, datastore)?;
+                    let ord = compare_graph_elements(&l, &r)?;
+                    Some(match op {
+                        BinaryOp::Lt => ord < 0,
+                        BinaryOp::Gt => ord > 0,
+                        BinaryOp::Le => ord <= 0,
+                        BinaryOp::Ge => ord >= 0,
+                        _ => unreachable!(),
+                    })
+                }
+                _ => None,
+            }
+        }
+        Expression::Unary(UnaryOp::Not, inner) => {
+            Some(!eval_expression_bool(inner, sub, datastore).unwrap_or(false))
+        }
+        Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
+        Expression::Exists(inner) => {
+            let sols = eval_components(inner, vec![sub.clone()], datastore);
+            Some(!sols.is_empty())
+        }
+        Expression::NotExists(inner) => {
+            let sols = eval_components(inner, vec![sub.clone()], datastore);
+            Some(sols.is_empty())
+        }
+        _ => {
+            let el = eval_expression_value(expr, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(b),
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { ref type_iri, ref literal })
+                    if type_iri.0 == XSD_BOOLEAN =>
+                {
+                    Some(literal == "true")
+                }
+                _ => None,
             }
         }
     }
+}
+
+fn eval_function_bool(
+    name: &str,
+    args: &[Expression],
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    let upper = name.to_ascii_uppercase();
+    match upper.as_str() {
+        "BOUND" => {
+            if let Some(Expression::Variable(v)) = args.first() {
+                Some(sub.contains_key(v))
+            } else {
+                None
+            }
+        }
+        "REGEX" => {
+            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text = graph_element_to_string(&text_el)?;
+
+            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pattern = graph_element_to_string(&pat_el)?;
+
+            // Flags (optional 3rd arg)
+            let flags = if let Some(flag_expr) = args.get(2) {
+                let fel = eval_expression_value(flag_expr, sub, datastore)?;
+                graph_element_to_string(&fel).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            let case_insensitive = flags.contains('i');
+            let matches = if case_insensitive {
+                text.to_lowercase().contains(&pattern.to_lowercase())
+            } else {
+                text.contains(pattern.as_str())
+            };
+            Some(matches)
+        }
+        "LANGMATCHES" => {
+            let lang_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let lang = graph_element_to_string(&lang_el)?.to_lowercase();
+
+            let range_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let range = graph_element_to_string(&range_el)?.to_lowercase();
+
+            Some(if range == "*" {
+                !lang.is_empty()
+            } else {
+                lang == range || lang.starts_with(&format!("{}-", range))
+            })
+        }
+        "ISIRI" | "ISURI" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            Some(matches!(
+                el,
+                dag_rdf::GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(_))
+            ))
+        }
+        "ISBLANK" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            Some(matches!(
+                el,
+                dag_rdf::GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(_))
+            ))
+        }
+        "ISLITERAL" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            Some(matches!(el, dag_rdf::GraphElement::GraphLiteral(_)))
+        }
+        _ => None,
+    }
+}
+
+/// Keep the old `eval_expression` for BIND which needs the ID.
+fn eval_expression(
+    expr: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElementId> {
+    sub.get(match expr {
+        Expression::Variable(v) => v,
+        _ => return None,
+    }).copied()
+}
+
+fn graph_element_to_string(el: &GraphElement) -> Option<String> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s.clone()),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            Some(literal.clone())
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+            Some(literal.clone())
+        }
+        GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => Some(iri.0.clone()),
+        _ => None,
+    }
+}
+
+/// Extract a numeric f64 from a literal if it has a numeric datatype.
+fn literal_to_f64(lit: &RdfLiteral) -> Option<f64> {
+    match lit {
+        RdfLiteral::IntegerLiteral(i) => i.to_string().parse().ok(),
+        RdfLiteral::DoubleLiteral(d) => Some(d.into_inner()),
+        RdfLiteral::DecimalLiteral(d) => Some(d.to_string().parse().ok()?),
+        RdfLiteral::FloatLiteral(f) => Some(f.into_inner()),
+        RdfLiteral::TypedLiteral { type_iri, literal } => {
+            let iri = &type_iri.0;
+            if iri == XSD_INTEGER || iri == XSD_DECIMAL || iri == XSD_DOUBLE || iri == XSD_FLOAT {
+                literal.parse().ok()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Compare graph elements for FILTER relational operators.
+/// Returns negative, 0, positive, or None if not comparable.
+fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
+    use dag_rdf::GraphElement::GraphLiteral;
+    use std::cmp::Ordering::*;
+    if let (GraphLiteral(a_lit), GraphLiteral(b_lit)) = (a, b) {
+        // Try numeric comparison first
+        if let (Some(af), Some(bf)) = (literal_to_f64(a_lit), literal_to_f64(b_lit)) {
+            return af.partial_cmp(&bf).map(|o| match o { Less => -1, Equal => 0, Greater => 1 });
+        }
+        // String literal comparison
+        let a_str = match a_lit {
+            RdfLiteral::LiteralString(s) => Some(s.as_str()),
+            RdfLiteral::TypedLiteral { literal, .. } => Some(literal.as_str()),
+            _ => None,
+        };
+        let b_str = match b_lit {
+            RdfLiteral::LiteralString(s) => Some(s.as_str()),
+            RdfLiteral::TypedLiteral { literal, .. } => Some(literal.as_str()),
+            _ => None,
+        };
+        if let (Some(a_s), Some(b_s)) = (a_str, b_str) {
+            return Some(match a_s.cmp(b_s) { Less => -1, Equal => 0, Greater => 1 });
+        }
+    }
+    None
 }

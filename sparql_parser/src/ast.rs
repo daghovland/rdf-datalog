@@ -25,7 +25,7 @@ pub enum ProjectionElement {
 pub enum QueryComponent {
     BGP(Vec<TriplePattern>),
     Optional(Vec<QueryComponent>),
-    Union(Vec<Vec<QueryComponent>>, Vec<Vec<QueryComponent>>),
+    Union(Vec<QueryComponent>, Vec<QueryComponent>),
     Filter(Expression),
     Bind(Expression, String),
     Values(Vec<String>, Vec<Vec<Option<GraphElement>>>),
