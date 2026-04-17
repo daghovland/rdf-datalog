@@ -9,9 +9,9 @@ Contact: hovlanddag@gmail.com
 //! Handlers for GET /sparql and POST /sparql.
 //!
 //! Implements the SPARQL 1.1 Protocol:
-//! - GET  /sparql?query=<encoded>          (query endpoint)
-//! - POST /sparql  application/x-www-form-urlencoded  query=<encoded>
-//! - POST /sparql  application/sparql-query           raw SPARQL body
+//! - `GET  /sparql?query=<encoded>` — query endpoint
+//! - `POST /sparql  application/x-www-form-urlencoded  query=<encoded>` — form query
+//! - `POST /sparql  application/sparql-query` — raw body query
 
 use crate::{
     AppState,
@@ -27,7 +27,7 @@ use axum::{
 use sparql_parser::{ParserContext, execute, parse_query};
 use std::collections::HashMap;
 
-/// GET /sparql?query=<url-encoded SPARQL>
+/// `GET /sparql?query=<url-encoded SPARQL>`
 ///
 /// If the `query` parameter is absent and the client wants Turtle/RDF, returns
 /// the SPARQL Service Description instead.

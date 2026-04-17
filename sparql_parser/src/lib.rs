@@ -672,8 +672,8 @@ fn parse_primary_expression<'a>(
                     map(parse_string_literal(ctx), |lit| {
                         GraphElement::GraphLiteral(lit)
                     }),
-                    map(parse_numeric_literal, |lit| GraphElement::GraphLiteral(lit)),
-                    map(parse_boolean_literal, |lit| GraphElement::GraphLiteral(lit)),
+                    map(parse_numeric_literal, GraphElement::GraphLiteral),
+                    map(parse_boolean_literal, GraphElement::GraphLiteral),
                     map(parse_iri_ref, |iri| {
                         GraphElement::NodeOrEdge(RdfResource::Iri(iri))
                     }),

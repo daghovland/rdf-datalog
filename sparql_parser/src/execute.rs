@@ -43,7 +43,7 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
         } => {
             let variables = projection_variables(projection, where_clause, datastore);
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let mut solutions = eval_components(where_clause, initial, datastore);
+            let solutions = eval_components(where_clause, initial, datastore);
 
             // Project
             let mut rows: Vec<SolutionRow> = solutions
@@ -77,7 +77,7 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
 fn projection_variables(
     proj: &[ProjectionElement],
     components: &[QueryComponent],
-    datastore: &Datastore,
+    _datastore: &Datastore,
 ) -> Vec<String> {
     // If star, collect all variables from the where clause
     if proj.iter().any(|p| matches!(p, ProjectionElement::Star)) {
@@ -587,7 +587,7 @@ fn eval_function_bool(
 fn eval_expression(
     expr: &Expression,
     sub: &PartialSub,
-    datastore: &Datastore,
+    _datastore: &Datastore,
 ) -> Option<GraphElementId> {
     sub.get(match expr {
         Expression::Variable(v) => v,

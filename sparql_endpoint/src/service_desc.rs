@@ -6,8 +6,9 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! SPARQL 1.1 Service Description (GET /sparql with no query param).
-//! Spec: https://www.w3.org/TR/sparql11-service-description/
+//! SPARQL 1.1 Service Description (`GET /sparql` with no query param).
+//!
+//! Spec: <https://www.w3.org/TR/sparql11-service-description/>
 
 /// Generate the Service Description as a Turtle document.
 pub fn service_description_turtle(base_iri: &str) -> String {

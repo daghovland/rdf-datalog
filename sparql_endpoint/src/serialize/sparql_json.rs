@@ -7,7 +7,8 @@ Contact: hovlanddag@gmail.com
 */
 
 //! Serializer for `application/sparql-results+json`
-//! Spec: https://www.w3.org/TR/sparql11-results-json/
+//!
+//! Spec: <https://www.w3.org/TR/sparql11-results-json/>
 
 use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
 use serde_json::{Value, json};

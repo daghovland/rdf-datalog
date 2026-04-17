@@ -8,9 +8,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Edition 2024 requires Rust ≥ 1.85.
+  RUST_VERSION: "1.85"
 
 jobs:
-  # ── Format ────────────────────────────────────────────────────────────────
+  # ── Format ──────────────────────────────────────────────────────────────────
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -18,12 +20,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
-  # ── Lint (clippy) ─────────────────────────────────────────────────────────
+  # ── Lint (clippy) ───────────────────────────────────────────────────────────
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -31,21 +33,85 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # ── Tests ─────────────────────────────────────────────────────────────────
+  # ── Unit tests ──────────────────────────────────────────────────────────────
   test:
-    name: Test
+    name: Unit & Integration Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test
+      - name: cargo test (debug)
         run: cargo test --workspace
+
+  # ── Release-mode tests ──────────────────────────────────────────────────────
+  # Catches optimisation-dependent bugs and verifies the release profile compiles.
+  test-release:
+    name: Tests (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Keep release cache separate so it doesn't evict the debug cache.
+          key: release
+      - name: cargo test (release)
+        run: cargo test --workspace --release
+
+  # ── Documentation build ─────────────────────────────────────────────────────
+  # Catches broken intra-doc links and missing items before they hit main.
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc
+        run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # ── Security audit ──────────────────────────────────────────────────────────
+  # Checks all dependencies against the RustSec advisory database.
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Minimal versions ────────────────────────────────────────────────────────
+  # Verifies the workspace builds with the *lowest* semver-compatible dependency
+  # versions. Catches undeclared version floor bumps early.
+  minimal-versions:
+    name: Minimal dependency versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: minimal-versions
+      - name: Resolve minimal versions
+        run: cargo +nightly update -Z minimal-versions
+      - name: cargo check with minimal versions
+        run: cargo check --workspace --all-targets
