@@ -1,0 +1,14 @@
+[package]
+name = "rdf-owl-translator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+ingress = { path = "../ingress" }
+owl-ontology = { path = "../owl_ontology" }
+num-bigint = "0.4"
+log = "0.4"
+
+[dev-dependencies]
+turtle-parser = { path = "../turtle_parser" }

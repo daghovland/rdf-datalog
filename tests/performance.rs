@@ -1,0 +1,396 @@
+/*
+Copyright (C) 2025 Dag Hovland
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+Contact: hovlanddag@gmail.com
+*/
+
+//! API-level performance integration tests.
+//!
+//! These tests exercise the full pipeline:
+//!   Turtle parse → RDF→OWL translation → Datalog rule generation
+//!   → materialisation → SPARQL query
+//!
+//! They require large ontology files that are **not** committed to the
+//! repository. Download them first:
+//!
+//! ```bash
+//! bash scripts/download_test_ontologies.sh
+//! ```
+//!
+//! Then run with:
+//! ```bash
+//! cargo test --test performance -- --ignored --nocapture
+//! ```
+//!
+//! All tests in this file are marked `#[ignore]` so they are skipped by the
+//! normal `cargo test` run.
+
+use dag_rdf::Datastore;
+use datalog::evaluate_rules;
+use owl2rl2datalog::owl2datalog;
+use rdf_owl_translator::rdf2owl;
+use sparql_parser::{ParserContext, execute, parse_query};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::Path;
+use std::time::Instant;
+use turtle_parser::parse_turtle;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Path to a test data file relative to the workspace root.
+fn test_data(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("testdata")
+        .join(name)
+}
+
+/// Return `true` when the test data file exists; `false` to skip.
+fn ensure_test_data(path: &Path) -> bool {
+    if path.exists() {
+        true
+    } else {
+        eprintln!(
+            "\n[SKIP] Test data not found: {}\n\
+             Run `bash scripts/download_test_ontologies.sh` to download it.\n",
+            path.display()
+        );
+        false
+    }
+}
+
+/// Print a labelled timing line.
+fn report(label: &str, elapsed_ms: u128) {
+    println!("  {:<40} {:>8} ms", label, elapsed_ms);
+}
+
+// ── Full pipeline helper ──────────────────────────────────────────────────────
+
+struct PipelineResult {
+    triple_count: usize,
+    axiom_count: usize,
+    rule_count: usize,
+    pre_reasoning_quad_count: usize,
+    post_reasoning_quad_count: usize,
+}
+
+/// Run the full parse → translate → reason pipeline on `path`, printing
+/// per-phase timings.  Returns counts for assertion.
+fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
+    println!("\n  File: {}", path.display());
+    println!("  {}", "-".repeat(60));
+
+    // ── Phase 1: Parse Turtle ────────────────────────────────────────────────
+    let t0 = Instant::now();
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(path).expect("test data file must be readable");
+    parse_turtle(&mut datastore, BufReader::new(file))
+        .expect("Turtle parse must succeed");
+    let triple_count = datastore.named_graphs.quad_count;
+    report("Turtle parse", t0.elapsed().as_millis());
+    println!("    triples loaded:        {}", triple_count);
+
+    // ── Phase 2: RDF → OWL translation ──────────────────────────────────────
+    let t1 = Instant::now();
+    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology = &ontology_doc.ontology;
+    let axiom_count = ontology.axioms.len();
+    report("RDF → OWL translation", t1.elapsed().as_millis());
+    println!("    OWL axioms extracted:  {}", axiom_count);
+
+    // ── Phase 3: OWL → Datalog rules ────────────────────────────────────────
+    let t2 = Instant::now();
+    let rules = owl2datalog(&mut datastore.resources, ontology);
+    let rule_count = rules.len();
+    report("OWL → Datalog rules", t2.elapsed().as_millis());
+    println!("    Datalog rules:         {}", rule_count);
+
+    let pre_reasoning_quad_count = datastore.named_graphs.quad_count;
+
+    // ── Phase 4: Materialisation ─────────────────────────────────────────────
+    let t3 = Instant::now();
+    evaluate_rules(rules, &mut datastore);
+    let post_reasoning_quad_count = datastore.named_graphs.quad_count;
+    report("Datalog materialisation", t3.elapsed().as_millis());
+    println!(
+        "    quads before:          {}",
+        pre_reasoning_quad_count
+    );
+    println!(
+        "    quads after:           {}",
+        post_reasoning_quad_count
+    );
+    println!(
+        "    inferred:              {}",
+        post_reasoning_quad_count.saturating_sub(pre_reasoning_quad_count)
+    );
+
+    (
+        datastore,
+        PipelineResult {
+            triple_count,
+            axiom_count,
+            rule_count,
+            pre_reasoning_quad_count,
+            post_reasoning_quad_count,
+        },
+    )
+}
+
+/// Run a SPARQL SELECT query against `datastore` and return the result rows.
+fn run_sparql<'a>(
+    datastore: &Datastore,
+    query_str: &str,
+) -> Vec<HashMap<String, dag_rdf::GraphElement>> {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let query = parse_query(query_str, &mut ctx)
+        .expect("SPARQL query must parse")
+        .1;
+    let result = execute(&query, datastore).expect("SPARQL execution must succeed");
+    result.rows
+}
+
+// ── Gene Ontology performance test ────────────────────────────────────────────
+
+/// Full pipeline over the Gene Ontology.
+///
+/// The Gene Ontology (go.ttl, ~89 MB, ~1.7 M triples) is the canonical
+/// large-scale benchmark for OWL reasoners and SPARQL endpoints.
+///
+/// Pipeline:
+/// 1. Parse Turtle              — measures I/O + parsing throughput
+/// 2. RDF → OWL translation    — measures axiom extraction
+/// 3. OWL → Datalog rules      — measures rule generation
+/// 4. Materialisation           — measures forward-chaining inference
+/// 5. SPARQL queries            — measures query answering over inferred data
+///
+/// To download go.ttl:
+/// ```bash
+/// bash scripts/download_test_ontologies.sh
+/// ```
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_full_pipeline() {
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — full pipeline ===");
+    let t_total = Instant::now();
+
+    let (datastore, stats) = run_pipeline(&path);
+
+    // ── Phase 5: SPARQL queries ──────────────────────────────────────────────
+    println!();
+
+    // 5a. Count all rdfs:subClassOf triples (direct + inferred)
+    let q_subclass = r#"PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?child ?parent
+WHERE { ?child rdfs:subClassOf ?parent }
+LIMIT 1000"#;
+    let t4 = Instant::now();
+    let rows = run_sparql(&datastore, q_subclass);
+    report("SPARQL: subClassOf (LIMIT 1000)", t4.elapsed().as_millis());
+    println!("    rows returned:         {}", rows.len());
+
+    // 5b. Find direct subclasses of GO:0008150 (biological_process)
+    let q_bio = r#"PREFIX obo: <http://purl.obolibrary.org/obo/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?subclass
+WHERE { ?subclass rdfs:subClassOf obo:GO_0008150 }"#;
+    let t5 = Instant::now();
+    let bio_rows = run_sparql(&datastore, q_bio);
+    report("SPARQL: subclasses of biological_process", t5.elapsed().as_millis());
+    println!("    subclasses found:      {}", bio_rows.len());
+
+    // 5c. Find direct subclasses of GO:0003674 (molecular_function)
+    let q_mol = r#"PREFIX obo: <http://purl.obolibrary.org/obo/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?subclass
+WHERE { ?subclass rdfs:subClassOf obo:GO_0003674 }"#;
+    let t6 = Instant::now();
+    let mol_rows = run_sparql(&datastore, q_mol);
+    report("SPARQL: subclasses of molecular_function", t6.elapsed().as_millis());
+    println!("    subclasses found:      {}", mol_rows.len());
+
+    // 5d. Retrieve GO terms with labels (rdfs:label)
+    let q_labels = r#"PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?term ?label
+WHERE { ?term rdfs:label ?label }
+LIMIT 500"#;
+    let t7 = Instant::now();
+    let label_rows = run_sparql(&datastore, q_labels);
+    report("SPARQL: terms with labels (LIMIT 500)", t7.elapsed().as_millis());
+    println!("    rows returned:         {}", label_rows.len());
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    println!();
+    report("TOTAL", t_total.elapsed().as_millis());
+
+    // ── Assertions ───────────────────────────────────────────────────────────
+    // The GO has > 40 000 terms, so we should have a lot of triples.
+    assert!(
+        stats.triple_count > 100_000,
+        "expected >100k triples, got {}",
+        stats.triple_count
+    );
+    // OWL axioms should be extracted.
+    assert!(
+        stats.axiom_count > 0,
+        "expected OWL axioms to be extracted, got 0"
+    );
+    // Rules should be generated.
+    assert!(
+        stats.rule_count > 0,
+        "expected Datalog rules to be generated, got 0"
+    );
+    // Reasoning should have inferred at least some new triples.
+    assert!(
+        stats.post_reasoning_quad_count >= stats.pre_reasoning_quad_count,
+        "reasoning must not reduce the quad count"
+    );
+    // SPARQL must return results.
+    assert!(
+        !rows.is_empty(),
+        "expected subClassOf triples to be present after parsing"
+    );
+    // Biological process should have subclasses.
+    assert!(
+        !bio_rows.is_empty(),
+        "expected subclasses of GO_0008150 (biological_process)"
+    );
+}
+
+/// Parse-only benchmark for the Gene Ontology.
+///
+/// Isolates Turtle parsing throughput without the reasoning overhead, useful
+/// for tracking parser regressions independently.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_parse_only() {
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — parse only ===");
+    let t0 = Instant::now();
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).unwrap();
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse must succeed");
+    let elapsed = t0.elapsed();
+    let triples = datastore.named_graphs.quad_count;
+    println!("  triples: {}", triples);
+    println!("  elapsed: {} ms", elapsed.as_millis());
+    println!(
+        "  throughput: {:.0} triples/sec",
+        triples as f64 / elapsed.as_secs_f64()
+    );
+    assert!(triples > 100_000);
+}
+
+/// OWL-axiom extraction and Datalog rule generation benchmark.
+///
+/// Focuses on the `rdf_owl_translator` + `owl2rl2datalog` phases, after
+/// parsing has already completed.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_axiom_extraction() {
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — axiom extraction ===");
+    let file = File::open(&path).unwrap();
+    let mut datastore = Datastore::new(2_000_000);
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse must succeed");
+    println!("  triples loaded: {}", datastore.named_graphs.quad_count);
+
+    let t1 = Instant::now();
+    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology = &ontology_doc.ontology;
+    println!(
+        "  OWL axioms:     {} ({} ms)",
+        ontology.axioms.len(),
+        t1.elapsed().as_millis()
+    );
+
+    let t2 = Instant::now();
+    let rules = owl2datalog(&mut datastore.resources, ontology);
+    println!(
+        "  Datalog rules:  {} ({} ms)",
+        rules.len(),
+        t2.elapsed().as_millis()
+    );
+
+    assert!(ontology.axioms.len() > 0, "expected OWL axioms");
+    assert!(rules.len() > 0, "expected Datalog rules");
+}
+
+/// SPARQL query performance over a fully materialised Gene Ontology.
+///
+/// Measures query latency for several representative query patterns.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_sparql_queries() {
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — SPARQL query benchmark ===");
+
+    // Build the materialised store once, then run multiple queries.
+    let (datastore, _stats) = run_pipeline(&path);
+    println!();
+
+    let queries: &[(&str, &str)] = &[
+        (
+            "SELECT * (LIMIT 10)",
+            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
+        ),
+        (
+            "subClassOf (LIMIT 100)",
+            "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+             SELECT ?a ?b WHERE { ?a rdfs:subClassOf ?b } LIMIT 100",
+        ),
+        (
+            "type owl:Class (LIMIT 100)",
+            "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n\
+             SELECT ?c WHERE { ?c a owl:Class } LIMIT 100",
+        ),
+        (
+            "subclasses of biological_process",
+            "PREFIX obo: <http://purl.obolibrary.org/obo/>\n\
+             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+             SELECT ?c WHERE { ?c rdfs:subClassOf obo:GO_0008150 }",
+        ),
+        (
+            "subclasses of cellular_component",
+            "PREFIX obo: <http://purl.obolibrary.org/obo/>\n\
+             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+             SELECT ?c WHERE { ?c rdfs:subClassOf obo:GO_0005575 }",
+        ),
+        (
+            "labels (LIMIT 200)",
+            "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+             SELECT ?t ?l WHERE { ?t rdfs:label ?l } LIMIT 200",
+        ),
+    ];
+
+    println!("  {:<45} {:>10}  {}", "Query", "Time (ms)", "Rows");
+    println!("  {}", "-".repeat(65));
+    for (label, query_str) in queries {
+        let t = Instant::now();
+        let rows = run_sparql(&datastore, query_str);
+        println!("  {:<45} {:>10}  {}", label, t.elapsed().as_millis(), rows.len());
+    }
+}

@@ -14,3 +14,7 @@ owl2rl2datalog = { path = "owl2rl2datalog" }
 turtle-parser = { path = "turtle_parser" }
 rdf-owl-translator = { path = "rdf_owl_translator" }
 log = "0.4"
+
+[dev-dependencies]
+datalog = { path = "datalog" }
+sparql-parser = { path = "sparql_parser" }
