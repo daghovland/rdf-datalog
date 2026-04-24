@@ -18,11 +18,11 @@ Each F# project becomes a Rust crate. Names are kept as close as possible:
 | `OWL2RL2Datalog` | `owl2rl2datalog` | Done |
 | `ELI` | `eli` | Done |
 | `RdfOwlTranslator` | `rdf_owl_translator` | Done |
-| `Turtle.Parser` | `turtle_parser` | Done (uses rio_turtle) |
+| `Turtle.Parser` | `turtle_parser` | Done (uses rio_turtle; now includes TriG support) |
 | `Manchester.Parser` | `manchester_parser` | Not started |
-| `Sparql.Parser` | `sparql_parser` | Done (nom-based) |
-| `Datalog.Parser` | `datalog_parser` | Not started |
-| `Api` | root crate `dagalog` | Working (end-to-end) |
+| `Sparql.Parser` | `sparql_parser` | Done (nom-based; `a` shorthand added) |
+| `Datalog.Parser` | `datalog_parser` | Not started — see Phase 6 for plan |
+| `Api` | root crate `dagalog` | Done — CLI + library (`src/lib.rs` + `src/main.rs`) |
 | `AlcTableau`, `OWL2ALC` | `alc_tableau` | Deferred |
 
 ---
@@ -202,17 +202,32 @@ Depends on `dag_rdf`. Translates `DagSemTools.Sparql.Parser`.
 Depends on `datalog`, `dag_rdf`. Translates `DagSemTools.Datalog.Parser`.
 - Grammar: reuse `grammars/datalog/Datalog.g4`
 - Produces `Vec<Rule>`
+- **Status**: stub only — `parse()` always returns an error.
+- **To implement**: translate the F# parser from DagSemTools similarly to how
+  `sparql_parser` was ported (nom-based, no ANTLR4 needed). The parser should
+  parse Datalog rules of the form `head :- body.` and return `Vec<datalog::types::Rule>`.
+- The CLI `--rules <file>` flag is present but rejects with an error until this is done.
 
 ---
 
-## Phase 7 — `api` / root crate integration
+## Phase 7 — `api` / root crate integration ✓ Done
 
-The root crate `dagalog` becomes the integration layer (mirrors `DagSemTools.Api`):
-- `Graph` / `Dataset` structs wrapping `Datastore`
-- `load_trig(path) -> Dataset` calling `turtle_parser`
-- `answer_select_query(query: &str) -> Results` calling `sparql_parser`
-- `load_ontology(path) -> Ontology` calling `manchester_parser` or `turtle_parser`
-- `reason(ontology, datastore)` — calling `owl2rl2datalog` then `datalog::reasoner::evaluate`
+The root crate `dagalog` is the integration layer, implemented as both a library (`src/lib.rs`) and a CLI binary (`src/main.rs`).
+
+### Library API (`src/lib.rs`)
+- `load_file(datastore, path)` — loads Turtle (`.ttl`) or TriG (`.trig`) files
+- `apply_ontologies(datastore, paths)` — loads OWL ontology files and runs OWL-RL materialisation
+- `run_sparql_query(datastore, sparql)` — executes a SPARQL SELECT query
+- `format_results(result, format)` — renders results as table, CSV, or JSON
+
+### CLI (`src/main.rs`)
+- `--data <FILE>` / `-d` — Turtle/TriG data files (repeatable)
+- `--ontology <FILE>` / `-o` — OWL ontology files, triggers reasoning (repeatable)
+- `--rules <FILE>` / `-r` — Datalog rules files (not yet supported, rejects at startup)
+- `--query-file <FILE>` / `-q` — SPARQL query from file
+- `--query <SPARQL>` / `-Q` — inline SPARQL query
+- `--format <FMT>` / `-f` — output format: `table` (default), `csv`, `json`
+- `--verbose` / `-v` — print pipeline stats to stderr
 
 ---
 

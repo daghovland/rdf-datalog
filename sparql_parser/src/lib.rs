@@ -300,6 +300,25 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
             map(parse_iri_ref, |iri| {
                 Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri)))
             }),
+            // 'a' shorthand for rdf:type (must come before prefixed-name parser)
+            |input: &'a str| {
+                if let Some(rest) = input.strip_prefix('a') {
+                    let next = rest.chars().next();
+                    if next.map(|c| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(true) {
+                        let iri = IriReference(
+                            "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
+                        );
+                        return Ok((
+                            rest,
+                            Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri))),
+                        ));
+                    }
+                }
+                Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Char,
+                )))
+            },
             // Prefixed name (prefix:local) — must come before bare terms
             map(parse_prefixed_name(ctx), |iri| {
                 Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri)))
