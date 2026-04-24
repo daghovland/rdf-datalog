@@ -1,0 +1,7 @@
+PREFIX ex: <http://example.org/family#>
+SELECT ?person ?name
+WHERE {
+    ?person a ex:Person .
+    ?person ex:name ?name .
+}
+ORDER BY ?name

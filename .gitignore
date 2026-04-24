@@ -14,7 +14,7 @@ target
 **/mutants.out*/
 
 # Large ontology test data files (downloaded separately via scripts/download_test_ontologies.sh)
-/tests/testdata/
+/tests/testdata/go.ttl
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

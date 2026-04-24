@@ -1,0 +1,19 @@
+@prefix ex: <http://example.org/family#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<http://example.org/family> a owl:Ontology .
+
+ex:Person a owl:Class .
+ex:Employee a owl:Class ;
+    rdfs:subClassOf ex:Person .
+
+ex:Alice a ex:Person ;
+    ex:name "Alice" .
+
+ex:Bob a ex:Employee ;
+    ex:name "Bob" .
+
+ex:Charlie a ex:Person ;
+    ex:name "Charlie" .

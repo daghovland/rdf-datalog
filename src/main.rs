@@ -92,7 +92,9 @@ fn run(cli: Cli) -> Result<(), String> {
         .parse()
         .map_err(|e: String| format!("--format: {}", e))?;
 
-    // Resolve SPARQL query (either from file or inline)
+    // Resolve SPARQL query (either from file or inline).
+    // --query accepts both an inline SPARQL string and a file path; if the value
+    // refers to an existing file it is read as a file, otherwise used as-is.
     let sparql = match (&cli.query_file, &cli.query) {
         (Some(_), Some(_)) => {
             return Err("--query-file and --query cannot be used together".to_string());
@@ -102,7 +104,16 @@ fn run(cli: Cli) -> Result<(), String> {
                 format!("cannot read query file {}: {}", path.display(), e)
             })?)
         }
-        (None, Some(q)) => Some(q.clone()),
+        (None, Some(q)) => {
+            let path = std::path::Path::new(q);
+            if path.is_file() {
+                Some(std::fs::read_to_string(path).map_err(|e| {
+                    format!("cannot read query file {}: {}", path.display(), e)
+                })?)
+            } else {
+                Some(q.clone())
+            }
+        }
         (None, None) => None,
     };
 
