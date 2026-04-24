@@ -12,8 +12,8 @@ Contact: hovlanddag@gmail.com
 use crate::axiom_parser::extract_axiom;
 use crate::class_expression_parser::OntologyDeclarations;
 use crate::ingress::WellKnownIds;
-use dag_rdf::datastore::Datastore;
 use dag_rdf::IriReference;
+use dag_rdf::datastore::Datastore;
 use ingress::*;
 use owl_ontology::*;
 
@@ -62,9 +62,9 @@ fn extract_ontology_version_iri(
     if triples.len() > 1 {
         log::warn!("Multiple owl:versionIri triples found – using first");
     }
-    triples.first().and_then(|tr| {
-        datastore.resources.get_named_resource(tr.obj).cloned()
-    })
+    triples
+        .first()
+        .and_then(|tr| datastore.resources.get_named_resource(tr.obj).cloned())
 }
 
 fn extract_ontology_imports(
@@ -105,7 +105,10 @@ fn extract_ontology_name(
             let imports = extract_ontology_imports(datastore, ids, iri_id);
             let version = match extract_ontology_version_iri(datastore, ids, iri_id) {
                 None => OntologyVersion::NamedOntology(iri),
-                Some(version_iri) => OntologyVersion::VersionedOntology { ontology_iri: iri, version_iri },
+                Some(version_iri) => OntologyVersion::VersionedOntology {
+                    ontology_iri: iri,
+                    version_iri,
+                },
             };
             (version, imports)
         }

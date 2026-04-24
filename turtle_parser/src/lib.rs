@@ -1,7 +1,7 @@
 use dag_rdf::{Datastore, IriReference, RdfLiteral, RdfResource, Triple};
 use rio_api::model::{GraphName, Literal, Subject, Term as RioTerm};
 use rio_api::parser::{QuadsParser, TriplesParser};
-use rio_turtle::{TurtleError, TurtleParser, TriGParser};
+use rio_turtle::{TriGParser, TurtleError, TurtleParser};
 use std::io::BufRead;
 
 pub fn parse_turtle<R: BufRead>(datastore: &mut Datastore, reader: R) -> Result<(), TurtleError> {
@@ -79,7 +79,11 @@ pub fn parse_trig<R: BufRead>(datastore: &mut Datastore, reader: R) -> Result<()
             _ => return Ok(()),
         };
 
-        let triple = Triple { subject, predicate, obj: object };
+        let triple = Triple {
+            subject,
+            predicate,
+            obj: object,
+        };
 
         match rio_quad.graph_name {
             None => {

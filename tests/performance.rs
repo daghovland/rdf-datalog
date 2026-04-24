@@ -88,8 +88,7 @@ fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
     let t0 = Instant::now();
     let mut datastore = Datastore::new(2_000_000);
     let file = File::open(path).expect("test data file must be readable");
-    parse_turtle(&mut datastore, BufReader::new(file))
-        .expect("Turtle parse must succeed");
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("Turtle parse must succeed");
     let triple_count = datastore.named_graphs.quad_count;
     report("Turtle parse", t0.elapsed().as_millis());
     println!("    triples loaded:        {}", triple_count);
@@ -116,14 +115,8 @@ fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
     evaluate_rules(rules, &mut datastore);
     let post_reasoning_quad_count = datastore.named_graphs.quad_count;
     report("Datalog materialisation", t3.elapsed().as_millis());
-    println!(
-        "    quads before:          {}",
-        pre_reasoning_quad_count
-    );
-    println!(
-        "    quads after:           {}",
-        post_reasoning_quad_count
-    );
+    println!("    quads before:          {}", pre_reasoning_quad_count);
+    println!("    quads after:           {}", post_reasoning_quad_count);
     println!(
         "    inferred:              {}",
         post_reasoning_quad_count.saturating_sub(pre_reasoning_quad_count)
@@ -207,7 +200,10 @@ SELECT ?subclass
 WHERE { ?subclass rdfs:subClassOf obo:GO_0008150 }"#;
     let t5 = Instant::now();
     let bio_rows = run_sparql(&datastore, q_bio);
-    report("SPARQL: subclasses of biological_process", t5.elapsed().as_millis());
+    report(
+        "SPARQL: subclasses of biological_process",
+        t5.elapsed().as_millis(),
+    );
     println!("    subclasses found:      {}", bio_rows.len());
 
     // 5c. Find direct subclasses of GO:0003674 (molecular_function)
@@ -217,7 +213,10 @@ SELECT ?subclass
 WHERE { ?subclass rdfs:subClassOf obo:GO_0003674 }"#;
     let t6 = Instant::now();
     let mol_rows = run_sparql(&datastore, q_mol);
-    report("SPARQL: subclasses of molecular_function", t6.elapsed().as_millis());
+    report(
+        "SPARQL: subclasses of molecular_function",
+        t6.elapsed().as_millis(),
+    );
     println!("    subclasses found:      {}", mol_rows.len());
 
     // 5d. Retrieve GO terms with labels (rdfs:label)
@@ -227,7 +226,10 @@ WHERE { ?term rdfs:label ?label }
 LIMIT 500"#;
     let t7 = Instant::now();
     let label_rows = run_sparql(&datastore, q_labels);
-    report("SPARQL: terms with labels (LIMIT 500)", t7.elapsed().as_millis());
+    report(
+        "SPARQL: terms with labels (LIMIT 500)",
+        t7.elapsed().as_millis(),
+    );
     println!("    rows returned:         {}", label_rows.len());
 
     // ── Summary ──────────────────────────────────────────────────────────────
@@ -391,6 +393,11 @@ fn gene_ontology_sparql_queries() {
     for (label, query_str) in queries {
         let t = Instant::now();
         let rows = run_sparql(&datastore, query_str);
-        println!("  {:<45} {:>10}  {}", label, t.elapsed().as_millis(), rows.len());
+        println!(
+            "  {:<45} {:>10}  {}",
+            label,
+            t.elapsed().as_millis(),
+            rows.len()
+        );
     }
 }

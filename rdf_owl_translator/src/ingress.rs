@@ -10,7 +10,9 @@ Contact: hovlanddag@gmail.com
 //! Mirrors `DagSemTools.RdfOwlTranslator.Ingress`.
 
 use dag_rdf::ingress::Triple;
-use dag_rdf::{GraphElement, GraphElementId, GraphElementManager, IriReference, RdfLiteral, RdfResource};
+use dag_rdf::{
+    GraphElement, GraphElementId, GraphElementManager, IriReference, RdfLiteral, RdfResource,
+};
 use ingress::*;
 use num_bigint::BigInt;
 use owl_ontology::{FullIri, Individual};
@@ -237,9 +239,7 @@ pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
         GraphElement::NodeOrEdge(_) => None,
         GraphElement::GraphLiteral(lit) => match lit {
             RdfLiteral::BooleanLiteral(b) => Some(*b),
-            RdfLiteral::TypedLiteral { type_iri, literal }
-                if type_iri.0 == XSD_BOOLEAN =>
-            {
+            RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_BOOLEAN => {
                 match literal.as_str() {
                     "true" => Some(true),
                     "false" => Some(false),

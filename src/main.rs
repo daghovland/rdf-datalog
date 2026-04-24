@@ -58,7 +58,12 @@ struct Cli {
     query: Option<String>,
 
     /// Output format: table, csv, json [default: table]
-    #[arg(short = 'f', long = "format", value_name = "FORMAT", default_value = "table")]
+    #[arg(
+        short = 'f',
+        long = "format",
+        value_name = "FORMAT",
+        default_value = "table"
+    )]
     format: String,
 
     /// Print pipeline statistics to stderr
@@ -99,17 +104,17 @@ fn run(cli: Cli) -> Result<(), String> {
         (Some(_), Some(_)) => {
             return Err("--query-file and --query cannot be used together".to_string());
         }
-        (Some(path), None) => {
-            Some(std::fs::read_to_string(path).map_err(|e| {
-                format!("cannot read query file {}: {}", path.display(), e)
-            })?)
-        }
+        (Some(path), None) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot read query file {}: {}", path.display(), e))?,
+        ),
         (None, Some(q)) => {
             let path = std::path::Path::new(q);
             if path.is_file() {
-                Some(std::fs::read_to_string(path).map_err(|e| {
-                    format!("cannot read query file {}: {}", path.display(), e)
-                })?)
+                Some(
+                    std::fs::read_to_string(path)
+                        .map_err(|e| format!("cannot read query file {}: {}", path.display(), e))?,
+                )
             } else {
                 Some(q.clone())
             }

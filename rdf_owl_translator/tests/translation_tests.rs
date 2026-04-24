@@ -10,11 +10,11 @@ Contact: hovlanddag@gmail.com
 //! Mirrors DagSemTools `TestApiOntology.cs`.
 
 use dag_rdf::Datastore;
-use rdf_owl_translator::rdf2owl;
-use std::io::BufReader;
-use std::fs::File;
-use turtle_parser::parse_turtle;
 use owl_ontology::Axiom;
+use rdf_owl_translator::rdf2owl;
+use std::fs::File;
+use std::io::BufReader;
+use turtle_parser::parse_turtle;
 
 fn parse_and_translate(path: &str) -> Vec<Axiom> {
     let file = File::open(path).unwrap_or_else(|_| panic!("Cannot open {}", path));
@@ -28,24 +28,40 @@ fn parse_and_translate(path: &str) -> Vec<Axiom> {
 #[test]
 fn translate_intersection_of_classes() {
     let axioms = parse_and_translate("tests/data/intersectionOfClassesWorks.ttl");
-    assert!(!axioms.is_empty(), "Expected axioms from intersectionOfClassesWorks.ttl");
+    assert!(
+        !axioms.is_empty(),
+        "Expected axioms from intersectionOfClassesWorks.ttl"
+    );
     // Should contain at least a SubClassOf axiom and class declarations
-    let has_subclass = axioms.iter().any(|ax| matches!(ax, Axiom::AxiomClassAxiom(_)));
+    let has_subclass = axioms
+        .iter()
+        .any(|ax| matches!(ax, Axiom::AxiomClassAxiom(_)));
     assert!(has_subclass, "Expected at least one class axiom");
 }
 
 #[test]
 fn translate_some_values_example() {
     let axioms = parse_and_translate("tests/data/someValuesExample.ttl");
-    assert!(!axioms.is_empty(), "Expected axioms from someValuesExample.ttl");
-    let has_subclass = axioms.iter().any(|ax| matches!(ax, Axiom::AxiomClassAxiom(_)));
-    assert!(has_subclass, "Expected at least one class axiom (SubClassOf restriction)");
+    assert!(
+        !axioms.is_empty(),
+        "Expected axioms from someValuesExample.ttl"
+    );
+    let has_subclass = axioms
+        .iter()
+        .any(|ax| matches!(ax, Axiom::AxiomClassAxiom(_)));
+    assert!(
+        has_subclass,
+        "Expected at least one class axiom (SubClassOf restriction)"
+    );
 }
 
 #[test]
 fn translate_owl_intersection() {
     let axioms = parse_and_translate("tests/data/intersection.owl.ttl");
-    assert!(!axioms.is_empty(), "Expected axioms from intersection.owl.ttl");
+    assert!(
+        !axioms.is_empty(),
+        "Expected axioms from intersection.owl.ttl"
+    );
 }
 
 #[test]
@@ -63,5 +79,8 @@ fn translate_simple_union() {
 #[test]
 fn translate_some_values_from_inverse() {
     let axioms = parse_and_translate("tests/data/someValuesFromInverse.ttl");
-    assert!(!axioms.is_empty(), "Expected axioms from someValuesFromInverse.ttl");
+    assert!(
+        !axioms.is_empty(),
+        "Expected axioms from someValuesFromInverse.ttl"
+    );
 }

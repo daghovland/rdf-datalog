@@ -79,12 +79,12 @@ WHERE { <http://example.org/alice> foaf:name ?name }"#;
     let bindings = body["results"]["bindings"].as_array().unwrap();
     // Both language variants should be returned
     assert!(!bindings.is_empty(), "expected at least one binding");
-    let has_en = bindings.iter().any(|r| {
-        r["name"]["value"] == "Alice" && r["name"]["xml:lang"] == "en"
-    });
-    let has_es = bindings.iter().any(|r| {
-        r["name"]["value"] == "Alicia" && r["name"]["xml:lang"] == "es"
-    });
+    let has_en = bindings
+        .iter()
+        .any(|r| r["name"]["value"] == "Alice" && r["name"]["xml:lang"] == "en");
+    let has_es = bindings
+        .iter()
+        .any(|r| r["name"]["value"] == "Alicia" && r["name"]["xml:lang"] == "es");
     assert!(has_en, "expected English name");
     assert!(has_es, "expected Spanish name");
 }
@@ -228,7 +228,11 @@ WHERE {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let bindings = body["results"]["bindings"].as_array().unwrap();
-    assert_eq!(bindings.len(), 1, "expected exactly one case-insensitive match");
+    assert_eq!(
+        bindings.len(),
+        1,
+        "expected exactly one case-insensitive match"
+    );
     common::assert_binding_contains(bindings, "title", "literal", "SPARQL Tutorial");
 }
 
@@ -646,7 +650,9 @@ GROUP BY ?author"#;
         .unwrap();
 
     // Aggregates are not yet implemented; 400/500 is acceptable
-    let ok = resp.status().is_success() || resp.status().is_client_error() || resp.status().is_server_error();
+    let ok = resp.status().is_success()
+        || resp.status().is_client_error()
+        || resp.status().is_server_error();
     assert!(ok, "unexpected HTTP status {}", resp.status());
 }
 
@@ -802,12 +808,7 @@ WHERE {
     let body: serde_json::Value = resp.json().await.unwrap();
     let bindings = body["results"]["bindings"].as_array().unwrap();
     assert_eq!(bindings.len(), 1);
-    common::assert_binding_contains(
-        bindings,
-        "friend",
-        "uri",
-        "http://example.org/bob",
-    );
+    common::assert_binding_contains(bindings, "friend", "uri", "http://example.org/bob");
 }
 
 // ── Section 4.1 — IRI Values ──────────────────────────────────────────────────
