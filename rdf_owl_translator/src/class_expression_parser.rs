@@ -10,8 +10,8 @@ Contact: hovlanddag@gmail.com
 //! Mirrors `DagSemTools.RdfOwlTranslator.ClassExpressionParser`.
 
 use crate::ingress::{
-    WellKnownIds, get_rdf_list_elements, try_get_bool_literal, try_get_individual,
-    try_get_non_negative_integer_literal, topological_sort,
+    WellKnownIds, get_rdf_list_elements, topological_sort, try_get_bool_literal,
+    try_get_individual, try_get_non_negative_integer_literal,
 };
 use dag_rdf::datastore::Datastore;
 use dag_rdf::ingress::Triple;
@@ -76,7 +76,11 @@ impl OntologyDeclarations {
     /// Returns the parsed class expression if known, a named-class expression
     /// for IRI resources, or `owl:Thing` as a conservative fallback for
     /// unresolved anonymous blank nodes (logging a warning).
-    pub fn class_expression(&self, id: GraphElementId, resources: &dag_rdf::GraphElementManager) -> ClassExpression {
+    pub fn class_expression(
+        &self,
+        id: GraphElementId,
+        resources: &dag_rdf::GraphElementManager,
+    ) -> ClassExpression {
         if let Some(ce) = self.class_expressions.get(&id) {
             return ce.clone();
         }
@@ -98,13 +102,20 @@ impl OntologyDeclarations {
                 ClassExpression::ClassName(FullIri(IriReference(OWL_THING_IRI.to_string())))
             }
             None => {
-                log::warn!("OWL: unknown resource {} used as class — using owl:Thing", id);
+                log::warn!(
+                    "OWL: unknown resource {} used as class — using owl:Thing",
+                    id
+                );
                 ClassExpression::ClassName(FullIri(IriReference(OWL_THING_IRI.to_string())))
             }
         }
     }
 
-    pub fn data_range(&self, id: GraphElementId, resources: &dag_rdf::GraphElementManager) -> DataRange {
+    pub fn data_range(
+        &self,
+        id: GraphElementId,
+        resources: &dag_rdf::GraphElementManager,
+    ) -> DataRange {
         if let Some(dr) = self.data_ranges.get(&id) {
             return dr.clone();
         }
@@ -117,7 +128,11 @@ impl OntologyDeclarations {
         )))
     }
 
-    pub fn object_property_expression(&self, id: GraphElementId, resources: &dag_rdf::GraphElementManager) -> ObjectPropertyExpression {
+    pub fn object_property_expression(
+        &self,
+        id: GraphElementId,
+        resources: &dag_rdf::GraphElementManager,
+    ) -> ObjectPropertyExpression {
         if let Some(ope) = self.object_property_expressions.get(&id) {
             return ope.clone();
         }
@@ -144,7 +159,11 @@ impl OntologyDeclarations {
         }
     }
 
-    pub fn data_property_expression(&self, id: GraphElementId, resources: &dag_rdf::GraphElementManager) -> DataProperty {
+    pub fn data_property_expression(
+        &self,
+        id: GraphElementId,
+        resources: &dag_rdf::GraphElementManager,
+    ) -> DataProperty {
         if let Some(dp) = self.data_property_expressions.get(&id) {
             return dp.clone();
         }
@@ -187,7 +206,9 @@ impl OntologyDeclarations {
             _ => {
                 // Fallback: try IRI-based heuristic, default to object property
                 if let Some(iri) = resources.get_named_resource(id) {
-                    object_fn(ObjectPropertyExpression::NamedObjectProperty(FullIri(iri.clone())))
+                    object_fn(ObjectPropertyExpression::NamedObjectProperty(FullIri(
+                        iri.clone(),
+                    )))
                 } else {
                     log::warn!(
                         "OWL: {:?} not declared as object or data property — \
@@ -212,7 +233,12 @@ fn get_initial_declarations(
 ) -> Vec<(GraphElementId, IriReference)> {
     let mut result: Vec<(GraphElementId, IriReference)> = datastore
         .get_triples_with_object_predicate(type_id, ids.rdf_type_id)
-        .filter_map(|tr| datastore.resources.get_named_resource(tr.subject).map(|iri| (tr.subject, iri.clone())))
+        .filter_map(|tr| {
+            datastore
+                .resources
+                .get_named_resource(tr.subject)
+                .map(|iri| (tr.subject, iri.clone()))
+        })
         .collect();
 
     // Also collect axiom-annotated declarations (second part of Table 7)
@@ -234,7 +260,10 @@ fn get_initial_declarations(
             datastore
                 .get_triples_with_subject_predicate(tr.subject, ids.owl_annotated_source_id)
                 .filter_map(|src_tr| {
-                    datastore.resources.get_named_resource(src_tr.obj).map(|iri| (src_tr.obj, iri.clone()))
+                    datastore
+                        .resources
+                        .get_named_resource(src_tr.obj)
+                        .map(|iri| (src_tr.obj, iri.clone()))
                 })
                 .collect::<Vec<_>>()
         })
@@ -248,10 +277,11 @@ fn build_class_declarations(
     datastore: &Datastore,
     ids: &WellKnownIds,
 ) -> HashMap<GraphElementId, ClassExpression> {
-    let mut map: HashMap<GraphElementId, ClassExpression> = get_initial_declarations(datastore, ids, ids.owl_class_id)
-        .into_iter()
-        .map(|(id, iri)| (id, ClassExpression::ClassName(FullIri(iri))))
-        .collect();
+    let mut map: HashMap<GraphElementId, ClassExpression> =
+        get_initial_declarations(datastore, ids, ids.owl_class_id)
+            .into_iter()
+            .map(|(id, iri)| (id, ClassExpression::ClassName(FullIri(iri))))
+            .collect();
 
     // Also treat subjects and objects of rdfs:subClassOf as classes
     for tr in datastore.get_triples_with_predicate(ids.rdfs_sub_class_of_id) {
@@ -270,10 +300,11 @@ fn build_data_range_declarations(
     datastore: &Datastore,
     ids: &WellKnownIds,
 ) -> HashMap<GraphElementId, DataRange> {
-    let mut map: HashMap<GraphElementId, DataRange> = get_initial_declarations(datastore, ids, ids.rdfs_datatype_id)
-        .into_iter()
-        .map(|(id, iri)| (id, DataRange::NamedDataRange(FullIri(iri))))
-        .collect();
+    let mut map: HashMap<GraphElementId, DataRange> =
+        get_initial_declarations(datastore, ids, ids.rdfs_datatype_id)
+            .into_iter()
+            .map(|(id, iri)| (id, DataRange::NamedDataRange(FullIri(iri))))
+            .collect();
 
     // rdfs:Literal is always a datatype
     if let Some(iri) = datastore.resources.get_named_resource(ids.rdfs_literal_id) {
@@ -292,7 +323,10 @@ fn build_object_property_declarations(
         get_initial_declarations(datastore, ids, ids.owl_object_property_id)
             .into_iter()
             .map(|(id, iri)| {
-                (id, ObjectPropertyExpression::NamedObjectProperty(FullIri(iri)))
+                (
+                    id,
+                    ObjectPropertyExpression::NamedObjectProperty(FullIri(iri)),
+                )
             })
             .collect();
 
@@ -446,10 +480,9 @@ fn parse_anonymous_class_expressions(
         let pred_id = defining_tr.predicate;
         let obj_id = defining_tr.obj;
 
-        let (predecessors, builder): (
-            Vec<GraphElementId>,
-            ClassExprBuilder,
-        ) = if pred_id == ids.owl_complement_of_id {
+        let (predecessors, builder): (Vec<GraphElementId>, ClassExprBuilder) = if pred_id
+            == ids.owl_complement_of_id
+        {
             let dep = obj_id;
             (
                 vec![dep],
@@ -498,7 +531,10 @@ fn parse_anonymous_class_expressions(
                     deps,
                     Box::new(move |decls: &OntologyDeclarations, res| {
                         ClassExpression::ObjectIntersectionOf(
-                            list_items.iter().map(|&id| decls.class_expression(id, res)).collect(),
+                            list_items
+                                .iter()
+                                .map(|&id| decls.class_expression(id, res))
+                                .collect(),
                         )
                     }),
                 )
@@ -508,7 +544,10 @@ fn parse_anonymous_class_expressions(
                     deps,
                     Box::new(move |decls: &OntologyDeclarations, res| {
                         ClassExpression::ObjectUnionOf(
-                            list_items.iter().map(|&id| decls.class_expression(id, res)).collect(),
+                            list_items
+                                .iter()
+                                .map(|&id| decls.class_expression(id, res))
+                                .collect(),
                         )
                     }),
                 )
@@ -559,7 +598,10 @@ fn parse_anonymous_restrictions(
         .filter_map(|tr| match datastore.resources.get_resource(tr.subject) {
             Some(RdfResource::AnonymousBlankNode(_)) => Some(tr.subject),
             other => {
-                log::warn!("owl:Restriction used on non-blank-node {:?} — skipped", other);
+                log::warn!(
+                    "owl:Restriction used on non-blank-node {:?} — skipped",
+                    other
+                );
                 None
             }
         })
@@ -576,7 +618,10 @@ fn parse_anonymous_restrictions(
         let pred_iris: Vec<String> = triples
             .iter()
             .filter_map(|tr| {
-                datastore.resources.get_named_resource(tr.predicate).map(|iri| iri.0.clone())
+                datastore
+                    .resources
+                    .get_named_resource(tr.predicate)
+                    .map(|iri| iri.0.clone())
             })
             .collect();
 
@@ -616,10 +661,17 @@ fn is_anon_dep(datastore: &Datastore, decls: &OntologyDeclarations, id: GraphEle
 }
 
 fn find_triple_obj(triples: &[Triple], predicate_id: GraphElementId) -> Option<GraphElementId> {
-    triples.iter().find(|tr| tr.predicate == predicate_id).map(|tr| tr.obj)
+    triples
+        .iter()
+        .find(|tr| tr.predicate == predicate_id)
+        .map(|tr| tr.obj)
 }
 
-fn require_triple_obj(triples: &[Triple], predicate_id: GraphElementId, desc: &str) -> Option<GraphElementId> {
+fn require_triple_obj(
+    triples: &[Triple],
+    predicate_id: GraphElementId,
+    desc: &str,
+) -> Option<GraphElementId> {
     let result = find_triple_obj(triples, predicate_id);
     if result.is_none() {
         log::warn!("Missing {} in OWL restriction — skipping restriction", desc);
@@ -636,7 +688,10 @@ fn require_cardinality(
     let gel = resources.get_graph_element(obj_id);
     let result = try_get_non_negative_integer_literal(gel);
     if result.is_none() {
-        log::warn!("Invalid cardinality value: {:?} — skipping restriction", gel);
+        log::warn!(
+            "Invalid cardinality value: {:?} — skipping restriction",
+            gel
+        );
     }
     result
 }
@@ -653,7 +708,8 @@ fn build_restriction(
 
     if has(OWL_ON_PROPERTIES) {
         // Data(All|Some)ValuesFrom with multiple properties
-        let on_props_id = require_triple_obj(triples, ids.owl_on_properties_id, "owl:onProperties")?;
+        let on_props_id =
+            require_triple_obj(triples, ids.owl_on_properties_id, "owl:onProperties")?;
         let list_items = get_rdf_list_elements(
             &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
             ids,
@@ -672,8 +728,10 @@ fn build_restriction(
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
-                let props: Vec<DataProperty> =
-                    list_items.iter().map(|&id| decls.data_property_expression(id, res)).collect();
+                let props: Vec<DataProperty> = list_items
+                    .iter()
+                    .map(|&id| decls.data_property_expression(id, res))
+                    .collect();
                 let dr = decls.data_range(values_from_id, res);
                 if use_all {
                     ClassExpression::DataAllValuesFrom(props, dr)
@@ -685,7 +743,11 @@ fn build_restriction(
     } else if has(OWL_SOME_VALUES_FROM) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_some_values_from_id, "owl:someValuesFrom")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) { vec![z] } else { vec![] };
+        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+            vec![z]
+        } else {
+            vec![]
+        };
         Some(Restriction {
             id: subj,
             predecessors: deps,
@@ -693,7 +755,12 @@ fn build_restriction(
                 decls.object_or_data_property(
                     y,
                     res,
-                    |ope| ClassExpression::ObjectSomeValuesFrom(ope, Box::new(decls.class_expression(z, res))),
+                    |ope| {
+                        ClassExpression::ObjectSomeValuesFrom(
+                            ope,
+                            Box::new(decls.class_expression(z, res)),
+                        )
+                    },
                     |dp| ClassExpression::DataSomeValuesFrom(vec![dp], decls.data_range(z, res)),
                 )
             }),
@@ -701,7 +768,11 @@ fn build_restriction(
     } else if has(OWL_ALL_VALUES_FROM) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_all_values_from_id, "owl:allValuesFrom")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) { vec![z] } else { vec![] };
+        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+            vec![z]
+        } else {
+            vec![]
+        };
         Some(Restriction {
             id: subj,
             predecessors: deps,
@@ -709,7 +780,12 @@ fn build_restriction(
                 decls.object_or_data_property(
                     y,
                     res,
-                    |ope| ClassExpression::ObjectAllValuesFrom(ope, Box::new(decls.class_expression(z, res))),
+                    |ope| {
+                        ClassExpression::ObjectAllValuesFrom(
+                            ope,
+                            Box::new(decls.class_expression(z, res)),
+                        )
+                    },
                     |dp| ClassExpression::DataAllValuesFrom(vec![dp], decls.data_range(z, res)),
                 )
             }),
@@ -741,8 +817,13 @@ fn build_restriction(
                 let has_self = match try_get_bool_literal(gel) {
                     Some(v) => v,
                     None => {
-                        log::warn!("owl:hasSelf value is not boolean: {:?} — using owl:Thing", gel);
-                        return ClassExpression::ClassName(FullIri(IriReference(OWL_THING_IRI.to_string())));
+                        log::warn!(
+                            "owl:hasSelf value is not boolean: {:?} — using owl:Thing",
+                            gel
+                        );
+                        return ClassExpression::ClassName(FullIri(IriReference(
+                            OWL_THING_IRI.to_string(),
+                        )));
                     }
                 };
                 if has_self {
@@ -758,7 +839,11 @@ fn build_restriction(
         // Qualified cardinality on object property
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_on_class_id, "owl:onClass")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) { vec![z] } else { vec![] };
+        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+            vec![z]
+        } else {
+            vec![]
+        };
         let (card_id, card_type) = if has(OWL_MAX_QUALIFIED_CARDINALITY) {
             (ids.owl_max_qualified_cardinality_id, 0u8)
         } else if has(OWL_MIN_QUALIFIED_CARDINALITY) {
@@ -844,12 +929,17 @@ fn build_restriction(
                 ClassExpression::ObjectExactQualifiedCardinality(
                     n.clone(),
                     ope,
-                    Box::new(ClassExpression::ClassName(FullIri(IriReference(OWL_THING.to_string())))),
+                    Box::new(ClassExpression::ClassName(FullIri(IriReference(
+                        OWL_THING.to_string(),
+                    )))),
                 )
             }),
         })
     } else {
-        log::warn!("Invalid owl:Restriction {}: no recognized restriction predicate found — skipping", subj);
+        log::warn!(
+            "Invalid owl:Restriction {}: no recognized restriction predicate found — skipping",
+            subj
+        );
         None
     }
 }

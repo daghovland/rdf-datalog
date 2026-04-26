@@ -33,8 +33,7 @@ WHERE { ?book dc:title ?title }";
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .expect("request failed");
@@ -68,8 +67,7 @@ WHERE { <http://example.org/alice> foaf:name ?name }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -79,12 +77,12 @@ WHERE { <http://example.org/alice> foaf:name ?name }"#;
     let bindings = body["results"]["bindings"].as_array().unwrap();
     // Both language variants should be returned
     assert!(!bindings.is_empty(), "expected at least one binding");
-    let has_en = bindings.iter().any(|r| {
-        r["name"]["value"] == "Alice" && r["name"]["xml:lang"] == "en"
-    });
-    let has_es = bindings.iter().any(|r| {
-        r["name"]["value"] == "Alicia" && r["name"]["xml:lang"] == "es"
-    });
+    let has_en = bindings
+        .iter()
+        .any(|r| r["name"]["value"] == "Alice" && r["name"]["xml:lang"] == "en");
+    let has_es = bindings
+        .iter()
+        .any(|r| r["name"]["value"] == "Alicia" && r["name"]["xml:lang"] == "es");
     assert!(has_en, "expected English name");
     assert!(has_es, "expected Spanish name");
 }
@@ -111,8 +109,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -151,8 +148,7 @@ WHERE { ?person ex:age 42 }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -187,8 +183,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -219,8 +214,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -228,7 +222,11 @@ WHERE {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let bindings = body["results"]["bindings"].as_array().unwrap();
-    assert_eq!(bindings.len(), 1, "expected exactly one case-insensitive match");
+    assert_eq!(
+        bindings.len(),
+        1,
+        "expected exactly one case-insensitive match"
+    );
     common::assert_binding_contains(bindings, "title", "literal", "SPARQL Tutorial");
 }
 
@@ -260,8 +258,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -295,8 +292,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -331,8 +327,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -384,8 +379,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -424,8 +418,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -462,8 +455,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -496,8 +488,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -534,8 +525,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -570,8 +560,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -603,8 +592,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -639,14 +627,15 @@ GROUP BY ?author"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
 
     // Aggregates are not yet implemented; 400/500 is acceptable
-    let ok = resp.status().is_success() || resp.status().is_client_error() || resp.status().is_server_error();
+    let ok = resp.status().is_success()
+        || resp.status().is_client_error()
+        || resp.status().is_server_error();
     assert!(ok, "unexpected HTTP status {}", resp.status());
 }
 
@@ -669,8 +658,7 @@ WHERE { ?person ex:likes ?animal }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -701,8 +689,7 @@ SELECT ?v WHERE { ?x ex:val ?v } LIMIT 3"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -729,8 +716,7 @@ SELECT ?v WHERE { ?x ex:val ?v } OFFSET 2"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -757,8 +743,7 @@ WHERE { <<( ?s ?p ?o )>> <http://example.org/occursIn> ?doc }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -792,8 +777,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -802,12 +786,7 @@ WHERE {
     let body: serde_json::Value = resp.json().await.unwrap();
     let bindings = body["results"]["bindings"].as_array().unwrap();
     assert_eq!(bindings.len(), 1);
-    common::assert_binding_contains(
-        bindings,
-        "friend",
-        "uri",
-        "http://example.org/bob",
-    );
+    common::assert_binding_contains(bindings, "friend", "uri", "http://example.org/bob");
 }
 
 // ── Section 4.1 — IRI Values ──────────────────────────────────────────────────
@@ -826,8 +805,7 @@ SELECT * WHERE { ?s ex:name ?o }";
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();

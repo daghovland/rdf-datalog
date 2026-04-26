@@ -1,0 +1,7 @@
+# Inference rules for the family.ttl dataset
+PREFIX ex: <http://example.org/family#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+# Every Employee is a Person (mirrors the rdfs:subClassOf in the ontology)
+ex:Person[?x] :- ex:Employee[?x] .

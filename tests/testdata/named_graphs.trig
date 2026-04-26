@@ -1,0 +1,17 @@
+@prefix ex: <http://example.org/ng#> .
+
+# Default graph
+ex:Alice a ex:Person ;
+    ex:name "Alice" .
+
+# Named graph for employees
+<http://example.org/ng/employees> {
+    ex:Bob a ex:Employee ;
+        ex:name "Bob" .
+}
+
+# Named graph for customers
+<http://example.org/ng/customers> {
+    ex:Carol a ex:Customer ;
+        ex:name "Carol" .
+}

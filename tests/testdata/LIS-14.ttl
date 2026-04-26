@@ -1,0 +1,2986 @@
+@prefix : <http://rds.posccaesar.org/ontology/lis14/ont/core#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix om: <http://www.ontology-of-units-of-measure.org/resource/om-2/> .
+@prefix dol: <http://www.loa-cnr.it/ontologies/DOLCE-Lite.owl#> .
+@prefix lis: <http://rds.posccaesar.org/ontology/lis14/rdl/> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix pav: <http://purl.org/pav/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ssn: <http://www.w3.org/ns/ssn/> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix time: <http://www.w3.org/2006/time#> .
+@prefix iof-av: <https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix dcmitype: <http://purl.org/dc/dcmitype/> .
+@prefix iof-core: <https://spec.industrialontologies.org/ontology/core/Core/> .
+@base <http://rds.posccaesar.org/ontology/lis14/ont/core> .
+
+<http://rds.posccaesar.org/ontology/lis14/ont/core> rdf:type owl:Ontology ;
+                                                     owl:versionIRI <http://rds.posccaesar.org/ontology/lis14/ont/core/4.0> ;
+                                                     dc:rights "Copyright POSC Caesar Association" ;
+                                                     dcterms:contributor <https://orcid.org/0000-0002-5509-8899> ,
+                                                                         <https://orcid.org/0000-0002-6228-1317> ,
+                                                                         <https://orcid.org/0000-0002-7167-7321> ,
+                                                                         <https://orcid.org/0000-0002-7336-3932> ,
+                                                                         <https://orcid.org/0000-0002-9736-8316> ,
+                                                                         <https://orcid.org/0009-0005-8440-2238> ;
+                                                     dcterms:creator <https://orcid.org/0000-0002-7167-7321> ;
+                                                     dcterms:description "The Industrial Data Ontology is an upper ontology for industrial data, inspired by the ISO 15926-2 data model and Basic Formal Ontology." ;
+                                                     dcterms:license <https://creativecommons.org/licenses/by-sa/4.0/> ;
+                                                     dcterms:modified "2024-11-28"^^xsd:date ;
+                                                     dcterms:publisher <https://www.posccaesar.org> ;
+                                                     dcterms:title "Industrial Data Ontology" ;
+                                                     pav:hasEarlierVersion <http://rds.posccaesar.org/ontology/lis14/ont/core/1.0> ,
+                                                                           <http://rds.posccaesar.org/ontology/lis14/ont/core/2.0> ;
+                                                     pav:lastUpdateOn "2024-11-28T14:33:46Z"^^xsd:dateTime ;
+                                                     pav:previousVersion <http://rds.posccaesar.org/ontology/lis14/ont/core/3.0> ;
+                                                     rdfs:comment "The Industrial Data Ontology is an upper ontology for industrial data, inspired by the ISO 15926-2 data model and Basic Formal Ontology." ;
+                                                     rdfs:label "Industrial Data Ontology" ;
+                                                     owl:versionInfo "4.0 Proposed DIS November 2024" .
+
+#################################################################
+#    Annotation properties
+#################################################################
+
+###  http://purl.org/dc/elements/1.1/rights
+dc:rights rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/contributor
+dcterms:contributor rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/creator
+dcterms:creator rdf:type owl:AnnotationProperty ;
+                rdfs:subPropertyOf dcterms:contributor .
+
+
+###  http://purl.org/dc/terms/description
+dcterms:description rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/issued
+dcterms:issued rdf:type owl:AnnotationProperty ;
+               rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+               rdfs:label "issued" .
+
+
+###  http://purl.org/dc/terms/license
+dcterms:license rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/modified
+dcterms:modified rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/publisher
+dcterms:publisher rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/source
+dcterms:source rdf:type owl:AnnotationProperty ;
+               rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+               rdfs:label "source" .
+
+
+###  http://purl.org/dc/terms/title
+dcterms:title rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/pav/contributedBy
+pav:contributedBy rdf:type owl:AnnotationProperty ;
+                  rdfs:isDefinedBy pav: ;
+                  rdfs:label "contributedBy" ;
+                  rdfs:subPropertyOf dcterms:contributor .
+
+
+###  http://purl.org/pav/createdBy
+pav:createdBy rdf:type owl:AnnotationProperty ;
+              rdfs:isDefinedBy pav: ;
+              rdfs:label "createdBy" ;
+              rdfs:subPropertyOf dcterms:creator .
+
+
+###  http://purl.org/pav/derivedFrom
+pav:derivedFrom rdf:type owl:AnnotationProperty ;
+                rdfs:isDefinedBy pav: ;
+                rdfs:label "derivedFrom" .
+
+
+###  http://purl.org/pav/hasEarlierVersion
+pav:hasEarlierVersion rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/pav/lastUpdateOn
+pav:lastUpdateOn rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/pav/previousVersion
+pav:previousVersion rdf:type owl:AnnotationProperty .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/mergedFrom
+lis:mergedFrom rdf:type owl:AnnotationProperty ;
+               rdfs:comment "This annotation property is used for stating that the current resource originates from one or several other resources by merging." ;
+               rdfs:label "mergedFrom" ;
+               rdfs:subPropertyOf lis:originatesFrom .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/originatesFrom
+lis:originatesFrom rdf:type owl:AnnotationProperty ;
+                   rdfs:comment "This is a super-property for associating a resource with a resource it originated from." ;
+                   rdfs:label "originatesFrom" .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/splitFrom
+lis:splitFrom rdf:type owl:AnnotationProperty ;
+              rdfs:comment "This annotation property is used for stating that the current resource originates from another resource by splitting." ;
+              rdfs:label "splitFrom" ;
+              rdfs:subPropertyOf lis:originatesFrom .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/transformedFrom
+lis:transformedFrom rdf:type owl:AnnotationProperty ;
+                    rdfs:comment "This annotation property is used for stating that the current resource originates from another resource by transformation." ;
+                    rdfs:label "transformedFrom" ;
+                    rdfs:subPropertyOf lis:originatesFrom .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#comment
+rdfs:comment rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#isDefinedBy
+rdfs:isDefinedBy rdf:type owl:AnnotationProperty ;
+                 rdfs:isDefinedBy "http://www.w3.org/2000/01/rdf-schema#" ;
+                 rdfs:label "isDefinedBy" ;
+                 rdfs:subPropertyOf rdfs:seeAlso .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#label
+rdfs:label rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#seeAlso
+rdfs:seeAlso rdf:type owl:AnnotationProperty ;
+             rdfs:isDefinedBy "http://www.w3.org/2000/01/rdf-schema#" ;
+             rdfs:label "see also" .
+
+
+###  http://www.w3.org/2004/02/skos/core#altLabel
+skos:altLabel rdf:type owl:AnnotationProperty ;
+              rdfs:comment "Alternative label for the ontology resource." ;
+              rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+              rdfs:label "altLabel" ;
+              rdfs:subPropertyOf rdfs:label .
+
+
+###  http://www.w3.org/2004/02/skos/core#definition
+skos:definition rdf:type owl:AnnotationProperty ;
+                rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+                rdfs:label "definition" ;
+                rdfs:subPropertyOf skos:note .
+
+
+###  http://www.w3.org/2004/02/skos/core#example
+skos:example rdf:type owl:AnnotationProperty ;
+             rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+             rdfs:label "example" .
+
+
+###  http://www.w3.org/2004/02/skos/core#note
+skos:note rdf:type owl:AnnotationProperty ;
+          rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+          rdfs:label "note" .
+
+
+###  http://www.w3.org/2004/02/skos/core#prefLabel
+skos:prefLabel rdf:type owl:AnnotationProperty ;
+               rdfs:comment "Preferred label for the ontology resource." ;
+               rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+               rdfs:label "prefLabel" ;
+               rdfs:subPropertyOf rdfs:label .
+
+
+###  http://www.w3.org/2004/02/skos/core#scopeNote
+skos:scopeNote rdf:type owl:AnnotationProperty ;
+               rdfs:comment "Note to clarify meaning or use of an ontology resource." ;
+               rdfs:isDefinedBy "http://www.w3.org/2004/02/skos/core" ;
+               rdfs:label "scopeNote" .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/adaptedFrom
+iof-av:adaptedFrom rdf:type owl:AnnotationProperty ;
+                   rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                   rdfs:label "adaptedFrom" ;
+                   rdfs:subPropertyOf dcterms:source .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/directSource
+iof-av:directSource rdf:type owl:AnnotationProperty ;
+                    rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                    rdfs:label "directSource" ;
+                    rdfs:subPropertyOf dcterms:source .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/explanatoryNote
+iof-av:explanatoryNote rdf:type owl:AnnotationProperty ;
+                       rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                       rdfs:label "explanatoryNote" .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/firstOrderLogicDefinition
+iof-av:firstOrderLogicDefinition rdf:type owl:AnnotationProperty ;
+                                 rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                                 rdfs:label "firstOrderLogicDefinition" ;
+                                 rdfs:subPropertyOf skos:definition .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/isPrimitive
+iof-av:isPrimitive rdf:type owl:AnnotationProperty ;
+                   rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                   rdfs:label "isPrimitive" .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/naturalLanguageDefinition
+iof-av:naturalLanguageDefinition rdf:type owl:AnnotationProperty ;
+                                 rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                                 rdfs:label "naturalLanguageDefinition" ;
+                                 rdfs:subPropertyOf skos:definition .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/primitiveRationale
+iof-av:primitiveRationale rdf:type owl:AnnotationProperty ;
+                          rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                          rdfs:label "primitiveRationale" ;
+                          rdfs:subPropertyOf skos:note .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/semiFormalNaturalLanguageAxiom
+iof-av:semiFormalNaturalLanguageAxiom rdf:type owl:AnnotationProperty ;
+                                      rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                                      rdfs:label "semiFormalNaturalLanguageAxiom" ;
+                                      rdfs:subPropertyOf skos:note .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/semiFormalNaturalLanguageDefinition
+iof-av:semiFormalNaturalLanguageDefinition rdf:type owl:AnnotationProperty ;
+                                           rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                                           rdfs:label "semiFormalNaturalLanguageDefinition" ;
+                                           rdfs:subPropertyOf skos:definition .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/synonym
+iof-av:synonym rdf:type owl:AnnotationProperty ;
+               rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+               rdfs:label "synonym" ;
+               rdfs:subPropertyOf skos:altLabel .
+
+
+###  https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/usageNote
+iof-av:usageNote rdf:type owl:AnnotationProperty ;
+                 rdfs:isDefinedBy "https://spec.industrialontologies.org/ontology/core/meta/AnnotationVocabulary/" ;
+                 rdfs:label "usageNote" .
+
+
+#################################################################
+#    Datatypes
+#################################################################
+
+###  http://www.w3.org/2001/XMLSchema#boolean
+xsd:boolean rdf:type rdfs:Datatype .
+
+
+###  http://www.w3.org/2001/XMLSchema#date
+xsd:date rdf:type rdfs:Datatype .
+
+
+###  http://www.w3.org/2001/XMLSchema#dateTime
+xsd:dateTime rdf:type rdfs:Datatype .
+
+
+#################################################################
+#    Object Properties
+#################################################################
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/activeParticipantIn
+lis:activeParticipantIn rdf:type owl:ObjectProperty ;
+                        rdfs:subPropertyOf lis:participantIn ;
+                        owl:inverseOf lis:hasActiveParticipant ;
+                        rdfs:label "activeParticipantIn" ;
+                        rdfs:seeAlso lis:hasActiveParticipant ;
+                        iof-av:isPrimitive "false"^^xsd:boolean ;
+                        iof-av:usageNote "For annotations, see the inverse relation 'has active participant'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/activityBoundOf
+lis:activityBoundOf rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:activityPartOf ;
+                    owl:inverseOf lis:hasActivityBound ;
+                    rdfs:label "activityBoundOf" ;
+                    rdfs:seeAlso lis:hasActivityBound ;
+                    iof-av:isPrimitive "false"^^xsd:boolean ;
+                    iof-av:usageNote "For annotations, see the inverse relation 'has activity bound'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/activityPartOf
+lis:activityPartOf rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:temporalPartOf ;
+                   owl:inverseOf lis:hasActivityPart ;
+                   rdfs:label "activityPartOf" ;
+                   rdfs:seeAlso lis:hasActivityPart ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:usageNote "For annotations, see the inverse relation 'has activity part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/activityProfileOf
+lis:activityProfileOf rdf:type owl:ObjectProperty ;
+                      rdfs:subPropertyOf lis:activityPartOf ;
+                      owl:inverseOf lis:hasActivityProfile ;
+                      rdfs:label "activityProfileOf" ;
+                      rdfs:seeAlso lis:hasActivityProfile ;
+                      iof-av:isPrimitive "false"^^xsd:boolean ;
+                      iof-av:usageNote "For annotations, see the inverse relation 'has activity profile'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/after
+lis:after rdf:type owl:ObjectProperty ;
+          rdfs:subPropertyOf lis:occursRelativeTo ;
+          owl:inverseOf lis:before ;
+          rdfs:comment "Use this relation to state that one activity occurs after another." ;
+          rdfs:label "after" ;
+          rdfs:seeAlso obo:BFO_0000062 ,
+                       lis:before ,
+                       "ISO 15926-2:2003 'class_of_temporal_sequence'" ;
+          iof-av:isPrimitive "false"^^xsd:boolean ;
+          iof-av:usageNote "For annotations, see the inverse relation 'before'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:after ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000062 ;
+   rdfs:comment "BFO_0000062 is 'preceded by' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/arrangedPartOf
+lis:arrangedPartOf rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:partOf ;
+                   owl:inverseOf lis:hasArrangedPart ;
+                   rdfs:label "arrangedPartOf" ;
+                   rdfs:seeAlso lis:hasArrangedPart ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:usageNote "For annotations, see the inverse relation 'has arranged part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/assembledPartOf
+lis:assembledPartOf rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:arrangedPartOf ;
+                    owl:inverseOf lis:hasAssembledPart ;
+                    rdfs:label "assembledPartOf" ;
+                    rdfs:seeAlso lis:hasAssembledPart ;
+                    iof-av:isPrimitive "false"^^xsd:boolean ;
+                    iof-av:usageNote "For annotations, see the inverse relation 'has assembled part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/before
+lis:before rdf:type owl:ObjectProperty ;
+           rdfs:subPropertyOf lis:occursRelativeTo ;
+           rdfs:label "before" ;
+           rdfs:seeAlso obo:BFO_0000063 ,
+                        lis:after ,
+                        "ISO 15926-2:2003 'class_of_temporal_sequence'" ;
+           skos:example "The cooling stage takes place before separation." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "If x is 'before' y, then x ends no later than the start of y." ;
+           iof-av:primitiveRationale "The temporal vocabulary is primitive." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:before ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000063 ;
+   rdfs:comment "BFO_0000063 is 'precedes' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/begins
+lis:begins rdf:type owl:ObjectProperty ;
+           rdfs:subPropertyOf lis:activityBoundOf ;
+           owl:inverseOf lis:hasBeginning ;
+           rdfs:label "begins" ;
+           rdfs:seeAlso lis:hasBeginning ;
+           iof-av:isPrimitive "false"^^xsd:boolean ;
+           iof-av:usageNote "For annotations, see the inverse relation 'has beginning'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/capabilityOf
+lis:capabilityOf rdf:type owl:ObjectProperty ;
+                 rdfs:subPropertyOf lis:dispositionOf ;
+                 owl:inverseOf lis:hasCapability ;
+                 rdfs:label "capabilityOf" ;
+                 rdfs:seeAlso lis:hasCapability ;
+                 iof-av:isPrimitive "false"^^xsd:boolean ;
+                 iof-av:usageNote "For annotations, see the inverse relation 'has capability'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/concretizedBy
+lis:concretizedBy rdf:type owl:ObjectProperty ;
+                  owl:inverseOf lis:concretizes ;
+                  rdfs:label "concretizedBy" ;
+                  rdfs:seeAlso lis:concretizes ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'concretizes'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/concretizes
+lis:concretizes rdf:type owl:ObjectProperty ;
+                rdfs:domain [ rdf:type owl:Class ;
+                              owl:unionOf ( lis:Activity
+                                            lis:PhysicalObject
+                                          )
+                            ] ;
+                rdfs:range lis:InformationObject ;
+                rdfs:label "concretizes" ;
+                rdfs:seeAlso obo:BFO_0000059 ,
+                             obo:BFO_0000164 ,
+                             obo:RO_0000059 ,
+                             lis:concretizedBy ;
+                skos:example "A report is produced as paper copies, a spreadsheet document is shown on a computer screen, a plan is carried out, a device operates according to a functional specification, a software program is executed." ;
+                skos:scopeNote "Inspired by BFO's \"concretizes\". The constraints on 'concretizes' in IDO closely matches that employed in BFO-ISO (obo:BFO_0000059), and not the RO or the IAO (obo:RO_0000059)." ;
+                iof-av:isPrimitive "true"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "If x 'concretizes' y, then y is an 'information object', and x is a 'physical object' copy of y, or an 'activity' performance of y." ;
+                iof-av:primitiveRationale "A comprehensive definition of what it means to be a copy, or manifest a pattern, is beyond the scope of IDO. The definition given here is clearly incomplete." ;
+                iof-av:usageNote "There are two main, and very different, uses of 'concretizes' for an information object y.  (1) The information object is made concrete in printed or electronic copies. Each copy will have patterns of ink or configurations of electrons that map to y: a quality of appropriate similarity.  (2) The information object is made concrete by a performance according to the specification given by y." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:concretizes ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000059 ;
+   rdfs:comment "BFO_0000059 is 'concretizes at some time', from BFO-ISO"
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:concretizes ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000164 ;
+   rdfs:comment "BFO_0000164 is 'concretizes at all times', from BFO-ISO"
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:concretizes ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000059 ;
+   rdfs:comment "RO_0000059 is 'concretizes', from the Relations Ontology; also used in the Information Artifact Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/connectedTo
+lis:connectedTo rdf:type owl:ObjectProperty ,
+                         owl:SymmetricProperty ;
+                rdfs:domain lis:PhysicalObject ;
+                rdfs:range lis:PhysicalObject ;
+                rdfs:label "connectedTo" ;
+                rdfs:seeAlso obo:RO_0002170 ,
+                             "ISO 15926-2:2003 'connection_of_individual'" ;
+                skos:example "A three-pin electrical plug is connected to a three-pin socket, two flanges are connected with bolts and a gasket, a gas compressor is indirectly connected to a gearbox assembly (via a coupling)." ;
+                iof-av:isPrimitive "true"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "If x is 'connected to' y, then there is a physical connection between x and y." ;
+                iof-av:primitiveRationale "The notion of being connected to is primitive; an account would require an account of connection activities and constancy of material objects between the connected individuals." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:connectedTo ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0002170 ;
+   rdfs:comment "RO_0002170 is 'connected to', in the Relations Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/containedBy
+lis:containedBy rdf:type owl:ObjectProperty ;
+                rdfs:subPropertyOf lis:locatedRelativeTo ;
+                owl:inverseOf lis:contains ;
+                rdfs:label "containedBy" ;
+                rdfs:seeAlso lis:contains ;
+                iof-av:isPrimitive "false"^^xsd:boolean ;
+                iof-av:usageNote "For annotations, see the inverse relation 'contains'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/contains
+lis:contains rdf:type owl:ObjectProperty ;
+             rdfs:subPropertyOf lis:locatedRelativeTo ;
+             rdfs:domain lis:PhysicalObject ;
+             rdfs:range lis:PhysicalObject ;
+             rdfs:label "contains" ;
+             rdfs:seeAlso obo:BFO_0000124 ,
+                          obo:RO_0001015 ,
+                          lis:containedBy ,
+                          "ISO 15926-2:2003 'containment_of_individual'" ;
+             skos:example "An instrument is contained in an enclosure, an pump contains an impeller, a device is contained by a volume of inert gas, a pipeline inspection gauge (pig) is located inside a pipeline." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "If x 'contains' y, then x and y are 'physical object's, and y is located entirely within x." ;
+             iof-av:primitiveRationale "The notion of being \"located within\" is not fully defined here, leaving open whether this is understood in terms of boundaries of physical objects or a fixed frame of reference." ;
+             iof-av:usageNote "This relation is intended to be used where an object x is located inside another object y, but x not is not a part of y (as would be the case, e.g., for an assembly)." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:contains ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000124 ;
+   rdfs:comment "BFO_0000124 is 'location of at some time' in BFO-ISO."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:contains ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0001015 ;
+   rdfs:comment "RO_0001015 is 'location of' in the Relations Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/contentPartOf
+lis:contentPartOf rdf:type owl:ObjectProperty ;
+                  rdfs:subPropertyOf lis:partOf ;
+                  owl:inverseOf lis:hasContentPart ;
+                  rdfs:label "contentPartOf" ;
+                  rdfs:seeAlso lis:hasContentPart ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'has content part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/createdBy
+lis:createdBy rdf:type owl:ObjectProperty ;
+              rdfs:subPropertyOf lis:passiveParticipantIn ;
+              owl:inverseOf lis:creates ;
+              rdfs:label "createdBy" ;
+              rdfs:seeAlso lis:creates ;
+              iof-av:isPrimitive "false"^^xsd:boolean ;
+              iof-av:usageNote "For annotations, see the inverse relation 'creates'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/creates
+lis:creates rdf:type owl:ObjectProperty ;
+            rdfs:subPropertyOf lis:hasPassiveParticipant ;
+            rdfs:comment "Use this relation to express that an activity brings an object into being." ;
+            rdfs:label "creates" ;
+            rdfs:seeAlso lis:createdBy ,
+                         "ISO 15926-2:2003 'class_of_cause_of_beginning_of_class_of_individual'" ;
+            skos:example "A manufacturing activity produces a car, a welding activity produces a piping spool, a measurement activity produces a performance log." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "if x 'creates' y, then x is an 'activity', y is an 'object', and x brings y into being." ;
+            iof-av:primitiveRationale "A comprehensive definition of the notion of creation is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:creates ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'class_of_cause_of_beginning_of_class_of_individual'" ;
+   rdfs:comment "ISO 15926-2:2003, 5.2.10.2 provides an example as, \"A car manufacturing activity causes the beginning of a car\"."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/datumUOM
+lis:datumUOM rdf:type owl:ObjectProperty ;
+             rdfs:subPropertyOf lis:hasContentPart ;
+             rdf:type owl:FunctionalProperty ;
+             rdfs:domain lis:QualityDatum ;
+             rdfs:range lis:UnitOfMeasure ;
+             rdfs:label "datumUOM" ;
+             rdfs:seeAlso obo:IAO_0000039 ,
+                          obo:RO_0002536 ,
+                          qudt:unit ,
+                          lis:uomOfDatum ,
+                          om:hasUnit ,
+                          "https://schema.org/unitCode" ;
+             skos:example "The measured datum \"55 degrees Celsius\" has Celsius as unit of measure." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "If x 'has datum uom' y, then x is a 'quality datum' for which any 'datum value' is interpreted by the 'unit of measure' y." ;
+             iof-av:primitiveRationale "Interpretation in terms of a unit is not defined." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumUOM ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000039 ;
+   rdfs:comment "IAO_0000039 is 'has measurement unit label' in the Information Artifact Ontology."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumUOM ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0002536 ;
+   rdfs:comment "RO_0002536 is 'measurement property has unit', an annotation property in the Relations Ontology."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumUOM ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "https://schema.org/unitCode" ;
+   rdfs:comment "unitCode is a property in the Schema.org vocabulary."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/directlyConnectedTo
+lis:directlyConnectedTo rdf:type owl:ObjectProperty ;
+                        rdfs:subPropertyOf lis:connectedTo ;
+                        rdf:type owl:SymmetricProperty ;
+                        rdfs:label "directlyConnectedTo" ;
+                        rdfs:seeAlso "ISO 15926-2:2003 'direct_connection'" ;
+                        skos:example "An electrical plug is connected to a socket, a tag plate is welded to a pressure vessel." ;
+                        iof-av:isPrimitive "true"^^xsd:boolean ;
+                        iof-av:naturalLanguageDefinition "If x is 'directly connected to' y, then x is 'connected to' y, and any material present between x and y directly serves to maintain the connection." ;
+                        iof-av:primitiveRationale "The notion of maintaining connection is not defined; what counts as a direct connection is hard to define precisely." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/dispositionOf
+lis:dispositionOf rdf:type owl:ObjectProperty ;
+                  rdfs:subPropertyOf lis:potentialOf ;
+                  owl:inverseOf lis:hasDisposition ;
+                  rdfs:label "dispositionOf" ;
+                  rdfs:seeAlso lis:hasDisposition ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'has disposition'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/ends
+lis:ends rdf:type owl:ObjectProperty ;
+         rdfs:subPropertyOf lis:activityBoundOf ;
+         owl:inverseOf lis:hasEnding ;
+         rdfs:label "ends" ;
+         rdfs:seeAlso lis:hasEnding ;
+         iof-av:isPrimitive "false"^^xsd:boolean ;
+         iof-av:usageNote "For annotations, see the inverse relation 'has ending'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/featureOf
+lis:featureOf rdf:type owl:ObjectProperty ;
+              rdfs:subPropertyOf lis:arrangedPartOf ;
+              owl:inverseOf lis:hasFeature ;
+              rdfs:label "featureOf" ;
+              rdfs:seeAlso lis:hasFeature ;
+              iof-av:isPrimitive "false"^^xsd:boolean ;
+              iof-av:usageNote "For annotations, see the inverse relation 'has feature'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/functionOf
+lis:functionOf rdf:type owl:ObjectProperty ;
+               rdfs:subPropertyOf lis:capabilityOf ;
+               owl:inverseOf lis:hasFunction ;
+               rdfs:label "functionOf" ;
+               rdfs:seeAlso lis:hasFunction ;
+               iof-av:isPrimitive "false"^^xsd:boolean ;
+               iof-av:usageNote "For annotations, see the inverse relation 'has function'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/functionalPartOf
+lis:functionalPartOf rdf:type owl:ObjectProperty ;
+                     rdfs:subPropertyOf lis:partOf ;
+                     owl:inverseOf lis:hasFunctionalPart ;
+                     rdfs:label "functionalPartOf" ;
+                     rdfs:seeAlso lis:hasFunctionalPart ;
+                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                     iof-av:usageNote "For annotations, see the inverse relation 'has functional part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasActiveParticipant
+lis:hasActiveParticipant rdf:type owl:ObjectProperty ;
+                         rdfs:subPropertyOf lis:hasParticipant ;
+                         rdfs:label "hasActiveParticipant" ;
+                         rdfs:seeAlso lis:activeParticipantIn ;
+                         skos:example "A hammer is the tool in a nail-driving activity, a pressure transmitter outputs data in a monitoring activity, a maintenance engineer replaces an instrument in a repair activity, a light sensor controls the level of illumination." ;
+                         iof-av:isPrimitive "true"^^xsd:boolean ;
+                         iof-av:naturalLanguageDefinition "If x 'has active participant' y, then x is an active participant in y." ;
+                         iof-av:primitiveRationale "The distinction between active and participation participation is primitive." ;
+                         iof-av:usageNote "With OWL property chains, the right kind of participation can be secured for activities that count as realizations of 'potential' individuals. As in, a pump's primary function is realized in pumping activities, but only provided the pump is actually doing the pumping, acting as an \"agent\" or \"subject\"." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasActivityBound
+lis:hasActivityBound rdf:type owl:ObjectProperty ;
+                     rdfs:subPropertyOf lis:hasActivityPart ;
+                     rdfs:range lis:Event ;
+                     rdfs:label "hasActivityBound" ;
+                     rdfs:seeAlso lis:activityBoundOf ,
+                                  "ISO 15926-2:2003 'temporal_bounding'" ;
+                     skos:example "The moment an electrical connection is broken, the time that a fluid reaches a set temperature." ;
+                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "If x 'has activity bound' y, then x 'has activity part' y, and y is an 'event'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasActivityPart
+lis:hasActivityPart rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:hasTemporalPart ;
+                    rdfs:domain lis:Activity ;
+                    rdfs:range lis:Activity ;
+                    rdfs:label "hasActivityPart" ;
+                    rdfs:seeAlso obo:BFO_0000117 ,
+                                 lis:activityPartOf ,
+                                 "ISO 15926-2:2003 'temporal_whole_part'" ;
+                    skos:example "The startup period of a chemical process, the inspection part of a maintenance activity, the moment a software program terminates execution." ;
+                    skos:scopeNote "Parts of activities may be determined by a range of criteria, including temporal restrictions (to sub-periods), spatial restrictions (parts that occupy sub-volumes of space), by the engagement of participants (temporal or spatial parts where one or more participants are active), and \"selective abstraction\" to profiles (parts determined by that which affects variation in selected qualities)." ;
+                    iof-av:isPrimitive "false"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "If x 'has activity part' y, then x and y are activities, and x 'has arranged part' y." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasActivityPart ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000117 ;
+   rdfs:comment "BFO_0000117 is 'has occurrent part' in BFO-ISO. This relation has 'occurrent' as domain and range, where the IDO 'has activity part' is restricted to just 'activity'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasActivityProfile
+lis:hasActivityProfile rdf:type owl:ObjectProperty ;
+                       rdfs:subPropertyOf lis:hasActivityPart ;
+                       rdfs:range lis:ActivityProfile ;
+                       rdfs:comment "BFO_0000133 is 'process profile of', in the Molecular Process Ontology and other BFO-based ontologies." ;
+                       rdfs:label "hasActivityProfile" ;
+                       rdfs:seeAlso obo:BFO_0000133 ,
+                                    lis:activityProfileOf ;
+                       skos:example "A pipeline transport activity has a \"profile\" part which is the variation in fluid pressure." ;
+                       iof-av:isPrimitive "true"^^xsd:boolean ;
+                       iof-av:naturalLanguageDefinition "If x 'has activity profile' y, then x 'has activity part' y, and y is determined by selective abstraction to that part of x that effects variation in some quality of a participant in x." ;
+                       iof-av:primitiveRationale "The notion of selective abstraction is not defined." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasArrangedPart
+lis:hasArrangedPart rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:hasPart ;
+                    rdfs:domain lis:PhysicalObject ;
+                    rdfs:range lis:PhysicalObject ;
+                    rdfs:label "hasArrangedPart" ;
+                    rdfs:seeAlso obo:BFO_0000024 ,
+                                 lis:arrangedPartOf ,
+                                 "ISO 15926-2:2003 'arrangement_of_individual'" ;
+                    skos:example "The upper half of a pressure vessel, the mid-section of a bridge. The buildings on a campus, arranged as parts." ;
+                    iof-av:isPrimitive "true"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "If x 'has arranged part' y, then y is a part of x with a boundary determined in relation to other parts of x." ;
+                    iof-av:primitiveRationale "The notion of determinate boundary is taken as primitive. For further details, refer to the explanation  of \"fiat part\" in the BFO documentation." ;
+                    iof-av:usageNote "The parts do not have to be connected to each other.  They may be separable or non-separable." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasArrangedPart ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000024 ;
+   rdfs:comment "BFO_0000024 is 'fiat object part' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasAssembledPart
+lis:hasAssembledPart rdf:type owl:ObjectProperty ;
+                     rdfs:subPropertyOf lis:hasArrangedPart ;
+                     rdfs:label "hasAssembledPart" ;
+                     rdfs:seeAlso lis:assembledPartOf ,
+                                  "ISO 15926-2:2003 'assembly_of_individual'" ;
+                     skos:example "A pipe bend welded into a piping spool, the protective sheath on an electrical cable, a door-handle in a door, a storey of a building." ;
+                     iof-av:isPrimitive "true"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "If x 'has assembled part' y, then y is a connected 'arranged part' of x." ;
+                     iof-av:primitiveRationale "The notion of connection is primitive." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasBeginning
+lis:hasBeginning rdf:type owl:ObjectProperty ;
+                 rdfs:subPropertyOf lis:hasActivityBound ;
+                 rdfs:label "hasBeginning" ;
+                 rdfs:seeAlso obo:BFO_0000222 ,
+                              lis:begins ,
+                              "ISO 15926-2:2003 'beginning'" ;
+                 skos:example "The event that light is switched on, the start of filling a tank." ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "If x 'has beginning' y, then y is an 'event' which 'has temporal extent' some 'instant' which is the first instant of the temporal extent of x." ;
+                 iof-av:primitiveRationale "The notion of first instant is not defined." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasBeginning ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000222 ;
+   rdfs:comment "BFO_0000222 is 'has first instant' in BFO-ISO, defined for 'temporal region' (differently from 'has beginning' in IDO, defined for 'activity')."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasCapability
+lis:hasCapability rdf:type owl:ObjectProperty ;
+                  rdfs:subPropertyOf lis:hasDisposition ;
+                  rdfs:range lis:Capability ;
+                  rdfs:label "hasCapability" ;
+                  rdfs:seeAlso lis:capabilityOf ;
+                  skos:example "A pressure sensor has the capability of being a level sensor, a wall has the capability of noise insulation." ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:naturalLanguageDefinition "x 'has capability' y if and only if x 'has potential' y, and y is a 'capability'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasContentPart
+lis:hasContentPart rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:hasPart ;
+                   rdfs:domain lis:InformationObject ;
+                   rdfs:range lis:InformationObject ;
+                   rdfs:comment "Introduced February 2024 as superproperty for parts of information objects." ;
+                   rdfs:label "hasContentPart" ;
+                   rdfs:seeAlso lis:contentPartOf ;
+                   skos:example "A part of a document such as a chapter, section or figure" ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "If x 'has content part' y, then x and y are information objects, and x 'has part' y." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasDisposition
+lis:hasDisposition rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:hasPotential ;
+                   rdfs:range lis:Disposition ;
+                   rdfs:label "hasDisposition" ;
+                   rdfs:seeAlso obo:BFO_0000197 ,
+                                obo:RO_0000091 ,
+                                lis:dispositionOf ;
+                   skos:example "A bolted joint has a disposition to come loose, a motor has a disposition to vibrate, a steel bar has a disposition to rust, a vessel has a disposition to leak, a volatile gas has a disposition to flow upwards." ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "x 'has disposition' y if and only if x 'has potential' y, and y is a 'disposition'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasDisposition ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000197 ;
+   rdfs:comment "BFO_0000197 is 'inheres in'"
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasDisposition ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000091 ;
+   rdfs:comment "RO_0000091 is 'has disposition'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasEnding
+lis:hasEnding rdf:type owl:ObjectProperty ;
+              rdfs:subPropertyOf lis:hasActivityBound ;
+              rdfs:label "hasEnding" ;
+              rdfs:seeAlso obo:BFO_0000224 ,
+                           lis:ends ,
+                           "ISO 15926-2:2003 'ending'" ;
+              skos:example "The event that light is switched off, the end of filling a tank." ;
+              iof-av:isPrimitive "true"^^xsd:boolean ;
+              iof-av:naturalLanguageDefinition "If x 'has ending' y, then y is an 'event' which 'has temporal extent' some 'instant' which is the last instant of the temporal extent of x." ;
+              iof-av:primitiveRationale "The notion of last instant is not defined." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasEnding ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000224 ;
+   rdfs:comment "BFO_0000224 is 'has last instant' in BFO-ISO, defined for 'temporal region' (differently from 'has ending' in IDO, defined for 'activity')."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasFeature
+lis:hasFeature rdf:type owl:ObjectProperty ;
+               rdfs:subPropertyOf lis:hasArrangedPart ;
+               rdfs:range lis:Feature ;
+               rdfs:label "hasFeature" ;
+               rdfs:seeAlso lis:featureOf ,
+                            "ISO 15926-2:2003 'feature_whole_part'" ;
+               skos:example "A flange face, a corrosion protected surface, the contact surface of an electrical plug." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "If x 'has feature' y, then y is a non-separable, contiguous 'arranged part' of x." ;
+               iof-av:primitiveRationale "The notion of non-separable and contiguous part is primitive." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasFeature ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'feature_whole_part'" ;
+   rdfs:comment "The definition is lifted directly from 'feature whole part' of ISO 15926-2:2003."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasFunction
+lis:hasFunction rdf:type owl:ObjectProperty ;
+                rdfs:subPropertyOf lis:hasCapability ;
+                rdfs:range lis:Function ;
+                rdfs:label "hasFunction" ;
+                rdfs:seeAlso obo:BFO_0000197 ,
+                             obo:RO_0000085 ,
+                             lis:functionOf ,
+                             "ISO 15926-2:2003 'functional_physical_object'" ;
+                skos:example "A pump has the function of moving fluids, a door has the function of an explosion barrier." ;
+                iof-av:isPrimitive "false"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "x 'has function' y if and only if x 'has potential' y, and y is a 'function'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasFunction ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000085 ;
+   rdfs:comment "RO_0000085 is 'has function'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasFunctionalPart
+lis:hasFunctionalPart rdf:type owl:ObjectProperty ;
+                      rdfs:subPropertyOf lis:hasPart ;
+                      rdfs:domain lis:System ;
+                      rdfs:range lis:FunctionalObject ;
+                      rdfs:label "hasFunctionalPart" ;
+                      rdfs:seeAlso lis:partOf ;
+                      skos:example "A separation system has a cooling system as functional part." ;
+                      iof-av:isPrimitive "true"^^xsd:boolean ;
+                      iof-av:naturalLanguageDefinition "If x 'has functional part' y, then x is a 'system' of which y is a part, and y has one or more functions that contribute to the function of x." ;
+                      iof-av:primitiveRationale "The notion of \"contributing function\" is not fully accounted for in IDO." ;
+                      iof-av:usageNote "'has functional part' is used to represent the functional break-down of a system. Where x is a functional part of a system y, the realisation of one or more functions of x contributes to the performance of y." ,
+                                       "'has functional part' provides a compact way of modeling that is not expressive enough to model multiple functional breakdowns. Note that modeling 'has part' directly between Function/Disposition instances gives a higher flexibility and precision, in particular when objects have multiple functions or dispositions." ,
+                                       "If 'has part' relationship is modeled between Function/Disposition instances, 'has functional part' can be inferred between the objects that are bearers of the respective functions/dispositions if the corresponding rules are implemented." ,
+                                       "Note that, for physical objects, 'has functional part' is a specialization of 'has arranged part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasInterest
+lis:hasInterest rdf:type owl:ObjectProperty ;
+                rdfs:subPropertyOf lis:hasPotential ;
+                rdfs:domain [ rdf:type owl:Class ;
+                              owl:unionOf ( lis:Organism
+                                            lis:Organization
+                                          )
+                            ] ;
+                rdfs:comment "Note, the use of \"potential\" in the definition does not imply \"not actual\", only \"not necessarily actual\"." ;
+                rdfs:label "hasInterest" ;
+                rdfs:seeAlso obo:IAO_0000033 ,
+                             lis:interestOf ,
+                             "ISO 15926-2:2003 'lifecycle_stage'" ;
+                skos:example "An intention to start a process, a plan to modify a plant, an approval of a certification." ;
+                iof-av:isPrimitive "false"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "x 'has interest' y if and only if x is an 'organization' or 'organism', x 'has potential' y, and y is an 'interest'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasInterest ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000033 ;
+   rdfs:comment "IAO_0000033 is 'directive information entity' in the Information Artifact Ontology. See, e.g., subtypes 'action specification', 'objective specification', 'plan specification'; and specifically, 'software' as a subtype of 'plan specification'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasInterest ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'lifecycle_stage'" ;
+   rdfs:comment "Derived from the relation 'lifecycle_stage' of ISO 15926-2:2003, which has the attribute pair 'interest'/'interested'; 'class_of_lifecycle_stage' provides examples of specialisations as, \"EXAMPLE Planned, required, expected, and proposed can be represented by instances of [class_of_lifecycle_stage].\" Following this, 'interest of' is a superproperty suitable for various intentional relationships, such as planning, approving, or ordering. With IDO, we restrict interest to 'potential' entities, while in ISO 15926-2:2003 the domain and range are both unrestricted."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasMaterialPart
+lis:hasMaterialPart rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:hasPart ;
+                    rdfs:domain lis:PhysicalObject ;
+                    rdfs:range lis:Compound ;
+                    rdfs:label "hasMaterialPart" ;
+                    rdfs:seeAlso lis:materialPartOf ;
+                    skos:example "A laptop cover has aluminium and plastic material parts." ;
+                    iof-av:isPrimitive "true"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "If x 'has material part' y, then x is a 'physical object', and y is a maximal part of x that has a certain 'material composition quality'." ;
+                    iof-av:primitiveRationale "The reference in the definition to some 'material composition quality' possessed by the part can not be captured in OWL." ;
+                    iof-av:usageNote "An RDL can include parthood relations that identify parts by their materials, supporting recyclability efforts and similar use cases.  This relation is suitable as the top node of a taxonomy of such relations. These include \"reinforced with material\"  or \"has a matrix with material\" which cannot be aligned with  lis:hasAssembledPart or lis:hasArrangedPart." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasPart
+lis:hasPart rdf:type owl:ObjectProperty ;
+            rdfs:label "hasPart" ;
+            rdfs:seeAlso obo:BFO_0000051 ,
+                         obo:BFO_0000117 ,
+                         obo:BFO_0000178 ,
+                         lis:partOf ,
+                         dol:part ,
+                         ssn:hasSubSystem ,
+                         "ISO 15926-2:2003 'composition_of_individual'" ;
+            skos:example "A system has functional parts, a process has stages, a plant is partitioned into areas." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "If x 'has part' y, then y is a part of x." ;
+            iof-av:primitiveRationale "Parthood is a primitive for ontologies." ;
+            iof-av:usageNote "The relationship x 'has part' y implies that y  is physically or conceptually associated with x, contributing to its  structure, functionality, or characteristics." ,
+                             "Where possible, the sub-properties should be used. This property can be used for arbitrary aggregates." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasPart ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000051 ;
+   rdfs:comment "BFO_0000051 is 'has part', in the Information Artifact Ontology and in the Relations Ontology (in the latter, BFO_0000051 appears as a subrelation of 'overlaps')."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasPart ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000117 ;
+   rdfs:comment "BFO_0000117 is 'has occurrent part' in BFO-ISO."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasPart ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000178 ;
+   rdfs:comment "BFO_0000178 is 'has continuant part of at some time' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasParticipant
+lis:hasParticipant rdf:type owl:ObjectProperty ;
+                   rdfs:domain lis:Activity ;
+                   rdfs:range lis:Object ;
+                   owl:propertyChainAxiom ( lis:hasActivityPart
+                                            lis:hasParticipant
+                                          ) ,
+                                          ( lis:profileOfQuality
+                                            lis:qualityOf
+                                          ) ,
+                                          ( lis:realizes
+                                            lis:potentialOf
+                                          ) ;
+                   rdfs:comment "A property chain axiom secures that a participant in part of an activity participates in the activity as a whole." ;
+                   rdfs:label "hasParticipant" ;
+                   rdfs:seeAlso obo:BFO_0000057 ,
+                                obo:RO_0000057 ,
+                                lis:participatesIn ,
+                                "ISO 15926-2:2003 'participation'" ;
+                   skos:example "A pump participates in (a) pumping (activity), an electric transformer participates in voltage conversion, a stream of water participates in dilution, a bolt participates in a connection." ;
+                   iof-av:isPrimitive "true"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "If x 'has participant' y, then x is an 'activity', and y is an 'object' that participates in x." ;
+                   iof-av:primitiveRationale "The notion of participation is primitive." ;
+                   iof-av:usageNote "A property chain axiom secures that when a realizable (a 'disposition' or 'role') is 'realized in' an activity, the activity has the bearer as a participant." ,
+                                    "A property chain axiom secures that when an activity has a 'profile quantity datum', the bearer of the quantity is a participant in the activity." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasParticipant ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000057 ;
+   rdfs:comment "BFO_0000057 is 'has participant at some time'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasParticipant ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000057 ;
+   rdfs:comment "RO_0000057 is 'has participant'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasParticipantQualityQuantifiedAs
+lis:hasParticipantQualityQuantifiedAs rdf:type owl:ObjectProperty ;
+                                      rdfs:subPropertyOf lis:representedIn ;
+                                      rdfs:domain lis:Activity ;
+                                      rdfs:range lis:QualityDatum ;
+                                      rdfs:label "hasParticipantQualityQuantifiedAs" ;
+                                      rdfs:seeAlso lis:quantifiesQualityOfParticipantIn ;
+                                      skos:example "Pressure of a stream during a pumping activity, the voltage provided to a motor during a test run." ;
+                                      iof-av:isPrimitive "true"^^xsd:boolean ;
+                                      iof-av:naturalLanguageDefinition "If x 'has participant quality quantified as' y, then x is an 'activity', y is a 'quality datum', and at a time within (inclusive) the duration of x, y 'quantifies quality' a 'quality' of a participant in x." ;
+                                      iof-av:primitiveRationale "The notion of \"during\" used here goes beyond OWL expressivity." ;
+                                      iof-av:usageNote "This relation is suitable as the top node in a taxonomy of relations that assign aggregate datums to activities." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasPassiveParticipant
+lis:hasPassiveParticipant rdf:type owl:ObjectProperty ;
+                          rdfs:subPropertyOf lis:hasParticipant ;
+                          rdfs:label "hasPassiveParticipant" ;
+                          rdfs:seeAlso lis:passiveParticipantIn ;
+                          skos:example "A metal plate is perforated in a drilling activity, a volume of liquid is heated in a heat transmission activity, a loading ramp is the location of an offloading activity, a fluid medium is pumped, a piece of metal is shaped, a stream of data is filtered." ;
+                          iof-av:isPrimitive "true"^^xsd:boolean ;
+                          iof-av:naturalLanguageDefinition "if x 'has passive participant' y, then x is a passive participant in y." ;
+                          iof-av:primitiveRationale "The distinction between active and participation participation is primitive." ;
+                          iof-av:usageNote "With OWL property chains, the right kind of participation can be secured for activities that count as realizations of 'potential' individuals. As in, a bolt is a passive participant in a bolt-driving activity, where its disposition to enter a threaded hole is realized (distinct from the bolt's function, which is realized in a subsequent activity of holding pieces together)." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasPhysicalQuantity
+lis:hasPhysicalQuantity rdf:type owl:ObjectProperty ;
+                        rdfs:subPropertyOf lis:hasQuality ;
+                        rdfs:domain lis:PhysicalObject ;
+                        rdfs:range lis:PhysicalQuantity ;
+                        rdfs:label "hasPhysicalQuantity" ;
+                        rdfs:seeAlso lis:physicalQuantityOf ;
+                        skos:example "A section of pipe has length, a crane has lifting power, a flange has inner diameter." ;
+                        iof-av:isPrimitive "false"^^xsd:boolean ;
+                        iof-av:naturalLanguageDefinition "x 'has physical quantity' y if and only if x 'has quality' y, and y is a 'physical quantity'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasPotential
+lis:hasPotential rdf:type owl:ObjectProperty ;
+                 rdfs:domain lis:Object ;
+                 rdfs:range lis:Potential ;
+                 rdfs:label "hasPotential" ;
+                 rdfs:seeAlso obo:BFO_0000196 ,
+                              obo:RO_0000053 ,
+                              lis:potentialOf ;
+                 skos:example "Having a role, function, obligation, or plan (intention to act)." ;
+                 skos:scopeNote "The pre-defined types of 'potential' entities in IDO are 'role', 'disposition', and 'interest'. If other kinds are needed for use case, then 'has potential' is a suitable superrelation for the corresponding bearer relations." ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "If x 'has potential' y, then x is an 'object', and y is a 'potential' that is dependent on x." ;
+                 iof-av:primitiveRationale "The relation of dependence is not defined in IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasPotential ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000196 ;
+   rdfs:comment "BFO_0000196 is 'bearer of', a more generic relation than 'has potential' in that its range is any 'specifically dependent continuant', which in IDO corresponds to 'dependent'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasPotential ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000053 ;
+   rdfs:comment "RO_0000053 is 'has characteristic', which in the Relation Ontology also has 'quality of' as a subrelation."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasPrimaryParticipant
+lis:hasPrimaryParticipant rdf:type owl:ObjectProperty ;
+                          rdfs:subPropertyOf lis:hasParticipant ;
+                          rdfs:label "hasPrimaryParticipant" ;
+                          rdfs:seeAlso lis:primaryParticipantIn ;
+                          skos:example "A pump is the performer in a pumping activity, a thermometer is the performer in a temperature measurement." ;
+                          iof-av:isPrimitive "true"^^xsd:boolean ;
+                          iof-av:naturalLanguageDefinition "If x 'has primary participant' y, then x is a realization of a disposition or role of y that is essential to the identification of x." ;
+                          iof-av:primitiveRationale "The notion of primary participant is not defined." ;
+                          iof-av:usageNote "Assume p is a pump, a an activity that realizes the function fp of p, and no subactivity x of a realizes fp (except for subactivities determined solely by restriction to a temporal sub-interval). For instance, the subactivity of the motor that drives the impeller realizes a function of the motor, but this is not by itself a realization of the function of the pump as a whole, hence the motor is not a 'primary participant'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasQuality
+lis:hasQuality rdf:type owl:ObjectProperty ;
+               rdfs:domain lis:Object ;
+               rdfs:range lis:Quality ;
+               rdfs:label "hasQuality" ;
+               rdfs:seeAlso obo:BFO_0000196 ,
+                            obo:RO_0000086 ,
+                            lis:qualityOf ;
+               skos:example "A motor has rated output power, a lightbulb has luminance, an amount of liquid has mass, a bar of metal has chemical composition, a document has readability." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "If x 'has quality' y, then x is an 'object', and y is a 'quality' that is dependent on x." ;
+               iof-av:primitiveRationale "The relation of dependence is not defined in IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasQuality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000196 ;
+   rdfs:comment "BFO_0000196 is 'bearer of', a more generic relation than 'has quality' in that its range is any 'specifically dependent continuant', which in IDO corresponds to 'dependent'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasQuality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000086 ;
+   rdfs:comment "RO_0000086 is 'has quality' in the Relations Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasQualityQuantifiedAs
+lis:hasQualityQuantifiedAs rdf:type owl:ObjectProperty ;
+                           rdfs:subPropertyOf lis:representedIn ;
+                           rdfs:domain lis:Object ;
+                           rdfs:range lis:QualityDatum ;
+                           owl:propertyChainAxiom ( lis:hasQuality
+                                                    lis:qualityQuantifiedAs
+                                                  ) ;
+                           rdfs:label "hasQualityQuantifiedAs" ;
+                           rdfs:seeAlso lis:quantifiesQualityOf ;
+                           skos:example "The GeoSPARQL object property geo:hasLength relates (spatial) objects to datums that provide length with number and unit of measure. lis:hasQualityQuantifiedAs is suitable as a superproperty in an alignment with GeoSPARQL data that includes geo:hasLength relationships." ;
+                           iof-av:isPrimitive "false"^^xsd:boolean ;
+                           iof-av:naturalLanguageDefinition "If x 'has quality quantified as' y, then x is an 'object', and y is a 'quality datum' that 'quantifies quality' a 'quality' of x." ;
+                           iof-av:usageNote "This relation is suitable as the top node in a taxonomy of \"shortcut\" relations that relate objects directly to quality datums, leaving the quality implicit." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasResident
+lis:hasResident rdf:type owl:ObjectProperty ;
+                rdfs:subPropertyOf lis:locatedRelativeTo ;
+                owl:inverseOf lis:residesIn ;
+                rdfs:label "hasResident" ;
+                rdfs:seeAlso lis:residesIn ,
+                             "ISO 15926-2:2003 'relative_location'" ;
+                iof-av:isPrimitive "false"^^xsd:boolean ;
+                iof-av:usageNote "For annotations, see the inverse relation 'resides in'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasRole
+lis:hasRole rdf:type owl:ObjectProperty ;
+            rdfs:subPropertyOf lis:hasPotential ;
+            rdfs:range lis:Role ;
+            rdfs:comment "Inspired by BFO's \"has role\" (RO_0000087)" ;
+            rdfs:label "hasRole" ;
+            rdfs:seeAlso obo:RO_0000087 ,
+                         lis:roleOf ,
+                         "ISO 15926-2:2003 'role'" ;
+            skos:example "An window has the role of a ventilation opening, a room has the role of a storage space, a gas sensor has the role of a leak detector, a person has the role of inspector." ;
+            iof-av:isPrimitive "false"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "x 'has role' y if and only if x 'has potential' y, and y is a 'role'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasSpatialExtent
+lis:hasSpatialExtent rdf:type owl:ObjectProperty ;
+                     rdfs:subPropertyOf lis:locatedRelativeTo ;
+                     rdf:type owl:FunctionalProperty ;
+                     rdfs:domain [ rdf:type owl:Class ;
+                                   owl:unionOf ( lis:PhysicalObject
+                                                 lis:Site
+                                               )
+                                 ] ;
+                     rdfs:range lis:SpatialLocation ;
+                     rdfs:label "hasSpatialExtent" ;
+                     rdfs:seeAlso obo:BFO_0000210 ,
+                                  lis:spatialExtentOf ,
+                                  dol:exact-location ;
+                     skos:example "The volume occupied by an process skid, the volume occupied by a volume of flammable gas." ;
+                     iof-av:isPrimitive "true"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "If x 'has spatial extent' y, then x is a 'physical object', and y is the 'spatial location' determined as the extension in space of x." ;
+                     iof-av:primitiveRationale "The notion of  \"spatial extension\" of an object is not fully defined." ;
+                     iof-av:usageNote "The 'site' of an object will occupy different 'spatial location's over time if the location and size of the object changes." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasSpatialExtent ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000210 ;
+   rdfs:comment "BFO_0000210 is 'occupies spatial region at some time' (from BFO-ISO)"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasSpatiotemporalExtent
+lis:hasSpatiotemporalExtent rdf:type owl:ObjectProperty ;
+                            rdfs:subPropertyOf lis:occursRelativeTo ;
+                            rdfs:domain lis:Activity ;
+                            rdfs:range lis:SpatiotemporalRegion ;
+                            rdfs:label "hasSpatiotemporalExtent" ;
+                            rdfs:seeAlso obo:BFO_0000200 ,
+                                         "lis:" ;
+                            skos:example "A pipeline pig occupies the spatiotemporal region which is its trajectory (adopted from BFO-ISO)." ;
+                            iof-av:isPrimitive "true"^^xsd:boolean ;
+                            iof-av:naturalLanguageDefinition "If x 'has spatiotemporal extent' y, then x is an activity, and y is a spatiotemporal region which is the spatiotemporal extent of x." ;
+                            iof-av:primitiveRationale "The notion of spatiotemporal extension is primitive." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasSpatiotemporalExtent ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000200 ;
+   rdfs:comment "BFO_0000200 is 'occupies spatiotemporal region'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasSubLocation
+lis:hasSubLocation rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:hasPart ,
+                                      lis:locatedRelativeTo ;
+                   rdfs:domain lis:Location ;
+                   rdfs:range lis:Location ;
+                   rdfs:label "hasSubLocation" ;
+                   rdfs:seeAlso lis:subLocationOf ;
+                   skos:example "The landing area is a sublocation of the helicopter deck." ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "If x 'has sublocation' y, then x and y are locations, and x 'has part' y." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasTemporalExtent
+lis:hasTemporalExtent rdf:type owl:ObjectProperty ;
+                      rdfs:subPropertyOf lis:occursRelativeTo ;
+                      rdfs:domain lis:Temporal ;
+                      rdfs:range lis:TemporalRegion ;
+                      rdfs:label "hasTemporalExtent" ;
+                      rdfs:seeAlso obo:BFO_0000199 ,
+                                   lis:temporalExtentOf ;
+                      skos:example "A well drilling activity takes place in a 20-hour interval, a control system is switched on at 10:00 AM." ;
+                      iof-av:isPrimitive "true"^^xsd:boolean ;
+                      iof-av:naturalLanguageDefinition "If x 'has temporal extent' y, then x is a 'temporal' entity, and y is a temporal region which is the temporal extent of x." ;
+                      iof-av:primitiveRationale "The notion of temporal extension is primitive." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:hasTemporalExtent ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000199 ;
+   rdfs:comment "BFO_0000199 is 'occupies temporal region'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/hasTemporalPart
+lis:hasTemporalPart rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:hasPart ;
+                    rdfs:domain lis:Temporal ;
+                    rdfs:range lis:Temporal ;
+                    rdfs:label "hasTemporalPart" ;
+                    rdfs:seeAlso lis:temporalPartOf ;
+                    skos:example "A specific day is a temporal part of a specific week." ;
+                    iof-av:isPrimitive "false"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "If x 'has temporal part' y, then x and y are temporal entities, and y is a part of x." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/implementedBy
+lis:implementedBy rdf:type owl:ObjectProperty ;
+                  owl:inverseOf lis:implements ;
+                  rdfs:label "implementedBy" ;
+                  rdfs:seeAlso lis:implements ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'implements'" .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/implements
+lis:implements rdf:type owl:ObjectProperty ;
+               rdfs:domain lis:Actual ;
+               rdfs:range lis:Specified ;
+               rdfs:label "implements" ;
+               rdfs:seeAlso lis:implementedBy ;
+               skos:example "Pump P-101 is a tag, and ACME pumps with serial numbers 457636 and 457711 implement (have been installed as) this pump." ;
+               skos:scopeNote "The 'implements' relation is central to the intended use of IDO. It allows for a record of different individuals being installed or otherwise serving as a specified object over time. Typically, a serial-numbered physical artefact is installed as a \"specification\" individual (a \"tag\") at one time, and later replaced with another serial-numbered physical artefact. The 'implements' relation carries semantic restrictions only to ensure no object is both Actual and Specified. No further constraints are given, to allow 'implements' relationships even where restrictions on the specification object are inconsistent with those on the implementing (installed) object." ;
+               iof-av:explanatoryNote "The domain and range restrictions to disjunct classes 'actual' and 'specified' prevent chains of 'implements' relationships." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "If x 'implements' y, then x is a 'specified' entity, y is an 'actual' entity, and at some time, x is the same individual as y." ;
+               iof-av:primitiveRationale "'implements' is used to express identity relationships that may vary over time. Because OWL lacks time indices, the representation is informal." ;
+               iof-av:usageNote "An asset model with 'implements' relationships supports compatibility checks for implementing objects, to uncover possible violations of requirements.  This is requires a transformation of the asset model, as follows: replace each 'implements'/'implementedBy' relationship with identity (owl:sameAs), and replace classifications as 'specified' or 'actual' with just 'object' for the participant individuals.  Any semantic inconsistency between the the specified object and the implementing object may then be discovered by OWL reasoning." ,
+                                "Periods of 'implements' relationships should be recorded using OWL annotations, to enable prescriptive objects to be matched with installed objects for selected points or periods in time. A detailed representation using 'role' is also possible." ,
+                                "The mechanism for checking requirement consistency on 'implements' relationships must be implemented as a transformation that is external to the OWL ontology." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/interestOf
+lis:interestOf rdf:type owl:ObjectProperty ;
+               rdfs:subPropertyOf lis:potentialOf ;
+               owl:inverseOf lis:hasInterest ;
+               rdfs:label "interestOf" ;
+               rdfs:seeAlso lis:hasInterest ;
+               iof-av:isPrimitive "false"^^xsd:boolean ;
+               iof-av:usageNote "For annotations, see the inverse relation 'has interest'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/isAbout
+lis:isAbout rdf:type owl:ObjectProperty ;
+            rdfs:domain lis:InformationObject ;
+            rdfs:label "isAbout" ;
+            rdfs:seeAlso obo:IAO_0000136 ,
+                         lis:representedIn ,
+                         "ISO 15926-2:2003 'representation_of_thing'" ;
+            skos:example "A regulation describes a procedure, a datum quantifies a quality, a nameplate provides basic information about a pressure vessel, a log file traces quantity values during an activity." ;
+            skos:scopeNote "This relation is suitable as the top node in a taxonomy of relations between information objects and entities, including describing, naming, characterisation, and evaluation." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "If x 'is about' y, then x is an 'information object' of relevance to y." ;
+            iof-av:primitiveRationale "A comprehensive account of aboutness is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:isAbout ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000136 ;
+   rdfs:comment "IAO_0000136 is 'is about', in the Information Artifact Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/locatedRelativeTo
+lis:locatedRelativeTo rdf:type owl:ObjectProperty ,
+                               owl:SymmetricProperty ;
+                      rdfs:domain lis:Object ;
+                      rdfs:range lis:Object ;
+                      rdfs:label "locatedRelativeTo" ;
+                      rdfs:seeAlso obo:BFO_0000171 ,
+                                   obo:BFO_0000210 ,
+                                   dol:generic-location ,
+                                   "ISO 15926-2:2003 'relative_location'" ;
+                      skos:example "An outlet is below an inlet, a door is inside an opening, a motor is inside an enclosure." ;
+                      iof-av:isPrimitive "true"^^xsd:boolean ;
+                      iof-av:naturalLanguageDefinition "If x is 'located relative to' y, then x and y are 'object's with location in space." ;
+                      iof-av:primitiveRationale "The notion of relative location in space is introduced with this relation." ;
+                      iof-av:usageNote "This relation is \"abstract\" (in the object-orientation sense of the word) in that it serves only as a parent relation to specialized relations of relative location." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:locatedRelativeTo ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000171 ;
+   rdfs:comment "BFO_0000171 is 'located in at some time' in BFO-ISO. This relation has domain and range restricted to 'independent continuant' and not 'spatial region', meaning it's a relation between entities that are material objects or determined by material objects, only."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:locatedRelativeTo ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000210 ;
+   rdfs:comment "BFO_0000210 is 'occupies spatial region at some time' in BFO-ISO. This relation has domain restricted to 'independent continuant' and not 'spatial region', and range to 'spatial region', meaning it's a relation from entities that are material objects or determined by material objects, to spatial regions determined independently of material objects."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/materialPartOf
+lis:materialPartOf rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:partOf ;
+                   owl:inverseOf lis:hasMaterialPart ;
+                   rdfs:label "materialPartOf" ;
+                   rdfs:seeAlso lis:hasMaterialPart ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:usageNote "For annotations, see the inverse relation 'has material part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/occursIn
+lis:occursIn rdf:type owl:ObjectProperty ;
+             owl:inverseOf lis:siteOf ;
+             rdfs:label "occursIn" ;
+             rdfs:seeAlso obo:BFO_0000066 ,
+                          lis:siteOf ;
+             iof-av:isPrimitive "false"^^xsd:boolean ;
+             iof-av:usageNote "For annotations, see the inverse relation 'site of'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:occursIn ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000066 ;
+   rdfs:comment "BFO_0000066 is 'occurs in'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/occursRelativeTo
+lis:occursRelativeTo rdf:type owl:ObjectProperty ,
+                              owl:SymmetricProperty ;
+                     rdfs:domain lis:Temporal ;
+                     rdfs:range lis:Temporal ;
+                     rdfs:label "occursRelativeTo" ;
+                     rdfs:seeAlso "ISO 15926-2:2003 'temporal_sequence'" ;
+                     skos:example "A vessel is emptied before inspection, a valve is opened before draining of a pipeline, firmware is installed before the equipment begins to operate." ;
+                     iof-av:isPrimitive "true"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "If x 'occurs relative to' y, then x and y are 'temporal' entities, with temporal location." ;
+                     iof-av:primitiveRationale "The notion of relative location in time is introduced with this relation." ;
+                     iof-av:usageNote "This relation is suitable as the top node in a taxonomy of relations of relative temporal location." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/partOf
+lis:partOf rdf:type owl:ObjectProperty ;
+           owl:inverseOf lis:hasPart ;
+           rdfs:label "partOf" ;
+           rdfs:seeAlso lis:hasPart ;
+           iof-av:isPrimitive "false"^^xsd:boolean ;
+           iof-av:usageNote "For annotations, see the inverse relation 'has part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/participantIn
+lis:participantIn rdf:type owl:ObjectProperty ;
+                  owl:inverseOf lis:hasParticipant ;
+                  rdfs:label "participantIn" ;
+                  rdfs:seeAlso lis:hasParticipant ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'has participant'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/passiveParticipantIn
+lis:passiveParticipantIn rdf:type owl:ObjectProperty ;
+                         rdfs:subPropertyOf lis:participantIn ;
+                         owl:inverseOf lis:hasPassiveParticipant ;
+                         rdfs:label "passiveParticipantIn" ;
+                         rdfs:seeAlso lis:hasPassiveParticipant ;
+                         iof-av:isPrimitive "false"^^xsd:boolean ;
+                         iof-av:usageNote "For annotations, see the inverse relation 'has passive participant'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/physicalQuantityOf
+lis:physicalQuantityOf rdf:type owl:ObjectProperty ;
+                       rdfs:subPropertyOf lis:qualityOf ;
+                       owl:inverseOf lis:hasPhysicalQuantity ;
+                       rdfs:label "physicalQuantityOf" ;
+                       rdfs:seeAlso lis:hasPhysicalQuantity ;
+                       iof-av:isPrimitive "false"^^xsd:boolean ;
+                       iof-av:usageNote "For annotations, see the inverse relation 'has physical quantity'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/potentialOf
+lis:potentialOf rdf:type owl:ObjectProperty ;
+                owl:inverseOf lis:hasPotential ;
+                rdfs:comment "This relation is used in the property chain for 'has participant', for inferring participation in a temporal entity (typically, an activity)." ;
+                rdfs:label "potentialOf" ;
+                rdfs:seeAlso lis:hasPotential ;
+                iof-av:isPrimitive "false"^^xsd:boolean ;
+                iof-av:usageNote "For annotations, see the inverse relation 'has potential'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/primaryParticipantIn
+lis:primaryParticipantIn rdf:type owl:ObjectProperty ;
+                         rdfs:subPropertyOf lis:participantIn ;
+                         owl:inverseOf lis:hasPrimaryParticipant ;
+                         rdfs:label "primaryParticipantIn" ;
+                         rdfs:seeAlso lis:hasPrimaryParticipant ;
+                         iof-av:isPrimitive "false"^^xsd:boolean ;
+                         iof-av:usageNote "For annotations, see the inverse relation 'has primary participant'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/profileOfQuality
+lis:profileOfQuality rdf:type owl:ObjectProperty ;
+                     rdfs:domain lis:ActivityProfile ;
+                     rdfs:range lis:Quality ;
+                     owl:propertyChainAxiom ( lis:profileQuantityDatum
+                                              lis:quantifiesQuality
+                                            ) ;
+                     rdfs:label "profileOfQuality" ;
+                     rdfs:seeAlso lis:qualityProfiledIn ;
+                     skos:example "A temperature activity profile of a heating process represents just that part of the process which is a variation in temperature." ;
+                     skos:scopeNote "'profile of quality' should be considered a functional property (i.e., an 'activity profile' is a profile of only a single 'quality'). However, in OWL, an object property with property chain restrictions may not be combined with cardinality restrictions. Correct cardinalities must therefore be maintained with rules external to the ontology." ;
+                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "x is a 'profile of quality' y if and only if x is an 'activity profile' that varies only in the 'quality' y." ;
+                     iof-av:usageNote "A property chain axiom ensures that a quantity datum individual associated with an activity profile by 'profile quantity datum' quantifies a quality which defines the activity profile by 'profile of quality'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/profileQuantityDatum
+lis:profileQuantityDatum rdf:type owl:ObjectProperty ;
+                         rdfs:subPropertyOf lis:hasParticipantQualityQuantifiedAs ;
+                         rdfs:domain lis:ActivityProfile ;
+                         rdfs:comment "Intuitively, 'profile quantity datum' should only point to quantity data recorded while the activity is taking place. This can not be enforced with OWL restrictions on the relation (it would require a \"diamond\" pattern). However, with a suitable date or time data property value restriction, an individual activity can constrain related quantity data." ;
+                         rdfs:label "profileQuantityDatum" ;
+                         rdfs:seeAlso lis:quantityDatumOfProfile ;
+                         skos:example "The pressure of a liquid is measured at 10, 11, and 12 bar at different points of time during a transport activity." ;
+                         iof-av:isPrimitive "false"^^xsd:boolean ;
+                         iof-av:naturalLanguageDefinition "If x has 'profile quantity datum' y, then x is an 'activity profile', and x 'has participant quality quantified as' y." ;
+                         iof-av:usageNote "Assume y is an 'activity profile', obtained from some containing activity z by selective abstraction on a quality q of a participant in z. Then, relate y by 'profile quantity datum' to magnitudes of q that are recorded during the execution of y." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/qualityOf
+lis:qualityOf rdf:type owl:ObjectProperty ;
+              owl:inverseOf lis:hasQuality ;
+              rdfs:label "qualityOf" ;
+              rdfs:seeAlso lis:hasQuality ;
+              iof-av:isPrimitive "false"^^xsd:boolean ;
+              iof-av:usageNote "For annotations, see the inverse relation 'has quality'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/qualityProfiledIn
+lis:qualityProfiledIn rdf:type owl:ObjectProperty ;
+                      owl:inverseOf lis:profileOfQuality ;
+                      rdfs:label "qualityProfiledIn" ;
+                      rdfs:seeAlso lis:profileOfQuality ;
+                      iof-av:isPrimitive "false"^^xsd:boolean ;
+                      iof-av:usageNote "For annotations, see the inverse relation 'profile of quality'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/qualityQuantifiedAs
+lis:qualityQuantifiedAs rdf:type owl:ObjectProperty ;
+                        rdfs:subPropertyOf lis:representedIn ;
+                        rdfs:domain lis:Quality ;
+                        rdfs:range lis:QualityDatum ;
+                        rdfs:label "qualityQuantifiedAs" ;
+                        rdfs:seeAlso obo:IAO_0000417 ,
+                                     lis:quantifiesQuality ,
+                                     ssn:observedProperty ,
+                                     "ISO 15926-2:2003 'property_quantification'" ;
+                        skos:example "The nominal outer diameter of a pipe is 324 mm, the measured temperature of a boiler is 150 degrees Celsius, the colour of a surface is 'red'." ;
+                        iof-av:isPrimitive "false"^^xsd:boolean ;
+                        iof-av:naturalLanguageDefinition "If x is a 'quality quantified as' y, then x is an 'quality' that is 'represented in' the 'quality datum' y." ;
+                        iof-av:usageNote "The range of 'quality quantified as' is 'quality datum', which includes data that do not follow the \"unit of measure with value\" pattern. Examples are colours and chemical composition categories." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:qualityQuantifiedAs ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000417 ;
+   rdfs:comment "IAO_0000417 is 'is quality measured as' of the Information Artifact Ontology. In IDO, the term \"quantified\" replaces \"measured\" to support cases where measurement is not involved, as in, e.g., estimates."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/quantifiesQuality
+lis:quantifiesQuality rdf:type owl:ObjectProperty ;
+                      rdfs:subPropertyOf lis:isAbout ;
+                      owl:inverseOf lis:qualityQuantifiedAs ;
+                      rdfs:label "quantifiesQuality" ;
+                      rdfs:seeAlso lis:qualityQuantifiedAs ;
+                      iof-av:isPrimitive "false"^^xsd:boolean ;
+                      iof-av:usageNote "For annotations, see the inverse relation 'quality quantified as'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/quantifiesQualityOf
+lis:quantifiesQualityOf rdf:type owl:ObjectProperty ;
+                        rdfs:subPropertyOf lis:isAbout ;
+                        owl:inverseOf lis:hasQualityQuantifiedAs ;
+                        rdfs:label "quantifiesQualityOf" ;
+                        rdfs:seeAlso lis:hasQualityQuantifiedAs ;
+                        iof-av:isPrimitive "false"^^xsd:boolean ;
+                        iof-av:usageNote "For annotations, see the inverse relation 'has quality quantified as'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/quantifiesQualityOfParticipantIn
+lis:quantifiesQualityOfParticipantIn rdf:type owl:ObjectProperty ;
+                                     rdfs:subPropertyOf lis:isAbout ;
+                                     owl:inverseOf lis:hasParticipantQualityQuantifiedAs ;
+                                     rdfs:label "quantifiesQualityOfParticipantIn" ;
+                                     rdfs:seeAlso lis:hasParticipantQualityQuantifiedAs ;
+                                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                                     iof-av:usageNote "For annotations, see the inverse relation 'has participant quality quantified as'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/quantityDatumOfProfile
+lis:quantityDatumOfProfile rdf:type owl:ObjectProperty ;
+                           rdfs:subPropertyOf lis:quantifiesQualityOfParticipantIn ;
+                           owl:inverseOf lis:profileQuantityDatum ;
+                           rdfs:label "quantityDatumOfProfile" ;
+                           rdfs:seeAlso lis:profileQuantityDatum ;
+                           iof-av:isPrimitive "false"^^xsd:boolean ;
+                           iof-av:usageNote "For annotations, see the inverse relation 'profile quantity datum'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/realizedIn
+lis:realizedIn rdf:type owl:ObjectProperty ;
+               rdfs:domain lis:Potential ;
+               rdfs:range lis:Activity ;
+               rdfs:label "realizedIn" ;
+               rdfs:seeAlso obo:BFO_0000054 ,
+                            lis:realizes ;
+               skos:example "A pump realizes its function in a pumping (activity), a bolt realizes its function in a connection, a software monitoring application realizes its function in streaming sensor data." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "If x is 'realized in' y, then x is a 'potential', and y is an 'activity' that successfully realizes x." ;
+               iof-av:primitiveRationale "A full account of the notion of \"successfully realizes\" is beyond the scope of IDO. It depends on an account of \"success\", in that failed activities will not be realizations, and on the bearer of the potential participating in the realizing activity in the right way." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:realizedIn ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000054 ;
+   rdfs:comment "BFO_0000054 is 'has realization' in BFO-ISO, and 'realized in' in the Relations Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/realizes
+lis:realizes rdf:type owl:ObjectProperty ;
+             owl:inverseOf lis:realizedIn ;
+             rdfs:label "realizes" ;
+             rdfs:seeAlso obo:BFO_0000055 ,
+                          lis:realizedIn ;
+             iof-av:isPrimitive "false"^^xsd:boolean ;
+             iof-av:usageNote "For annotations, see the inverse relation 'realized in'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:realizes ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000055 ;
+   rdfs:comment "BFO_0000055 is 'realizes' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/representedIn
+lis:representedIn rdf:type owl:ObjectProperty ;
+                  owl:inverseOf lis:isAbout ;
+                  rdfs:range lis:InformationObject ;
+                  rdfs:label "representedIn" ;
+                  rdfs:seeAlso lis:isAbout ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'is about'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/residesIn
+lis:residesIn rdf:type owl:ObjectProperty ;
+              rdfs:subPropertyOf lis:locatedRelativeTo ;
+              rdfs:domain lis:PhysicalObject ;
+              rdfs:range lis:Location ;
+              rdfs:label "residesIn" ;
+              rdfs:seeAlso lis:hasResident ,
+                           "ISO 15926-2:2003 'relative_location'" ;
+              skos:example "An engine is located in a machine room, a pressure vessel is located in an outdoors plant area." ;
+              iof-av:isPrimitive "true"^^xsd:boolean ;
+              iof-av:naturalLanguageDefinition "If x 'resides in' y, then x is a 'physical object', y is a 'location', and x is located entirely within y." ;
+              iof-av:primitiveRationale "The notion of being \"located within\" is not fully defined here, leaving open whether this is understood in terms of boundaries of physical objects or a fixed frame of reference." ;
+              iof-av:usageNote "This relation may be used where an object x is located in a site y, defined in terms of boundaries of a physical object, that may change its location over time." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/roleOf
+lis:roleOf rdf:type owl:ObjectProperty ;
+           rdfs:subPropertyOf lis:potentialOf ;
+           owl:inverseOf lis:hasRole ;
+           rdfs:label "roleOf" ;
+           rdfs:seeAlso obo:RO_0000081 ,
+                        lis:hasRole ,
+                        "ISO 15926-2:2003 'role'" ;
+           iof-av:isPrimitive "false"^^xsd:boolean ;
+           iof-av:usageNote "For annotations, see the inverse relation 'has role'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:roleOf ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:RO_0000081 ;
+   rdfs:comment "RO_0000081 is 'role of' in the Relations Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/siteOf
+lis:siteOf rdf:type owl:ObjectProperty ;
+           rdfs:domain lis:Site ;
+           rdfs:range lis:Activity ;
+           rdfs:label "siteOf" ;
+           rdfs:seeAlso obo:BFO_0000067 ,
+                        obo:BFO_0000183 ,
+                        obo:BFO_0000217 ,
+                        lis:occursIn ;
+           skos:example "Mixing takes place within a vessel, transport takes place in a pipeline" ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "If x 'site of' y, then x is a 'site', y is an 'activity', and y takes place entirely within x." ;
+           iof-av:primitiveRationale "x 'site of' y means, the spatial extent of the site contains the spatial extent of the activity for the duration of the activity. This requires a relation of \"spatial projection throughout the time of the activity\", which is not included in IDO. (The BFO-ISO definition expresses this using the temporalized relation 'spatially projects onto at all times'.)" ;
+           iof-av:synonym "environs" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:siteOf ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000067 ;
+   rdfs:comment "BFO_0000067 is 'contains process', from RO, where an annotation says the 'editor preferred term' is \"site of\". There are subtle differences in the range and domain restrictions between BFO's 'environs' and RO's 'contains process': where RO has domain as the broad 'independent continuant' only, BFO has ('site' or 'material entity'); where RO has range as 'occurrent', BFO has ('process' or 'process boundary')."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:siteOf ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000183 ;
+   rdfs:comment "BFO_0000183 is 'environs' from BFO"
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:siteOf ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000217 ;
+   rdfs:comment "BFO_0000217 is 'spatially projects onto at all times'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/spatialExtentOf
+lis:spatialExtentOf rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf lis:locatedRelativeTo ;
+                    owl:inverseOf lis:hasSpatialExtent ;
+                    rdfs:label "spatialExtentOf" ;
+                    rdfs:seeAlso lis:hasSpatialExtent ;
+                    iof-av:isPrimitive "false"^^xsd:boolean ;
+                    iof-av:usageNote "For annotations, see the inverse relation 'has spatial extent'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/spatiotemporalExtentOf
+lis:spatiotemporalExtentOf rdf:type owl:ObjectProperty ;
+                           rdfs:subPropertyOf lis:occursRelativeTo ;
+                           owl:inverseOf lis:hasSpatiotemporalExtent ;
+                           rdfs:label "spatiotemporalExtentOf" ;
+                           rdfs:seeAlso lis:hasSpatiotemporalExtent ;
+                           iof-av:isPrimitive "false"^^xsd:boolean ;
+                           iof-av:usageNote "For annotations, see the inverse relation 'has spatiotemporal extent'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/subLocationOf
+lis:subLocationOf rdf:type owl:ObjectProperty ;
+                  rdfs:subPropertyOf lis:partOf ;
+                  owl:inverseOf lis:hasSubLocation ;
+                  rdfs:label "subLocationOf" ;
+                  rdfs:seeAlso lis:hasSubLocation ;
+                  iof-av:isPrimitive "false"^^xsd:boolean ;
+                  iof-av:usageNote "For annotations, see the inverse relation 'has sub location'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/temporalExtentOf
+lis:temporalExtentOf rdf:type owl:ObjectProperty ;
+                     rdfs:subPropertyOf lis:occursRelativeTo ;
+                     owl:inverseOf lis:hasTemporalExtent ;
+                     rdfs:label "temporalExtentOf" ;
+                     rdfs:seeAlso lis:hasTemporalExtent ;
+                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                     iof-av:usageNote "For annotations, see the inverse relation 'has temporal extent'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/temporalPartOf
+lis:temporalPartOf rdf:type owl:ObjectProperty ;
+                   rdfs:subPropertyOf lis:partOf ;
+                   owl:inverseOf lis:hasTemporalPart ;
+                   rdfs:label "temporalPartOf" ;
+                   rdfs:seeAlso lis:hasTemporalPart ;
+                   iof-av:isPrimitive "false"^^xsd:boolean ;
+                   iof-av:usageNote "For annotations, see the inverse relation 'has temporal part'." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/uomOfDatum
+lis:uomOfDatum rdf:type owl:ObjectProperty ;
+               rdfs:subPropertyOf lis:contentPartOf ;
+               owl:inverseOf lis:datumUOM ;
+               rdfs:comment "Relation from 'unit of measure' to 'quantity datum'. The inverse relation of datumUOM." ;
+               rdfs:label "uomOfDatum" ;
+               rdfs:seeAlso lis:datumUOM ;
+               iof-av:isPrimitive "false"^^xsd:boolean ;
+               iof-av:usageNote "For annotations, see the inverse relation 'datumUOM'." .
+
+
+#################################################################
+#    Data properties
+#################################################################
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/datumValue
+lis:datumValue rdf:type owl:DatatypeProperty ,
+                        owl:FunctionalProperty ;
+               rdfs:domain lis:QualityDatum ;
+               rdfs:label "datumValue" ;
+               rdfs:seeAlso obo:IAO_0000004 ,
+                            qudt:numericValue ,
+                            om:hasNumericalValue ,
+                            ssn:hasSimpleResult ;
+               skos:example "The measured datum \"55 degrees Celsius\" has \"55\" as literal value." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "If x 'datum value' y, then x is a 'quality datum', and y is the literal value of x." ;
+               iof-av:primitiveRationale "The notion of literal value is primitive." ;
+               iof-av:usageNote "A literal value is uninterpreted. Provide a unit of measure, or other category, for a 'quality datum' to be interpretable." ,
+                                "For numeric non-integer values, the recommended data type is xsd:float." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumValue ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000004 ;
+   rdfs:comment "BFO-ISO declares no data properties." ,
+                "IAO_0000004 is the data property 'has measurement value', in the Information Artifact Ontology."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumValue ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget qudt:numericValue ;
+   rdfs:comment "numericValue is a data property in QUDT."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumValue ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget om:hasNumericalValue ;
+   rdfs:comment "hasNumericalValue is a data property in the Ontology of Units of Measure."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:datumValue ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget ssn:hasSimpleResult ;
+   rdfs:comment "hasSimpleResult is a data property in the Semantic Sensor Networks ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/qualityQuantityValue
+lis:qualityQuantityValue rdf:type owl:DatatypeProperty ;
+                         rdfs:domain lis:Object ;
+                         rdfs:label "qualityQuantityValue" ;
+                         skos:example "Mass in kilograms, pressure in barg." ;
+                         iof-av:isPrimitive "false"^^xsd:boolean ;
+                         iof-av:naturalLanguageDefinition "If x has 'quality quantity value' y, then x is an 'object', and y is a literal value that quantifies a quality of x." ;
+                         iof-av:usageNote "This relation is suitable as the top node in a taxonomy of \"shortcut\" relations that combine quality and unit of measure into a single, simple data property." ,
+                                          "When introducing shortcut properties as subproperties, annotations should be provided to explain the intended quantity type, any quantification type (e.g., measured, nominal, etc.), and unit of measure." .
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Activity
+lis:Activity rdf:type owl:Class ;
+             rdfs:subClassOf lis:Temporal ,
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty lis:hasParticipant ;
+                               owl:someValuesFrom lis:PhysicalObject
+                             ] ;
+             rdfs:label "Activity" ;
+             rdfs:seeAlso obo:BFO_0000015 ,
+                          dol:accomplishment ,
+                          dol:process ,
+                          prov:Activity ,
+                          "ISO 15926-2:2003 'activity'" ;
+             skos:example "A pumping, an inspection, a report writing, a fastening (the activity of a bolt in holding two pieces together)." ;
+             skos:scopeNote "An 'activity' doesn't need to be temporally connected. For example, intermittent operation of a heater over a week can be represented by a single 'activity' individual; it will occupy a non-connected 'interval region'. The details of each connected activity part (\"singular activities\") may be modelled by relating the activity to 'interval' individuals." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A temporal entity in which one or more physical objects participate." ;
+             iof-av:primitiveRationale "(Here we could consider saying the class is in fact not primitive, but defined in terms of 'temporal' and 'has participant'.)" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Activity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'activity'" ;
+   rdfs:comment "ISO 15926-2:2003, 4.7.17 states, \"... activities are considered to be space-time extensions in which other individuals and events participate.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/ActivityProfile
+lis:ActivityProfile rdf:type owl:Class ;
+                    rdfs:subClassOf lis:Activity ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty lis:profileOfQuality ;
+                                      owl:someValuesFrom lis:Quality
+                                    ] ;
+                    rdfs:comment "An 'activity profile' is a part of an 'activity', a \"selective abstraction\" (using a term from the BFO reference guide) made according to a quality of interest to the process. Typically, we will select a physical quantity such as pressure or temperature, and refer to the \"pressure profile\" of the activity. By means of the relation 'profile quantity datum', the activity profile can be related to a set of 'quantity datum' individuals, to which aggregation can be applied, giving a basis for classification." ,
+                                 "The name \"ActivityProfile\"  has been chosen because lis:Activity corresponds to BFO's 'process'." ;
+                    rdfs:label "ActivityProfile" ;
+                    skos:example "An 'activity profile' of an 'activity' involving rotating equipment, instantiating a class \"100 revolutions per minute\"." ,
+                                 "The BFO 2.0 reference guide provides good examples, like \"constant speed profile\", \"acceleration profile\", and \"irregular beat profile\"." ;
+                    iof-av:adaptedFrom obo:BFO_0000144 ;
+                    iof-av:isPrimitive "true"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "An activity obtained by \"selective abstraction\" to just that part of an activity that consists in varying or maintaining a specified 'quality' of a participant." ;
+                    iof-av:primitiveRationale "A precise account of the notion of selective abstraction is beyond the scope of IDO." ;
+                    iof-av:usageNote "Typically, a physical quantity of a participant, such as a \"pressure\" individual, is selected, and the \"pressure profile\" of the activity is introduced. The relation 'profile of quality' links to that pressure quality individual that defines (is the basis for abstraction to) the activity profile. By means of the relation 'profile quantity datum', the activity profile can be related to 'quantity datum' individuals, to which aggregation can be applied, giving a basis for classification of the activity profile; for example, as a \"rising pressure\" activity." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:ActivityProfile ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000144 ;
+   rdfs:comment "BFO_0000144 is 'process profile'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Actual
+lis:Actual rdf:type owl:Class ;
+           owl:disjointWith lis:Specified ;
+           rdfs:label "Actual" ;
+           skos:example "A serial-numbered artefact installed at a tag, a function of a concrete artefact, a run or execution of a designed process, an industrial facility \"as built\"." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "An entity that is a concrete implementation of a 'specified' entity." ;
+           iof-av:primitiveRationale "The notion of concrete implementation, of providing an actual item to serve a design, is not defined. An explication should be given in terms of systems engineering practices." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Capability
+lis:Capability rdf:type owl:Class ;
+               rdfs:subClassOf lis:Disposition ;
+               rdfs:label "Capability" ;
+               rdfs:seeAlso obo:MF_0000043 ,
+                            obo:NCIT_C74979 ,
+                            obo:SIO_000112 ,
+                            lis:hasCapability ;
+               skos:example "The capability of a motor to generate power, of a pump to generate head and flow. The capability to use a hammer as a paperweight, which is not it's primary capability (function)." ;
+               iof-av:isPrimitive "true"^^xsd:boolean ;
+               iof-av:naturalLanguageDefinition "A disposition which when realized serves a positive or desired outcome." ;
+               iof-av:primitiveRationale "Making the notion of \"positive interest\" fully precise is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Capability ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:MF_0000043 ;
+   rdfs:comment "MF_0000043 is 'capability'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Capability ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:NCIT_C74979 ;
+   rdfs:comment "NCIT_C74979 is 'capability'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Capability ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:SIO_000112 ;
+   rdfs:comment "SIO_000112 is 'capability'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Compound
+lis:Compound rdf:type owl:Class ;
+             rdfs:subClassOf lis:PhysicalObject ,
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty lis:hasQuality ;
+                               owl:someValuesFrom lis:MaterialCompositionQuality
+                             ] ;
+             rdfs:label "MateriallyClassifiedObject" ;
+             rdfs:seeAlso "ISO 15926-2:2003 'class_of_compound'" ;
+             skos:altLabel "Compound" ;
+             skos:example "Types of material composition, such as 316 stainless steel, reinforced concrete, and carbon monoxide." ;
+             skos:scopeNote "Natural kinds are expressly not to be classified as 'compound'. The class 'compound' is only to be used to classify amounts of matter, with non-semantic auxiliaries used to refer to chemical composition. The semantics of natural kinds such as \"helium\", \"steel\", or \"hydrocarbon\" is out of scope for IDO." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A physical object with a defined material composition." ;
+             iof-av:primitiveRationale "The semantics of materials, of which compounds would be a specialisation, is beyond the scope of IDO." ;
+             iof-av:usageNote "A typical RDL includes classes that categorise individuals according to material composition. This class is suitable as the top node of such a taxonomy." ,
+                              "Renamed class. Checked materially in Oxford English Dictionary." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Dependent
+lis:Dependent rdf:type owl:Class ;
+              rdfs:comment "The class Dependent is closely related to \"specifically dependent continuant\" in BFO (BFO_0000020)." ;
+              rdfs:label "Dependent" ;
+              rdfs:seeAlso lis:ActivityProfile ,
+                           lis:hasParticipantQualityQuantifiedAs ,
+                           "ISO 15926-2:2003 'property', 'functional_physical_object'" ;
+              skos:altLabel "Dependent Entity" ;
+              skos:example "The colour of a surface, the temperature of a medium, a technical contact role, the storage-space role of a room." ;
+              skos:scopeNote "Any 'object' will be the bearer of various 'dependent' entities, but any 'temporal' entity has only an indirect relationship to 'dependent's. This is in line with BFO." ;
+              iof-av:adaptedFrom obo:BFO_0000020 ;
+              iof-av:isPrimitive "true"^^xsd:boolean ;
+              iof-av:naturalLanguageDefinition "An entity that is an inherent quality or realizable potential of an object." ;
+              iof-av:primitiveRationale "Providing necessary and sufficient conditions for dependence is beyond the scope of IDO. Note that the BFO analogue, 'specifically dependent continuant', is defined in terms of the primitive relation 'specifically depends on' (s-depends on), which is not included in IDO." ;
+              iof-av:usageNote "A common need is to relate a measure based on a 'physical quantity' to an 'activity', like average speed to a transport activity. This may not be implemented with an 'average speed' entity that is dependent on the transport. For a suitable representation pattern, see the class 'activity profile' and related resources. A \"shortcut\" approach may use the relation 'has participant quality quantified as'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Dependent ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000020 ;
+   rdfs:comment "BFO_0000020 is 'specifically dependent continuant'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Disposition
+lis:Disposition rdf:type owl:Class ;
+                rdfs:subClassOf lis:Potential ;
+                rdfs:label "Disposition" ;
+                rdfs:seeAlso lis:hasDisposition ;
+                skos:example "The disposition of a steel bar to corrode, the disposition of a gasket to leak. The disposition to overflow a memory buffer." ;
+                skos:scopeNote "An object may not lose a disposition without undergoing physical change." ;
+                iof-av:adaptedFrom obo:BFO_0000016 ;
+                iof-av:isPrimitive "true"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "A potential whose realization is dependent on an object's structure." ;
+                iof-av:primitiveRationale "Making the notion of \"dependence on an object's structure\" fully precise is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Disposition ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000016 ;
+   rdfs:comment "BFO_0000016 is 'disposition'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Event
+lis:Event rdf:type owl:Class ;
+          rdfs:subClassOf lis:Activity ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty lis:hasTemporalExtent ;
+                            owl:allValuesFrom lis:InstantRegion
+                          ] ;
+          rdfs:comment "An 'event' doesn't need to be temporally connected. For example, several instances of switching on a heater over a week may be represented by a single 'event' individual; it will occupy a non-singular 'instant region'. The details of a singular event part may be modelled by relating the event to 'instant' individuals." ,
+                       "Event is close in meaning to BFO's 'process boundary', and to DOLCE's 'achievement'. Note that BFO's 'process boundary' is a sibling class to 'process', even though the definition annotation states it to be a \"temporal part of a process\". It's not obvious why the event/process boundary should not have the same participants as the parent activity/process." ;
+          rdfs:label "Event" ;
+          rdfs:seeAlso obo:BFO_0000035 ,
+                       dol:achievement ,
+                       "ISO 15926-2:2003 'event'" ;
+          skos:example "The beginning of a lifting operation, the end of a measurement activity, the midpoint between beginning and end of an activity." ;
+          iof-av:isPrimitive "false"^^xsd:boolean ;
+          iof-av:naturalLanguageDefinition "An activity  that occurs at one or more specific points in time." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Event ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000035 ;
+   rdfs:comment "BFO_0000035 is 'process boundary'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Feature
+lis:Feature rdf:type owl:Class ;
+            rdfs:subClassOf lis:PhysicalObject ;
+            rdfs:label "Feature" ;
+            rdfs:seeAlso obo:BFO_0000024 ,
+                         dol:relevant-part ,
+                         "ISO 15926-2:2003 'class_of_feature'" ;
+            skos:example "A flange face, a connection port (terminal), the inside surface of a pump, a painted area of a manifold, a bolt threading." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "A physical object that is a contiguous, non-separable part of a physical object." ;
+            iof-av:primitiveRationale "A precise account of what \"non-separable\" means is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Feature ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000024 ;
+   iof-av:explanatoryNote "BFO_0000024 is 'fiat object part'. This is at least very close in meaning to 'feature' as defined in in ISO 15926."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Function
+lis:Function rdf:type owl:Class ;
+             rdfs:subClassOf lis:Capability ;
+             rdfs:label "Function" ;
+             rdfs:seeAlso lis:hasFunction ,
+                          "ISO 15926-2:2003 'functional_physical_object'" ;
+             skos:example "The function of a motor to apply a specified torque to a shaft." ;
+             iof-av:adaptedFrom obo:BFO_0000034 ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A capability that meets a design requirement." ;
+             iof-av:primitiveRationale "Making the notion of meeting a requirement fully precise is beyond the scope of IDO." ;
+             iof-av:usageNote "The typical 'function' of a hammer is realized when the hammer participates as the tool in a successful nail-driving activity. If the hammer has multiple functions, such as extracting nails using a claw or shaping objects with a ball, each function should be represented with a distinct individual." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Function ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000034 ;
+   rdfs:comment "BFO_0000034 is 'function'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/FunctionalObject
+lis:FunctionalObject rdf:type owl:Class ;
+                     rdfs:subClassOf lis:Object ,
+                                     [ rdf:type owl:Restriction ;
+                                       owl:onProperty lis:hasFunction ;
+                                       owl:someValuesFrom lis:Function
+                                     ] ;
+                     rdfs:label "FunctionalObject" ;
+                     rdfs:seeAlso "ISO 15926-2:2003 'functional_physical_object'" ;
+                     skos:example "A pump, a hammer, a password." ;
+                     iof-av:isPrimitive "false"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "An 'Object' that provides a required 'Function'." ;
+                     iof-av:semiFormalNaturalLanguageAxiom "If x is a 'functional object', then x is an 'object' that 'has function' some 'Function'." ;
+                     iof-av:usageNote "A \"tag\", when included in an IDO asset model, should in general have a type that is subclass of both 'functional object' and 'physical artefact'." ,
+                                      "A password must be concretized, this is done when it is entered, the password performs the function of unlocking the computer. The password participates in the unlocking process through its concretization." ,
+                                      "Artefact types tend to be described primarily in terms of 'function'; for example, the \"minimal\" definition of a pump would be, \"a physical artefact, the function of which is to pump (to be the active participant in a pumping activity)\". This kind of definition places no restriction on physical make-up and is suitable for a subclass of 'functional object'. Note that the activity type of 'pumping' is here a precursor to the definition of the physical object type 'pump'. A taxonomy of pump classes should extend from a class 'pump' defined solely in terms of function, as above." ,
+                                      "Most artefacts are both physical and functional objects as a functional object is any object that has a function." ,
+                                      "Note that it is possible to model without explicitly using this class, as any object that has a function can be inferred to be a functional object." ,
+                                      "This class can be used as a root class for functional classification of objects, including physical objects." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:FunctionalObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'functional_physical_object'" ;
+   rdfs:comment "ISO 15926-2:2003, p. 110, states, \"A functional_physical_object is a physical_object that has functional, rather than material, continuity as its basis for identity. Adjacent temporal parts of a functional_physical_object need not have common matter or energy, provided the matter or energy of each temporal part fulfils the same function.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/InanimatePhysicalObject
+lis:InanimatePhysicalObject rdf:type owl:Class ;
+                            rdfs:subClassOf lis:PhysicalObject ;
+                            rdfs:label "InanimatePhysicalObject" ;
+                            rdfs:seeAlso "ISO 15926-2:2003 'class_of_inanimate_physical_object'" ;
+                            skos:example "A tool, a building, a vehicle, an instrument, a parking lot." ;
+                            iof-av:isPrimitive "true"^^xsd:boolean ;
+                            iof-av:naturalLanguageDefinition "A 'physical object' that is not living." ;
+                            iof-av:primitiveRationale "An account of what \"living\" means is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:InanimatePhysicalObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'class_of_inanimate_physical_object'" ;
+   rdfs:comment "ISO 15926-2:2003, p. 122: \"A class_of_inanimate_physical_object is a class_of_arranged\\-_individual whose members are not living.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/InformationObject
+lis:InformationObject rdf:type owl:Class ;
+                      rdfs:subClassOf lis:Object ;
+                      rdfs:label "InformationObject" ;
+                      rdfs:seeAlso obo:BFO_0000031 ,
+                                   obo:IAO_0000030 ,
+                                   "ISO 15926-2:2003 'class_of_information_object'" ;
+                      skos:example "A report, a drawing, a P&ID diagram, a purchase order, a certificate, a database, a database record, a measurement datum, a unit of measure, an identifier, an algorithm, a programming language." ;
+                      skos:scopeNote "The BFO class 'generically dependent continuant' represents the notion of a pattern that exists in at least one copy, e.g., \"the sequence of this protein molecule\". This is more general than 'information object', and not at present included in IDO.  'information object' is a subclass, with the added condition that the pattern 'is about' something." ;
+                      iof-av:isPrimitive "true"^^xsd:boolean ;
+                      iof-av:naturalLanguageDefinition "An object that captures information about something." ;
+                      iof-av:primitiveRationale "The notion of aboutness is not defined." ;
+                      iof-av:usageNote "A common application of 'information object' is in representing facts about the vocabulary of the ontology itself. The OWL facility of \"punning\" treats OWL classes and properties as OWL individuals, enabling OWL object properties to be applied to them. In use cases that involve punning, the SKOS vocabulary is recommended to be used, with the SKOS classes 'concept', 'concept scheme', and 'collection'  as subclasses of 'information object'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:InformationObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000031 ;
+   rdfs:comment "BFO_0000031 is 'generically dependent continuant'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:InformationObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000030 ;
+   rdfs:comment "IAO_0000030 is 'information content entity', a subclass of BFO_0000031 'generically dependent continuant' defined in the Information Artifact Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Instant
+lis:Instant rdf:type owl:Class ;
+            rdfs:subClassOf lis:InstantRegion ;
+            rdfs:label "Instant" ;
+            rdfs:seeAlso time:Instant ,
+                         "ISO 15926-2:2003 'point_in_time'" ;
+            skos:example "The moment a valve is closed, the time of a measurement as use for time-stamping, the moment an activity starts." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "An instant region with no proper parts" ;
+            iof-av:primitiveRationale "(Could be considered non-primitive, defined in terms of 'instant region' and 'no proper part'.)" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Instant ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget time:Instant ;
+   rdfs:comment "'instant' is defined in OWL Time as \"A temporal entity with zero extent or duration\"."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/InstantRegion
+lis:InstantRegion rdf:type owl:Class ;
+                  rdfs:subClassOf lis:TemporalRegion ;
+                  rdfs:label "InstantRegion" ;
+                  rdfs:seeAlso obo:BFO_0000148 ;
+                  skos:example "The moment a valve is closed, the instants of a series of measurements." ;
+                  iof-av:isPrimitive "true"^^xsd:boolean ;
+                  iof-av:naturalLanguageDefinition "A temporal region whose only parts are one or more points in time." ;
+                  iof-av:primitiveRationale "(Could be considered non-primitive, defined in terms of 'temporal region' and each part mapping by 'has temporal extent' to 'instant'.)" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:InstantRegion ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000148 ;
+   rdfs:comment "obo:BFO_0000148 is 'zero-dimensional temporal region'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Interest
+lis:Interest rdf:type owl:Class ;
+             rdfs:subClassOf lis:Potential ;
+             rdfs:label "Interest" ;
+             skos:example "A plan to act, an approval of a survey." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A potential, the realization of which is of value for the bearer." ;
+             iof-av:primitiveRationale "Accounting for  (mental) attitudes of value is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Interval
+lis:Interval rdf:type owl:Class ;
+             rdfs:subClassOf lis:IntervalRegion ;
+             rdfs:label "Interval" ;
+             rdfs:seeAlso obo:BFO_0000202 ,
+                          dol:time-interval ,
+                          time:Interval ,
+                          "ISO 15926-2:2003 'period_in_time'" ;
+             skos:example "The time an instrument has been in operation, the time during which a measurement was made." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A continuous period of time." ;
+             iof-av:primitiveRationale "A precise account of temporal intervals is beyond the scope of IDO (temporal logic offers no obvious consensus)." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Interval ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000202 ;
+   rdfs:comment "BFO_0000202 is 'temporal interval'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Interval ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget time:Interval ;
+   rdfs:comment "'interval' is defined in OWL Time as \"A temporal entity with an extent or duration\"."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/IntervalRegion
+lis:IntervalRegion rdf:type owl:Class ;
+                   rdfs:subClassOf lis:TemporalRegion ;
+                   rdfs:label "IntervalRegion" ;
+                   rdfs:seeAlso obo:BFO_0000038 ;
+                   skos:example "Intermittent times of operation of a heater, maintenance periods at a plant, times that a milling machine is run, The Saturdays of 2011, the construction period for a plant modification" ;
+                   iof-av:isPrimitive "true"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "A temporal region whose only parts are one or more intervals in time." ;
+                   iof-av:primitiveRationale "(This class could be considered non-primitive, defined in terms of 'temporal region' and each part mapping by 'has temporal extent' to 'interval'.)" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:IntervalRegion ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000038 ;
+   rdfs:comment "BFO_0000038 is 'one-dimensional temporal region' in BFO-ISO."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/LineInSpace
+lis:LineInSpace rdf:type owl:Class ;
+                rdfs:subClassOf lis:SpatialLocation ;
+                rdfs:label "LineInSpace" ;
+                skos:example "A line connecting two points with coordinates relative to the frame of reference, the path of a flexible pipe at 12:00 AM." ;
+                iof-av:isPrimitive "true"^^xsd:boolean ;
+                iof-av:naturalLanguageDefinition "A spatial location consisting of one or more lines." ;
+                iof-av:primitiveRationale "A comprehensive account of geometries is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Location
+lis:Location rdf:type owl:Class ;
+             rdfs:subClassOf lis:Object ;
+             rdfs:label "Location" ;
+             rdfs:seeAlso dol:space-region ,
+                          "ISO 15926-2:2003 'spatial_location'" ;
+             skos:example "An outdoor plant area, an opening in a wall, the space inside an enclosure" ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "An object that is a region in space." ;
+             iof-av:primitiveRationale "A comprehensive definition of the notion of location is beyond the scope of IDO." ;
+             iof-av:usageNote "IDO is an anthropocentric ontology in the sense that it is disregards complexities of the deep theories of the physical sciences that have only negligible impact at the standard industrial scale. For example, this means ignoring cosmological effects on the average industry and adopting a geocentric model of the universe where there exists a commonly agreed upon stationary earthly “spatial reference system”." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/MaterialCompositionQuality
+lis:MaterialCompositionQuality rdf:type owl:Class ;
+                               rdfs:subClassOf lis:Quality ;
+                               rdfs:label "MaterialCompositionQuality" ;
+                               skos:example "The steel grade of a cast-iron component, the plastic type of a wire sheathing." ;
+                               iof-av:isPrimitive "true"^^xsd:boolean ;
+                               iof-av:naturalLanguageDefinition "A quality that can be characterised in terms of chemical or material properties." ;
+                               iof-av:primitiveRationale "A precise account of chemical properties is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Object
+lis:Object rdf:type owl:Class ;
+           rdfs:label "Object" ;
+           rdfs:seeAlso obo:BFO_0000004 ,
+                        dol:endurant ,
+                        "ISO 15926-2:2003 'possible_individual'" ;
+           skos:example "A process plant, a compressor, a wire, a person, an operator, a database record, an industry standard, a manual document, a site." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "An entity that is not dependent on other entities for existence, and which persists through time." ;
+           iof-av:primitiveRationale "A precise account of what counts as an 'object' is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Object ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000004 ;
+   rdfs:comment "BFO_0000004 is 'independent continuant'." ;
+   skos:scopeNote "In IDO, ’information object’ is represented as a subclass of ’object’. According to the BFO literature, and applied in the Information Artifact Ontology and other BFO compliant ontologies, information artifacts are (multiply) dependent objects. a /sibling/ class to ’independent continuant’ rather than a subclass, as used in IDO."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Object ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget dol:endurant ;
+   rdfs:comment "From the DOLCE description of 'endurant': \"The main characteristic of endurants is that all of them are independent essential wholes. ...\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Organism
+lis:Organism rdf:type owl:Class ;
+             rdfs:subClassOf lis:PhysicalObject ;
+             rdfs:label "Organism" ;
+             rdfs:seeAlso "ISO 15926-2:2003 'class_of_organism'" ;
+             skos:example "Animal, plant, fungus, bacterium." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "A physical object that is living." ;
+             iof-av:primitiveRationale "Providing precise semantics of what \"living thing\" amounts to is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Organization
+lis:Organization rdf:type owl:Class ;
+                 rdfs:subClassOf lis:Object ;
+                 rdfs:label "Organization" ;
+                 rdfs:seeAlso "ISO 15926-2:2003 'class_of_organization'" ;
+                 skos:example "A standards body, a service team, a workgroup, a company" ;
+                 iof-av:adaptedFrom iof-core:Organization ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "An object comprising one or more persons who identify by some name and pursue a common set of plans and objectives." ;
+                 iof-av:primitiveRationale "A comprehensive definition of the notion of organization is beyond the scope of IDO (it would determine which kinds of aggregations of people, and which kinds of roles, are appropriate for organizations)." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Organization ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget iof-core:Organization ;
+   rdfs:comment "Organization is a class in the IOF Core ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Person
+lis:Person rdf:type owl:Class ;
+           rdfs:subClassOf lis:Organism ;
+           rdfs:label "Person" ;
+           rdfs:seeAlso "ISO 15926-2:2003 'class_of_person'" ;
+           skos:example "A human being." ;
+           skos:scopeNote "In an RDL, subclasses of 'person' will typically require 'role' restrictions to be considered fully explicit. For example, 'maintenance engineer' will be a subclass of 'person', as every engineer is a person. To capture what a maintenance engineer does, a role restriction can say that any member is the bearer of an engineering role, and what the role amounts to will be represented by the kinds of activities that count as realizations of the role." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "An organism that is a human." ;
+           iof-av:primitiveRationale "Providing precise semantics of what \"human\" amounts to is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Phase
+lis:Phase rdf:type owl:Class ;
+          rdfs:subClassOf lis:PhysicalObject ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty lis:hasQuality ;
+                            owl:someValuesFrom lis:PhaseQuality
+                          ] ;
+          rdfs:label "Phase" ;
+          rdfs:seeAlso "ISO 15926-2:2003 'phase'" ;
+          skos:example "Solid object, liquid object, gaseous object." ;
+          iof-av:isPrimitive "true"^^xsd:boolean ;
+          iof-av:naturalLanguageDefinition "A physical object with a distinct and homogeneous form." ;
+          iof-av:primitiveRationale "The semantics of phases is beyond the scope of IDO." ;
+          iof-av:usageNote "An RDL can include classes that categorise individuals according to material phase. This class is suitable as the top node of such a taxonomy." ,
+                           "Definition from Oxford English Dictionary." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PhaseQuality
+lis:PhaseQuality rdf:type owl:Class ;
+                 rdfs:subClassOf lis:Quality ;
+                 rdfs:label "PhaseQuality" ;
+                 skos:example "The liquid quality of an amount of molten steel, the solid quality of a steel gasket." ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "A 'quality' that can be characterised in terms of material phase." ;
+                 iof-av:primitiveRationale "A precise account of material phase is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PhysicalArtefact
+lis:PhysicalArtefact rdf:type owl:Class ;
+                     rdfs:subClassOf lis:PhysicalObject ;
+                     rdfs:label "PhysicalArtefact" ;
+                     skos:example "a pressure transmitter, a process plant, a wrench, a computer." ;
+                     iof-av:isPrimitive "true"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "A 'physical object' that has been created as the result of deliberate activity." ;
+                     iof-av:primitiveRationale "To give a precise account of \"making\" goes beyond the scope of IDO. An account would engage notions on which there is no clear consensus, including intentional notions of intended purpose, and of goal-directed action; of permanence and integrity; etc. There is an abundance of edge cases for \"physical artefact\"." ;
+                     iof-av:usageNote "A typical RDL includes classes that represent industrial item types, such as equipment, devices, assemblies, buildings, and products, among other elements. This class is suitable as the top node in a taxonomy of such classes." ,
+                                      "The superclass of 'physical artefact' is not 'inanimate physical object', in order to allow for artificially made organisms." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PhysicalObject
+lis:PhysicalObject rdf:type owl:Class ;
+                   rdfs:subClassOf lis:Object ;
+                   rdfs:label "PhysicalObject" ;
+                   rdfs:seeAlso obo:BFO_0000040 ,
+                                dol:physical-object ,
+                                "ISO 15926-2:2003 'physical_object'" ;
+                   skos:example "A wall, a fluid stream, a welder, a printed manual, a seafloor." ;
+                   iof-av:isPrimitive "true"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "An object that occupies space and possesses mass." ;
+                   iof-av:primitiveRationale "A precise account of what it means to be a physical object is beyond the scope of IDO. There is no obvious consensus on the notion of \"material\"." ;
+                   iof-av:usageNote "Installed software is considered a physical object." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000040 ;
+   iof-av:explanatoryNote "BFO_0000040 is 'material entity'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalObject ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'physical_object'" ;
+   rdfs:comment "IDO asserts that 'physical object' and 'activity' are disjunct classes. In contrast to this, and according to a 4D approach, ISO 15926-2:2003, p. 26, states that \"physical_object and activity are not mutually exclusive. A possible_individual can be both\"."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PhysicalQuantity
+lis:PhysicalQuantity rdf:type owl:Class ;
+                     rdfs:subClassOf lis:Quality ;
+                     rdfs:label "PhysicalQuantity" ;
+                     rdfs:seeAlso obo:PATO_0001018 ,
+                                  qudt:QuantityKind ,
+                                  dol:physical-quality ,
+                                  om:Quantity ,
+                                  ssn:ObservableProperty ,
+                                  "ISO 15926-2:2003 'property'" ;
+                     skos:example "The mass of a bar of steel, the temperature of a medium, the inner diameter of a pipe, the lift height of a crane, the head (lift height) of a pump." ;
+                     iof-av:isPrimitive "true"^^xsd:boolean ;
+                     iof-av:naturalLanguageDefinition "A quality that can be quantified by measurement." ;
+                     iof-av:primitiveRationale "It is beyond the scope of IDO to give an account of measurement." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalQuantity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget qudt:QuantityKind ;
+   rdfs:comment "QUDT explains 'quantity kind' as, \"any observable property that can be measured and quantified numerically. Familiar examples include physical properties such as length, mass, time, force, energy, power, electric charge, etc. Less familiar examples include currency, interest rate, price to earning ratio, and information capacity.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalQuantity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget dol:physical-quality ;
+   rdfs:comment "DOLCE defines 'physical-quality' as, \"A quality inherent in a physical endurant.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalQuantity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget om:Quantity ;
+   rdfs:comment "OM2 explains 'quantity' as, \"A quantity is a representation of a quantifiable (standardised) aspect (such as length, mass, and time) of a phenomenon (e.g., a star, a molecule, or a food product). Quantities are classified according to similarity in their (implicit) metrological aspect, e.g. the length of my table and the length of my chair are both classified as length.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalQuantity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget ssn:ObservableProperty ;
+   rdfs:comment "SSN offers the following examples for ObservableProperty, a subclass of Property: \"The height of a tree, the depth of a water body, or the temperature of a surface are examples of observable properties, while the value of a classic car is not (directly) observable but asserted.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:PhysicalQuantity ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:PATO_0001018 ;
+   rdfs:comment "PATO_0001018 is 'physical quality', defined in the Information Artifact Ontology as \"A quality of a physical entity that exists through action of continuants at the physical level of organisation in relation to other entities.\" Note that this is distinct from 'physical object quality'; see annotation to lis:Quality."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PlaneInSpace
+lis:PlaneInSpace rdf:type owl:Class ;
+                 rdfs:subClassOf lis:SpatialLocation ;
+                 rdfs:label "PlaneInSpace" ;
+                 skos:example "The midway horizontal plane of a volume given by coordinates, the plane of a moving work platform at 12:00" ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "A spatial location that is a two-dimensional plane." ;
+                 iof-av:primitiveRationale "A comprehensive account of geometries is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/PointInSpace
+lis:PointInSpace rdf:type owl:Class ;
+                 rdfs:subClassOf lis:SpatialLocation ;
+                 rdfs:label "PointInSpace" ;
+                 skos:example "The location of a probe at a given point in time" ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "A spatial location that has zero dimension with no proper parts." ;
+                 iof-av:primitiveRationale "A comprehensive account of geometries is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Potential
+lis:Potential rdf:type owl:Class ;
+              rdfs:subClassOf lis:Dependent ;
+              owl:disjointWith lis:Quality ;
+              rdfs:label "Potential" ;
+              skos:altLabel "Realizable Entity" ;
+              skos:example "The sealing function of a gasket, the disposition of a steel bar to corrode." ;
+              iof-av:adaptedFrom obo:BFO_0000017 ;
+              iof-av:isPrimitive "true"^^xsd:boolean ;
+              iof-av:naturalLanguageDefinition "A dependent entity that can potentially be realised through participation in an activity." ;
+              iof-av:primitiveRationale "The necessary condition for being a 'potential' is that activity type and participation type are provided. It is however not clear what sufficient conditions would consist in, as these would at least involve a notion of successful execution for the relevant activities, which goes beyond the scope of IDO." ;
+              iof-av:usageNote "Use OWL property chains to enforce constraints on how the bearer needs to participate in order for an activity to count as a realization." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Potential ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000017 ;
+   rdfs:comment "BFO_0000017 is 'realizable entity'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Quality
+lis:Quality rdf:type owl:Class ;
+            rdfs:subClassOf lis:Dependent ;
+            rdfs:comment "The class Quality and its subclass PhysicalQuantity are inspired by corresponding classes included in the DOLCE and BFO upper ontologies." ;
+            rdfs:label "Quality" ;
+            rdfs:seeAlso obo:BFO_0000019 ,
+                         obo:PATO_0000001 ,
+                         obo:PATO_0001241 ,
+                         dol:quality ,
+                         ssn:ActuatableProperty ,
+                         ssn:Property ,
+                         "ISO 15926-2:2003 'property'" ;
+            skos:example "The temperature of a fluid stream, the tensile strength of a bolt, the length of a pipeline, the colour of a surface coating, the familiarity of a specialist with a modification procedure, the quality of a window of being open or closed." ;
+            iof-av:isPrimitive "true"^^xsd:boolean ;
+            iof-av:naturalLanguageDefinition "A dependent entity that is present any time its bearer exists." ;
+            iof-av:primitiveRationale "Qualities cover a broad range of what is commonly referred to as \"properties\". It is beyond the scope of IDO to precisely determine what should be included." ;
+            iof-av:usageNote "Qualities are in general subject to change over the lifetime of the bearer. The main IDO device for representing quality changes is through 'datum' individuals: see lis:qualityQuantifiedAs." ,
+                             "Qualities should only be used for root properties such as voltage, pressure, etc. Where there are variants such as nominal, rated, actual voltage, modellers should use lis:Quality for voltage and use a subclass of lis:QualityDatum for the moderator (\"nominal\", etc.)" .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000019 ;
+   rdfs:comment "BFO_0000019 is 'quality'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:PATO_0000001 ;
+   rdfs:comment "PATO_0000001 is 'quality'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:PATO_0001241 ;
+   rdfs:comment "PATO_0001241 is 'physical object quality', defined in the Information Artifact Ontology as \"A quality which inheres in a continuant\"."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget dol:quality ;
+   rdfs:comment "DOLCE describes qualities as follows: \"Qualities can be seen as the basic entities we can perceive or measure: shapes, colors, sizes, sounds, smells, as well as weights, lengths, electrical charges... 'Quality' is often used as a synonymous of 'property', but this is not the case in this upper ontology: qualities are particulars, properties are universals.  Qualities inhere to entities: every entity (including qualities themselves) comes with certain qualities, which exist as long as the entity exists.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget ssn:ActuatableProperty ;
+   rdfs:comment "SSN offers the following as an example for ActuatableProperty, a subclass of Property: \"A window actuator acts by changing the state between a frame and a window. The ability of the window to be opened and closed is its ActuatableProperty.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget ssn:Property ;
+   rdfs:comment "SSN defines 'Property' as follows (2017): \"A quality of an entity. An aspect of an entity that is intrinsic to and cannot exist without the entity.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Quality ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'property'" ;
+   iof-av:explanatoryNote "In ISO 15926-2:2003, the term \"quality or characteristic\" is used to explain what the entity type 'property' represents (clause 5.2.26.5, notes 1 and 2). Note 2 reads, \"The types of characteristic or quality, such as temperature or density, are instances of class_of_property.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/QualityDatum
+lis:QualityDatum rdf:type owl:Class ;
+                 rdfs:subClassOf lis:InformationObject ,
+                                 [ rdf:type owl:Restriction ;
+                                   owl:onProperty lis:quantifiesQuality ;
+                                   owl:someValuesFrom lis:Quality
+                                 ] ;
+                 rdfs:comment "This class is inspired by the class \"measurement datum\" of the Information Artifact Ontology (IAO). The change of wording from \"measurement\" to \"quality\" is intended to support cases where measurement is not involved, such as with nominal values." ;
+                 rdfs:label "QualityDatum" ;
+                 rdfs:seeAlso obo:IAO_0000109 ;
+                 skos:example "10 volts, high (of pressure), low (of temperature), category 3 (as used to rate the strength 'quality' of a storm), 3 MB (a file size), qualifications, grades." ;
+                 skos:scopeNote "Introduce subclasses of 'quality datum' in RDL to distinguish categories of data, such as nominal versus measured values." ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "An information object that quantifies a quality." ;
+                 iof-av:primitiveRationale "A precise account of the  representation of magnitudes is beyond the scope of IDO." ;
+                 iof-av:usageNote "Quantification may be on nominal, ordinal, and other scales." ,
+                                  "This class may be used for data that don't fit the restriction to \"single unit, single number\" of 'scalar quantity datum', including data employing vectors instead of numbers, and conventional categories like \"high\" and \"medium\"." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:QualityDatum ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000109 ;
+   rdfs:comment "IAO_0000109 is 'measurement datum', a class in the Information Artifact Ontology."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Role
+lis:Role rdf:type owl:Class ;
+         rdfs:subClassOf lis:Potential ;
+         rdfs:label "Role" ;
+         rdfs:seeAlso lis:hasRole ,
+                      "ISO 15926-2:2003 'role', 'role_and_domain'" ;
+         skos:example "The role an individual person takes in a work situation, such as a manager. A student role." ,
+                      "The role of an interior space (a 'site') as a meeting room is realized when it serves as the space for conducting meetings. The site may be assigned a storage room role at a different time." ;
+         skos:scopeNote "This class is intended to serve the same purpose as the ISO 15926-2:2003 'role' entity type, as well as the same-named BFO class (BFO_0000023)." ;
+         iof-av:adaptedFrom obo:BFO_0000023 ;
+         iof-av:isPrimitive "true"^^xsd:boolean ;
+         iof-av:naturalLanguageDefinition "A potential that is assigned to an object." ;
+         iof-av:primitiveRationale "Making the notion of assignment (to a task) fully precise is beyond the scope of IDO. With complex intentions notions of obligation, which are often required in role assignments, this is particularly clear." ;
+         iof-av:usageNote "As with any 'potential', the existence of a role is dependent on its bearer. A particular meeting room's role may therefore not be transferred to a different room; a different role individual with similar classification would be needed." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Role ;
+   owl:annotatedProperty iof-av:adaptedFrom ;
+   owl:annotatedTarget obo:BFO_0000023 ;
+   rdfs:comment "BFO_0000023 is 'role'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/ScalarQuantityDatum
+lis:ScalarQuantityDatum rdf:type owl:Class ;
+                        rdfs:subClassOf lis:QualityDatum ,
+                                        [ rdf:type owl:Restriction ;
+                                          owl:onProperty lis:datumUOM ;
+                                          owl:someValuesFrom lis:UnitOfMeasure
+                                        ] ,
+                                        [ rdf:type owl:Restriction ;
+                                          owl:onProperty lis:quantifiesQuality ;
+                                          owl:someValuesFrom lis:PhysicalQuantity
+                                        ] ,
+                                        [ rdf:type owl:Restriction ;
+                                          owl:onProperty lis:datumValue ;
+                                          owl:someValuesFrom rdfs:Literal
+                                        ] ;
+                        rdfs:label "ScalarQuantityDatum" ;
+                        rdfs:seeAlso obo:IAO_0000032 ,
+                                     qudt:QuantityValue ,
+                                     om:Measure ;
+                        skos:example "10 kilograms, 220 volt." ;
+                        iof-av:isPrimitive "false"^^xsd:boolean ;
+                        iof-av:naturalLanguageDefinition "A quality datum that quantifies a physical quantity with a numeric value and a scale." ;
+                        iof-av:semiFormalNaturalLanguageAxiom "If x is a 'scalar quantity datum', then x is a 'quality datum' which 'quantifies quality' some 'physical quantity', and has a 'datum uom' relationship to a 'unit of measure' and a 'datum value' relationship to a literal value." ;
+                        iof-av:usageNote "A scalar quantity datum has a unique unit of measure and a unique numeric value. This class is inspired by the class \"scalar measurement datum\" of the Information Artifact Ontology." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:ScalarQuantityDatum ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:IAO_0000032 ;
+   rdfs:comment "IAO_0000032 is 'scalar measurement datum', a class in the Information Artifact Ontology."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:ScalarQuantityDatum ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget qudt:QuantityValue ;
+   rdfs:comment "QUDT describes 'quantity value' as follows. \"A Quantity Value expresses the magnitude and kind of a quantity and is given by the product of a numerical value n and a unit of measure U. The number multiplying the unit is referred to as the numerical value of the quantity expressed in that unit.\""
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:ScalarQuantityDatum ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget om:Measure ;
+   rdfs:comment "OM 2 describes 'measure' as follows. \"A measure combines a number to a unit of measure. For example, '3 m' is a measure.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Scale
+lis:Scale rdf:type owl:Class ;
+          rdfs:subClassOf lis:UnitOfMeasure ;
+          rdfs:label "Scale" ;
+          rdfs:seeAlso qudt:Scale ,
+                       om:Scale ,
+                       "ISO 15926-2:2003 'scale'" ;
+          skos:example "centimetre, kilogram per minute, degree Celsius, lunar distance, kilo-lines of code" ;
+          skos:scopeNote "Arguably, IDO conflates the notions of \"unit of measure\" and \"scale\" in an unhealthy way. While a unit of measure is a definite magnitude, a scale arises from fixing a number range to express multiples of the unit of measure. One may argue that a unit of measure has an implicit scale, obtained by multiplying the unit by any number; this will then allow for undefined or meaningless expressions like \"minus 10 Kelvin\"." ;
+          iof-av:isPrimitive "true"^^xsd:boolean ;
+          iof-av:naturalLanguageDefinition "A unit of measure that, when paired with a number, unambiguously describes the magnitude of a physical quantity." ;
+          iof-av:primitiveRationale "A comprehensive definition of the notion of scale is beyond the scope of IDO." ;
+          iof-av:usageNote "'scale' corresponds to the common sense notion of unit of measure which unambiguously defines the magnitude of the measure." ,
+                           "OWL data ranges can capture the acceptable numerical range for a scale. For instance, the 'datum value' of any 'quality datum' that has Celsius as 'datum uom' can be limited to the range from -273.15 upwards to infinity." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Scale ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget qudt:Scale ;
+   rdfs:comment "QUDT provides the following subclasses of 'scale': 'Enumeration scale', 'Interval scale', 'Nominal scale', 'Ordinal scale', 'Ratio scale'. Note that the notion of nominal scales diverges in being a coding scheme, with numbers not implying relative magnitude."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/ShapeQuality
+lis:ShapeQuality rdf:type owl:Class ;
+                 rdfs:subClassOf lis:Quality ;
+                 rdfs:label "ShapeQuality" ;
+                 skos:example "The flat shape of a surface feature, the cylindrical shape of a piece of pipe." ;
+                 iof-av:isPrimitive "true"^^xsd:boolean ;
+                 iof-av:naturalLanguageDefinition "A quality that can be characterised in terms of geometry." ;
+                 iof-av:primitiveRationale "A precise account of geometries is beyond the scope of IDO." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Site
+lis:Site rdf:type owl:Class ;
+         rdfs:subClassOf lis:Location ;
+         owl:disjointWith lis:SpatialLocation ;
+         rdfs:comment "This class is inspired by the BFO class 'site'." ;
+         rdfs:label "Site" ;
+         rdfs:seeAlso obo:BFO_0000029 ,
+                      "ISO 15926-2:2003 'spatial_location', 'region_in_space'" ;
+         skos:example "A flight deck, the inside of a manifold, the hold of a ship, a centre of gravity, an outside area" ;
+         skos:scopeNote "Locations such as countries and cities are also considered sites." ,
+                        "The position of a 'site' follows the position of the 'physical object' by which it is demarcated." ;
+         iof-av:isPrimitive "true"^^xsd:boolean ;
+         iof-av:naturalLanguageDefinition "A location determined in relation to one or more physical objects." ;
+         iof-av:primitiveRationale "A comprehensive definition of the notion of demarcation is beyond the scope of IDO." ;
+         iof-av:usageNote "The utility of a 'site' may be represented by assigning one or more 'role's, such as 'front desk role', 'storage space role', or 'entryway role'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Site ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000029 ;
+   rdfs:comment "BFO_0000029 is 'site'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/SpatialLocation
+lis:SpatialLocation rdf:type owl:Class ;
+                    rdfs:subClassOf lis:Location ;
+                    rdfs:label "SpatialLocation" ;
+                    rdfs:seeAlso obo:BFO_0000006 ,
+                                 "ISO 15926-2:2003 'spatial_location', 'region_in_space'" ;
+                    skos:example "The cube-shaped region extending 1 metre in each direction from origo, the line extending 10 metres from origo along the z axis, two points with coordinates on a two-dimensional plane; the location of a container at 10:00 AM." ;
+                    skos:scopeNote "The position of a 'spatial location' is fixed (relative to the frame of reference); it is not dependent on changing positions of 'physical object's." ;
+                    iof-av:isPrimitive "true"^^xsd:boolean ;
+                    iof-av:naturalLanguageDefinition "A location defined relative to a spatial reference system." ;
+                    iof-av:primitiveRationale "To provide an account of space, or spatial reference system, is beyond the scope of IDO." ;
+                    iof-av:usageNote "As with 'spatiotemporal region', a spatial location need not be connected; for example, a location may consist in several cube-shaped regions." ,
+                                     "The subclasses 'point in space', 'line in space', 'plane in space', and 'volume in space' are all defined as singular: for example, a 'point in space' individual may not have multiple points as parts. This, in contrast to the analogous BFO classes 'one-dimensional spatial region', etc., which are all defined as plural, allowing for disconnected parts." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:SpatialLocation ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000006 ;
+   rdfs:comment "BFO_0000006 is 'spatial region'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/SpatiotemporalRegion
+lis:SpatiotemporalRegion rdf:type owl:Class ;
+                         rdfs:subClassOf lis:Temporal ;
+                         rdfs:comment "An 'activity' occupies a 'spatiotemporal region'. Note that the spatiotemporal region doesn't need to be connected." ;
+                         rdfs:label "SpatiotemporalRegion" ;
+                         rdfs:seeAlso obo:BFO_0000011 ,
+                                      dol:spatio-temporal-region ;
+                         skos:example "The spatiotemporal region occupied by the fluid contents of a vessel over a period of time, the spatiotemporal region occupied by a pipeline inspection device (pig) during an inspection." ;
+                         iof-av:isPrimitive "true"^^xsd:boolean ;
+                         iof-av:naturalLanguageDefinition "A temporal entity that extends in space and time." ;
+                         iof-av:primitiveRationale "A precise account of the notion of spacetime goes beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:SpatiotemporalRegion ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000011 ;
+   rdfs:comment "BFO_0000011 is 'spatiotemporal region'."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Specified
+lis:Specified rdf:type owl:Class ;
+              rdfs:comment "A 'specified' entity is typically an individual that represents the asset as designed, with restrictions that capture requirements." ,
+                           "A 'specified' individual may be matched with an individual representing an 'actual' individual. Naming for the according relations may include: 'installed as' for physical objects, and 'executed as' for activities." ;
+              rdfs:label "Specified" ;
+              rdfs:seeAlso lis:Actual ;
+              skos:example "A \"tag\" individual, a function of a tag, an activity as characterised in process design." ;
+              iof-av:isPrimitive "true"^^xsd:boolean ;
+              iof-av:naturalLanguageDefinition "An entity that is part of an engineering specification." ;
+              iof-av:primitiveRationale "The notion of specification is not defined. An explication should be given in terms of systems engineering practices." ;
+              iof-av:usageNote "This class is not intended to be used directly, but only for serving as the domain of 'implements' and similar relations. The disjointness axiom serves to block iterated chains of 'implements', etc., relationships." .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Stream
+lis:Stream rdf:type owl:Class ;
+           rdfs:subClassOf lis:InanimatePhysicalObject ;
+           rdfs:label "Stream" ;
+           rdfs:seeAlso "ISO 15926-2:2003 'stream'" ;
+           skos:example "A stream of fluid in a pipeline, electricity in an electrical wire, ore moving on a conveyor belt." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "An inanimate physical object consisting of energy or homogeneous parts that flow through a system." ;
+           iof-av:primitiveRationale "A full account of the criteria for what counts as a stream is beyond the scope of IDO." ;
+           iof-av:usageNote "The class 'stream' is intended to be used for flows of material or energy, in accordance with conventional use. There is an abundance of cases where use of the term \"stream\" might be called into question, as in, is a stream of electricity really moving; how many cars are needed to participate before it is properly called a \"flow\" of cars; while a flow of sand is a stream, maybe a succession of rolling rocks would not qualify." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Stream ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget "ISO 15926-2:2003 'stream'" ;
+   rdfs:comment "ISO 15926-2:2003, p. 112, states, \"A stream is a physical_object that is material or energy moving along a path, where the path is the basis of identity and may be constrained. The stream consists of the temporal parts of those things that are in the stream whilst they are in it.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/System
+lis:System rdf:type owl:Class ;
+           rdfs:subClassOf lis:FunctionalObject ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty lis:hasFunctionalPart ;
+                             owl:someValuesFrom lis:FunctionalObject
+                           ] ;
+           rdfs:label "System" ;
+           rdfs:seeAlso lis:functionalPartOf ,
+                        ssn:System ;
+           skos:example "An electrical network, an HVAC system, a pumping system, a compressor." ;
+           iof-av:isPrimitive "true"^^xsd:boolean ;
+           iof-av:naturalLanguageDefinition "A 'functional object' with one or more functional parts whose functions contribute to its function." ;
+           iof-av:primitiveRationale "A precise account of the nature of dependency between the function of a system, as a whole, and the functions of its parts is beyond the scope of IDO." ;
+           iof-av:usageNote "Most industrial assets are both 'system' and 'inanimate physical object'. When modelling, e.g., a pump system, that system will be an 'inanimate physical object', with the pump part related to the pump system by 'has functional part'. The domain and range restrictions on 'has functional part' then imply that the pump system has type 'system', and the pump has type 'functional object'." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:System ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget ssn:System ;
+   rdfs:comment "The SSN definition of 'System' (2017): \"System is a unit of abstraction for pieces of infrastructure that implement Procedures. A System may have components, its subsystems, which are other Systems.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/Temporal
+lis:Temporal rdf:type owl:Class ;
+             rdfs:label "Temporal" ;
+             rdfs:seeAlso obo:BFO_0000003 ,
+                          dol:perdurant ;
+             skos:altLabel "Temporal Entity" ;
+             skos:example "A moment in time, a period of time, an activity or process, a beginning, a closing event." ;
+             iof-av:isPrimitive "true"^^xsd:boolean ;
+             iof-av:naturalLanguageDefinition "An entity that is part of time or takes place in time." ;
+             iof-av:primitiveRationale "A comprehensive account of time, and of the unfolding of events in time, is beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Temporal ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000003 ;
+   rdfs:comment "BFO_0000003 is 'occurrent'."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:Temporal ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget dol:perdurant ;
+   rdfs:comment "From the DOLCE description of 'perdurant': \"Perdurants (AKA occurrences) comprise what are variously called events, processes, phenomena, activities and states.\""
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/TemporalRegion
+lis:TemporalRegion rdf:type owl:Class ;
+                   rdfs:subClassOf lis:Temporal ;
+                   rdfs:label "TemporalRegion" ;
+                   rdfs:seeAlso obo:BFO_0000008 ,
+                                dol:temporal-region ;
+                   skos:example "The moment a valve is closed, upstart time for a motor, the length of time that a bolt has been installed, intervals between maintenance." ;
+                   iof-av:isPrimitive "true"^^xsd:boolean ;
+                   iof-av:naturalLanguageDefinition "A temporal entity that extends only in time." ;
+                   iof-av:primitiveRationale "A precise account of the notion of time goes beyond the scope of IDO." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:TemporalRegion ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:BFO_0000008 ;
+   rdfs:comment "BFO_0000008 is 'temporal region'"
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/UnitOfMeasure
+lis:UnitOfMeasure rdf:type owl:Class ;
+                  rdfs:subClassOf lis:InformationObject ;
+                  rdfs:label "UnitOfMeasure" ;
+                  rdfs:seeAlso obo:UO_0000000 ,
+                               om:Unit ;
+                  skos:example "carton, cup, temperature degree, instances of scales" ;
+                  iof-av:isPrimitive "true"^^xsd:boolean ;
+                  iof-av:naturalLanguageDefinition "An information object that defines the magnitude of a 'quality', adopted by convention or by law." ;
+                  iof-av:primitiveRationale "Precisely determining what qualifies as a unit of measure is beyond the scope of IDO." ;
+                  iof-av:usageNote "'unit of measure' may be used when there is ambiguity about the scale of the measure." .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:UnitOfMeasure ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget obo:UO_0000000 ;
+   rdfs:comment "UO_0000000 is 'unit', a class in the OBO Units of measure ontology."
+ ] .
+
+[ rdf:type owl:Axiom ;
+   owl:annotatedSource lis:UnitOfMeasure ;
+   owl:annotatedProperty rdfs:seeAlso ;
+   owl:annotatedTarget om:Unit ;
+   rdfs:comment "'unit' is a class in the Ontology of units of Measure (OM 2)."
+ ] .
+
+
+###  http://rds.posccaesar.org/ontology/lis14/rdl/VolumeInSpace
+lis:VolumeInSpace rdf:type owl:Class ;
+                  rdfs:subClassOf lis:SpatialLocation ;
+                  rdfs:label "VolumeInSpace" ;
+                  skos:example "A volume designated for 3D engineering at a point in time, a box-shaped volume determined by coordinates in a 3D frame of reference; the extent of a gas leak at 12:00" ;
+                  iof-av:isPrimitive "true"^^xsd:boolean ;
+                  iof-av:naturalLanguageDefinition "A spatial location that is a three-dimensional volume." ;
+                  iof-av:primitiveRationale "A comprehensive account of geometries is beyond the scope of IDO." .
+
+
+#################################################################
+#    Annotations
+#################################################################
+
+dc:rights rdfs:isDefinedBy "http://purl.org/dc/elements/1.1/" ;
+          rdfs:label "rights" .
+
+
+dcterms:contributor rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                    rdfs:label "contributor" .
+
+
+dcterms:creator rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                rdfs:label "creator" .
+
+
+dcterms:description rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                    rdfs:label "description" .
+
+
+dcterms:license rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                rdfs:label "license" .
+
+
+dcterms:modified rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                 rdfs:label "modified" .
+
+
+dcterms:publisher rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+                  rdfs:label "publisher" .
+
+
+dcterms:title rdfs:isDefinedBy "http://purl.org/dc/terms/" ;
+              rdfs:label "title" .
+
+
+pav:hasEarlierVersion rdfs:isDefinedBy pav: ;
+                      rdfs:label "hasEarlierVersion" .
+
+
+pav:lastUpdateOn rdfs:isDefinedBy pav: ;
+                 rdfs:label "lastUpdateOn" .
+
+
+pav:previousVersion rdfs:isDefinedBy pav: ;
+                    rdfs:label "previousVersion" .
+
+
+rdfs:comment rdfs:isDefinedBy "http://www.w3.org/2000/01/rdf-schema#" ;
+             rdfs:label "comment" ;
+             iof-av:usageNote "IDO includes a number of rdfs:comment annotations. Clarify how to reconcile this with the IOF Annotation Property Guide V2.2, which states that \"comment MUST NOT be used\"." .
+
+
+rdfs:label rdfs:isDefinedBy "http://www.w3.org/2000/01/rdf-schema#" ;
+           rdfs:label "label" .
+
+
+#################################################################
+#    General axioms
+#################################################################
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( lis:Activity
+                lis:SpatiotemporalRegion
+                lis:TemporalRegion
+              )
+] .
+
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( lis:Dependent
+                lis:Object
+                lis:Temporal
+              )
+] .
+
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( lis:InformationObject
+                lis:Location
+                lis:Organization
+                lis:PhysicalObject
+              )
+] .
+
+
+###  Generated by the OWL API (version 5.1.7) https://github.com/owlcs/owlapi/

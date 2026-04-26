@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 datalog = { path = "../datalog" }
+nom = "7.1"
+log = "0.4"

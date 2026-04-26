@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use std::path::PathBuf;
 
 // ── Output format ─────────────────────────────────────────────────────────────
 
@@ -36,7 +37,10 @@ impl std::str::FromStr for OutputFormat {
             "table" => Ok(OutputFormat::Table),
             "csv" => Ok(OutputFormat::Csv),
             "json" => Ok(OutputFormat::Json),
-            other => Err(format!("unknown format '{}': expected table, csv, or json", other)),
+            other => Err(format!(
+                "unknown format '{}': expected table, csv, or json",
+                other
+            )),
         }
     }
 }
@@ -57,8 +61,7 @@ pub struct ReasoningStats {
 /// The format is inferred from the file extension: `.trig` → TriG, everything
 /// else → Turtle (which also accepts plain `.ttl` files).
 pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
-    let file = File::open(path)
-        .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
+    let file = File::open(path).map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
     let reader = BufReader::new(file);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext {
@@ -106,6 +109,23 @@ pub fn apply_ontologies(
     })
 }
 
+// ── Datalog rules ─────────────────────────────────────────────────────────────
+
+/// Parse and apply Datalog rules from one or more `.datalog` files.
+///
+/// IRIs are interned into `datastore`; rules are then evaluated by naive
+/// forward-chaining materialisation.  Returns the number of rules applied.
+pub fn apply_rules(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<usize, String> {
+    let mut all_rules = Vec::new();
+    for path in paths {
+        let mut rules = datalog_parser::parse_file(path, datastore)?;
+        all_rules.append(&mut rules);
+    }
+    let rule_count = all_rules.len();
+    datalog::evaluate_rules(all_rules, datastore);
+    Ok(rule_count)
+}
+
 // ── SPARQL ────────────────────────────────────────────────────────────────────
 
 /// Execute a SPARQL SELECT query string against `datastore`.
@@ -113,8 +133,8 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
     };
-    let (_, query) = parse_query(sparql, &mut ctx)
-        .map_err(|e| format!("SPARQL parse error: {:?}", e))?;
+    let (_, query) =
+        parse_query(sparql, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;
     execute(&query, datastore)
 }
 
@@ -176,7 +196,11 @@ fn format_table(result: &SelectResult) -> String {
     let mut out = String::new();
 
     for (i, var) in result.variables.iter().enumerate() {
-        out.push_str(&format!("{:<width$}  ", format!("?{}", var), width = widths[i]));
+        out.push_str(&format!(
+            "{:<width$}  ",
+            format!("?{}", var),
+            width = widths[i]
+        ));
     }
     out.push('\n');
 
@@ -241,7 +265,7 @@ fn format_csv(result: &SelectResult) -> String {
             .map(|var| {
                 let val = row
                     .get(var)
-                    .map(|el| graph_element_raw_value(el))
+                    .map(graph_element_raw_value)
                     .unwrap_or_default();
                 csv_escape(&val)
             })
@@ -359,8 +383,7 @@ ex:Bob a ex:Employee ;
 
     fn load_family() -> Datastore {
         let mut ds = Datastore::new(10_000);
-        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes())
-            .expect("parse should succeed");
+        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
         ds
     }
 
@@ -372,7 +395,9 @@ PREFIX ex: <http://example.org/family#>
 SELECT ?person WHERE { ?person a ex:Person . }
 "#;
         let result = run_sparql_query(&ds, sparql).expect("query should succeed");
-        let persons: Vec<_> = result.rows.iter()
+        let persons: Vec<_> = result
+            .rows
+            .iter()
             .filter_map(|r| r.get("person"))
             .map(graph_element_display)
             .collect();
@@ -384,8 +409,7 @@ SELECT ?person WHERE { ?person a ex:Person . }
     #[test]
     fn sparql_with_reasoning() {
         let mut ds = Datastore::new(10_000);
-        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes())
-            .expect("parse should succeed");
+        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
         // Ontology IS the data file here; re-load for reasoning
         let ontology_doc = rdf2owl(&mut ds);
         let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
@@ -396,7 +420,9 @@ PREFIX ex: <http://example.org/family#>
 SELECT ?person WHERE { ?person a ex:Person . }
 "#;
         let result = run_sparql_query(&ds, sparql).expect("query should succeed");
-        let persons: Vec<_> = result.rows.iter()
+        let persons: Vec<_> = result
+            .rows
+            .iter()
             .filter_map(|r| r.get("person"))
             .map(graph_element_display)
             .collect();
@@ -439,9 +465,16 @@ SELECT ?person ?name WHERE {
         let result = run_sparql_query(&ds, sparql).expect("query should succeed");
         let output = format_results(&result, &OutputFormat::Csv);
         let mut lines = output.lines();
-        assert_eq!(lines.next(), Some("person,name"), "first line should be header");
+        assert_eq!(
+            lines.next(),
+            Some("person,name"),
+            "first line should be header"
+        );
         // Values should be raw (no RDF quoting): IRI without <>, literal without ""
-        assert!(output.contains("Alice"), "should contain raw literal value Alice");
+        assert!(
+            output.contains("Alice"),
+            "should contain raw literal value Alice"
+        );
         assert!(
             !output.contains(r#""""Alice""""#),
             "should not double-escape the literal"
@@ -457,7 +490,10 @@ SELECT ?person WHERE { ?person a ex:Person . }
 "#;
         let result = run_sparql_query(&ds, sparql).expect("query should succeed");
         let output = format_results(&result, &OutputFormat::Json);
-        assert!(output.starts_with("{\"head\":{\"vars\":"), "should be SPARQL JSON");
+        assert!(
+            output.starts_with("{\"head\":{\"vars\":"),
+            "should be SPARQL JSON"
+        );
         assert!(output.contains("\"person\""));
         assert!(output.contains("http://example.org/family#Alice"));
     }

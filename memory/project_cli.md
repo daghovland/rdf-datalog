@@ -33,12 +33,12 @@ Load data → (optionally load OWL ontologies + apply datalog reasoning) → run
 - `format_csv(result) -> String` — CSV output
 - `format_json(result) -> String` — SPARQL results JSON
 
-## Status (2026-04-24)
+## Status (2026-04-25)
 
 - Data loading (Turtle): done
 - OWL ontology loading + reasoning: done
 - SPARQL SELECT: done
-- `--rules` flag: present but immediately returns error (datalog_parser is a stub)
+- `--rules` flag: fully wired — parses and applies Datalog rules before query/serve
 - TriG named-graph loading: wired via `parse_trig` in `turtle_parser`
 - Integration tests: `tests/cli_integration.rs`
 

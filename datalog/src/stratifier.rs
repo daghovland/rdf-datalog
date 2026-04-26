@@ -178,21 +178,19 @@ impl RulePartitioner {
         path.push(idx);
         for edge in &self.ordered[idx].successors {
             let dep = edge.get_rule();
-            if let Some(&dep_idx) = self.rule_index.get(dep) {
-                if !self.ordered[dep_idx].output {
-                    if matches!(edge, PatternEdge::NegativePatternEdge(_)) {
-                        log::error!(
-                            "Datalog program has a cycle with negation — not stratifiable! \
-                             Cycle includes rule: {}",
-                            self.rules[idx]
-                        );
-                        panic!(
-                            "Datalog program has a cycle with negation and is not stratifiable!"
-                        );
-                    }
-                    if self.dfs_cycle(dep_idx, visited, path) {
-                        return true;
-                    }
+            if let Some(&dep_idx) = self.rule_index.get(dep)
+                && !self.ordered[dep_idx].output
+            {
+                if matches!(edge, PatternEdge::NegativePatternEdge(_)) {
+                    log::error!(
+                        "Datalog program has a cycle with negation — not stratifiable! \
+                         Cycle includes rule: {}",
+                        self.rules[idx]
+                    );
+                    panic!("Datalog program has a cycle with negation and is not stratifiable!");
+                }
+                if self.dfs_cycle(dep_idx, visited, path) {
+                    return true;
                 }
             }
         }

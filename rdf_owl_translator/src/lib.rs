@@ -15,9 +15,9 @@ Contact: hovlanddag@gmail.com
 //!
 //! Entry point: [`rdf2owl`].
 
-pub mod ingress;
-mod class_expression_parser;
 mod axiom_parser;
+mod class_expression_parser;
+pub mod ingress;
 mod translator;
 
 pub use translator::rdf2owl;

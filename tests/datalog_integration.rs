@@ -1,0 +1,332 @@
+/*
+Copyright (C) 2025 Dag Hovland
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+Contact: hovlanddag@gmail.com
+*/
+
+//! Integration tests for the Datalog parser and rule application pipeline.
+//!
+//! These tests exercise `datalog_parser::parse` / `parse_file` and
+//! `dagalog::apply_rules` through the public library API.
+//!
+//! Test data files mirror the DagSemTools DatalogParser.Unit.Tests/TestData/
+//! directory and are stored in tests/testdata/.
+
+use dag_rdf::Datastore;
+use dagalog::{apply_rules, graph_element_display, load_file, run_sparql_query};
+use datalog::types::{RuleAtom, RuleHead};
+use std::path::Path;
+
+fn testdata(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("testdata")
+        .join(name)
+}
+
+fn ds() -> Datastore {
+    Datastore::new(100_000)
+}
+
+// ── Parser correctness (translated from DagSemTools TestParser) ───────────────
+
+#[test]
+fn parse_single_rule() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("rule1.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "rule1.datalog should produce 1 rule");
+}
+
+#[test]
+fn parse_rule_with_and() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("ruleand.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(
+        rules[0].body.len(),
+        2,
+        "ruleand.datalog body should have 2 atoms"
+    );
+}
+
+#[test]
+fn parse_two_rules() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("tworules.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].body.len(), 2);
+}
+
+#[test]
+fn parse_negation() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("rulenot.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].body.len(), 2);
+    assert!(
+        matches!(rules[0].body[1], RuleAtom::NotPattern(_)),
+        "second body atom should be NOT"
+    );
+}
+
+#[test]
+fn parse_type_atom() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("ruletypeatom.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].body.len(), 2);
+}
+
+#[test]
+fn parse_prefixes() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("prefixes.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].body.len(), 1);
+    // The body predicate should be the expanded ex2:predicate2 IRI
+    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0]
+        && let dag_rdf::Term::Resource(id) = &pat.predicate
+    {
+        let iri = ds
+            .resources
+            .get_named_resource(*id)
+            .expect("should be an IRI");
+        assert!(
+            iri.0.contains("predicate2"),
+            "body predicate should contain 'predicate2', got {}",
+            iri.0
+        );
+    }
+}
+
+#[test]
+fn parse_all_variables_with_rdf_range() {
+    // properties.datalog: [?x, a, ?c] :- [?x, ?p, ?y], [?p, rdfs:range, ?c]
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("properties.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].body.len(), 2);
+    // Head must be a NormalHead
+    assert!(matches!(rules[0].head, RuleHead::NormalHead(_)));
+    // Head predicate must be rdf:type
+    if let RuleHead::NormalHead(ref pat) = rules[0].head
+        && let dag_rdf::Term::Resource(id) = &pat.predicate
+    {
+        let iri = ds.resources.get_named_resource(*id).unwrap();
+        assert!(
+            iri.0.ends_with("rdf-syntax-ns#type"),
+            "head predicate should be rdf:type, got {}",
+            iri.0
+        );
+    }
+}
+
+#[test]
+fn parse_type_atom2() {
+    // typeatom2.datalog: ex:type [?new_node] :- ex:type [?node] .
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("typeatom2.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].body.len(), 1);
+}
+
+#[test]
+fn parse_contradiction() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("contradiction.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(
+        matches!(rules[0].head, RuleHead::Contradiction),
+        "head should be Contradiction"
+    );
+}
+
+#[test]
+fn parse_named_graph_rule() {
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("namedgraph.datalog"), &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    // Both head and body atom should have a graph variable
+    if let RuleHead::NormalHead(ref pat) = rules[0].head {
+        assert!(
+            matches!(&pat.graph, dag_rdf::Term::Variable(v) if v == "graph"),
+            "head graph should be variable 'graph'"
+        );
+    } else {
+        panic!("expected NormalHead");
+    }
+    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0] {
+        assert!(
+            matches!(&pat.graph, dag_rdf::Term::Variable(v) if v == "graph"),
+            "body graph should be variable 'graph'"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires large.datalog — run `bash scripts/download_test_ontologies.sh` first"]
+fn parse_large_file() {
+    let path = testdata("large.datalog");
+    if !path.exists() {
+        eprintln!("[SKIP] large.datalog not found — run scripts/download_test_ontologies.sh");
+        return;
+    }
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&path, &mut ds).unwrap();
+    assert!(
+        rules.len() > 100,
+        "large.datalog should produce >100 rules, got {}",
+        rules.len()
+    );
+}
+
+// ── End-to-end: rules applied to data, then queried via SPARQL ────────────────
+
+#[test]
+fn datalog_rules_infer_new_triples() {
+    // Load family data (only Alice=Person, Bob=Employee, Charlie=Person)
+    let mut ds = ds();
+    load_file(&mut ds, &testdata("family.ttl")).unwrap();
+    let triples_before = ds.named_graphs.quad_count;
+
+    // Apply infer_employee.datalog: every Employee is a Person
+    let rule_count = apply_rules(&mut ds, &[testdata("infer_employee.datalog")]).unwrap();
+    assert!(rule_count > 0, "should have loaded at least one rule");
+
+    let triples_after = ds.named_graphs.quad_count;
+    assert!(
+        triples_after > triples_before,
+        "rules should have added triples (before={}, after={})",
+        triples_before,
+        triples_after
+    );
+
+    // Bob (Employee) should now be queryable as a Person
+    let sparql = "PREFIX ex: <http://example.org/family#> SELECT ?p WHERE { ?p a ex:Person . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let persons: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("p"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        persons.contains(&"<http://example.org/family#Alice>".to_string()),
+        "Alice should be a Person"
+    );
+    assert!(
+        persons.contains(&"<http://example.org/family#Bob>".to_string()),
+        "Bob should be inferred as a Person via Datalog rules; got: {:?}",
+        persons
+    );
+}
+
+#[test]
+fn datalog_rules_with_rdfs_range() {
+    // properties.datalog: [?x, a, ?c] :- [?x, ?p, ?y], [?p, rdfs:range, ?c]
+    // We need data that contains triples with rdfs:range declarations
+    let ttl = r#"
+@prefix ex: <https://example.com/data#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:hasAge rdfs:range ex:AgeValue .
+ex:Alice ex:hasAge "30" .
+"#;
+    let mut ds = ds();
+    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let rules = datalog_parser::parse_file(&testdata("properties.datalog"), &mut ds).unwrap();
+    datalog::evaluate_rules(rules, &mut ds);
+
+    // SPARQL: Alice should now be typed as AgeValue (via range inference)
+    let sparql = r#"
+PREFIX ex: <https://example.com/data#>
+SELECT ?x WHERE { ?x a ex:AgeValue . }
+"#;
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    assert!(
+        !result.rows.is_empty(),
+        "range inference should have added type triples; no ex:AgeValue instances found"
+    );
+}
+
+#[test]
+fn apply_rules_from_inline_string() {
+    // Test parse() directly with inline Datalog
+    let src = r#"
+prefix ex: <https://example.com/test#>
+ex:Mammal[?x] :- ex:Dog[?x] .
+ex:Mammal[?x] :- ex:Cat[?x] .
+"#;
+    let ttl = r#"
+@prefix ex: <https://example.com/test#> .
+ex:Fido a ex:Dog .
+ex:Whiskers a ex:Cat .
+ex:Nobody a ex:Fish .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 2);
+    datalog::evaluate_rules(rules, &mut ds);
+
+    let sparql = "PREFIX ex: <https://example.com/test#> SELECT ?x WHERE { ?x a ex:Mammal . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let mammals: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+    assert!(
+        mammals.contains(&"<https://example.com/test#Fido>".to_string()),
+        "Fido should be a Mammal"
+    );
+    assert!(
+        mammals.contains(&"<https://example.com/test#Whiskers>".to_string()),
+        "Whiskers should be a Mammal"
+    );
+    assert!(
+        !mammals.contains(&"<https://example.com/test#Nobody>".to_string()),
+        "Nobody (Fish) should NOT be a Mammal"
+    );
+}
+
+#[test]
+fn apply_rules_via_lib_api() {
+    // Test the dagalog::apply_rules() library function
+    let src = r#"prefix ex: <https://example.com/test#>
+ex:Big[?x] :- ex:VeryBig[?x] ."#;
+    let ttl = r#"@prefix ex: <https://example.com/test#> .
+ex:Elephant a ex:VeryBig ."#;
+
+    let mut ds = Datastore::new(10_000);
+    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let tmp = std::env::temp_dir().join("dagalog_test_rules.datalog");
+    std::fs::write(&tmp, src).unwrap();
+    let count = apply_rules(&mut ds, &[tmp]).unwrap();
+    assert_eq!(count, 1);
+
+    let sparql = "PREFIX ex: <https://example.com/test#> SELECT ?x WHERE { ?x a ex:Big . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    assert!(
+        !result.rows.is_empty(),
+        "Elephant should be inferred as Big"
+    );
+}
+
+#[test]
+fn contradiction_rule_parsed_but_does_not_panic() {
+    // Contradiction rules generate no new triples; they're used for consistency checking.
+    let mut ds = ds();
+    let rules = datalog_parser::parse_file(&testdata("contradiction.datalog"), &mut ds).unwrap();
+    // Should not panic during materialisation
+    let ttl = r#"@prefix ex: <https://example.com/> . ex:Alice a ex:ValidClass ."#;
+    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+    datalog::evaluate_rules(rules, &mut ds); // must not panic
+}

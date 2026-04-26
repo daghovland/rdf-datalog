@@ -17,7 +17,10 @@ Contact: hovlanddag@gmail.com
 //! All test data lives in `tests/testdata/`.
 
 use dag_rdf::Datastore;
-use dagalog::{OutputFormat, apply_ontologies, format_results, graph_element_display, load_file, run_sparql_query};
+use dagalog::{
+    OutputFormat, apply_ontologies, format_results, graph_element_display, load_file,
+    run_sparql_query,
+};
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -59,7 +62,11 @@ fn load_nonexistent_file_returns_error() {
     let result = load_file(&mut ds, Path::new("/nonexistent/path/file.ttl"));
     assert!(result.is_err(), "should fail to open nonexistent file");
     let msg = result.unwrap_err();
-    assert!(msg.contains("cannot open"), "error should mention 'cannot open': {}", msg);
+    assert!(
+        msg.contains("cannot open"),
+        "error should mention 'cannot open': {}",
+        msg
+    );
 }
 
 // ── Basic SPARQL ──────────────────────────────────────────────────────────────
@@ -107,7 +114,11 @@ SELECT ?p WHERE {
     FILTER(?n = "Alice")
 }"#;
     let result = run_sparql_query(&ds, sparql).expect("query should succeed");
-    assert_eq!(result.rows.len(), 1, "expected exactly one result for name=Alice");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected exactly one result for name=Alice"
+    );
     let val = graph_element_display(result.rows[0].get("p").unwrap());
     assert_eq!(val, "<http://example.org/family#Alice>");
 }
@@ -279,10 +290,22 @@ fn output_format_json_structure() {
     let result = run_sparql_query(&ds, sparql).expect("query");
     let output = format_results(&result, &OutputFormat::Json);
 
-    assert!(output.starts_with("{\"head\":{\"vars\":"), "should start with SPARQL JSON head");
-    assert!(output.contains("\"results\":{\"bindings\":"), "should have results bindings");
-    assert!(output.contains("\"type\":\"uri\""), "IRIs should have type:uri");
-    assert!(output.contains("http://example.org/family#Alice"), "should contain Alice IRI");
+    assert!(
+        output.starts_with("{\"head\":{\"vars\":"),
+        "should start with SPARQL JSON head"
+    );
+    assert!(
+        output.contains("\"results\":{\"bindings\":"),
+        "should have results bindings"
+    );
+    assert!(
+        output.contains("\"type\":\"uri\""),
+        "IRIs should have type:uri"
+    );
+    assert!(
+        output.contains("http://example.org/family#Alice"),
+        "should contain Alice IRI"
+    );
 }
 
 #[test]
@@ -297,8 +320,14 @@ SELECT ?name WHERE { ex:Alice ex:name ?name . }
     let result = run_sparql_query(&ds, sparql).expect("query");
     let output = format_results(&result, &OutputFormat::Json);
 
-    assert!(output.contains("\"type\":\"literal\""), "literals should have type:literal");
-    assert!(output.contains("Alice"), "should contain literal value Alice");
+    assert!(
+        output.contains("\"type\":\"literal\""),
+        "literals should have type:literal"
+    );
+    assert!(
+        output.contains("Alice"),
+        "should contain literal value Alice"
+    );
 }
 
 // ── SPARQL query file ─────────────────────────────────────────────────────────
@@ -308,10 +337,12 @@ fn sparql_query_from_file() {
     let mut ds = Datastore::new(10_000);
     load_file(&mut ds, &testdata("family.ttl")).expect("load");
 
-    let query_str = std::fs::read_to_string(testdata("family.sparql"))
-        .expect("read family.sparql");
+    let query_str = std::fs::read_to_string(testdata("family.sparql")).expect("read family.sparql");
     let result = run_sparql_query(&ds, &query_str).expect("query from file");
-    assert!(!result.rows.is_empty(), "family.sparql should return results");
+    assert!(
+        !result.rows.is_empty(),
+        "family.sparql should return results"
+    );
     assert_eq!(result.variables, vec!["person", "name"]);
 }
 

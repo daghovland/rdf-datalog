@@ -304,7 +304,10 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
             |input: &'a str| {
                 if let Some(rest) = input.strip_prefix('a') {
                     let next = rest.chars().next();
-                    if next.map(|c| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(true) {
+                    if next
+                        .map(|c| !c.is_alphanumeric() && c != '_' && c != ':')
+                        .unwrap_or(true)
+                    {
                         let iri = IriReference(
                             "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
                         );
@@ -337,7 +340,9 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
             }),
             // Blank node _:label
             map(parse_blank_node, |id| {
-                Term::Constant(GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)))
+                Term::Constant(GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(
+                    id,
+                )))
             }),
         ))(input)
     }
@@ -352,11 +357,7 @@ fn parse_varname(input: &str) -> IResult<&str, String> {
 
 fn parse_iri_ref(input: &str) -> IResult<&str, IriReference> {
     map(
-        delimited(
-            char('<'),
-            take_while(|c: char| c != '>'),
-            char('>'),
-        ),
+        delimited(char('<'), take_while(|c: char| c != '>'), char('>')),
         |iri: &str| IriReference(iri.to_string()),
     )(input)
 }
@@ -367,12 +368,13 @@ fn parse_prefixed_name<'a>(
     move |input| {
         // Match prefix_name : local_name
         // prefix can be empty (just ":")
-        let (after_prefix, prefix) =
-            take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
+        let (after_prefix, prefix) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
         let (after_colon, _) = char(':')(after_prefix)?;
         // local name: alphanumeric, underscore, hyphen, dot (but not trailing dot), slash
         let (after_local, local) =
-            take_while(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))(after_colon)?;
+            take_while(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))(
+                after_colon,
+            )?;
 
         // Must not be an empty local + empty prefix (that would match nothing)
         if prefix.is_empty() && local.is_empty() {
@@ -386,11 +388,31 @@ fn parse_prefixed_name<'a>(
         let lower = prefix.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
-            "filter" | "optional" | "union" | "minus" | "bind" | "values"
-                | "select" | "where" | "prefix" | "distinct" | "limit"
-                | "offset" | "group" | "order" | "having" | "construct"
-                | "describe" | "ask" | "not" | "exists" | "service"
-                | "graph" | "from" | "named" | "base"
+            "filter"
+                | "optional"
+                | "union"
+                | "minus"
+                | "bind"
+                | "values"
+                | "select"
+                | "where"
+                | "prefix"
+                | "distinct"
+                | "limit"
+                | "offset"
+                | "group"
+                | "order"
+                | "having"
+                | "construct"
+                | "describe"
+                | "ask"
+                | "not"
+                | "exists"
+                | "service"
+                | "graph"
+                | "from"
+                | "named"
+                | "base"
         ) {
             return Err(nom::Err::Error(nom::error::Error::new(
                 input,
@@ -412,28 +434,30 @@ fn parse_string_literal<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, RdfLiteral> + 'a {
     move |input| {
         // Triple-quoted strings first, then single-quoted
-        let (input, value) = alt((
-            parse_triple_quoted_string,
-            parse_single_quoted_string,
-        ))(input)?;
+        let (input, value) = alt((parse_triple_quoted_string, parse_single_quoted_string))(input)?;
 
         // Optional language tag or datatype
         if input.starts_with('@') {
             let (input, _) = char('@')(input)?;
-            let (input, lang) =
-                take_while1(|c: char| c.is_alphanumeric() || c == '-')(input)?;
-            return Ok((input, RdfLiteral::LangLiteral { literal: value, lang: lang.to_string() }));
+            let (input, lang) = take_while1(|c: char| c.is_alphanumeric() || c == '-')(input)?;
+            return Ok((
+                input,
+                RdfLiteral::LangLiteral {
+                    literal: value,
+                    lang: lang.to_string(),
+                },
+            ));
         }
         if input.starts_with("^^") {
             let (input, _) = tag("^^")(input)?;
-            let (input, dt_iri) = alt((
-                parse_iri_ref,
-                parse_prefixed_name(ctx),
-            ))(input)?;
-            return Ok((input, RdfLiteral::TypedLiteral {
-                type_iri: dt_iri,
-                literal: value,
-            }));
+            let (input, dt_iri) = alt((parse_iri_ref, parse_prefixed_name(ctx)))(input)?;
+            return Ok((
+                input,
+                RdfLiteral::TypedLiteral {
+                    type_iri: dt_iri,
+                    literal: value,
+                },
+            ));
         }
 
         Ok((input, RdfLiteral::LiteralString(value)))
@@ -493,16 +517,22 @@ fn parse_numeric_literal(input: &str) -> IResult<&str, RdfLiteral> {
     // Produce TypedLiteral to match what turtle_parser produces from Turtle data
     if let Some((_, frac_digits)) = frac {
         let s = format!("{}{}.{}", sign_str, integer_part, frac_digits);
-        Ok((input, RdfLiteral::TypedLiteral {
-            type_iri: IriReference(XSD_DECIMAL.to_string()),
-            literal: s,
-        }))
+        Ok((
+            input,
+            RdfLiteral::TypedLiteral {
+                type_iri: IriReference(XSD_DECIMAL.to_string()),
+                literal: s,
+            },
+        ))
     } else {
         let s = format!("{}{}", sign_str, integer_part);
-        Ok((input, RdfLiteral::TypedLiteral {
-            type_iri: IriReference(XSD_INTEGER.to_string()),
-            literal: s,
-        }))
+        Ok((
+            input,
+            RdfLiteral::TypedLiteral {
+                type_iri: IriReference(XSD_INTEGER.to_string()),
+                literal: s,
+            },
+        ))
     }
 }
 
@@ -640,12 +670,18 @@ fn parse_unary_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         alt((
-            map(preceded(pair(char('!'), multispace0), |i| {
-                parse_primary_expression(ctx)(i)
-            }), |e| Expression::Unary(UnaryOp::Not, Box::new(e))),
-            map(preceded(pair(char('-'), multispace0), |i| {
-                parse_primary_expression(ctx)(i)
-            }), |e| Expression::Unary(UnaryOp::Minus, Box::new(e))),
+            map(
+                preceded(pair(char('!'), multispace0), |i| {
+                    parse_primary_expression(ctx)(i)
+                }),
+                |e| Expression::Unary(UnaryOp::Not, Box::new(e)),
+            ),
+            map(
+                preceded(pair(char('-'), multispace0), |i| {
+                    parse_primary_expression(ctx)(i)
+                }),
+                |e| Expression::Unary(UnaryOp::Minus, Box::new(e)),
+            ),
             |i| parse_primary_expression(ctx)(i),
         ))(input)
     }
@@ -668,7 +704,12 @@ fn parse_primary_expression<'a>(
             // NOT EXISTS
             map(
                 preceded(
-                    tuple((tag_no_case("NOT"), multispace1, tag_no_case("EXISTS"), multispace0)),
+                    tuple((
+                        tag_no_case("NOT"),
+                        multispace1,
+                        tag_no_case("EXISTS"),
+                        multispace0,
+                    )),
                     parse_group_graph_pattern(ctx),
                 ),
                 Expression::NotExists,
@@ -722,10 +763,10 @@ fn parse_function_call<'a>(
         let (input, _) = multispace0(input)?;
         let (input, _) = char('(')(input)?;
         let (input, _) = multispace0(input)?;
-        let (input, args) = separated_list0(
-            pair(multispace0, pair(char(','), multispace0)),
-            |i| parse_expression(ctx)(i),
-        )(input)?;
+        let (input, args) =
+            separated_list0(pair(multispace0, pair(char(','), multispace0)), |i| {
+                parse_expression(ctx)(i)
+            })(input)?;
         let (input, _) = multispace0(input)?;
         let (input, _) = char(')')(input)?;
 
@@ -771,10 +812,7 @@ fn parse_values<'a>(
             // Multiple in parens
             delimited(
                 pair(char('('), multispace0),
-                many0(terminated(
-                    preceded(char('?'), parse_varname),
-                    multispace0,
-                )),
+                many0(terminated(preceded(char('?'), parse_varname), multispace0)),
                 char(')'),
             ),
         ))(input)?;
@@ -807,10 +845,7 @@ fn parse_values_row<'a>(
         } else {
             let (input, _) = char('(')(input)?;
             let (input, _) = multispace0(input)?;
-            let (input, vals) = separated_list0(
-                multispace1,
-                parse_values_value(ctx),
-            )(input)?;
+            let (input, vals) = separated_list0(multispace1, parse_values_value(ctx))(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = char(')')(input)?;
             let (input, _) = multispace0(input)?;
@@ -840,7 +875,12 @@ fn parse_group_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
     move |input| {
         let (input, gb) = opt(preceded(
-            tuple((tag_no_case("GROUP"), multispace1, tag_no_case("BY"), multispace1)),
+            tuple((
+                tag_no_case("GROUP"),
+                multispace1,
+                tag_no_case("BY"),
+                multispace1,
+            )),
             separated_list1(multispace1, |i| parse_expression(ctx)(i)),
         ))(input)?;
         Ok((input, gb.unwrap_or_default()))
@@ -851,10 +891,9 @@ fn parse_having<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
     move |input| {
-        let (input, hv) = opt(preceded(
-            pair(tag_no_case("HAVING"), multispace1),
-            |i| parse_expression(ctx)(i),
-        ))(input)?;
+        let (input, hv) = opt(preceded(pair(tag_no_case("HAVING"), multispace1), |i| {
+            parse_expression(ctx)(i)
+        }))(input)?;
         Ok((input, hv.map(|e| vec![e]).unwrap_or_default()))
     }
 }
@@ -864,7 +903,12 @@ fn parse_order_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<OrderCondition>> + 'a {
     move |input| {
         let (input, ob) = opt(preceded(
-            tuple((tag_no_case("ORDER"), multispace1, tag_no_case("BY"), multispace1)),
+            tuple((
+                tag_no_case("ORDER"),
+                multispace1,
+                tag_no_case("BY"),
+                multispace1,
+            )),
             separated_list1(multispace1, parse_order_condition(ctx)),
         ))(input)?;
         Ok((input, ob.unwrap_or_default()))
@@ -880,18 +924,27 @@ fn parse_order_condition<'a>(
                 preceded(pair(tag_no_case("ASC"), multispace0), |i| {
                     parse_expression(ctx)(i)
                 }),
-                |e| OrderCondition { expression: e, ascending: true },
+                |e| OrderCondition {
+                    expression: e,
+                    ascending: true,
+                },
             ),
             map(
                 preceded(pair(tag_no_case("DESC"), multispace0), |i| {
                     parse_expression(ctx)(i)
                 }),
-                |e| OrderCondition { expression: e, ascending: false },
+                |e| OrderCondition {
+                    expression: e,
+                    ascending: false,
+                },
             ),
-            map(|i| parse_expression(ctx)(i), |e| OrderCondition {
-                expression: e,
-                ascending: true,
-            }),
+            map(
+                |i| parse_expression(ctx)(i),
+                |e| OrderCondition {
+                    expression: e,
+                    ascending: true,
+                },
+            ),
         ))(input)
     }
 }
@@ -900,10 +953,9 @@ fn parse_limit_offset(keyword: &str) -> impl Fn(&str) -> IResult<&str, Option<u6
     move |input| {
         let (input, val) = opt(preceded(
             pair(tag_no_case(keyword), multispace1),
-            map(
-                take_while1(|c: char| c.is_ascii_digit()),
-                |s: &str| s.parse::<u64>().unwrap_or(0),
-            ),
+            map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+                s.parse::<u64>().unwrap_or(0)
+            }),
         ))(input)?;
         Ok((input, val))
     }

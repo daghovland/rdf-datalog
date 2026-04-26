@@ -198,16 +198,13 @@ fn eval_component(
             result
         }
 
-        QueryComponent::Minus(inner) => {
-            solutions
-                .into_iter()
-                .filter(|sub| {
-                    let minus_sols = eval_components(inner, vec![sub.clone()], datastore);
-                    minus_sols.is_empty()
-                        || minus_sols.iter().all(|ms| !compatible(sub, ms))
-                })
-                .collect()
-        }
+        QueryComponent::Minus(inner) => solutions
+            .into_iter()
+            .filter(|sub| {
+                let minus_sols = eval_components(inner, vec![sub.clone()], datastore);
+                minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms))
+            })
+            .collect(),
 
         QueryComponent::Graph(_, inner) => {
             // Flatten named-graph patterns into the default graph for now
@@ -233,24 +230,21 @@ fn eval_component(
                     let mut new_sub = sub.clone();
                     let mut ok = true;
                     for (var, val_opt) in vars.iter().zip(row.iter()) {
-                        match val_opt {
-                            Some(gel) => {
-                                let Some(&id) = datastore.resources.resource_map.get(gel) else {
+                        if let Some(gel) = val_opt {
+                            let Some(&id) = datastore.resources.resource_map.get(gel) else {
+                                ok = false;
+                                break;
+                            };
+                            match new_sub.get(var) {
+                                Some(&existing) if existing != id => {
                                     ok = false;
                                     break;
-                                };
-                                match new_sub.get(var) {
-                                    Some(&existing) if existing != id => {
-                                        ok = false;
-                                        break;
-                                    }
-                                    _ => {
-                                        new_sub.insert(var.clone(), id);
-                                    }
+                                }
+                                _ => {
+                                    new_sub.insert(var.clone(), id);
                                 }
                             }
-                            None => {} // UNDEF — leave unbound
-                        }
+                        } // UNDEF (None) — leave unbound
                     }
                     if ok {
                         result.push(new_sub);
@@ -433,7 +427,9 @@ fn eval_function_value(
             if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) = el {
                 Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(lang)))
             } else {
-                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(String::new())))
+                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    String::new(),
+                )))
             }
         }
         _ => None,
@@ -446,43 +442,41 @@ fn eval_expression_bool(
     datastore: &Datastore,
 ) -> Option<bool> {
     match expr {
-        Expression::Binary(left, op, right) => {
-            match op {
-                BinaryOp::And => {
-                    let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
-                    let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
-                    Some(l && r)
-                }
-                BinaryOp::Or => {
-                    let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
-                    let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
-                    Some(l || r)
-                }
-                BinaryOp::Eq => {
-                    let l = eval_expression_value(left, sub, datastore)?;
-                    let r = eval_expression_value(right, sub, datastore)?;
-                    Some(l == r)
-                }
-                BinaryOp::Ne => {
-                    let l = eval_expression_value(left, sub, datastore)?;
-                    let r = eval_expression_value(right, sub, datastore)?;
-                    Some(l != r)
-                }
-                BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
-                    let l = eval_expression_value(left, sub, datastore)?;
-                    let r = eval_expression_value(right, sub, datastore)?;
-                    let ord = compare_graph_elements(&l, &r)?;
-                    Some(match op {
-                        BinaryOp::Lt => ord < 0,
-                        BinaryOp::Gt => ord > 0,
-                        BinaryOp::Le => ord <= 0,
-                        BinaryOp::Ge => ord >= 0,
-                        _ => unreachable!(),
-                    })
-                }
-                _ => None,
+        Expression::Binary(left, op, right) => match op {
+            BinaryOp::And => {
+                let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
+                let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                Some(l && r)
             }
-        }
+            BinaryOp::Or => {
+                let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
+                let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                Some(l || r)
+            }
+            BinaryOp::Eq => {
+                let l = eval_expression_value(left, sub, datastore)?;
+                let r = eval_expression_value(right, sub, datastore)?;
+                Some(l == r)
+            }
+            BinaryOp::Ne => {
+                let l = eval_expression_value(left, sub, datastore)?;
+                let r = eval_expression_value(right, sub, datastore)?;
+                Some(l != r)
+            }
+            BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
+                let l = eval_expression_value(left, sub, datastore)?;
+                let r = eval_expression_value(right, sub, datastore)?;
+                let ord = compare_graph_elements(&l, &r)?;
+                Some(match op {
+                    BinaryOp::Lt => ord < 0,
+                    BinaryOp::Gt => ord > 0,
+                    BinaryOp::Le => ord <= 0,
+                    BinaryOp::Ge => ord >= 0,
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        },
         Expression::Unary(UnaryOp::Not, inner) => {
             Some(!eval_expression_bool(inner, sub, datastore).unwrap_or(false))
         }
@@ -499,11 +493,10 @@ fn eval_expression_bool(
             let el = eval_expression_value(expr, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(b),
-                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { ref type_iri, ref literal })
-                    if type_iri.0 == XSD_BOOLEAN =>
-                {
-                    Some(literal == "true")
-                }
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                    ref type_iri,
+                    ref literal,
+                }) if type_iri.0 == XSD_BOOLEAN => Some(literal == "true"),
                 _ => None,
             }
         }
@@ -592,7 +585,8 @@ fn eval_expression(
     sub.get(match expr {
         Expression::Variable(v) => v,
         _ => return None,
-    }).copied()
+    })
+    .copied()
 }
 
 fn graph_element_to_string(el: &GraphElement) -> Option<String> {
@@ -636,7 +630,11 @@ fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
     if let (GraphLiteral(a_lit), GraphLiteral(b_lit)) = (a, b) {
         // Try numeric comparison first
         if let (Some(af), Some(bf)) = (literal_to_f64(a_lit), literal_to_f64(b_lit)) {
-            return af.partial_cmp(&bf).map(|o| match o { Less => -1, Equal => 0, Greater => 1 });
+            return af.partial_cmp(&bf).map(|o| match o {
+                Less => -1,
+                Equal => 0,
+                Greater => 1,
+            });
         }
         // String literal comparison
         let a_str = match a_lit {
@@ -650,7 +648,11 @@ fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
             _ => None,
         };
         if let (Some(a_s), Some(b_s)) = (a_str, b_str) {
-            return Some(match a_s.cmp(b_s) { Less => -1, Equal => 0, Greater => 1 });
+            return Some(match a_s.cmp(b_s) {
+                Less => -1,
+                Equal => 0,
+                Greater => 1,
+            });
         }
     }
     None
