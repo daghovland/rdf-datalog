@@ -6,7 +6,7 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! dagalog — RDF triplestore with OWL-RL reasoning and SPARQL query answering.
+//! dagalog — RDF triplestore with OWL-RL reasoning, Datalog rules, and SPARQL.
 //!
 //! # Usage
 //!
@@ -14,66 +14,76 @@ Contact: hovlanddag@gmail.com
 //! dagalog [OPTIONS]
 //!
 //! Options:
-//!   -d, --data <FILE>         Turtle/TriG data file(s) to load [repeatable]
-//!   -o, --ontology <FILE>     OWL ontology file(s) to apply (triggers OWL-RL reasoning) [repeatable]
-//!   -r, --rules <FILE>        Datalog rules file(s) [not yet supported] [repeatable]
-//!   -q, --query-file <FILE>   SPARQL SELECT query file
-//!   -Q, --query <SPARQL>      Inline SPARQL SELECT query string
-//!   -f, --format <FORMAT>     Output format: table, csv, json [default: table]
-//!   -v, --verbose             Print pipeline statistics to stderr
-//!   -h, --help                Print help
+//!   -d, --data <FILE>          Turtle/TriG data file(s) to load [repeatable]
+//!   -o, --ontology <FILE>      OWL ontology file(s) → OWL-RL reasoning [repeatable]
+//!   -r, --rules <FILE>         Datalog rules file(s) [repeatable]
+//!   -Q, --query <SPARQL|FILE>  Inline SPARQL SELECT or path to .sparql file
+//!   -q, --query-file <FILE>    SPARQL SELECT query file (alternative to --query)
+//!   -f, --format <FORMAT>      Output: table (default), csv, json
+//!   -v, --verbose              Print pipeline stats to stderr
+//!       --serve                Start SPARQL HTTP endpoint
+//!       --port <PORT>          Port to listen on [default: 3030]
+//!       --base-iri <IRI>       Base IRI for Service Description
+//!   -h, --help                 Print help
 //! ```
 
 use clap::Parser;
 use dag_rdf::Datastore;
-use dagalog::{OutputFormat, apply_ontologies, format_results, load_file, run_sparql_query};
+use dagalog::{OutputFormat, apply_ontologies, apply_rules, format_results, load_file, run_sparql_query};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "dagalog",
-    about = "RDF triplestore with OWL-RL reasoning and SPARQL query answering",
-    long_about = "Load Turtle/TriG data, optionally apply OWL-RL reasoning from ontology files,\n\
-                  and answer SPARQL SELECT queries."
+    about = "RDF triplestore with OWL-RL reasoning, Datalog rules, and SPARQL",
+    long_about = "Load Turtle/TriG data, optionally apply OWL-RL reasoning and custom Datalog\n\
+                  rules, then answer SPARQL SELECT queries or serve a SPARQL HTTP endpoint."
 )]
 struct Cli {
-    /// Turtle or TriG data file(s) to load (may be given multiple times)
+    /// Turtle or TriG data file(s) to load (repeatable)
     #[arg(short = 'd', long = "data", value_name = "FILE")]
     data: Vec<PathBuf>,
 
-    /// OWL ontology Turtle file(s) to load and apply OWL-RL reasoning (may be given multiple times)
+    /// OWL ontology file(s) — loads and applies OWL-RL reasoning (repeatable)
     #[arg(short = 'o', long = "ontology", value_name = "FILE")]
     ontology: Vec<PathBuf>,
 
-    /// Datalog rules file(s) — NOT YET SUPPORTED (may be given multiple times)
+    /// Datalog rules file(s) to load and apply (repeatable)
     #[arg(short = 'r', long = "rules", value_name = "FILE")]
     rules: Vec<PathBuf>,
 
-    /// SPARQL SELECT query file
+    /// Inline SPARQL SELECT query or path to a .sparql file
+    #[arg(short = 'Q', long = "query", value_name = "SPARQL|FILE")]
+    query: Option<String>,
+
+    /// SPARQL SELECT query file (alternative to --query)
     #[arg(short = 'q', long = "query-file", value_name = "FILE")]
     query_file: Option<PathBuf>,
 
-    /// Inline SPARQL SELECT query string
-    #[arg(short = 'Q', long = "query", value_name = "SPARQL")]
-    query: Option<String>,
-
-    /// Output format: table, csv, json [default: table]
-    #[arg(
-        short = 'f',
-        long = "format",
-        value_name = "FORMAT",
-        default_value = "table"
-    )]
+    /// Output format: table (default), csv, json
+    #[arg(short = 'f', long = "format", value_name = "FORMAT", default_value = "table")]
     format: String,
 
     /// Print pipeline statistics to stderr
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
+
+    /// Start a SPARQL 1.1 HTTP endpoint instead of running a one-shot query
+    #[arg(long = "serve")]
+    serve: bool,
+
+    /// Port to listen on when --serve is set [default: 3030]
+    #[arg(long = "port", value_name = "PORT", default_value = "3030")]
+    port: u16,
+
+    /// Base IRI for the SPARQL Service Description [default: http://localhost:PORT]
+    #[arg(long = "base-iri", value_name = "IRI")]
+    base_iri: Option<String>,
 }
 
 fn main() {
     let cli = Cli::parse();
-
     if let Err(e) = run(cli) {
         eprintln!("error: {}", e);
         std::process::exit(1);
@@ -81,40 +91,19 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
-    // Reject --rules early — datalog parser is not yet implemented
-    if !cli.rules.is_empty() {
-        return Err(
-            "--rules is not yet supported: the Datalog parser has not been implemented.\n\
-             To implement it, translate DagSemTools.Datalog.Parser from F# similarly to\n\
-             how the SPARQL and Turtle parsers were translated."
-                .to_string(),
-        );
-    }
+    let format: OutputFormat = cli.format.parse().map_err(|e: String| format!("--format: {}", e))?;
 
-    // Parse output format
-    let format: OutputFormat = cli
-        .format
-        .parse()
-        .map_err(|e: String| format!("--format: {}", e))?;
-
-    // Resolve SPARQL query (either from file or inline).
-    // --query accepts both an inline SPARQL string and a file path; if the value
-    // refers to an existing file it is read as a file, otherwise used as-is.
+    // Resolve SPARQL query string: --query-file wins; --query auto-detects file paths.
     let sparql = match (&cli.query_file, &cli.query) {
-        (Some(_), Some(_)) => {
-            return Err("--query-file and --query cannot be used together".to_string());
-        }
+        (Some(_), Some(_)) => return Err("--query-file and --query cannot both be set".to_string()),
         (Some(path), None) => Some(
             std::fs::read_to_string(path)
                 .map_err(|e| format!("cannot read query file {}: {}", path.display(), e))?,
         ),
         (None, Some(q)) => {
-            let path = std::path::Path::new(q);
-            if path.is_file() {
-                Some(
-                    std::fs::read_to_string(path)
-                        .map_err(|e| format!("cannot read query file {}: {}", path.display(), e))?,
-                )
+            let p = std::path::Path::new(q.as_str());
+            if p.is_file() {
+                Some(std::fs::read_to_string(p).map_err(|e| format!("cannot read {}: {}", p.display(), e))?)
             } else {
                 Some(q.clone())
             }
@@ -122,54 +111,81 @@ fn run(cli: Cli) -> Result<(), String> {
         (None, None) => None,
     };
 
-    // Build datastore
+    // ── Build the datastore ──────────────────────────────────────────────────
     let mut datastore = Datastore::new(1_000_000);
 
-    // Load data files
     for path in &cli.data {
-        if cli.verbose {
-            eprintln!("loading data: {}", path.display());
-        }
+        if cli.verbose { eprintln!("loading data: {}", path.display()); }
         load_file(&mut datastore, path)?;
-        if cli.verbose {
-            eprintln!("  triples: {}", datastore.named_graphs.quad_count);
-        }
+        if cli.verbose { eprintln!("  triples: {}", datastore.named_graphs.quad_count); }
     }
 
-    // Load ontologies and apply OWL-RL reasoning
     if !cli.ontology.is_empty() {
         if cli.verbose {
-            for path in &cli.ontology {
-                eprintln!("loading ontology: {}", path.display());
-            }
+            for p in &cli.ontology { eprintln!("loading ontology: {}", p.display()); }
         }
         let stats = apply_ontologies(&mut datastore, &cli.ontology)?;
         if cli.verbose {
             eprintln!("OWL axioms extracted: {}", stats.axiom_count);
             eprintln!("Datalog rules generated: {}", stats.rule_count);
             eprintln!(
-                "Triples after reasoning: {} (inferred: {})",
+                "Triples after OWL reasoning: {} (+{})",
                 stats.triples_after,
                 stats.triples_after.saturating_sub(stats.triples_before)
             );
         }
     }
 
-    // Print triple count summary if verbose and no query
+    if !cli.rules.is_empty() {
+        if cli.verbose {
+            for p in &cli.rules { eprintln!("loading rules: {}", p.display()); }
+        }
+        let triples_before = datastore.named_graphs.quad_count;
+        let rule_count = apply_rules(&mut datastore, &cli.rules)?;
+        if cli.verbose {
+            eprintln!("Datalog rules applied: {}", rule_count);
+            eprintln!(
+                "Triples after Datalog materialisation: {} (+{})",
+                datastore.named_graphs.quad_count,
+                datastore.named_graphs.quad_count.saturating_sub(triples_before)
+            );
+        }
+    }
+
     if cli.verbose {
         eprintln!("total triples: {}", datastore.named_graphs.quad_count);
     }
 
-    // Execute SPARQL query if given
-    if let Some(sparql_str) = &sparql {
+    // ── Serve or query ───────────────────────────────────────────────────────
+    if cli.serve {
+        let base_iri = cli.base_iri.clone()
+            .unwrap_or_else(|| format!("http://localhost:{}", cli.port));
+        let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", cli.port)
+            .parse()
+            .map_err(|e| format!("invalid port {}: {}", cli.port, e))?;
+
+        eprintln!("SPARQL endpoint ready at http://localhost:{}/sparql", cli.port);
+
+        let config = sparql_endpoint::Config {
+            bind_addr,
+            base_iri,
+            read_only: true,
+            max_query_timeout_secs: 30,
+        };
+        let store = Arc::new(tokio::sync::RwLock::new(datastore));
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| format!("failed to create async runtime: {}", e))?;
+        runtime
+            .block_on(sparql_endpoint::serve(store, config))
+            .map_err(|e| format!("server error: {}", e))?;
+    } else if let Some(sparql_str) = &sparql {
         let result = run_sparql_query(&datastore, sparql_str)?;
         print!("{}", format_results(&result, &format));
-    } else if cli.data.is_empty() && cli.ontology.is_empty() {
-        // No data, no query: print help hint
+    } else if cli.data.is_empty() && cli.ontology.is_empty() && cli.rules.is_empty() {
         eprintln!("No data files or query provided. Run with --help for usage.");
     } else {
         eprintln!(
-            "Loaded {} triples. Use --query or --query-file to run a SPARQL query.",
+            "Loaded {} triples. Use --query, --query-file, or --serve.",
             datastore.named_graphs.quad_count
         );
     }

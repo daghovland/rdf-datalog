@@ -14,9 +14,12 @@ owl2rl2datalog = { path = "owl2rl2datalog" }
 turtle-parser = { path = "turtle_parser" }
 rdf-owl-translator = { path = "rdf_owl_translator" }
 datalog = { path = "datalog" }
+datalog-parser = { path = "datalog_parser" }
 sparql-parser = { path = "sparql_parser" }
+sparql-endpoint = { path = "sparql_endpoint" }
 log = "0.4"
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 env_logger = "0.10"

@@ -230,24 +230,21 @@ fn eval_component(
                     let mut new_sub = sub.clone();
                     let mut ok = true;
                     for (var, val_opt) in vars.iter().zip(row.iter()) {
-                        match val_opt {
-                            Some(gel) => {
-                                let Some(&id) = datastore.resources.resource_map.get(gel) else {
+                        if let Some(gel) = val_opt {
+                            let Some(&id) = datastore.resources.resource_map.get(gel) else {
+                                ok = false;
+                                break;
+                            };
+                            match new_sub.get(var) {
+                                Some(&existing) if existing != id => {
                                     ok = false;
                                     break;
-                                };
-                                match new_sub.get(var) {
-                                    Some(&existing) if existing != id => {
-                                        ok = false;
-                                        break;
-                                    }
-                                    _ => {
-                                        new_sub.insert(var.clone(), id);
-                                    }
+                                }
+                                _ => {
+                                    new_sub.insert(var.clone(), id);
                                 }
                             }
-                            None => {} // UNDEF — leave unbound
-                        }
+                        } // UNDEF (None) — leave unbound
                     }
                     if ok {
                         result.push(new_sub);

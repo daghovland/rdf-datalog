@@ -7,13 +7,16 @@ edition = "2024"
 dag-rdf = { path = "../dag_rdf" }
 sparql-parser = { path = "../sparql_parser" }
 turtle-parser = { path = "../turtle_parser" }
-
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["cors"] }
+axum = { version = "0.8",
+    bytes = "1.11.1" }
+tokio = { version = "1.52", features = ["full"],
+    bytes = "1.11.1" }
+tower-http = { version = "0.6", features = ["cors"],
+        bytes = "1.11.1"}
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"],
+    rustls-webpki = "0.103" }
 urlencoding = "2"

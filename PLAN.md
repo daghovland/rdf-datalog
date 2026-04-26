@@ -21,8 +21,8 @@ Each F# project becomes a Rust crate. Names are kept as close as possible:
 | `Turtle.Parser` | `turtle_parser` | Done (uses rio_turtle; now includes TriG support) |
 | `Manchester.Parser` | `manchester_parser` | Not started |
 | `Sparql.Parser` | `sparql_parser` | Done (nom-based; `a` shorthand added) |
-| `Datalog.Parser` | `datalog_parser` | Not started — see Phase 6 for plan |
-| `Api` | root crate `dagalog` | Done — CLI + library (`src/lib.rs` + `src/main.rs`) |
+| `Datalog.Parser` | `datalog_parser` | Done — nom-based parser (see Phase 6) |
+| `Api` | root crate `dagalog` | Done — CLI + library + `--serve` HTTP mode |
 | `AlcTableau`, `OWL2ALC` | `alc_tableau` | Deferred |
 
 ---
@@ -198,15 +198,16 @@ Depends on `dag_rdf`. Translates `DagSemTools.Sparql.Parser`.
 - Grammar: reuse `grammars/sparql/Sparql.g4`
 - Produces `SelectQuery` (in `dag_rdf::query`)
 
-### `datalog_parser`
-Depends on `datalog`, `dag_rdf`. Translates `DagSemTools.Datalog.Parser`.
-- Grammar: reuse `grammars/datalog/Datalog.g4`
-- Produces `Vec<Rule>`
-- **Status**: stub only — `parse()` always returns an error.
-- **To implement**: translate the F# parser from DagSemTools similarly to how
-  `sparql_parser` was ported (nom-based, no ANTLR4 needed). The parser should
-  parse Datalog rules of the form `head :- body.` and return `Vec<datalog::types::Rule>`.
-- The CLI `--rules <file>` flag is present but rejects with an error until this is done.
+### `datalog_parser` ✓ Done
+Depends on `datalog`, `dag_rdf`, `nom`. Translates `DagSemTools.Datalog.Parser`.
+- Nom-based parser (no ANTLR4 needed), same style as `sparql_parser`.
+- Supports all syntax forms: bracket triples `[s,p,o]`, predicate-first `p[s,o]`,
+  type atoms `p[s]`, negation `NOT`, contradiction `false`, named graph suffix,
+  prefix declarations (`PREFIX`, `@prefix`, `prefix`), built-in `rdf:/rdfs:/xsd:/owl:` prefixes.
+- Entry points: `parse(input, &mut datastore)`, `parse_file(path, &mut datastore)`.
+- 27 unit tests; 16 integration tests in `tests/datalog_integration.rs`.
+- Test data: translated from `DagSemTools/test/DatalogParser.Unit.Tests/TestData/`.
+- The CLI `--rules <file>` flag now works end-to-end.
 
 ---
 

@@ -123,31 +123,28 @@ impl<'a> QueryExecutor<'a> {
                     let mut new_binding = binding.clone();
                     let mut possible = true;
 
-                    if let Term::Variable(v) = &pattern.graph {
-                        if !self.bind_var(&mut new_binding, v, quad.triple_id) {
-                            possible = false;
-                        }
+                    if let Term::Variable(v) = &pattern.graph
+                        && !self.bind_var(&mut new_binding, v, quad.triple_id)
+                    {
+                        possible = false;
                     }
-                    if possible {
-                        if let Term::Variable(v) = &pattern.subject {
-                            if !self.bind_var(&mut new_binding, v, quad.subject) {
-                                possible = false;
-                            }
-                        }
+                    if possible
+                        && let Term::Variable(v) = &pattern.subject
+                        && !self.bind_var(&mut new_binding, v, quad.subject)
+                    {
+                        possible = false;
                     }
-                    if possible {
-                        if let Term::Variable(v) = &pattern.predicate {
-                            if !self.bind_var(&mut new_binding, v, quad.predicate) {
-                                possible = false;
-                            }
-                        }
+                    if possible
+                        && let Term::Variable(v) = &pattern.predicate
+                        && !self.bind_var(&mut new_binding, v, quad.predicate)
+                    {
+                        possible = false;
                     }
-                    if possible {
-                        if let Term::Variable(v) = &pattern.object {
-                            if !self.bind_var(&mut new_binding, v, quad.obj) {
-                                possible = false;
-                            }
-                        }
+                    if possible
+                        && let Term::Variable(v) = &pattern.object
+                        && !self.bind_var(&mut new_binding, v, quad.obj)
+                    {
+                        possible = false;
                     }
 
                     if possible {

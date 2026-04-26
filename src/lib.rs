@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use std::path::PathBuf;
 
 // ── Output format ─────────────────────────────────────────────────────────────
 
@@ -106,6 +107,23 @@ pub fn apply_ontologies(
         triples_before,
         triples_after,
     })
+}
+
+// ── Datalog rules ─────────────────────────────────────────────────────────────
+
+/// Parse and apply Datalog rules from one or more `.datalog` files.
+///
+/// IRIs are interned into `datastore`; rules are then evaluated by naive
+/// forward-chaining materialisation.  Returns the number of rules applied.
+pub fn apply_rules(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<usize, String> {
+    let mut all_rules = Vec::new();
+    for path in paths {
+        let mut rules = datalog_parser::parse_file(path, datastore)?;
+        all_rules.append(&mut rules);
+    }
+    let rule_count = all_rules.len();
+    datalog::evaluate_rules(all_rules, datastore);
+    Ok(rule_count)
 }
 
 // ── SPARQL ────────────────────────────────────────────────────────────────────
