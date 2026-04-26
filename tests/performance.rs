@@ -509,8 +509,15 @@ fn imf_ontology_rule_generation() {
         t2.elapsed().as_millis()
     );
 
-    assert!(!ontology.axioms.is_empty(), "expected OWL axioms from IMF ontology");
-    assert!(rules.len() > 100, "expected >100 Datalog rules, got {}", rules.len());
+    assert!(
+        !ontology.axioms.is_empty(),
+        "expected OWL axioms from IMF ontology"
+    );
+    assert!(
+        rules.len() > 100,
+        "expected >100 Datalog rules, got {}",
+        rules.len()
+    );
 }
 
 /// Round-trip test: OWL→Datalog rule generation, then parse the generated
@@ -536,7 +543,11 @@ fn imf_rules_generation_and_parsing_round_trip() {
     let ontology_doc = rdf2owl(&mut gen_store);
     let generated_rules = owl2datalog(&mut gen_store.resources, &ontology_doc.ontology);
     println!("  generated {} Datalog rules", generated_rules.len());
-    assert!(generated_rules.len() > 100, "expected >100 rules, got {}", generated_rules.len());
+    assert!(
+        generated_rules.len() > 100,
+        "expected >100 rules, got {}",
+        generated_rules.len()
+    );
 
     // Stage 2: serialise the generated rules to Datalog text
     let datalog_text: String = generated_rules
