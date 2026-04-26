@@ -73,7 +73,11 @@ impl TestServer {
 
     /// `/sparql?query=<url-encoded SPARQL>` — use instead of `.query(&[...])`.
     pub fn sparql_query_url(&self, sparql: &str) -> String {
-        format!("{}/sparql?query={}", self.base_url, urlencoding::encode(sparql))
+        format!(
+            "{}/sparql?query={}",
+            self.base_url,
+            urlencoding::encode(sparql)
+        )
     }
 }
 
