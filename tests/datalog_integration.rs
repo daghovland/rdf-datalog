@@ -44,7 +44,11 @@ fn parse_rule_with_and() {
     let mut ds = ds();
     let rules = datalog_parser::parse_file(&testdata("ruleand.datalog"), &mut ds).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].body.len(), 2, "ruleand.datalog body should have 2 atoms");
+    assert_eq!(
+        rules[0].body.len(),
+        2,
+        "ruleand.datalog body should have 2 atoms"
+    );
 }
 
 #[test]
@@ -84,7 +88,10 @@ fn parse_prefixes() {
     // The body predicate should be the expanded ex2:predicate2 IRI
     if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0] {
         if let dag_rdf::Term::Resource(id) = &pat.predicate {
-            let iri = ds.resources.get_named_resource(*id).expect("should be an IRI");
+            let iri = ds
+                .resources
+                .get_named_resource(*id)
+                .expect("should be an IRI");
             assert!(
                 iri.0.contains("predicate2"),
                 "body predicate should contain 'predicate2', got {}",
@@ -186,13 +193,16 @@ fn datalog_rules_infer_new_triples() {
     assert!(
         triples_after > triples_before,
         "rules should have added triples (before={}, after={})",
-        triples_before, triples_after
+        triples_before,
+        triples_after
     );
 
     // Bob (Employee) should now be queryable as a Person
     let sparql = "PREFIX ex: <http://example.org/family#> SELECT ?p WHERE { ?p a ex:Person . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
-    let persons: Vec<_> = result.rows.iter()
+    let persons: Vec<_> = result
+        .rows
+        .iter()
         .filter_map(|r| r.get("p"))
         .map(graph_element_display)
         .collect();
@@ -260,13 +270,24 @@ ex:Nobody a ex:Fish .
 
     let sparql = "PREFIX ex: <https://example.com/test#> SELECT ?x WHERE { ?x a ex:Mammal . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
-    let mammals: Vec<_> = result.rows.iter()
+    let mammals: Vec<_> = result
+        .rows
+        .iter()
         .filter_map(|r| r.get("x"))
         .map(graph_element_display)
         .collect();
-    assert!(mammals.contains(&"<https://example.com/test#Fido>".to_string()), "Fido should be a Mammal");
-    assert!(mammals.contains(&"<https://example.com/test#Whiskers>".to_string()), "Whiskers should be a Mammal");
-    assert!(!mammals.contains(&"<https://example.com/test#Nobody>".to_string()), "Nobody (Fish) should NOT be a Mammal");
+    assert!(
+        mammals.contains(&"<https://example.com/test#Fido>".to_string()),
+        "Fido should be a Mammal"
+    );
+    assert!(
+        mammals.contains(&"<https://example.com/test#Whiskers>".to_string()),
+        "Whiskers should be a Mammal"
+    );
+    assert!(
+        !mammals.contains(&"<https://example.com/test#Nobody>".to_string()),
+        "Nobody (Fish) should NOT be a Mammal"
+    );
 }
 
 #[test]
@@ -287,7 +308,10 @@ ex:Elephant a ex:VeryBig ."#;
 
     let sparql = "PREFIX ex: <https://example.com/test#> SELECT ?x WHERE { ?x a ex:Big . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
-    assert!(!result.rows.is_empty(), "Elephant should be inferred as Big");
+    assert!(
+        !result.rows.is_empty(),
+        "Elephant should be inferred as Big"
+    );
 }
 
 #[test]

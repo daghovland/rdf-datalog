@@ -45,7 +45,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! `rdf:`, `rdfs:`, `xsd:`, and `owl:` are pre-declared.
 
-use dag_rdf::{Datastore, IriReference, QuadPattern, RdfResource, Term, DEFAULT_GRAPH_ELEMENT_ID};
+use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, IriReference, QuadPattern, RdfResource, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
 use nom::{
     IResult,
@@ -103,11 +103,20 @@ struct ParserContext {
 impl Default for ParserContext {
     fn default() -> Self {
         let mut prefixes = HashMap::new();
-        prefixes.insert("rdf".into(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#".into());
-        prefixes.insert("rdfs".into(), "http://www.w3.org/2000/01/rdf-schema#".into());
+        prefixes.insert(
+            "rdf".into(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".into(),
+        );
+        prefixes.insert(
+            "rdfs".into(),
+            "http://www.w3.org/2000/01/rdf-schema#".into(),
+        );
         prefixes.insert("xsd".into(), "http://www.w3.org/2001/XMLSchema#".into());
         prefixes.insert("owl".into(), "http://www.w3.org/2002/07/owl#".into());
-        ParserContext { prefixes, base_iri: None }
+        ParserContext {
+            prefixes,
+            base_iri: None,
+        }
     }
 }
 
@@ -145,7 +154,10 @@ pub fn parse(input: &str, datastore: &mut Datastore) -> Result<Vec<Rule>, String
         }
     }
 
-    parsed_rules.into_iter().map(|r| intern_rule(r, datastore)).collect()
+    parsed_rules
+        .into_iter()
+        .map(|r| intern_rule(r, datastore))
+        .collect()
 }
 
 /// Parse a Datalog program from a file.
@@ -184,7 +196,10 @@ fn parse_directive<'i>(input: &'i str, ctx: &mut ParserContext) -> IResult<&'i s
     if let Ok((rest, _)) = parse_version_decl(input) {
         return Ok((rest, ()));
     }
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Tag,
+    )))
 }
 
 fn parse_prefix_decl(input: &str) -> IResult<&str, (String, String)> {
@@ -220,13 +235,20 @@ fn alt_keyword<'i>(input: &'i str, keywords: &[&str]) -> IResult<&'i str, &'i st
     for kw in keywords {
         if let Some(rest) = input.strip_prefix(kw) {
             let at_word_boundary = kw.starts_with('@')
-                || rest.chars().next().map(|c| !c.is_alphanumeric() && c != '_').unwrap_or(true);
+                || rest
+                    .chars()
+                    .next()
+                    .map(|c| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(true);
             if at_word_boundary {
                 return Ok((rest, &input[..kw.len()]));
             }
         }
     }
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Tag,
+    )))
 }
 
 // ── IRI parsing ───────────────────────────────────────────────────────────────
@@ -252,12 +274,23 @@ fn parse_prefixed_iri<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i st
     // Reject bare keyword prefixes
     let lower = prefix.to_ascii_lowercase();
     if matches!(lower.as_str(), "not" | "false" | "prefix" | "base") {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
     }
 
     // Local name must start with alphanumeric or '_'
-    if !after_colon.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::TakeWhile1)));
+    if !after_colon
+        .chars()
+        .next()
+        .map(|c| c.is_alphanumeric() || c == '_')
+        .unwrap_or(false)
+    {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TakeWhile1,
+        )));
     }
 
     let (after_local, local) = take_while(|c: char| {
@@ -282,11 +315,18 @@ fn parse_variable_term(input: &str) -> IResult<&str, ParsedTerm> {
 
 fn parse_rdf_type_abbr(input: &str) -> IResult<&str, ParsedTerm> {
     if let Some(rest) = input.strip_prefix('a')
-        && rest.chars().next().map(|c| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(true)
+        && rest
+            .chars()
+            .next()
+            .map(|c| !c.is_alphanumeric() && c != '_' && c != ':')
+            .unwrap_or(true)
     {
         return Ok((rest, ParsedTerm::Iri(RDF_TYPE.to_string())));
     }
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char)))
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Char,
+    )))
 }
 
 fn parse_term<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedTerm> {
@@ -307,7 +347,10 @@ fn default_graph_term() -> ParsedTerm {
 }
 
 /// Parse `[subject, predicate, object]`.
-fn parse_bracket_triple<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedQuadPattern> {
+fn parse_bracket_triple<'i>(
+    input: &'i str,
+    ctx: &ParserContext,
+) -> IResult<&'i str, ParsedQuadPattern> {
     let (input, _) = char('[')(input)?;
     let (input, _) = multispace0(input)?;
     let (input, subject) = parse_term(input, ctx)?;
@@ -321,13 +364,24 @@ fn parse_bracket_triple<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i 
     let (input, object) = parse_term(input, ctx)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char(']')(input)?;
-    Ok((input, ParsedQuadPattern { graph: default_graph_term(), subject, predicate, object }))
+    Ok((
+        input,
+        ParsedQuadPattern {
+            graph: default_graph_term(),
+            subject,
+            predicate,
+            object,
+        },
+    ))
 }
 
 /// Parse `relation[subject, object]` (triple) or `relation[subject]` (type atom).
 ///
 /// Type atom `p[s]` is sugar for `s rdf:type p`.
-fn parse_predicate_first<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedQuadPattern> {
+fn parse_predicate_first<'i>(
+    input: &'i str,
+    ctx: &ParserContext,
+) -> IResult<&'i str, ParsedQuadPattern> {
     let (input, predicate) = parse_term(input, ctx)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('[')(input)?;
@@ -340,21 +394,35 @@ fn parse_predicate_first<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i
         let (input, second_arg) = parse_term(input, ctx)?;
         let (input, _) = multispace0(input)?;
         let (input, _) = char(']')(input)?;
-        Ok((input, ParsedQuadPattern { graph: default_graph_term(), subject: first_arg, predicate, object: second_arg }))
+        Ok((
+            input,
+            ParsedQuadPattern {
+                graph: default_graph_term(),
+                subject: first_arg,
+                predicate,
+                object: second_arg,
+            },
+        ))
     } else {
         // Type atom p[s] → s rdf:type p
         let (input, _) = char(']')(input)?;
-        Ok((input, ParsedQuadPattern {
-            graph: default_graph_term(),
-            subject: first_arg,
-            predicate: ParsedTerm::Iri(RDF_TYPE.to_string()),
-            object: predicate,
-        }))
+        Ok((
+            input,
+            ParsedQuadPattern {
+                graph: default_graph_term(),
+                subject: first_arg,
+                predicate: ParsedTerm::Iri(RDF_TYPE.to_string()),
+                object: predicate,
+            },
+        ))
     }
 }
 
 /// Parse an atom with an optional graph-name suffix.
-fn parse_positive_atom<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedQuadPattern> {
+fn parse_positive_atom<'i>(
+    input: &'i str,
+    ctx: &ParserContext,
+) -> IResult<&'i str, ParsedQuadPattern> {
     let (input, mut pattern) = if input.starts_with('[') {
         parse_bracket_triple(input, ctx)?
     } else {
@@ -366,7 +434,11 @@ fn parse_positive_atom<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i s
     let save = input;
     if let Ok((after_term, graph)) = parse_term(input, ctx) {
         let after_ws = skip_ws_comments(after_term);
-        if after_ws.starts_with(":-") || after_ws.starts_with('.') || after_ws.starts_with(',') || after_ws.is_empty() {
+        if after_ws.starts_with(":-")
+            || after_ws.starts_with('.')
+            || after_ws.starts_with(',')
+            || after_ws.is_empty()
+        {
             pattern.graph = graph;
             return Ok((after_term, pattern));
         }
@@ -389,14 +461,23 @@ fn parse_rule<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, Parse
         Ok((input, ParsedRule { head, body }))
     } else {
         let (input, _) = char('.')(input)?;
-        Ok((input, ParsedRule { head, body: Vec::new() }))
+        Ok((
+            input,
+            ParsedRule {
+                head,
+                body: Vec::new(),
+            },
+        ))
     }
 }
 
 fn parse_head<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedRuleHead> {
     if let Some(rest) = input.strip_prefix("false") {
         let next = rest.chars().next();
-        if next.map(|c| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(true) {
+        if next
+            .map(|c| !c.is_alphanumeric() && c != '_' && c != ':')
+            .unwrap_or(true)
+        {
             return Ok((rest, ParsedRuleHead::Contradiction));
         }
     }
@@ -443,7 +524,11 @@ fn keyword_not(input: &str) -> bool {
         matches!(b[0], b'N' | b'n')
             && matches!(b[1], b'O' | b'o')
             && matches!(b[2], b'T' | b't')
-            && input[3..].chars().next().map(|c| !c.is_alphanumeric() && c != '_').unwrap_or(true)
+            && input[3..]
+                .chars()
+                .next()
+                .map(|c| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(true)
     }
 }
 
@@ -454,13 +539,19 @@ fn intern_rule(parsed: ParsedRule, ds: &mut Datastore) -> Result<Rule, String> {
         ParsedRuleHead::Contradiction => RuleHead::Contradiction,
         ParsedRuleHead::NormalHead(p) => RuleHead::NormalHead(intern_quad_pattern(p, ds)?),
     };
-    let body = parsed.body.into_iter().map(|a| intern_rule_atom(a, ds)).collect::<Result<_, _>>()?;
+    let body = parsed
+        .body
+        .into_iter()
+        .map(|a| intern_rule_atom(a, ds))
+        .collect::<Result<_, _>>()?;
     Ok(Rule { head, body })
 }
 
 fn intern_rule_atom(atom: ParsedRuleAtom, ds: &mut Datastore) -> Result<RuleAtom, String> {
     Ok(match atom {
-        ParsedRuleAtom::PositivePattern(p) => RuleAtom::PositivePattern(intern_quad_pattern(p, ds)?),
+        ParsedRuleAtom::PositivePattern(p) => {
+            RuleAtom::PositivePattern(intern_quad_pattern(p, ds)?)
+        }
         ParsedRuleAtom::NotPattern(p) => RuleAtom::NotPattern(intern_quad_pattern(p, ds)?),
     })
 }
@@ -477,8 +568,12 @@ fn intern_quad_pattern(p: ParsedQuadPattern, ds: &mut Datastore) -> Result<QuadP
 fn intern_term(term: ParsedTerm, ds: &mut Datastore) -> Result<Term, String> {
     Ok(match term {
         ParsedTerm::Variable(name) => Term::Variable(name),
-        ParsedTerm::Iri(iri) if iri == "__default_graph__" => Term::Resource(DEFAULT_GRAPH_ELEMENT_ID),
-        ParsedTerm::Iri(iri) => Term::Resource(ds.add_node_resource(RdfResource::Iri(IriReference(iri)))),
+        ParsedTerm::Iri(iri) if iri == "__default_graph__" => {
+            Term::Resource(DEFAULT_GRAPH_ELEMENT_ID)
+        }
+        ParsedTerm::Iri(iri) => {
+            Term::Resource(ds.add_node_resource(RdfResource::Iri(IriReference(iri))))
+        }
     })
 }
 
@@ -490,7 +585,9 @@ mod tests {
     use dag_rdf::Datastore;
     use datalog::types::RuleAtom;
 
-    fn ds() -> Datastore { Datastore::new(10_000) }
+    fn ds() -> Datastore {
+        Datastore::new(10_000)
+    }
 
     fn ctx_with(prefix: &str, iri: &str) -> ParserContext {
         let mut ctx = ParserContext::default();
@@ -680,7 +777,8 @@ mod tests {
         assert_eq!(rules[0].body.len(), 2);
         // Head predicate should be rdf:type
         if let RuleHead::NormalHead(ref pat) = rules[0].head {
-            let rdf_type_id = ds.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_string())));
+            let rdf_type_id =
+                ds.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_string())));
             assert_eq!(pat.predicate, Term::Resource(rdf_type_id));
         } else {
             panic!("expected NormalHead");
@@ -714,7 +812,8 @@ mod tests {
     #[test]
     fn type_atom_with_space_before_bracket() {
         // typeatom2.datalog: ex:type [?new_node] :- ex:type [?node] .
-        let src = "prefix ex: <https://example.com/data#>\nex:type [?new_node] :- ex:type [?node] .";
+        let src =
+            "prefix ex: <https://example.com/data#>\nex:type [?new_node] :- ex:type [?node] .";
         let rules = parse(src, &mut ds()).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].body.len(), 1);
@@ -743,10 +842,16 @@ mod tests {
 
     #[test]
     fn large_file() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/testdata/large.datalog");
-        if !path.exists() { return; }
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/large.datalog");
+        if !path.exists() {
+            return;
+        }
         let rules = parse_file(&path, &mut ds()).unwrap();
-        assert!(rules.len() > 100, "expected >100 rules, got {}", rules.len());
+        assert!(
+            rules.len() > 100,
+            "expected >100 rules, got {}",
+            rules.len()
+        );
     }
 }

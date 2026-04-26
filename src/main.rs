@@ -29,7 +29,9 @@ Contact: hovlanddag@gmail.com
 
 use clap::Parser;
 use dag_rdf::Datastore;
-use dagalog::{OutputFormat, apply_ontologies, apply_rules, format_results, load_file, run_sparql_query};
+use dagalog::{
+    OutputFormat, apply_ontologies, apply_rules, format_results, load_file, run_sparql_query,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -62,7 +64,12 @@ struct Cli {
     query_file: Option<PathBuf>,
 
     /// Output format: table (default), csv, json
-    #[arg(short = 'f', long = "format", value_name = "FORMAT", default_value = "table")]
+    #[arg(
+        short = 'f',
+        long = "format",
+        value_name = "FORMAT",
+        default_value = "table"
+    )]
     format: String,
 
     /// Print pipeline statistics to stderr
@@ -91,7 +98,10 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
-    let format: OutputFormat = cli.format.parse().map_err(|e: String| format!("--format: {}", e))?;
+    let format: OutputFormat = cli
+        .format
+        .parse()
+        .map_err(|e: String| format!("--format: {}", e))?;
 
     // Resolve SPARQL query string: --query-file wins; --query auto-detects file paths.
     let sparql = match (&cli.query_file, &cli.query) {
@@ -103,7 +113,10 @@ fn run(cli: Cli) -> Result<(), String> {
         (None, Some(q)) => {
             let p = std::path::Path::new(q.as_str());
             if p.is_file() {
-                Some(std::fs::read_to_string(p).map_err(|e| format!("cannot read {}: {}", p.display(), e))?)
+                Some(
+                    std::fs::read_to_string(p)
+                        .map_err(|e| format!("cannot read {}: {}", p.display(), e))?,
+                )
             } else {
                 Some(q.clone())
             }
@@ -115,14 +128,20 @@ fn run(cli: Cli) -> Result<(), String> {
     let mut datastore = Datastore::new(1_000_000);
 
     for path in &cli.data {
-        if cli.verbose { eprintln!("loading data: {}", path.display()); }
+        if cli.verbose {
+            eprintln!("loading data: {}", path.display());
+        }
         load_file(&mut datastore, path)?;
-        if cli.verbose { eprintln!("  triples: {}", datastore.named_graphs.quad_count); }
+        if cli.verbose {
+            eprintln!("  triples: {}", datastore.named_graphs.quad_count);
+        }
     }
 
     if !cli.ontology.is_empty() {
         if cli.verbose {
-            for p in &cli.ontology { eprintln!("loading ontology: {}", p.display()); }
+            for p in &cli.ontology {
+                eprintln!("loading ontology: {}", p.display());
+            }
         }
         let stats = apply_ontologies(&mut datastore, &cli.ontology)?;
         if cli.verbose {
@@ -138,7 +157,9 @@ fn run(cli: Cli) -> Result<(), String> {
 
     if !cli.rules.is_empty() {
         if cli.verbose {
-            for p in &cli.rules { eprintln!("loading rules: {}", p.display()); }
+            for p in &cli.rules {
+                eprintln!("loading rules: {}", p.display());
+            }
         }
         let triples_before = datastore.named_graphs.quad_count;
         let rule_count = apply_rules(&mut datastore, &cli.rules)?;
@@ -147,7 +168,10 @@ fn run(cli: Cli) -> Result<(), String> {
             eprintln!(
                 "Triples after Datalog materialisation: {} (+{})",
                 datastore.named_graphs.quad_count,
-                datastore.named_graphs.quad_count.saturating_sub(triples_before)
+                datastore
+                    .named_graphs
+                    .quad_count
+                    .saturating_sub(triples_before)
             );
         }
     }
@@ -158,13 +182,18 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // ── Serve or query ───────────────────────────────────────────────────────
     if cli.serve {
-        let base_iri = cli.base_iri.clone()
+        let base_iri = cli
+            .base_iri
+            .clone()
             .unwrap_or_else(|| format!("http://localhost:{}", cli.port));
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", cli.port)
             .parse()
             .map_err(|e| format!("invalid port {}: {}", cli.port, e))?;
 
-        eprintln!("SPARQL endpoint ready at http://localhost:{}/sparql", cli.port);
+        eprintln!(
+            "SPARQL endpoint ready at http://localhost:{}/sparql",
+            cli.port
+        );
 
         let config = sparql_endpoint::Config {
             bind_addr,

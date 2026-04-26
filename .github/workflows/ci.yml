@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Edition 2024 requires Rust ≥ 1.85.
-  RUST_VERSION: "1.85"
+  RUST_VERSION: "1.95"
 
 jobs:
   # ── Format ──────────────────────────────────────────────────────────────────

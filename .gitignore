@@ -24,3 +24,7 @@ target
 #.idea/
 /.idea
 /Cargo.lock
+/tests/testdata/imf.ttl
+/tests/testdata/go.owl.xml
+/datalog_parser/tests/testdata/large.datalog
+/tests/testdata/large.datalog

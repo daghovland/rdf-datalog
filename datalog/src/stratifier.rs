@@ -187,9 +187,7 @@ impl RulePartitioner {
                          Cycle includes rule: {}",
                         self.rules[idx]
                     );
-                    panic!(
-                        "Datalog program has a cycle with negation and is not stratifiable!"
-                    );
+                    panic!("Datalog program has a cycle with negation and is not stratifiable!");
                 }
                 if self.dfs_cycle(dep_idx, visited, path) {
                     return true;
