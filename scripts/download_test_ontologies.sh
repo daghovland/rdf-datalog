@@ -46,5 +46,36 @@ else
     fi
 fi
 
+# ── IMF ontology ─────────────────────────────────────────────────────────────
+# Information Modeling Framework (IMF) ontology used for end-to-end pipeline
+# tests.  Replaces storing the pre-generated large.datalog in the repo:
+# the tests generate the Datalog rules from the ontology on the fly.
+#
+# Set IMF_TTL_URL to the actual URL before running, or place imf.ttl manually.
+# Example (Equinor internal or public READI release):
+IMF_TTL_URL="https://gitlab.com/imf-lab/spec/imf-ontology/-/raw/develop/owl/imf-ontology.owl.ttl?inline=false"
+#
+IMF_TTL="$DEST/imf.ttl"
+
+if [ -f "$IMF_TTL" ]; then
+    echo "imf.ttl already present, skipping download."
+elif [ -n "${IMF_TTL_URL:-}" ]; then
+    echo "Downloading IMF ontology from $IMF_TTL_URL …"
+    curl -fL --progress-bar -o "$IMF_TTL" "$IMF_TTL_URL"
+    echo "imf.ttl written."
+else
+    echo ""
+    echo "NOTE: IMF ontology (imf.ttl) not downloaded."
+    echo "  Set IMF_TTL_URL to download it, or copy imf.ttl to $IMF_TTL manually."
+    echo "  IMF pipeline tests will be skipped without this file."
+    echo ""
+fi
+
 echo "Done. Run performance tests with:"
 echo "  cargo test --test performance -- --ignored --nocapture"
+echo ""
+echo "Run only IMF tests:"
+echo "  cargo test --test performance imf -- --ignored --nocapture"
+echo ""
+echo "Run only Gene Ontology tests:"
+echo "  cargo test --test performance gene_ontology -- --ignored --nocapture"

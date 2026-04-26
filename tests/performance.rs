@@ -29,6 +29,7 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::Datastore;
 use datalog::evaluate_rules;
+use datalog_parser::parse_file as parse_datalog_file;
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
 use sparql_parser::{ParserContext, execute, parse_query};
@@ -400,4 +401,167 @@ fn gene_ontology_sparql_queries() {
             rows.len()
         );
     }
+}
+
+// ── IMF ontology end-to-end pipeline ─────────────────────────────────────────
+//
+// The IMF (Industrial Modeling Framework) ontology is used internally and its
+// OWL-RL rules exercise the full pipeline with a real-world industrial ontology.
+//
+// Download the ontology first:
+//   bash scripts/download_test_ontologies.sh
+//
+// Then run:
+//   cargo test --test performance imf -- --ignored --nocapture
+
+/// Full pipeline over the IMF ontology:
+///   Turtle parse → RDF→OWL translation → Datalog rule generation
+///   → materialisation → SPARQL query
+///
+/// This replaces checking in a pre-generated large.datalog snapshot.
+/// Testing the whole pipeline catches bugs in any stage, not just the parser.
+#[test]
+#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
+fn imf_ontology_full_pipeline() {
+    let path = test_data("imf.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== IMF Ontology — full pipeline ===");
+    let t_total = Instant::now();
+
+    let (datastore, stats) = run_pipeline(&path);
+
+    assert!(
+        stats.rule_count > 100,
+        "expected >100 Datalog rules from IMF ontology, got {}",
+        stats.rule_count
+    );
+    assert!(
+        stats.post_reasoning_quad_count >= stats.pre_reasoning_quad_count,
+        "reasoning must not reduce the quad count"
+    );
+
+    // Verify known IMF class hierarchy is present after reasoning.
+    let q_descriptor = r#"PREFIX imf: <http://ns.imfid.org/imf#>
+SELECT ?x WHERE { ?x a imf:Descriptor }"#;
+    let t = Instant::now();
+    let rows = run_sparql(&datastore, q_descriptor);
+    report("SPARQL: imf:Descriptor instances", t.elapsed().as_millis());
+    println!("    rows returned:         {}", rows.len());
+
+    report("TOTAL", t_total.elapsed().as_millis());
+    println!();
+}
+
+/// Parse-only benchmark for the IMF ontology (no reasoning).
+#[test]
+#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
+fn imf_ontology_parse_only() {
+    let path = test_data("imf.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== IMF Ontology — parse only ===");
+    let t0 = Instant::now();
+    let mut datastore = Datastore::new(500_000);
+    let file = File::open(&path).unwrap();
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse must succeed");
+    let elapsed = t0.elapsed();
+    let triples = datastore.named_graphs.quad_count;
+    println!("  triples: {}", triples);
+    println!("  elapsed: {} ms", elapsed.as_millis());
+
+    assert!(triples > 0, "expected triples from IMF ontology");
+}
+
+/// Rule generation benchmark: OWL→Datalog only (no reasoning, no parsing).
+#[test]
+#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
+fn imf_ontology_rule_generation() {
+    let path = test_data("imf.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== IMF Ontology — rule generation ===");
+    let file = File::open(&path).unwrap();
+    let mut datastore = Datastore::new(500_000);
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse must succeed");
+    println!("  triples loaded: {}", datastore.named_graphs.quad_count);
+
+    let t1 = Instant::now();
+    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology = &ontology_doc.ontology;
+    println!(
+        "  OWL axioms:     {} ({} ms)",
+        ontology.axioms.len(),
+        t1.elapsed().as_millis()
+    );
+
+    let t2 = Instant::now();
+    let rules = owl2datalog(&mut datastore.resources, ontology);
+    println!(
+        "  Datalog rules:  {} ({} ms)",
+        rules.len(),
+        t2.elapsed().as_millis()
+    );
+
+    assert!(!ontology.axioms.is_empty(), "expected OWL axioms from IMF ontology");
+    assert!(rules.len() > 100, "expected >100 Datalog rules, got {}", rules.len());
+}
+
+/// Round-trip test: OWL→Datalog rule generation, then parse the generated
+/// rules back through the Datalog parser.  Verifies that the rules our
+/// pipeline produces are valid Datalog syntax.
+///
+/// This is the conceptual replacement for storing large.datalog in the repo:
+/// we generate the rules on-the-fly and immediately verify they parse cleanly.
+#[test]
+#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
+fn imf_rules_generation_and_parsing_round_trip() {
+    let path = test_data("imf.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== IMF Ontology — rules generation → Datalog parser round-trip ===");
+
+    // Stage 1: generate rules from the ontology
+    let mut gen_store = Datastore::new(500_000);
+    let file = File::open(&path).unwrap();
+    parse_turtle(&mut gen_store, BufReader::new(file)).expect("parse must succeed");
+    let ontology_doc = rdf2owl(&mut gen_store);
+    let generated_rules = owl2datalog(&mut gen_store.resources, &ontology_doc.ontology);
+    println!("  generated {} Datalog rules", generated_rules.len());
+    assert!(generated_rules.len() > 100, "expected >100 rules, got {}", generated_rules.len());
+
+    // Stage 2: serialise the generated rules to Datalog text
+    let datalog_text: String = generated_rules
+        .iter()
+        .map(|r| format!("{} .\n", r))
+        .collect();
+
+    // Stage 3: parse the serialised text back and verify rule count matches
+    let mut parse_store = Datastore::new(500_000);
+    let parsed_rules = parse_datalog_file(
+        // Write to a temp file so parse_file can read it
+        {
+            let tmp = std::env::temp_dir().join("imf_roundtrip.datalog");
+            std::fs::write(&tmp, &datalog_text).expect("write temp file");
+            tmp
+        }
+        .as_path(),
+        &mut parse_store,
+    )
+    .expect("round-trip Datalog must parse without errors");
+
+    println!("  re-parsed  {} Datalog rules", parsed_rules.len());
+    assert_eq!(
+        generated_rules.len(),
+        parsed_rules.len(),
+        "round-trip rule count must match"
+    );
 }

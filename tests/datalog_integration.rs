@@ -166,9 +166,15 @@ fn parse_named_graph_rule() {
 }
 
 #[test]
+#[ignore = "requires large.datalog — run `bash scripts/download_test_ontologies.sh` first"]
 fn parse_large_file() {
+    let path = testdata("large.datalog");
+    if !path.exists() {
+        eprintln!("[SKIP] large.datalog not found — run scripts/download_test_ontologies.sh");
+        return;
+    }
     let mut ds = ds();
-    let rules = datalog_parser::parse_file(&testdata("large.datalog"), &mut ds).unwrap();
+    let rules = datalog_parser::parse_file(&path, &mut ds).unwrap();
     assert!(
         rules.len() > 100,
         "large.datalog should produce >100 rules, got {}",
