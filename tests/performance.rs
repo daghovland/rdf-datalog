@@ -135,7 +135,7 @@ fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
 }
 
 /// Run a SPARQL SELECT query against `datastore` and return the result rows.
-fn run_sparql<'a>(
+fn run_sparql(
     datastore: &Datastore,
     query_str: &str,
 ) -> Vec<HashMap<String, dag_rdf::GraphElement>> {
@@ -333,8 +333,8 @@ fn gene_ontology_axiom_extraction() {
         t2.elapsed().as_millis()
     );
 
-    assert!(ontology.axioms.len() > 0, "expected OWL axioms");
-    assert!(rules.len() > 0, "expected Datalog rules");
+    assert!(!ontology.axioms.is_empty(), "expected OWL axioms");
+    assert!(!rules.is_empty(), "expected Datalog rules");
 }
 
 /// SPARQL query performance over a fully materialised Gene Ontology.
@@ -388,7 +388,7 @@ fn gene_ontology_sparql_queries() {
         ),
     ];
 
-    println!("  {:<45} {:>10}  {}", "Query", "Time (ms)", "Rows");
+    println!("  {:<45} {:>10}  Rows", "Query", "Time (ms)");
     println!("  {}", "-".repeat(65));
     for (label, query_str) in queries {
         let t = Instant::now();

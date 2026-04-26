@@ -24,6 +24,7 @@ pub struct TestServer {
     _handle: tokio::task::JoinHandle<()>,
 }
 
+#[allow(dead_code)]
 impl TestServer {
     /// Start a server pre-loaded with `turtle` RDF data.
     ///
@@ -68,6 +69,11 @@ impl TestServer {
 
     pub fn sparql_url(&self) -> String {
         format!("{}/sparql", self.base_url)
+    }
+
+    /// `/sparql?query=<url-encoded SPARQL>` — use instead of `.query(&[...])`.
+    pub fn sparql_query_url(&self, sparql: &str) -> String {
+        format!("{}/sparql?query={}", self.base_url, urlencoding::encode(sparql))
     }
 }
 

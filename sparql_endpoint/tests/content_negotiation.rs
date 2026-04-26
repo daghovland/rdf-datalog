@@ -21,8 +21,7 @@ async fn test_default_accept_returns_sparql_json() {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", SPARQL)])
+        .get(server.sparql_query_url(SPARQL))
         .send()
         .await
         .expect("request failed");
@@ -42,8 +41,7 @@ async fn test_explicit_json_accept() {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", SPARQL)])
+        .get(server.sparql_query_url(SPARQL))
         .header("accept", "application/sparql-results+json")
         .send()
         .await

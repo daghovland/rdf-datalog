@@ -86,18 +86,18 @@ fn parse_prefixes() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].body.len(), 1);
     // The body predicate should be the expanded ex2:predicate2 IRI
-    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0] {
-        if let dag_rdf::Term::Resource(id) = &pat.predicate {
-            let iri = ds
-                .resources
-                .get_named_resource(*id)
-                .expect("should be an IRI");
-            assert!(
-                iri.0.contains("predicate2"),
-                "body predicate should contain 'predicate2', got {}",
-                iri.0
-            );
-        }
+    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0]
+        && let dag_rdf::Term::Resource(id) = &pat.predicate
+    {
+        let iri = ds
+            .resources
+            .get_named_resource(*id)
+            .expect("should be an IRI");
+        assert!(
+            iri.0.contains("predicate2"),
+            "body predicate should contain 'predicate2', got {}",
+            iri.0
+        );
     }
 }
 
@@ -111,15 +111,15 @@ fn parse_all_variables_with_rdf_range() {
     // Head must be a NormalHead
     assert!(matches!(rules[0].head, RuleHead::NormalHead(_)));
     // Head predicate must be rdf:type
-    if let RuleHead::NormalHead(ref pat) = rules[0].head {
-        if let dag_rdf::Term::Resource(id) = &pat.predicate {
-            let iri = ds.resources.get_named_resource(*id).unwrap();
-            assert!(
-                iri.0.ends_with("rdf-syntax-ns#type"),
-                "head predicate should be rdf:type, got {}",
-                iri.0
-            );
-        }
+    if let RuleHead::NormalHead(ref pat) = rules[0].head
+        && let dag_rdf::Term::Resource(id) = &pat.predicate
+    {
+        let iri = ds.resources.get_named_resource(*id).unwrap();
+        assert!(
+            iri.0.ends_with("rdf-syntax-ns#type"),
+            "head predicate should be rdf:type, got {}",
+            iri.0
+        );
     }
 }
 

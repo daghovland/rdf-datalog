@@ -22,8 +22,7 @@ async fn test_get_single_literal() {
         "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", sparql)])
+        .get(server.sparql_query_url(sparql))
         .send()
         .await
         .expect("request failed");
@@ -54,8 +53,7 @@ async fn test_get_no_results() {
     let sparql = "SELECT ?x WHERE { ?x <http://example.org/nonexistent-predicate> ?y }";
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", sparql)])
+        .get(server.sparql_query_url(sparql))
         .send()
         .await
         .expect("request failed");
@@ -85,8 +83,7 @@ async fn test_get_bad_query_returns_400() {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", "THIS IS NOT SPARQL")])
+        .get(server.sparql_query_url("THIS IS NOT SPARQL"))
         .send()
         .await
         .expect("request failed");
@@ -97,8 +94,7 @@ async fn test_get_bad_query_returns_400() {
     let sparql = "SELECT ?x WHERE { ?x ?p ?o }";
     let resp2 = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", sparql)])
+        .get(server.sparql_query_url(sparql))
         .send()
         .await
         .expect("second request failed");

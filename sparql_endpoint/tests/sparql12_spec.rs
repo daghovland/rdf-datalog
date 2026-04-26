@@ -33,8 +33,7 @@ WHERE { ?book dc:title ?title }";
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .expect("request failed");
@@ -68,8 +67,7 @@ WHERE { <http://example.org/alice> foaf:name ?name }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -111,8 +109,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -151,8 +148,7 @@ WHERE { ?person ex:age 42 }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -187,8 +183,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -219,8 +214,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -264,8 +258,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -299,8 +292,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -335,8 +327,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -388,8 +379,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -428,8 +418,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -466,8 +455,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -500,8 +488,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -538,8 +525,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -574,8 +560,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -607,8 +592,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -643,8 +627,7 @@ GROUP BY ?author"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -675,8 +658,7 @@ WHERE { ?person ex:likes ?animal }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -707,8 +689,7 @@ SELECT ?v WHERE { ?x ex:val ?v } LIMIT 3"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -735,8 +716,7 @@ SELECT ?v WHERE { ?x ex:val ?v } OFFSET 2"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -763,8 +743,7 @@ WHERE { <<( ?s ?p ?o )>> <http://example.org/occursIn> ?doc }"#;
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -798,8 +777,7 @@ WHERE {
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
@@ -827,8 +805,7 @@ SELECT * WHERE { ?s ex:name ?o }";
 
     let resp = server
         .client
-        .get(server.sparql_url())
-        .query(&[("query", query)])
+        .get(server.sparql_query_url(query))
         .send()
         .await
         .unwrap();
