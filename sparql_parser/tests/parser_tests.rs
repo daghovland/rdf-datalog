@@ -125,7 +125,10 @@ fn test_parse_sparql12_graph_clause_with_variable_graph_name() {
             assert_eq!(inner.len(), 1);
             assert!(matches!(inner[0], QueryComponent::BGP(_)));
         }
-        other => panic!("Expected Graph component with variable graph name, got: {:?}", other),
+        other => panic!(
+            "Expected Graph component with variable graph name, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -172,8 +175,8 @@ fn test_parse_sparql12_optional_with_bound_filter() {
         prefixes: HashMap::new(),
     };
 
-    let (_, query) = parse_query(sparql, &mut ctx)
-        .expect("Should parse SPARQL 1.2 OPTIONAL/FILTER example");
+    let (_, query) =
+        parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 OPTIONAL/FILTER example");
     let Query::Select { where_clause, .. } = query;
 
     assert_eq!(where_clause.len(), 3);
@@ -196,11 +199,9 @@ fn test_parse_sparql12_union_example() {
         prefixes: HashMap::new(),
     };
 
-    let (_, query) =
-        parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 UNION example");
+    let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 UNION example");
     let Query::Select { where_clause, .. } = query;
 
     assert_eq!(where_clause.len(), 1);
     assert!(matches!(where_clause[0], QueryComponent::Union(_, _)));
 }
-

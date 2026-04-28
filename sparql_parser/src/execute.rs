@@ -14,7 +14,9 @@ Contact: hovlanddag@gmail.com
 use crate::ast::{
     BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
-use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID};
+use dag_rdf::{
+    Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
+};
 use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER};
 use std::collections::HashMap;
 
@@ -42,8 +44,12 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
         } => {
             let variables = projection_variables(projection, where_clause, datastore);
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions =
-                eval_components(where_clause, initial, datastore, ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID));
+            let solutions = eval_components(
+                where_clause,
+                initial,
+                datastore,
+                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+            );
 
             // Project
             let mut rows: Vec<SolutionRow> = solutions
@@ -130,8 +136,14 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
 
 fn collect_vars_from_term(term: &Term, vars: &mut Vec<String>) {
     if let Term::Variable(v) = term {
-        vars.push(v.clone());
+        if !is_internal_variable(v) {
+            vars.push(v.clone());
+        }
     }
+}
+
+fn is_internal_variable(var: &str) -> bool {
+    var.starts_with("__path_")
 }
 
 fn project(sub: &PartialSub, variables: &[String], datastore: &Datastore) -> SolutionRow {
@@ -189,7 +201,8 @@ fn eval_component(
         QueryComponent::Optional(inner) => {
             let mut result = Vec::new();
             for sub in solutions {
-                let extended = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+                let extended =
+                    eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
                 if extended.is_empty() {
                     result.push(sub);
                 } else {
@@ -200,7 +213,8 @@ fn eval_component(
         }
 
         QueryComponent::Union(left, right) => {
-            let left_sols = eval_components(left, solutions.clone(), datastore, (*active_graph).clone());
+            let left_sols =
+                eval_components(left, solutions.clone(), datastore, (*active_graph).clone());
             let right_sols = eval_components(right, solutions, datastore, (*active_graph).clone());
             let mut result = left_sols;
             result.extend(right_sols);
@@ -397,7 +411,6 @@ fn eval_triple_pattern(
     new_solutions
 }
 
-
 fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> DagTerm {
     match term {
         Term::Variable(v) => match sub.get(v) {
@@ -516,11 +529,13 @@ fn eval_expression_bool(
         }
         Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
         Expression::Exists(inner) => {
-            let sols = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+            let sols =
+                eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
             Some(!sols.is_empty())
         }
         Expression::NotExists(inner) => {
-            let sols = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+            let sols =
+                eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
             Some(sols.is_empty())
         }
         _ => {

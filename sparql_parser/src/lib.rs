@@ -281,7 +281,6 @@ fn flush_triples(components: &mut Vec<QueryComponent>, triples: &mut Vec<TripleP
 
 // ── Triple pattern ────────────────────────────────────────────────────────────
 
-
 fn parse_triple_pattern_statement<'a>(
     ctx: &'a ParserContext,
     generated_path_var_index: &mut usize,

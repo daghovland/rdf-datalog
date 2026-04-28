@@ -138,3 +138,39 @@ SELECT ?s WHERE {
     assert!(result.rows.is_empty());
 }
 
+#[test]
+fn select_star_hides_internal_property_path_variables() {
+    let mut ds = Datastore::new(1_000);
+
+    add_quad(
+        &mut ds,
+        "urn:x-arq:DefaultGraph",
+        "http://example.org/alice",
+        "http://example.org/p1",
+        "http://example.org/mid",
+    );
+    add_quad(
+        &mut ds,
+        "urn:x-arq:DefaultGraph",
+        "http://example.org/mid",
+        "http://example.org/p2",
+        "http://example.org/bob",
+    );
+
+    let query = r#"
+PREFIX ex: <http://example.org/>
+SELECT * WHERE {
+  ?s ex:p1/ex:p2 ?o .
+}
+"#;
+
+    let result = run_query(&ds, query);
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.variables.contains(&"s".to_string()));
+    assert!(result.variables.contains(&"o".to_string()));
+    assert!(
+        result.variables.iter().all(|v| !v.starts_with("__path_")),
+        "internal path variables must not be projected: {:?}",
+        result.variables
+    );
+}
