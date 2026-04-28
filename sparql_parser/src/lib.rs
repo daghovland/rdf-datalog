@@ -158,6 +158,7 @@ fn parse_group_graph_pattern_contents<'a>(
     move |input| {
         let mut components: Vec<QueryComponent> = Vec::new();
         let mut current_triples: Vec<TriplePattern> = Vec::new();
+        let mut generated_path_var_index: usize = 0;
         let mut remaining = input;
 
         loop {
@@ -185,6 +186,19 @@ fn parse_group_graph_pattern_contents<'a>(
                 flush_triples(&mut components, &mut current_triples);
                 let (r, expr) = parse_filter(ctx)(remaining)?;
                 components.push(QueryComponent::Filter(expr));
+                remaining = r;
+                continue;
+            }
+
+            // GRAPH
+            if remaining.to_ascii_uppercase().starts_with("GRAPH") {
+                flush_triples(&mut components, &mut current_triples);
+                let (r, _) = tag_no_case("GRAPH")(remaining)?;
+                let (r, _) = multispace1(r)?;
+                let (r, graph_term) = parse_term(ctx)(r)?;
+                let (r, _) = multispace0(r)?;
+                let (r, inner) = parse_group_graph_pattern(ctx)(r)?;
+                components.push(QueryComponent::Graph(graph_term, inner));
                 remaining = r;
                 continue;
             }
@@ -239,10 +253,10 @@ fn parse_group_graph_pattern_contents<'a>(
                 continue;
             }
 
-            // Triple pattern
-            match parse_triple_pattern(ctx)(remaining) {
-                Ok((r, tp)) => {
-                    current_triples.push(tp);
+            // Triple pattern statement (supports ';', ',' and simple '/' property paths)
+            match parse_triple_pattern_statement(ctx, &mut generated_path_var_index, remaining) {
+                Ok((r, tps)) => {
+                    current_triples.extend(tps);
                     remaining = r;
                     // Consume optional dot
                     remaining = multispace0(remaining)?.0;
@@ -267,26 +281,131 @@ fn flush_triples(components: &mut Vec<QueryComponent>, triples: &mut Vec<TripleP
 
 // ── Triple pattern ────────────────────────────────────────────────────────────
 
-fn parse_triple_pattern<'a>(
+
+fn parse_triple_pattern_statement<'a>(
     ctx: &'a ParserContext,
-) -> impl Fn(&'a str) -> IResult<&'a str, TriplePattern> + 'a {
-    move |input| {
-        let (input, _) = multispace0(input)?;
-        let (input, subject) = parse_term(ctx)(input)?;
-        let (input, _) = multispace1(input)?;
-        let (input, predicate) = parse_term(ctx)(input)?;
-        let (input, _) = multispace1(input)?;
-        let (input, object) = parse_term(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
-        Ok((
-            input,
-            TriplePattern {
-                subject,
-                predicate,
-                object,
-            },
-        ))
+    generated_path_var_index: &mut usize,
+    input: &'a str,
+) -> IResult<&'a str, Vec<TriplePattern>> {
+    let (input, _) = multispace0(input)?;
+    let (mut remaining, subject) = parse_term(ctx)(input)?;
+    let mut triples = Vec::new();
+    let mut first_predicate = true;
+
+    loop {
+        let (r, _) = if first_predicate {
+            multispace1(remaining)?
+        } else {
+            multispace0(remaining)?
+        };
+        let (r, predicate_path) = parse_property_path(ctx)(r)?;
+        let (r, _) = multispace1(r)?;
+        let (mut r, first_object) = parse_term(ctx)(r)?;
+
+        let mut objects = vec![first_object];
+        loop {
+            let (r_ws, _) = multispace0(r)?;
+            if !r_ws.starts_with(',') {
+                r = r_ws;
+                break;
+            }
+            let (r_after_comma, _) = char(',')(r_ws)?;
+            let (r_after_comma, _) = multispace0(r_after_comma)?;
+            let (r_next, obj) = parse_term(ctx)(r_after_comma)?;
+            objects.push(obj);
+            r = r_next;
+        }
+
+        for object in objects {
+            expand_property_path_to_triples(
+                &subject,
+                &predicate_path,
+                &object,
+                generated_path_var_index,
+                &mut triples,
+            );
+        }
+
+        let (r_ws, _) = multispace0(r)?;
+        if !r_ws.starts_with(';') {
+            remaining = r_ws;
+            break;
+        }
+
+        let (r_after_semi, _) = char(';')(r_ws)?;
+        let (r_after_semi, _) = multispace0(r_after_semi)?;
+
+        // Allow trailing semicolon before '.' or '}'.
+        if r_after_semi.starts_with('.') || r_after_semi.starts_with('}') {
+            remaining = r_after_semi;
+            break;
+        }
+
+        remaining = r_after_semi;
+        first_predicate = false;
     }
+
+    Ok((remaining, triples))
+}
+
+fn parse_property_path<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Term>> + 'a {
+    move |input| {
+        let (mut input, first) = parse_term(ctx)(input)?;
+        let mut segments = vec![first];
+        loop {
+            let r_ws = multispace0(input)?.0;
+            if !r_ws.starts_with('/') {
+                break;
+            }
+            let (r_after_slash, _) = char('/')(r_ws)?;
+            let (r_after_slash, _) = multispace0(r_after_slash)?;
+            let (r_next, segment) = parse_term(ctx)(r_after_slash)?;
+            segments.push(segment);
+            input = r_next;
+        }
+        Ok((input, segments))
+    }
+}
+
+fn expand_property_path_to_triples(
+    subject: &Term,
+    predicate_path: &[Term],
+    object: &Term,
+    generated_path_var_index: &mut usize,
+    triples: &mut Vec<TriplePattern>,
+) {
+    if predicate_path.is_empty() {
+        return;
+    }
+
+    if predicate_path.len() == 1 {
+        triples.push(TriplePattern {
+            subject: subject.clone(),
+            predicate: predicate_path[0].clone(),
+            object: object.clone(),
+        });
+        return;
+    }
+
+    let mut current_subject = subject.clone();
+    for predicate in &predicate_path[..predicate_path.len() - 1] {
+        let bridge_var = Term::Variable(format!("__path_{}", *generated_path_var_index));
+        *generated_path_var_index += 1;
+        triples.push(TriplePattern {
+            subject: current_subject,
+            predicate: predicate.clone(),
+            object: bridge_var.clone(),
+        });
+        current_subject = bridge_var;
+    }
+
+    triples.push(TriplePattern {
+        subject: current_subject,
+        predicate: predicate_path[predicate_path.len() - 1].clone(),
+        object: object.clone(),
+    });
 }
 
 // ── Term / literal parsing ───────────────────────────────────────────────────
@@ -370,11 +489,9 @@ fn parse_prefixed_name<'a>(
         // prefix can be empty (just ":")
         let (after_prefix, prefix) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
         let (after_colon, _) = char(':')(after_prefix)?;
-        // local name: alphanumeric, underscore, hyphen, dot (but not trailing dot), slash
+        // local name: alphanumeric, underscore, hyphen, dot
         let (after_local, local) =
-            take_while(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))(
-                after_colon,
-            )?;
+            take_while(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))(after_colon)?;
 
         // Must not be an empty local + empty prefix (that would match nothing)
         if prefix.is_empty() && local.is_empty() {

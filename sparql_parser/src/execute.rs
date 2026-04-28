@@ -14,8 +14,7 @@ Contact: hovlanddag@gmail.com
 use crate::ast::{
     BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
-use dag_rdf::query::get_default_graph_pattern;
-use dag_rdf::{Datastore, GraphElement, GraphElementId, QuadPattern, RdfLiteral, Term as DagTerm};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID};
 use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER};
 use std::collections::HashMap;
 
@@ -43,7 +42,8 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
         } => {
             let variables = projection_variables(projection, where_clause, datastore);
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions = eval_components(where_clause, initial, datastore);
+            let solutions =
+                eval_components(where_clause, initial, datastore, ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID));
 
             // Project
             let mut rows: Vec<SolutionRow> = solutions
@@ -113,7 +113,8 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
                 collect_vars_from_components(left, vars);
                 collect_vars_from_components(right, vars);
             }
-            QueryComponent::Graph(_, inner) => {
+            QueryComponent::Graph(graph_term, inner) => {
+                collect_vars_from_term(graph_term, vars);
                 collect_vars_from_components(inner, vars);
             }
             QueryComponent::Bind(_, alias) => {
@@ -149,14 +150,21 @@ fn project(sub: &PartialSub, variables: &[String], datastore: &Datastore) -> Sol
 
 type PartialSub = HashMap<String, GraphElementId>;
 
+#[derive(Clone)]
+enum ActiveGraph {
+    Fixed(GraphElementId),
+    Variable(String),
+}
+
 fn eval_components(
     components: &[QueryComponent],
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
+    active_graph: ActiveGraph,
 ) -> Vec<PartialSub> {
     let mut current = solutions;
     for comp in components {
-        current = eval_component(comp, current, datastore);
+        current = eval_component(comp, current, datastore, &active_graph);
         if current.is_empty() {
             break;
         }
@@ -168,19 +176,20 @@ fn eval_component(
     comp: &QueryComponent,
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
+    active_graph: &ActiveGraph,
 ) -> Vec<PartialSub> {
     match comp {
-        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore),
+        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph),
 
         QueryComponent::Filter(expr) => solutions
             .into_iter()
-            .filter(|sub| eval_filter(expr, sub, datastore))
+            .filter(|sub| eval_filter(expr, sub, datastore, active_graph))
             .collect(),
 
         QueryComponent::Optional(inner) => {
             let mut result = Vec::new();
             for sub in solutions {
-                let extended = eval_components(inner, vec![sub.clone()], datastore);
+                let extended = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
                 if extended.is_empty() {
                     result.push(sub);
                 } else {
@@ -191,8 +200,8 @@ fn eval_component(
         }
 
         QueryComponent::Union(left, right) => {
-            let left_sols = eval_components(left, solutions.clone(), datastore);
-            let right_sols = eval_components(right, solutions, datastore);
+            let left_sols = eval_components(left, solutions.clone(), datastore, (*active_graph).clone());
+            let right_sols = eval_components(right, solutions, datastore, (*active_graph).clone());
             let mut result = left_sols;
             result.extend(right_sols);
             result
@@ -201,15 +210,33 @@ fn eval_component(
         QueryComponent::Minus(inner) => solutions
             .into_iter()
             .filter(|sub| {
-                let minus_sols = eval_components(inner, vec![sub.clone()], datastore);
+                let minus_sols =
+                    eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
                 minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms))
             })
             .collect(),
 
-        QueryComponent::Graph(_, inner) => {
-            // Flatten named-graph patterns into the default graph for now
-            eval_components(inner, solutions, datastore)
-        }
+        QueryComponent::Graph(graph_term, inner) => solutions
+            .into_iter()
+            .flat_map(|sub| {
+                let scoped_graph = match graph_term {
+                    Term::Constant(gel) => {
+                        let Some(&graph_id) = datastore.resources.resource_map.get(gel) else {
+                            return Vec::new();
+                        };
+                        ActiveGraph::Fixed(graph_id)
+                    }
+                    Term::Variable(var) => {
+                        if let Some(&graph_id) = sub.get(var) {
+                            ActiveGraph::Fixed(graph_id)
+                        } else {
+                            ActiveGraph::Variable(var.clone())
+                        }
+                    }
+                };
+                eval_components(inner, vec![sub], datastore, scoped_graph)
+            })
+            .collect(),
 
         QueryComponent::Bind(expr, alias) => solutions
             .into_iter()
@@ -280,12 +307,13 @@ fn eval_bgp(
     patterns: &[TriplePattern],
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
+    active_graph: &ActiveGraph,
 ) -> Vec<PartialSub> {
     let mut current = solutions;
     for pattern in patterns {
         current = current
             .into_iter()
-            .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore))
+            .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph))
             .collect();
         if current.is_empty() {
             break;
@@ -298,6 +326,7 @@ fn eval_triple_pattern(
     tp: &TriplePattern,
     sub: &PartialSub,
     datastore: &Datastore,
+    active_graph: &ActiveGraph,
 ) -> Vec<PartialSub> {
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
@@ -308,23 +337,22 @@ fn eval_triple_pattern(
         }
     }
 
-    let quad_pattern = triple_pattern_to_quad_pattern(tp, sub, datastore);
     let mut new_solutions = Vec::new();
 
-    let g = match &quad_pattern.graph {
-        DagTerm::Resource(id) => Some(*id),
+    let g = match active_graph {
+        ActiveGraph::Fixed(id) => Some(*id),
+        ActiveGraph::Variable(v) => sub.get(v).copied(),
+    };
+    let s = match ast_term_to_dag_term(&tp.subject, sub, datastore) {
+        DagTerm::Resource(id) => Some(id),
         _ => None,
     };
-    let s = match &quad_pattern.subject {
-        DagTerm::Resource(id) => Some(*id),
+    let p = match ast_term_to_dag_term(&tp.predicate, sub, datastore) {
+        DagTerm::Resource(id) => Some(id),
         _ => None,
     };
-    let p = match &quad_pattern.predicate {
-        DagTerm::Resource(id) => Some(*id),
-        _ => None,
-    };
-    let o = match &quad_pattern.object {
-        DagTerm::Resource(id) => Some(*id),
+    let o = match ast_term_to_dag_term(&tp.object, sub, datastore) {
+        DagTerm::Resource(id) => Some(id),
         _ => None,
     };
 
@@ -351,6 +379,17 @@ fn eval_triple_pattern(
         bind!(&tp.predicate, quad.predicate);
         bind!(&tp.object, quad.obj);
 
+        if let ActiveGraph::Variable(graph_var) = active_graph {
+            match new_sub.get(graph_var) {
+                Some(&existing) if existing != quad.triple_id => {
+                    ok = false;
+                }
+                _ => {
+                    new_sub.insert(graph_var.clone(), quad.triple_id);
+                }
+            }
+        }
+
         if ok {
             new_solutions.push(new_sub);
         }
@@ -358,17 +397,6 @@ fn eval_triple_pattern(
     new_solutions
 }
 
-fn triple_pattern_to_quad_pattern(
-    tp: &TriplePattern,
-    sub: &PartialSub,
-    datastore: &Datastore,
-) -> QuadPattern {
-    get_default_graph_pattern(
-        ast_term_to_dag_term(&tp.subject, sub, datastore),
-        ast_term_to_dag_term(&tp.predicate, sub, datastore),
-        ast_term_to_dag_term(&tp.object, sub, datastore),
-    )
-}
 
 fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> DagTerm {
     match term {
@@ -385,8 +413,13 @@ fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) ->
 
 // ── FILTER expression evaluation ──────────────────────────────────────────────
 
-fn eval_filter(expr: &Expression, sub: &PartialSub, datastore: &Datastore) -> bool {
-    eval_expression_bool(expr, sub, datastore).unwrap_or(false)
+fn eval_filter(
+    expr: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> bool {
+    eval_expression_bool(expr, sub, datastore, active_graph).unwrap_or(false)
 }
 
 /// Evaluate an expression to a concrete GraphElement value.
@@ -440,17 +473,18 @@ fn eval_expression_bool(
     expr: &Expression,
     sub: &PartialSub,
     datastore: &Datastore,
+    active_graph: &ActiveGraph,
 ) -> Option<bool> {
     match expr {
         Expression::Binary(left, op, right) => match op {
             BinaryOp::And => {
-                let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
-                let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                let l = eval_expression_bool(left, sub, datastore, active_graph).unwrap_or(false);
+                let r = eval_expression_bool(right, sub, datastore, active_graph).unwrap_or(false);
                 Some(l && r)
             }
             BinaryOp::Or => {
-                let l = eval_expression_bool(left, sub, datastore).unwrap_or(false);
-                let r = eval_expression_bool(right, sub, datastore).unwrap_or(false);
+                let l = eval_expression_bool(left, sub, datastore, active_graph).unwrap_or(false);
+                let r = eval_expression_bool(right, sub, datastore, active_graph).unwrap_or(false);
                 Some(l || r)
             }
             BinaryOp::Eq => {
@@ -478,15 +512,15 @@ fn eval_expression_bool(
             _ => None,
         },
         Expression::Unary(UnaryOp::Not, inner) => {
-            Some(!eval_expression_bool(inner, sub, datastore).unwrap_or(false))
+            Some(!eval_expression_bool(inner, sub, datastore, active_graph).unwrap_or(false))
         }
         Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
         Expression::Exists(inner) => {
-            let sols = eval_components(inner, vec![sub.clone()], datastore);
+            let sols = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
             Some(!sols.is_empty())
         }
         Expression::NotExists(inner) => {
-            let sols = eval_components(inner, vec![sub.clone()], datastore);
+            let sols = eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
             Some(sols.is_empty())
         }
         _ => {

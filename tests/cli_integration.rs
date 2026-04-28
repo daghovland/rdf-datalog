@@ -353,8 +353,7 @@ fn trig_load_and_query() {
     let mut ds = Datastore::new(10_000);
     load_file(&mut ds, &testdata("named_graphs.trig")).expect("load trig");
 
-    // The SPARQL executor currently flattens named graphs into the default graph,
-    // so all triples should be queryable.
+    // Top-level BGP patterns query the default graph only.
     let sparql = "PREFIX ex: <http://example.org/ng#> SELECT ?x WHERE { ?x ex:name ?n . }";
     let result = run_sparql_query(&ds, sparql).expect("query");
     let names: Vec<_> = result
@@ -363,9 +362,40 @@ fn trig_load_and_query() {
         .filter_map(|r| r.get("x"))
         .map(graph_element_display)
         .collect();
-    // Should find Alice (default graph), Bob (named graph), Carol (named graph)
+
     assert!(
         names.contains(&"<http://example.org/ng#Alice>".to_string()),
         "should find Alice from default graph"
+    );
+    assert!(
+        !names.contains(&"<http://example.org/ng#Bob>".to_string()),
+        "should not find Bob without a GRAPH clause"
+    );
+    assert!(
+        !names.contains(&"<http://example.org/ng#Carol>".to_string()),
+        "should not find Carol without a GRAPH clause"
+    );
+
+    let graph_sparql = r#"
+PREFIX ex: <http://example.org/ng#>
+SELECT ?g ?x WHERE {
+    GRAPH ?g { ?x ex:name ?n . }
+}
+"#;
+    let graph_result = run_sparql_query(&ds, graph_sparql).expect("graph query");
+    let graph_subjects: Vec<_> = graph_result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        graph_subjects.contains(&"<http://example.org/ng#Bob>".to_string()),
+        "GRAPH ?g should find Bob in named graph"
+    );
+    assert!(
+        graph_subjects.contains(&"<http://example.org/ng#Carol>".to_string()),
+        "GRAPH ?g should find Carol in named graph"
     );
 }
