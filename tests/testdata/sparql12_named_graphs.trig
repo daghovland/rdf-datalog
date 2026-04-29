@@ -1,0 +1,48 @@
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex:   <http://example.org/> .
+@prefix dc:   <http://purl.org/dc/elements/1.1/> .
+@prefix org:  <http://example.org/org/> .
+
+# Based on SPARQL 1.2 specification §8 (Querying Named Graphs)
+# Provides data in multiple named graphs to exercise:
+#   GRAPH <iri> { ... }
+#   GRAPH ?g    { ... }
+#   SELECT *
+# https://www.w3.org/TR/sparql12-query/#queryDataset
+
+# ── Default graph: directory of who is in which department ───────────────────
+
+<http://example.org/alice> ex:worksIn org:engineering .
+<http://example.org/bob>   ex:worksIn org:marketing .
+<http://example.org/carol> ex:worksIn org:engineering .
+
+# ── Named graph: engineering team ────────────────────────────────────────────
+
+<http://example.org/graphs/engineering> {
+    <http://example.org/alice>
+        foaf:name "Alice" ;
+        foaf:mbox <mailto:alice@example.org> .
+    <http://example.org/carol>
+        foaf:name "Carol" ;
+        foaf:mbox <mailto:carol@example.org> .
+}
+
+# ── Named graph: marketing team ──────────────────────────────────────────────
+
+<http://example.org/graphs/marketing> {
+    <http://example.org/bob>
+        foaf:name "Bob" ;
+        foaf:mbox <mailto:bob@example.org> .
+}
+
+# ── Named graph: publications ─────────────────────────────────────────────────
+
+<http://example.org/graphs/publications> {
+    ex:paper1
+        dc:title "Efficient SPARQL Evaluation" ;
+        dc:creator <http://example.org/alice> .
+    ex:paper2
+        dc:title "Named Graphs at Scale" ;
+        dc:creator <http://example.org/carol> .
+}
+

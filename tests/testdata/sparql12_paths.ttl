@@ -1,0 +1,24 @@
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex:   <http://example.org/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# Based on SPARQL 1.2 specification §9 (Property Paths)
+# For testing simple sequence paths  p1/p2
+# https://www.w3.org/TR/sparql12-query/#propertypaths
+
+# Alice → knows → Bob → knows → Carol
+ex:alice foaf:knows ex:bob .
+ex:bob   foaf:knows ex:carol .
+ex:carol foaf:knows ex:dave .
+ex:dave  foaf:knows ex:eve .
+
+# Names so we can check end objects
+ex:alice foaf:name "Alice" .
+ex:bob   foaf:name "Bob" .
+ex:carol foaf:name "Carol" .
+ex:dave  foaf:name "Dave" .
+ex:eve   foaf:name "Eve" .
+
+# A disconnected node (for FILTER/NOT EXISTS tests)
+ex:frank foaf:name "Frank" .
+

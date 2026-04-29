@@ -58,7 +58,20 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
                 .collect();
 
             if *distinct {
-                rows.dedup();
+                // `dedup()` only removes *consecutive* duplicates; use a proper
+                // seen-set so non-adjacent identical rows are also removed.
+                // SolutionRow = HashMap<String, GraphElement> — not Hash itself,
+                // so we canonicalise each row as a sorted Vec of (var, element) pairs.
+                let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
+                    std::collections::HashSet::new();
+                rows.retain(|row| {
+                    let mut key: Vec<(String, GraphElement)> = row
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    key.sort_by(|a, b| a.0.cmp(&b.0));
+                    seen.insert(key)
+                });
             }
 
             if let Some(off) = offset {

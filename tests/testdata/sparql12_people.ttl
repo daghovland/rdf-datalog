@@ -1,0 +1,31 @@
+@prefix foaf:  <http://xmlns.com/foaf/0.1/> .
+@prefix ex:    <http://example.org/> .
+@prefix dc:    <http://purl.org/dc/elements/1.1/> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# Based on SPARQL 1.2 specification §2 (Basic Graph Patterns) and §6 (Optional)
+# https://www.w3.org/TR/sparql12-query/
+
+ex:alice
+    a foaf:Person ;
+    foaf:name "Alice" ;
+    foaf:mbox <mailto:alice@example.org> ;
+    foaf:age "42"^^xsd:integer ;
+    foaf:knows ex:bob , ex:carol .
+
+ex:bob
+    a foaf:Person ;
+    foaf:name "Bob" ;
+    foaf:age "35"^^xsd:integer ;
+    foaf:knows ex:alice .
+
+ex:carol
+    a foaf:Person ;
+    foaf:name "Carol" ;
+    foaf:mbox <mailto:carol@example.org> ;
+    foaf:age "28"^^xsd:integer .
+
+ex:dave
+    a foaf:Person ;
+    foaf:name "Dave" .
+
