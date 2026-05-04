@@ -65,10 +65,8 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
                 let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
                     std::collections::HashSet::new();
                 rows.retain(|row| {
-                    let mut key: Vec<(String, GraphElement)> = row
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
+                    let mut key: Vec<(String, GraphElement)> =
+                        row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     key.sort_by(|a, b| a.0.cmp(&b.0));
                     seen.insert(key)
                 });

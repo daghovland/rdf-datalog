@@ -20,6 +20,13 @@ cargo test test_add_and_get_resource
 
 # Run the main binary
 cargo run
+
+# End-of-task quality checks (run before handing work back)
+# Match CI strictness to avoid push/PR surprises.
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo audit
+
 ```
 
 ## Planning and protocol documents

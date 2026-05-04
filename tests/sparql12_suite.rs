@@ -41,7 +41,7 @@ fn query_rows(ds: &Datastore, sparql: &str) -> usize {
         .len()
 }
 
-fn query_vars<'a>(ds: &Datastore, sparql: &str) -> Vec<String> {
+fn query_vars(ds: &Datastore, sparql: &str) -> Vec<String> {
     run_sparql_query(ds, sparql)
         .expect("query should execute")
         .variables
@@ -226,7 +226,11 @@ SELECT ?x WHERE {
     { ?x foaf:name "Bob" . }
 }
 "#;
-    assert_eq!(query_rows(&ds, sparql), 2, "§6.3: UNION should produce 2 rows");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "§6.3: UNION should produce 2 rows"
+    );
 }
 
 // ── §8  Named Graphs ─────────────────────────────────────────────────────────
@@ -593,9 +597,18 @@ SELECT * WHERE {
 }
 "#;
     let vars = query_vars(&ds, sparql);
-    assert!(vars.contains(&"x".to_string()), "§2.7: ?x should be projected");
-    assert!(vars.contains(&"name".to_string()), "§2.7: ?name should be projected");
-    assert!(vars.contains(&"mbox".to_string()), "§2.7: ?mbox should be projected");
+    assert!(
+        vars.contains(&"x".to_string()),
+        "§2.7: ?x should be projected"
+    );
+    assert!(
+        vars.contains(&"name".to_string()),
+        "§2.7: ?name should be projected"
+    );
+    assert!(
+        vars.contains(&"mbox".to_string()),
+        "§2.7: ?mbox should be projected"
+    );
     assert!(
         vars.iter().all(|v| !v.starts_with("__")),
         "§2.7: no internal variables should appear in SELECT *"
@@ -639,4 +652,3 @@ SELECT ?x ?name WHERE {
         "§15: VALUES should bind Alice and Bob"
     );
 }
-
