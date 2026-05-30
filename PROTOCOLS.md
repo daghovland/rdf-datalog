@@ -5,6 +5,11 @@ endpoint in this project should implement, with links to the normative
 specifications, the required behaviour, and notes on what is in scope for this
 project.
 
+Note on terminology:
+- **HTTP protocol compliance target** in this document is SPARQL 1.1 Protocol.
+- **Query language implementation target** in the parser/executor is SPARQL 1.2,
+  currently focused on a `SELECT` subset (including `GRAPH` patterns).
+
 ---
 
 ## 1. SPARQL 1.1 Protocol (core, required)

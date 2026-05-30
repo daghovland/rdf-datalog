@@ -1,0 +1,42 @@
+@prefix dc:   <http://purl.org/dc/elements/1.1/> .
+@prefix ex:   <http://example.org/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# Based on SPARQL 1.2 specification §2.6 (Combining Syntax Forms)
+# and §13 (Solution Modifiers: LIMIT, OFFSET, ORDER BY, DISTINCT)
+
+ex:book1
+    dc:title "SPARQL Tutorial" ;
+    dc:creator "Alice" ;
+    dc:subject "Databases" ;
+    ex:year "2023"^^xsd:integer .
+
+ex:book2
+    dc:title "RDF and the Semantic Web" ;
+    dc:creator "Bob" ;
+    dc:subject "Semantic Web" ;
+    ex:year "2021"^^xsd:integer .
+
+ex:book3
+    dc:title "Ontology Engineering" ;
+    dc:creator "Carol" ;
+    dc:subject "Ontology" ;
+    ex:year "2022"^^xsd:integer .
+
+ex:book4
+    dc:title "Linked Data Patterns" ;
+    dc:creator "Dave" ;
+    dc:subject "Linked Data" ;
+    ex:year "2020"^^xsd:integer .
+
+ex:book5
+    dc:title "Knowledge Graphs" ;
+    dc:creator "Alice" ;
+    dc:subject "Knowledge Management" ;
+    ex:year "2024"^^xsd:integer .
+
+# This book has no creator (for OPTIONAL tests)
+ex:book6
+    dc:title "Anonymous Work" ;
+    dc:subject "Philosophy" .
+

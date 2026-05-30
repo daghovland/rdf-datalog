@@ -6,6 +6,5 @@ edition = "2024"
 [dependencies]
 num-bigint = "0.4.4"
 chrono = { version = "0.4.20", features = ["serde"] }
-rust_decimal = { version = "1.41",
-    bytes = "1.11.1" }
+rust_decimal = "1.41"
 ordered-float = "5.3.0"

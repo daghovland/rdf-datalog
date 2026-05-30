@@ -1863,7 +1863,6 @@ dependencies = [
  "axum",
  "dag-rdf",
  "reqwest",
- "serde",
  "serde_json",
  "sparql-parser",
  "tokio",

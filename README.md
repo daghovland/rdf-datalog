@@ -1,6 +1,6 @@
 # dagalog
 
-A fast RDF triplestore with native Rust implementation of Datalog-based OWL-RL reasoning, custom Datalog rules, and a SPARQL 1.1 HTTP endpoint.
+A fast RDF triplestore with native Rust implementation of Datalog-based OWL-RL reasoning, custom Datalog rules, and a SPARQL HTTP endpoint.
 
 This is a Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 
@@ -11,7 +11,7 @@ This is a Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) 
 - Load RDF data from Turtle (`.ttl`) and TriG (`.trig`) files
 - Apply OWL 2 RL reasoning via Datalog materialisation
 - Load and apply custom Datalog rules (`.datalog` files)
-- Answer SPARQL 1.1 SELECT queries over the materialised dataset
+- Answer SPARQL 1.2 SELECT-subset queries over the materialised dataset
 - Expose a W3C-compliant SPARQL 1.1 HTTP endpoint
 
 ---
@@ -28,7 +28,7 @@ This is a Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) 
 | `owl2rl2datalog` | OWL 2 RL → Datalog rule translation (W3C §4.3) |
 | `rdf_owl_translator` | RDF triples → OWL 2 axiom extraction |
 | `turtle_parser` | Turtle/TriG parser (`rio_turtle`); populates a `Datastore` |
-| `sparql_parser` | SPARQL 1.1 SELECT parser (nom-based) + in-memory query executor |
+| `sparql_parser` | SPARQL 1.2 SELECT-subset parser (nom-based) + in-memory query executor |
 | `datalog_parser` | **Datalog rule syntax parser (nom-based) — complete** |
 | `sparql_endpoint` | SPARQL 1.1 HTTP endpoint (axum + tokio) |
 | `manchester_parser` | OWL Manchester Syntax parser (stub — not yet implemented) |
@@ -163,6 +163,21 @@ When `--serve` is used, the `sparql_endpoint` crate exposes:
 
 Response format is negotiated via the `Accept` header.
 Default is `application/sparql-results+json`.
+
+### SPARQL query language support (SPARQL 1.2 target)
+
+The parser/executor targets SPARQL 1.2 for `SELECT` queries, with implemented support for:
+
+- `SELECT`, `DISTINCT`, `LIMIT`, `OFFSET`, `ORDER BY`, `GROUP BY`, `HAVING`
+- `FILTER`, `BIND`, `VALUES`, `OPTIONAL`, `UNION`, `MINUS`, `EXISTS`, `NOT EXISTS`
+- `GRAPH <iri>` and `GRAPH ?g` named-graph patterns
+- Turtle-style triple shorthand (`;` and `,`) in group patterns
+- Simple sequence property paths (`p1/p2/...`), expanded to equivalent triple joins
+
+Current scope/limits:
+
+- Query forms other than `SELECT` are not implemented yet
+- Full SPARQL 1.2 property path algebra is not implemented yet (only simple `/` sequences)
 
 ### Using the endpoint as a library
 
