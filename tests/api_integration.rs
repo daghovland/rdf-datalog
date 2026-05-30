@@ -32,12 +32,16 @@ fn count_with_predicate_object(ds: &Datastore, pred: &str, obj: &str) -> usize {
     let pred_id = ds
         .resources
         .resource_map
-        .get(&dag_rdf::GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(pred.to_string()))))
+        .get(&dag_rdf::GraphElement::NodeOrEdge(RdfResource::Iri(
+            IriReference(pred.to_string()),
+        )))
         .copied();
     let obj_id = ds
         .resources
         .resource_map
-        .get(&dag_rdf::GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(obj.to_string()))))
+        .get(&dag_rdf::GraphElement::NodeOrEdge(RdfResource::Iri(
+            IriReference(obj.to_string()),
+        )))
         .copied();
     match (pred_id, obj_id) {
         (Some(p), Some(o)) => ds.quads_matching(None, None, Some(p), Some(o)).len(),
@@ -58,7 +62,11 @@ SELECT ?label
 WHERE { <http://dbpedia.org/datatype/FuelEfficiency> rdfs:label ?label . }
 "#;
     let result = run_sparql_query(&ds, sparql).expect("query must succeed");
-    assert_eq!(result.rows.len(), 1, "expected exactly one label on FuelEfficiency");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected exactly one label on FuelEfficiency"
+    );
 }
 
 // ── TestApi.TestAbbreviatedBlankNode ─────────────────────────────────────────
@@ -70,28 +78,32 @@ fn test_abbreviated_blank_node() {
 
     // foaf:knows: 2 triples
     let knows_count = {
-        let sparql = "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?o WHERE { ?s foaf:knows ?o }";
+        let sparql =
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?o WHERE { ?s foaf:knows ?o }";
         run_sparql_query(&ds, sparql).unwrap().rows.len()
     };
     assert_eq!(knows_count, 2, "expected 2 foaf:knows triples");
 
     // foaf:name: 3 triples
     let name_count = {
-        let sparql = "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?n WHERE { ?s foaf:name ?n }";
+        let sparql =
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?n WHERE { ?s foaf:name ?n }";
         run_sparql_query(&ds, sparql).unwrap().rows.len()
     };
     assert_eq!(name_count, 3, "expected 3 foaf:name triples");
 
     // foaf:mbox: 1 triple
     let mbox_count = {
-        let sparql = "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?m WHERE { ?s foaf:mbox ?m }";
+        let sparql =
+            "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s ?m WHERE { ?s foaf:mbox ?m }";
         run_sparql_query(&ds, sparql).unwrap().rows.len()
     };
     assert_eq!(mbox_count, 1, "expected 1 foaf:mbox triple");
 
     // Eve has exactly one foaf:name
     let eve_count = {
-        let sparql = r#"PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s WHERE { ?s foaf:name "Eve" }"#;
+        let sparql =
+            r#"PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?s WHERE { ?s foaf:name "Eve" }"#;
         run_sparql_query(&ds, sparql).unwrap().rows.len()
     };
     assert_eq!(eve_count, 1, "expected Eve to have exactly one foaf:name");
@@ -115,7 +127,11 @@ fn test_datalog_reasoning() {
 
     // Before rules: predicate→object exists, predicate→object2 does not
     assert_eq!(count_with_predicate_object(&ds, PRED, OBJ), 1);
-    assert_eq!(count_with_predicate_object(&ds, PRED, OBJ2), 0, "object2 should not exist before rules");
+    assert_eq!(
+        count_with_predicate_object(&ds, PRED, OBJ2),
+        0,
+        "object2 should not exist before rules"
+    );
 
     apply_rules(&mut ds, &[testdata("rules.datalog")]).unwrap();
 
@@ -193,7 +209,11 @@ fn test_datalog2_propagation() {
     const DATA_PROPERTY: &str = "http://example.com/data#property";
     const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
-    assert_eq!(count_with_predicate_object(&ds, RDF_TYPE, DATA_PROPERTY), 1, "before rules");
+    assert_eq!(
+        count_with_predicate_object(&ds, RDF_TYPE, DATA_PROPERTY),
+        1,
+        "before rules"
+    );
 
     apply_rules(&mut ds, &[testdata("test2.datalog")]).unwrap();
 
@@ -224,8 +244,16 @@ fn test_datalog_stratified_negation() {
     const DATA_TYPE3: &str = "http://example.com/data#Type3";
 
     // Before: data:Node rdf:type data:Type (1), no data:Type3
-    assert_eq!(count_with_predicate_object(&ds, RDF_TYPE, DATA_TYPE), 1, "before rules");
-    assert_eq!(count_with_predicate_object(&ds, RDF_TYPE, DATA_TYPE3), 0, "no Type3 before rules");
+    assert_eq!(
+        count_with_predicate_object(&ds, RDF_TYPE, DATA_TYPE),
+        1,
+        "before rules"
+    );
+    assert_eq!(
+        count_with_predicate_object(&ds, RDF_TYPE, DATA_TYPE3),
+        0,
+        "no Type3 before rules"
+    );
 
     apply_rules(&mut ds, &[testdata("test_stratified.datalog")]).unwrap();
 
@@ -264,18 +292,24 @@ fn sparql1_simple_title_retrieval() {
 /// TestSparql2 — name+mbox join (SPARQL 1.1 spec §2.2).
 #[test]
 fn sparql2_name_mbox_join() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 _:a foaf:name "Johnny Lee Outlaw" .
 _:a foaf:mbox <mailto:jlow@example.com> .
 _:b foaf:name "Peter Goodguy" .
 _:b foaf:mbox <mailto:peter@example.org> .
 _:c foaf:mbox <mailto:carol@example.org> .
-"#);
-    let result = run_sparql_query(&ds, r#"
+"#,
+    );
+    let result = run_sparql_query(
+        &ds,
+        r#"
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 SELECT ?name ?mbox WHERE { ?x foaf:name ?name . ?x foaf:mbox ?mbox }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     assert_eq!(result.rows.len(), 2, "two people have both name and mbox");
     for row in &result.rows {
         assert!(row.contains_key("name"));
@@ -286,12 +320,14 @@ SELECT ?name ?mbox WHERE { ?x foaf:name ?name . ?x foaf:mbox ?mbox }
 /// TestSparql3 — language-tagged literal matching (SPARQL 1.1 spec §2.3.1).
 #[test]
 fn sparql3_language_tagged_literal() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX ns: <http://example.org/ns#>
 PREFIX :   <http://example.org/ns#>
 :x ns:p "cat"@en .
 :y ns:p "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
-"#);
+"#,
+    );
     // Plain "cat" (no lang tag) matches nothing
     let r = run_sparql_query(&ds, r#"SELECT ?v WHERE { ?v ?p "cat" }"#).unwrap();
     assert_eq!(r.rows.len(), 0, "plain 'cat' should not match 'cat'@en");
@@ -306,14 +342,20 @@ PREFIX :   <http://example.org/ns#>
 /// TestSparql4 — typed integer literal matching (SPARQL 1.1 spec §2.3.2).
 #[test]
 fn sparql4_typed_integer_literal() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX ns: <http://example.org/ns#>
 PREFIX :   <http://example.org/ns#>
 :x ns:p "cat"@en .
 :y ns:p "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
-"#);
+"#,
+    );
     let r = run_sparql_query(&ds, r#"SELECT ?v WHERE { ?v ?p 42 }"#).unwrap();
-    assert_eq!(r.rows.len(), 1, "integer 42 should match the xsd:integer literal");
+    assert_eq!(
+        r.rows.len(),
+        1,
+        "integer 42 should match the xsd:integer literal"
+    );
     let v = graph_element_display(r.rows[0].get("v").unwrap());
     assert_eq!(v, "<http://example.org/ns#y>");
 }
@@ -321,12 +363,14 @@ PREFIX :   <http://example.org/ns#>
 /// TestSparql5 — custom datatype matching (SPARQL 1.1 spec §2.3.3).
 #[test]
 fn sparql5_custom_datatype_literal() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX dt: <http://example.org/datatype#>
 PREFIX ns: <http://example.org/ns#>
 PREFIX :   <http://example.org/ns#>
 :z ns:p "abc"^^dt:specialDatatype .
-"#);
+"#,
+    );
     let r = run_sparql_query(
         &ds,
         r#"SELECT ?v WHERE { ?v ?p "abc"^^<http://example.org/datatype#specialDatatype> }"#,
@@ -340,11 +384,13 @@ PREFIX :   <http://example.org/ns#>
 /// TestSparql6 — blank node subjects (SPARQL 1.1 spec §2.4).
 #[test]
 fn sparql6_blank_node_subjects() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 _:a foaf:name "Alice" .
 _:b foaf:name "Bob" .
-"#);
+"#,
+    );
     let result = run_sparql_query(
         &ds,
         r#"PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?x ?name WHERE { ?x foaf:name ?name }"#,
@@ -361,7 +407,11 @@ _:b foaf:name "Bob" .
     // Both x values should be blank nodes
     for row in &result.rows {
         let x = graph_element_display(row.get("x").unwrap());
-        assert!(x.starts_with("_:"), "subject should be a blank node, got {}", x);
+        assert!(
+            x.starts_with("_:"),
+            "subject should be a blank node, got {}",
+            x
+        );
     }
 }
 
@@ -370,22 +420,32 @@ _:b foaf:name "Bob" .
 /// Translated from `TestApi.TestSparqlOptionalPatterns`.
 #[test]
 fn sparql_optional_patterns() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 _:a rdf:type foaf:Person ; foaf:name "Alice" ; foaf:mbox <mailto:alice@example.com> .
 _:a foaf:mbox <mailto:alice@work.example> .
 _:b rdf:type foaf:Person ; foaf:name "Bob" .
-"#);
-    let result = run_sparql_query(&ds, r#"
+"#,
+    );
+    let result = run_sparql_query(
+        &ds,
+        r#"
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 SELECT ?name ?mbox WHERE {
     ?x foaf:name ?name .
     OPTIONAL { ?x foaf:mbox ?mbox }
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     // Alice has 2 mboxes (2 rows), Bob has 0 (1 row with unbound mbox) → 3 rows total
-    assert_eq!(result.rows.len(), 3, "Alice×2 mboxes + Bob×0 mboxes = 3 rows");
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "Alice×2 mboxes + Bob×0 mboxes = 3 rows"
+    );
     let names: Vec<_> = result
         .rows
         .iter()
@@ -400,15 +460,21 @@ SELECT ?name ?mbox WHERE {
 /// Translated from `TestApi.TestSparqlBasicJoin`.
 #[test]
 fn sparql_basic_join() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX ns: <http://example.org/ns#>
 _:a ns:price 20 .
 _:a ns:title "Cheap Book" .
-"#);
-    let result = run_sparql_query(&ds, r#"
+"#,
+    );
+    let result = run_sparql_query(
+        &ds,
+        r#"
 PREFIX ns: <http://example.org/ns#>
 SELECT ?title ?price WHERE { ?x ns:price ?price . ?x ns:title ?title . }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     assert_eq!(result.rows.len(), 1, "one book with both price and title");
 }
 
@@ -417,18 +483,27 @@ SELECT ?title ?price WHERE { ?x ns:price ?price . ?x ns:title ?title . }
 /// Translated from `TestApi.TestSparqlBind`.
 #[test]
 fn sparql_bind_variable() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX ns: <http://example.org/ns#>
 _:a ns:price 20 .
-"#);
-    let result = run_sparql_query(&ds, r#"
+"#,
+    );
+    let result = run_sparql_query(
+        &ds,
+        r#"
 PREFIX ns: <http://example.org/ns#>
 SELECT ?price ?double WHERE { ?x ns:price ?price . BIND(?price AS ?double) }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     assert_eq!(result.rows.len(), 1);
     let price = graph_element_display(result.rows[0].get("price").unwrap());
     let double = graph_element_display(result.rows[0].get("double").unwrap());
-    assert_eq!(price, double, "BIND(?price AS ?double) should give same value");
+    assert_eq!(
+        price, double,
+        "BIND(?price AS ?double) should give same value"
+    );
 }
 
 // ── TestApi.TestSparqlFilter ──────────────────────────────────────────────────
@@ -436,27 +511,41 @@ SELECT ?price ?double WHERE { ?x ns:price ?price . BIND(?price AS ?double) }
 /// Translated from `TestApi.TestSparqlFilter`.
 #[test]
 fn sparql_filter_numeric() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX ns: <http://example.org/ns#>
 _:a ns:price 20 ; dc:title "Cheap Book" .
 _:b ns:price 40 ; dc:title "Expensive Book" .
-"#);
+"#,
+    );
     // Without FILTER: both books
-    let r = run_sparql_query(&ds, r#"
+    let r = run_sparql_query(
+        &ds,
+        r#"
 PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX ns: <http://example.org/ns#>
 SELECT ?title ?price WHERE { ?x ns:price ?price . ?x dc:title ?title . }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     assert_eq!(r.rows.len(), 2, "both books without filter");
 
     // With FILTER price < 30: only cheap book
-    let r = run_sparql_query(&ds, r#"
+    let r = run_sparql_query(
+        &ds,
+        r#"
 PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX ns: <http://example.org/ns#>
 SELECT ?title ?price WHERE { ?x ns:price ?price . ?x dc:title ?title . FILTER (?price < 30) }
-"#).unwrap();
-    assert_eq!(r.rows.len(), 1, "only the cheap book passes FILTER price < 30");
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        r.rows.len(),
+        1,
+        "only the cheap book passes FILTER price < 30"
+    );
 }
 
 // ── TestApi.TestSparqlAggregate ───────────────────────────────────────────────
@@ -466,17 +555,23 @@ SELECT ?title ?price WHERE { ?x ns:price ?price . ?x dc:title ?title . FILTER (?
 #[test]
 #[ignore = "aggregate functions (SUM / GROUP BY) not yet implemented in the SPARQL engine"]
 fn sparql_aggregate_sum_group_by() {
-    let ds = parse_inline_ttl(r#"
+    let ds = parse_inline_ttl(
+        r#"
 PREFIX : <http://books.example/>
 :org1 :hasBook :book1 . :book1 :price 10 .
 :org1 :hasBook :book2 . :book2 :price 20 .
 :org2 :hasBook :book3 . :book3 :price 30 .
-"#);
-    let result = run_sparql_query(&ds, r#"
+"#,
+    );
+    let result = run_sparql_query(
+        &ds,
+        r#"
 PREFIX : <http://books.example/>
 SELECT ?org (SUM(?lprice) AS ?totalPrice)
 WHERE { ?org :hasBook ?book . ?book :price ?lprice . }
 GROUP BY ?org
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     assert_eq!(result.rows.len(), 2, "two organisations");
 }

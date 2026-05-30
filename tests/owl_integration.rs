@@ -13,8 +13,8 @@ Contact: hovlanddag@gmail.com
 //! marked `#[ignore]`.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
-use datalog::evaluate_rules;
 use dagalog::load_file;
+use datalog::evaluate_rules;
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
 use std::path::Path;
@@ -39,11 +39,31 @@ fn load_and_extract_rules(name: &str) -> (Datastore, usize) {
 }
 
 fn has_triple(ds: &Datastore, subj: &str, pred: &str, obj: &str) -> bool {
-    let s = ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(subj.to_string())))).copied();
-    let p = ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(pred.to_string())))).copied();
-    let o = ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(obj.to_string())))).copied();
+    let s = ds
+        .resources
+        .resource_map
+        .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            subj.to_string(),
+        ))))
+        .copied();
+    let p = ds
+        .resources
+        .resource_map
+        .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            pred.to_string(),
+        ))))
+        .copied();
+    let o = ds
+        .resources
+        .resource_map
+        .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            obj.to_string(),
+        ))))
+        .copied();
     match (s, p, o) {
-        (Some(s), Some(p), Some(o)) => !ds.quads_matching(None, Some(s), Some(p), Some(o)).is_empty(),
+        (Some(s), Some(p), Some(o)) => !ds
+            .quads_matching(None, Some(s), Some(p), Some(o))
+            .is_empty(),
         _ => false,
     }
 }
@@ -92,22 +112,49 @@ fn equality_reasoning_works() {
     const IND2: &str = "https://example.com/vocab#ind2";
 
     // ind1 must be typed (it was explicitly asserted)
-    let ind1_typed = !ds.quads_matching(
-        None,
-        ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(IND1.to_string())))).copied(),
-        ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(RDF_TYPE.to_string())))).copied(),
-        None,
-    ).is_empty();
+    let ind1_typed = !ds
+        .quads_matching(
+            None,
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    IND1.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    RDF_TYPE.to_string(),
+                ))))
+                .copied(),
+            None,
+        )
+        .is_empty();
     assert!(ind1_typed, "ind1 must have an rdf:type");
 
     // After reasoning via owl:sameAs, ind2 should also be typed
-    let ind2_typed = !ds.quads_matching(
-        None,
-        ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(IND2.to_string())))).copied(),
-        ds.resources.resource_map.get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(RDF_TYPE.to_string())))).copied(),
-        None,
-    ).is_empty();
-    assert!(ind2_typed, "ind2 should be typed after owl:sameAs equality reasoning");
+    let ind2_typed = !ds
+        .quads_matching(
+            None,
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    IND2.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    RDF_TYPE.to_string(),
+                ))))
+                .copied(),
+            None,
+        )
+        .is_empty();
+    assert!(
+        ind2_typed,
+        "ind2 should be typed after owl:sameAs equality reasoning"
+    );
 }
 
 // ── TestApiOntology.LoadIntersection ─────────────────────────────────────────
@@ -136,7 +183,11 @@ const EXAMPLE_NOTX: &str = "http://example.org/notx";
 
 fn assert_reasoning_example(name: &str) {
     let (ds, rule_count) = load_and_extract_rules(name);
-    assert!(rule_count > 0, "{}: expected at least one Datalog rule", name);
+    assert!(
+        rule_count > 0,
+        "{}: expected at least one Datalog rule",
+        name
+    );
 
     let x_has_type_a = has_triple(&ds, EXAMPLE_X, RDF_TYPE, EXAMPLE_A);
     assert!(
@@ -217,9 +268,15 @@ fn descriptor_from_imf_ontology_non_cyclic() {
     let mut ds = Datastore::new(100_000);
     load_file(&mut ds, &testdata("cycle-imf-test.ttl")).unwrap();
     let ontology_doc = rdf2owl(&mut ds);
-    assert!(!ontology_doc.ontology.axioms.is_empty(), "expected axioms from cycle-imf-test.ttl");
+    assert!(
+        !ontology_doc.ontology.axioms.is_empty(),
+        "expected axioms from cycle-imf-test.ttl"
+    );
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
-    assert!(!rules.is_empty(), "expected Datalog rules from cycle-imf-test.ttl");
+    assert!(
+        !rules.is_empty(),
+        "expected Datalog rules from cycle-imf-test.ttl"
+    );
     // Must not panic during materialisation
     evaluate_rules(rules, &mut ds);
 }
@@ -251,15 +308,18 @@ fn duplicate_rules_are_deduplicated() {
     let rules = datalog_parser::parse_file(&testdata("duplicate_rules.datalog"), &mut ds).unwrap();
 
     // The raw parse gives 2 rules (the file has the rule twice)
-    assert_eq!(rules.len(), 2, "parse should give 2 rules before deduplication");
+    assert_eq!(
+        rules.len(),
+        2,
+        "parse should give 2 rules before deduplication"
+    );
 
     // The stratifier deduplicates: unique(rules) should be 1
     let partitioner = datalog::stratifier::RulePartitioner::new(rules);
     let ordered = partitioner.order_rules();
     let total_unique: usize = ordered.iter().map(|stratum| stratum.len()).sum();
     assert_eq!(
-        total_unique,
-        1,
+        total_unique, 1,
         "stratifier should deduplicate to 1 unique rule, got {}",
         total_unique
     );
@@ -283,7 +343,10 @@ fn load_ido_ontology_works() {
     let mut ds = Datastore::new(1_000_000);
     load_file(&mut ds, &path).unwrap();
     let ontology_doc = rdf2owl(&mut ds);
-    assert!(!ontology_doc.ontology.axioms.is_empty(), "LIS-14.ttl should yield OWL axioms");
+    assert!(
+        !ontology_doc.ontology.axioms.is_empty(),
+        "LIS-14.ttl should yield OWL axioms"
+    );
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     assert!(!rules.is_empty(), "LIS-14.ttl should yield Datalog rules");
     evaluate_rules(rules, &mut ds);
