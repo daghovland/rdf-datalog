@@ -414,7 +414,7 @@ fn readme_owl_same_as() {
     )
     .expect("query must succeed");
     assert!(
-        typed.rows.len() >= 1,
+        !typed.rows.is_empty(),
         "ind2 must have at least one rdf:type after reasoning"
     );
 }
