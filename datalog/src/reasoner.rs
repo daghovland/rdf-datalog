@@ -65,14 +65,55 @@ impl DatalogProgram {
             .collect()
     }
 
-    /// Naive (forward-chaining) materialisation over the quad store.
-    pub fn materialise_naive(&self, named_graphs: &mut QuadTable) {
-        // First, add all ground facts from the rules
+    /// Semi-naive forward-chaining materialisation over the quad store.
+    ///
+    /// Each iteration evaluates rules only against the *delta* — quads newly
+    /// added in the previous iteration — rather than scanning the whole store.
+    /// Joins for non-triggering body atoms still use the full indexed store.
+    /// This gives O(delta × rules) work per iteration instead of O(store × rules).
+    pub fn materialise_seminaive(&self, named_graphs: &mut QuadTable) {
         for quad in self.get_facts() {
             named_graphs.add_quad(quad);
         }
 
-        // Forward-chain until fixpoint
+        // delta_start tracks the index into quad_list where the current delta begins.
+        // Initially the entire store is the delta (all input facts are "new").
+        let mut delta_start: usize = 0;
+
+        loop {
+            let delta_end = named_graphs.quad_count;
+            if delta_start >= delta_end {
+                break; // nothing new last round — fixpoint reached
+            }
+
+            // Snapshot the delta so we can mutate named_graphs during the loop.
+            let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
+            delta_start = delta_end;
+
+            for quad in &delta {
+                for rule_match in self.get_rules_for_fact(quad) {
+                    let head_pattern = match &rule_match.partial_rule.rule.head {
+                        RuleHead::Contradiction => panic!(
+                            "Contradiction during reasoning: {}",
+                            rule_match.partial_rule.rule
+                        ),
+                        RuleHead::NormalHead(h) => h.clone(),
+                    };
+                    for sub in evaluate(named_graphs, &rule_match) {
+                        let new_quad = apply_substitution_quad(&sub, &head_pattern);
+                        named_graphs.add_quad(new_quad); // dedup handled internally
+                    }
+                }
+            }
+        }
+    }
+
+    /// Naive materialisation kept for regression comparison.
+    #[allow(dead_code)]
+    fn materialise_naive(&self, named_graphs: &mut QuadTable) {
+        for quad in self.get_facts() {
+            named_graphs.add_quad(quad);
+        }
         let mut changed = true;
         while changed {
             changed = false;
@@ -87,7 +128,6 @@ impl DatalogProgram {
                         ),
                         RuleHead::NormalHead(h) => h.clone(),
                     };
-                    // evaluate already returns a Vec
                     let subs = evaluate(named_graphs, &rule_match);
                     for sub in subs {
                         let new_quad = apply_substitution_quad(&sub, &head_pattern);
@@ -115,6 +155,6 @@ pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) {
     let stratification = stratifier.order_rules();
     for partition in stratification {
         let program = DatalogProgram::new(partition);
-        program.materialise_naive(&mut datastore.named_graphs);
+        program.materialise_seminaive(&mut datastore.named_graphs);
     }
 }
