@@ -330,3 +330,98 @@ fn contradiction_rule_parsed_but_does_not_panic() {
     turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
     datalog::evaluate_rules(rules, &mut ds); // must not panic
 }
+
+// ── Stratified negation ───────────────────────────────────────────────────────
+
+/// A program with a positive recursive cycle (ancestor) plus a negation of that
+/// derived predicate (unrelated) must be accepted and produce correct results.
+/// The negated rule must land in a strictly later stratum than the ancestor rules.
+#[test]
+fn stratified_negation_with_positive_recursion() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:ancestor[?x, ?y] :- ex:parent[?x, ?y] .
+ex:ancestor[?x, ?z] :- ex:ancestor[?x, ?y], ex:parent[?y, ?z] .
+ex:unrelated[?x, ?y] :- ex:person[?x], ex:person[?y], NOT ex:ancestor[?x, ?y] .
+"#;
+    let data = r#"
+@prefix ex: <http://example.org/> .
+ex:a ex:parent ex:b .
+ex:b ex:parent ex:c .
+ex:a a ex:person .
+ex:b a ex:person .
+ex:c a ex:person .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle_parser::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+
+    // Verify stratification: the unrelated rule (negates IDB) must be in a later stratum.
+    let partitioner = datalog::RulePartitioner::new(rules.clone());
+    let strata = partitioner.order_rules();
+    assert!(
+        strata.len() >= 2,
+        "should produce ≥2 strata (ancestor strata then unrelated stratum), got {}",
+        strata.len()
+    );
+
+    datalog::evaluate_rules(rules, &mut ds);
+
+    let sparql = "PREFIX ex: <http://example.org/> SELECT ?x ?y WHERE { ?x ex:unrelated ?y . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let pairs: Vec<(String, String)> = result
+        .rows
+        .iter()
+        .filter_map(|r| {
+            Some((
+                graph_element_display(r.get("x")?),
+                graph_element_display(r.get("y")?),
+            ))
+        })
+        .collect();
+
+    // b is not an ancestor of a → should be unrelated
+    assert!(
+        pairs.contains(&(
+            "<http://example.org/b>".into(),
+            "<http://example.org/a>".into()
+        )),
+        "b is not an ancestor of a → should be unrelated; got: {:?}",
+        pairs
+    );
+    // a IS a direct parent of b → must NOT be unrelated
+    assert!(
+        !pairs.contains(&(
+            "<http://example.org/a>".into(),
+            "<http://example.org/b>".into()
+        )),
+        "a IS a direct parent of b → must NOT be unrelated; got: {:?}",
+        pairs
+    );
+    // a IS an ancestor of c (requires recursive ancestor derivation) → must NOT be unrelated
+    assert!(
+        !pairs.contains(&(
+            "<http://example.org/a>".into(),
+            "<http://example.org/c>".into()
+        )),
+        "a IS an ancestor of c via b (recursive rule) → must NOT be unrelated; got: {:?}",
+        pairs
+    );
+}
+
+/// A program where a depends negatively on b and b depends negatively on a
+/// forms a negative cycle and cannot be stratified. The engine must panic.
+#[test]
+#[should_panic(expected = "not stratifiable")]
+fn non_stratifiable_negative_cycle_panics() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:a[?x] :- ex:person[?x], NOT ex:b[?x] .
+ex:b[?x] :- ex:person[?x], NOT ex:a[?x] .
+"#;
+    let mut ds = Datastore::new(10_000);
+    let data = "@prefix ex: <http://example.org/> . ex:alice a ex:person .";
+    turtle_parser::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    datalog::evaluate_rules(rules, &mut ds);
+}

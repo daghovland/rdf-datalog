@@ -9,46 +9,56 @@ Contact: hovlanddag@gmail.com
 //! Top-level RDF → OWL translation.
 //! Mirrors `DagSemTools.RdfOwlTranslator.Rdf2Owl`.
 
-use crate::axiom_parser::extract_axiom;
+use crate::axiom_parser::{axiom_structural_predicate_ids, extract_axiom};
 use crate::class_expression_parser::OntologyDeclarations;
 use crate::ingress::WellKnownIds;
 use dag_rdf::IriReference;
 use dag_rdf::datastore::Datastore;
 use ingress::*;
 use owl_ontology::*;
+use std::collections::HashSet;
 
 /// Translate all RDF triples in `datastore` into an OWL 2 `OntologyDocument`.
 ///
 /// This is the main entry point, mirroring `Rdf2Owl.extractOntology`.
 pub fn rdf2owl(datastore: &mut Datastore) -> OntologyDocument {
-    // Pre-compute all well-known IRI IDs (may add them to the resource manager)
     let ids = WellKnownIds::new(&mut datastore.resources);
-
-    // Build class/property/individual declarations and parse anonymous class expressions
     let decls = OntologyDeclarations::build(datastore, &ids);
-
-    // Extract ontology IRI and version from the triple store
     let (ontology_version, imports) = extract_ontology_name(datastore, &ids);
-
-    // Extract all axioms from triples
-    let axioms: Vec<Axiom> = datastore
-        .named_graphs
-        .get_all_quads()
-        .filter(|q| q.triple_id == dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID)
-        .filter_map(|q| {
-            let triple = dag_rdf::ingress::Triple {
-                subject: q.subject,
-                predicate: q.predicate,
-                obj: q.obj,
-            };
-            extract_axiom(datastore, &ids, &decls, &triple)
-        })
-        .collect();
-
+    let axioms = extract_axioms_indexed(datastore, &ids, &decls);
     OntologyDocument::new(
         vec![],
         Ontology::new(imports, ontology_version, vec![], axioms),
     )
+}
+
+/// Extract all OWL axioms using the predicate index.
+///
+/// Only iterates triples whose predicate can produce an axiom: the fixed set of
+/// OWL/RDFS structural predicates plus any declared object- and data-property
+/// predicates. Triples with other predicates (rdfs:label, rdfs:comment,
+/// annotation properties, custom IRIs) are skipped entirely.
+///
+/// A `HashSet` over predicate IDs prevents double-iteration if a declared property
+/// IRI coincides with a structural predicate IRI (degenerate but possible).
+fn extract_axioms_indexed(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+    decls: &OntologyDeclarations,
+) -> Vec<Axiom> {
+    let mut pred_ids: HashSet<_> = axiom_structural_predicate_ids(ids).into_iter().collect();
+    pred_ids.extend(decls.object_property_expressions.keys().copied());
+    pred_ids.extend(decls.data_property_expressions.keys().copied());
+
+    let mut axioms = Vec::new();
+    for pred_id in pred_ids {
+        for triple in datastore.get_triples_with_predicate(pred_id) {
+            if let Some(axiom) = extract_axiom(datastore, ids, decls, &triple) {
+                axioms.push(axiom);
+            }
+        }
+    }
+    axioms
 }
 
 fn extract_ontology_version_iri(

@@ -96,19 +96,51 @@ quad.
 
 ---
 
-### B5 — Multiple full-datastore scans during RDF → OWL translation (HIGH)
+### B5 — Full-quad scan for axiom extraction in RDF → OWL translation (HIGH)
 
-**File:** `rdf_owl_translator/src/class_expression_parser.rs`
+**Original diagnosis corrected:** The initial plan described six "full scans" in
+`OntologyDeclarations::build()`. On investigation, all six `build_*_declarations()` calls use
+indexed lookups (`get_triples_with_object_predicate`) which are already O(matching triples),
+not O(total triples). They are not a bottleneck.
 
-`OntologyDeclarations::build()` calls six separate `build_*_declarations()` functions, each
-performing a full or partial scan of the quad store. For 1.7 M triples this is 6–7 serial O(n)
-passes.
+The real full scan was in `rdf2owl()` itself:
 
-**Fix:** Single-pass dispatch — one iteration over all quads, dispatching by predicate into all
-six declaration maps simultaneously. The existing `predicate_index` can narrow the scan for
-many declaration types.
+```rust
+// OLD — iterates all 1.7 M quads:
+datastore.named_graphs.get_all_quads()
+    .filter(|q| q.triple_id == DEFAULT_GRAPH_ELEMENT_ID)
+    .filter_map(|q| extract_axiom(...))
+```
 
-**Status: PLANNED** (see §Planned work)
+`extract_axiom` additionally did O(len_IRI) string comparison per triple to dispatch on
+predicate.
+
+**Fix implemented:**
+
+1. **`axiom_structural_predicate_ids(ids)`** — a function co-located with `extract_axiom` that
+   returns the 13 predicate IDs handled by named match arms. This is the single authoritative
+   list; drift between the list and the match arms is immediately visible.
+
+2. **`extract_axioms_indexed`** — replaces the `get_all_quads()` loop in `rdf2owl()`. Builds a
+   `HashSet` of structural predicates + declared object/data property predicates, then iterates
+   only triples with those predicates using the `predicate_index`. Triples with non-axiom
+   predicates (rdfs:label, rdfs:comment, annotation properties) are skipped entirely.
+
+3. **ID-based dispatch in `extract_axiom`** — match arms now compare `triple.predicate` and
+   `triple.obj` as `GraphElementId` (u32) instead of calling `get_named_resource` + string
+   comparison. Also added missing `owl_same_as_id` to `WellKnownIds`.
+
+4. **Equivalence test** — `rdf_owl_translator/src/axiom_parser.rs` (cfg(test)) asserts that the
+   indexed and full-scan paths produce the same axiom multiset on diverse test data covering:
+   SubClassOf, DisjointWith, EquivalentClass, Domain, Range, ClassAssertion, SameIndividual.
+
+**Status: DONE**
+
+**Design tradeoff surfaced:** Blank-node `rdf:type` objects are still rejected (returning None)
+in the ClassAssertion arm, preserving the original behavior. This means `x rdf:type _:restriction1`
+does not become a ClassAssertion even when `_:restriction1` is a parsed anonymous restriction.
+This is arguably incorrect OWL 2 semantics (the restriction IS a valid class), but fixing it is a
+semantics change, not a perf change, and should be a separate labeled commit with its own test.
 
 ---
 
@@ -206,16 +238,41 @@ reduction for ontologies with many subclass chains.
 
 ---
 
+### 2026-05-31 — B5: Predicate-indexed axiom extraction + ID-based dispatch
+
+**Changed:** `rdf_owl_translator/src/axiom_parser.rs`, `rdf_owl_translator/src/translator.rs`,
+`rdf_owl_translator/src/ingress.rs`
+
+Three coordinated changes:
+
+1. **`axiom_structural_predicate_ids(ids)`** added to `axiom_parser.rs` — the single
+   authoritative list of the 13 predicate IDs handled by named arms of `extract_axiom`.
+
+2. **`extract_axioms_indexed`** in `translator.rs` replaces the `get_all_quads()` full scan.
+   Collects structural predicates + declared object/data property predicates into a `HashSet`,
+   then iterates only triples with those predicates using the `predicate_index`. Skips rdfs:label,
+   rdfs:comment, annotation-property triples, and any other non-axiom predicate.
+
+3. **ID-based dispatch in `extract_axiom`** — predicate and rdf:type-object matching now compares
+   `GraphElementId` (u32) instead of calling `get_named_resource` + O(n) string comparison.
+   Added missing `owl_same_as_id` to `WellKnownIds`.
+
+Added an in-crate equivalence test that asserts the indexed path and the full-scan produce
+identical axiom multisets.
+
+**IMF timing:** RDF→OWL 2 ms → 1 ms. The gain at Gene Ontology scale is larger (skips ~700 k
+label/comment/annotation triples entirely).
+
+---
+
 ## Planned work
 
 ### P1 — Single-pass RDF → OWL translation (B5)
 
-Replace the six sequential `build_*_declarations()` scans with a single pass. Use the
-`predicate_index` to narrow iteration where possible (e.g., only quads with `rdf:type` for
-class declarations). This requires refactoring `OntologyDeclarations::build()` to accumulate
-into all six maps in one pass.
-
-**Estimate:** 1–2 days. Expected speedup: 3–6× for the RDF→OWL phase.
+**Completed as B5** (see §Implementation log). The `build_*_declarations()` functions were
+found to already use indexed queries and are not a bottleneck. The real win was replacing the
+`get_all_quads()` axiom scan with predicate-indexed iteration and switching predicate dispatch
+from string comparison to `GraphElementId` (u32) comparison.
 
 ### P2 — Flat SP/OP indexes (B6)
 
