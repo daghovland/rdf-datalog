@@ -1,0 +1,28 @@
+{
+  "@context": {
+    "schema": "http://schema.org/",
+    "ex":     "http://example.org/"
+  },
+  "@id": "http://example.org/company/acme",
+  "@type": "schema:Organization",
+  "schema:name": "Acme Corp",
+  "schema:employee": [
+    {
+      "@id": "http://example.org/person/alice",
+      "@type": "schema:Person",
+      "schema:name": "Alice",
+      "schema:jobTitle": "Engineer",
+      "schema:address": {
+        "@type": "schema:PostalAddress",
+        "schema:addressLocality": "Springfield",
+        "schema:addressCountry": "US"
+      }
+    },
+    {
+      "@id": "http://example.org/person/bob",
+      "@type": "schema:Person",
+      "schema:name": "Bob",
+      "schema:jobTitle": "Manager"
+    }
+  ]
+}

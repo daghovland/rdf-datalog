@@ -329,11 +329,31 @@ fn parse_rdf_type_abbr(input: &str) -> IResult<&str, ParsedTerm> {
     )))
 }
 
+fn parse_numeric_id_term(input: &str) -> IResult<&str, ParsedTerm> {
+    let (rest, _) = char('_')(input)?;
+    let (rest, digits) = take_while1(|c: char| c.is_ascii_digit())(rest)?;
+    if rest
+        .chars()
+        .next()
+        .map(|c| c.is_alphanumeric() || c == '_')
+        .unwrap_or(false)
+    {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Char,
+        )));
+    }
+    Ok((rest, ParsedTerm::Iri(format!("urn:x-dag-id:{}", digits))))
+}
+
 fn parse_term<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, ParsedTerm> {
     if input.starts_with('?') {
         return parse_variable_term(input);
     }
     if let Ok(r) = parse_rdf_type_abbr(input) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_numeric_id_term(input) {
         return Ok(r);
     }
     let (rest, iri) = parse_iri(input, ctx)?;

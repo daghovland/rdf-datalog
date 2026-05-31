@@ -408,10 +408,12 @@ dependencies = [
  "datalog-parser",
  "env_logger",
  "ingress",
+ "jsonld-parser",
  "log",
  "owl-ontology",
  "owl2rl2datalog",
  "rdf-owl-translator",
+ "serde_json",
  "sparql-endpoint",
  "sparql-parser",
  "tokio",
@@ -1010,6 +1012,15 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "jsonld-parser"
+version = "0.1.0"
+dependencies = [
+ "dag-rdf",
+ "log",
+ "serde_json",
 ]
 
 [[package]]

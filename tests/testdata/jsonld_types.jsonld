@@ -1,0 +1,14 @@
+{
+  "@context": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "ex":   "http://example.org/"
+  },
+  "@id": "http://example.org/person/alice",
+  "@type": "foaf:Person",
+  "foaf:name": "Alice",
+  "foaf:knows": {
+    "@id": "http://example.org/person/bob",
+    "@type": "foaf:Person",
+    "foaf:name": "Bob"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "dc":    "http://purl.org/dc/elements/1.1/",
+    "title": { "@id": "dc:title", "@container": "@language" }
+  },
+  "@id": "http://example.org/book/1",
+  "title": {
+    "en": "Linked Data in Practice",
+    "de": "Linked Data in der Praxis",
+    "fr": "Linked Data en pratique"
+  }
+}

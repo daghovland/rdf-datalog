@@ -1,0 +1,8 @@
+{
+  "@context": {
+    "ex":      "http://example.org/",
+    "payload": { "@id": "http://example.org/payload", "@type": "@json" }
+  },
+  "@id": "http://example.org/event/1",
+  "payload": { "key": "value", "count": 42, "active": true }
+}

@@ -1,0 +1,14 @@
+{
+  "@context": {
+    "ex":     "http://example.org/",
+    "foaf":   "http://xmlns.com/foaf/0.1/",
+    "graphs": { "@id": "ex:hasGraph", "@container": "@graph", "@type": "@id" }
+  },
+  "@id": "http://example.org/dataset",
+  "graphs": {
+    "http://example.org/graph/people": {
+      "@id":       "http://example.org/alice",
+      "foaf:name": "Alice"
+    }
+  }
+}

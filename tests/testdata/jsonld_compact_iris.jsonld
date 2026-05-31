@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "dc":   "http://purl.org/dc/elements/1.1/",
+    "ex":   "http://example.org/"
+  },
+  "@id": "ex:alice",
+  "@type": "foaf:Person",
+  "foaf:name": "Alice",
+  "foaf:homepage": { "@id": "http://alice.example.org/" },
+  "dc:description": "A test person."
+}

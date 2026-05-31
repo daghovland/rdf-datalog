@@ -49,11 +49,15 @@ impl QuadPattern {
 
 impl fmt::Display for QuadPattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} [{}, {}, {}]",
-            self.graph, self.subject, self.predicate, self.object
-        )
+        if self.graph == Term::Resource(DEFAULT_GRAPH_ELEMENT_ID) {
+            write!(f, "[{}, {}, {}]", self.subject, self.predicate, self.object)
+        } else {
+            write!(
+                f,
+                "[{}, {}, {}] {}",
+                self.subject, self.predicate, self.object, self.graph
+            )
+        }
     }
 }
 

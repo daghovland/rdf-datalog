@@ -1,0 +1,11 @@
+{
+  "@context": {
+    "ex":    "http://example.org/",
+    "title": { "@id": "http://purl.org/dc/elements/1.1/title", "@direction": "ltr" }
+  },
+  "@id": "http://example.org/book/1",
+  "title": [
+    { "@value": "JSON-LD Primer",   "@direction": "ltr", "@language": "en" },
+    { "@value": "مقدمة JSON-LD",    "@direction": "rtl", "@language": "ar" }
+  ]
+}

@@ -1,5 +1,5 @@
 [workspace]
-members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle_parser", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "."]
+members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle_parser", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "jsonld_parser", "."]
 
 [package]
 name = "dagalog"
@@ -23,3 +23,5 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 env_logger = "0.10"
+jsonld-parser = { path = "jsonld_parser" }
+serde_json = "1"

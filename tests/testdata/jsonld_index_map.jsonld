@@ -1,0 +1,14 @@
+{
+  "@context": {
+    "schema": "http://schema.org/",
+    "entries": {
+      "@id":        "schema:entry",
+      "@container": "@index"
+    }
+  },
+  "@id": "http://example.org/catalog",
+  "entries": {
+    "book":    { "@id": "http://example.org/book/1",  "schema:name": "A Book"   },
+    "article": { "@id": "http://example.org/article/1", "schema:name": "An Article" }
+  }
+}

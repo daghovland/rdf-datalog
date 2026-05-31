@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "id":   "@id",
+    "type": "@type",
+    "value": "@value",
+    "lang":  "@language"
+  },
+  "id":   "http://example.org/alice",
+  "type": "foaf:Person",
+  "foaf:name": { "value": "Alice", "lang": "en" }
+}
