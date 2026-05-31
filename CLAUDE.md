@@ -36,21 +36,23 @@ cargo audit
 
 ## Architecture
 
-Goal: fast RDF triplestore with native OWL-RL reasoning over datalog, plus a standards-compliant SPARQL HTTP endpoint.
+Goal: fast RDF triplestore with native OWL-RL reasoning over datalog, JSON-LD 1.1 support, and a standards-compliant SPARQL HTTP endpoint.
 
 ```
-dagalog (root binary)
+dagalog (root binary + library)
 ├── ingress/             — RDF data types and vocabulary constants
 ├── dag_rdf/             — Graph element storage, quad indexing, Datastore
 ├── datalog/             — Datalog engine (rules, stratifier, reasoner)
 ├── owl_ontology/        — OWL 2 type hierarchy (axioms, ontology)
 ├── eli/                 — EL profile → datalog (ELI2RL)
 ├── owl2rl2datalog/      — OWL 2 RL → datalog (W3C spec §4.3)
-├── turtle_parser/       — Turtle/TriG parser (ANTLR4)      [planned]
-├── manchester_parser/   — OWL Manchester syntax (ANTLR4)   [planned]
-├── sparql_parser/       — SPARQL 1.1 parser (ANTLR4)       [planned]
-├── datalog_parser/      — Datalog rules parser (ANTLR4)    [planned]
-└── sparql_endpoint/     — HTTP SPARQL endpoint (axum)      [planned]
+├── rdf_owl_translator/  — RDF triples → OWL 2 axiom extraction
+├── turtle_parser/       — Turtle/TriG parser (rio_turtle)
+├── jsonld_parser/       — JSON-LD 1.1 parser + serialiser (serde_json)
+├── sparql_parser/       — SPARQL 1.2 SELECT parser (nom) + executor
+├── datalog_parser/      — Datalog rules parser (nom)
+├── sparql_endpoint/     — HTTP SPARQL endpoint (axum + tokio)
+└── manchester_parser/   — OWL Manchester syntax parser   [stub]
 ```
 
 ### `ingress` crate
@@ -79,8 +81,28 @@ Two-stage OWL → datalog translation:
 1. `eli`: ELI class axioms → normalized `Formula`s → datalog `Rule`s (via `eli_axiom_extractor` + `generate_tbox_rl`)
 2. `owl2rl2datalog`: full OWL 2 RL ontology → `Vec<Rule>` via `owl2datalog(resources, ontology)`
 
-### `sparql_endpoint` crate (planned)
-`axum`-based HTTP server. See `PROTOCOLS.md` for the full specification of each endpoint. State is an `Arc<RwLock<Datastore>>`. See `PLAN.md` Phase 8 for the full implementation plan.
+### `jsonld_parser` crate
+JSON-LD 1.1 parser (`parse_jsonld`) and serialiser (`serialize_jsonld`, `serialize_jsonld_expanded`, `serialize_jsonld_flattened`). Uses `serde_json` for JSON handling. The parser populates a `Datastore` directly; the serialiser reads all quads back and emits expanded JSON-LD value objects. Context processing supports: term mappings, prefixes, `@vocab`, `@base`, `@language`, compact IRIs, `@type` coercion, all container types, `@reverse`, `@included`, `@nest`, keyword aliasing, property-scoped and type-scoped contexts. External context URL fetching (`@import`) is not yet implemented.
+
+### `sparql_parser` crate
+nom-based SPARQL 1.2 SELECT parser and in-memory executor. Supports: basic graph patterns, `FILTER` (comparison, `regex()`, `lang()`, `bound()`, `EXISTS`/`NOT EXISTS`), `OPTIONAL`, `UNION`, `GRAPH` clause, `BIND`, `VALUES`, `DISTINCT`, `LIMIT`, `OFFSET`, `SELECT *`, sequence property paths (`/`). Aggregates and non-SELECT forms are not yet implemented.
+
+### `sparql_endpoint` crate
+`axum`-based HTTP server exposing SPARQL 1.1 Protocol endpoints (`GET /sparql`, `POST /sparql`), Service Description, content negotiation, and CORS. State is an `Arc<RwLock<Datastore>>`.
 
 ### Key design pattern
 All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.
+
+## Integration tests
+
+The test suite is the best reference for what actually works:
+
+| Test file | Coverage |
+|---|---|
+| `tests/readme_examples.rs` | Every code example in `README.md` |
+| `tests/api_integration.rs` | Turtle parsing, SPARQL SELECT, Datalog reasoning (ported from DagSemTools) |
+| `tests/owl_integration.rs` | OWL ontology loading, OWL-RL reasoning (ported from DagSemTools) |
+| `tests/sparql12_suite.rs` | SPARQL 1.2 spec conformance (§2–§15) |
+| `tests/jsonld_suite.rs` | JSON-LD 1.1 spec examples (§3–§5), serialisation, round-trips |
+| `tests/datalog_integration.rs` | Datalog rule parsing and evaluation |
+| `tests/performance.rs` | Large-ontology smoke tests (ignored by default; require download) |
