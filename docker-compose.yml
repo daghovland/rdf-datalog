@@ -1,0 +1,10 @@
+services:
+  dagalog:
+    build: .
+    ports:
+      - "3030:3030"
+    volumes:
+      - ./data:/data
+    # Override CMD to load a local data file on startup.
+    # Remove the --data flag to start with an empty store.
+    command: ["--serve", "--data", "/data/dataset.ttl"]

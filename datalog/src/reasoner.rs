@@ -8,11 +8,10 @@ Contact: hovlanddag@gmail.com
 
 use crate::datalog::{
     apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate,
-    get_matches_for_rule, get_partial_matches, is_fact, is_safe_rule, merge_partial_match_maps,
-    wildcard_quad_pattern,
+    get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern,
 };
 use crate::stratifier::RulePartitioner;
-use crate::types::{PartialRule, QuadWildcard, Rule, RuleHead};
+use crate::types::{PartialRule, QuadWildcard, Rule, RuleAtom, RuleHead};
 use dag_rdf::{Datastore, QuadTable};
 use std::collections::HashMap;
 
@@ -28,18 +27,36 @@ impl DatalogProgram {
         for r in &rules {
             is_safe_rule(r); // panics on unsafe rule
         }
-        let rule_map = rules
-            .iter()
-            .map(get_partial_matches)
-            .reduce(|a, b| merge_partial_match_maps(vec![a, b]))
-            .unwrap_or_default();
+        // Single-pass build: insert directly into one HashMap instead of
+        // reducing via binary merges (which would be O(n²) for large rule sets).
+        let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
+        for rule in &rules {
+            for atom in &rule.body {
+                if let RuleAtom::PositivePattern(p) = atom {
+                    for wc in wildcard_quad_pattern(p) {
+                        rule_map.entry(wc).or_default().push(PartialRule {
+                            rule: rule.clone(),
+                            match_pattern: p.clone(),
+                        });
+                    }
+                }
+            }
+        }
         DatalogProgram { rules, rule_map }
     }
 
     pub fn add_rule(&mut self, rule: Rule) {
         is_safe_rule(&rule);
-        let new_map = get_partial_matches(&rule);
-        self.rule_map = merge_partial_match_maps(vec![std::mem::take(&mut self.rule_map), new_map]);
+        for atom in &rule.body {
+            if let RuleAtom::PositivePattern(p) = atom {
+                for wc in wildcard_quad_pattern(p) {
+                    self.rule_map.entry(wc).or_default().push(PartialRule {
+                        rule: rule.clone(),
+                        match_pattern: p.clone(),
+                    });
+                }
+            }
+        }
         self.rules.push(rule);
     }
 
@@ -79,12 +96,22 @@ impl DatalogProgram {
         // delta_start tracks the index into quad_list where the current delta begins.
         // Initially the entire store is the delta (all input facts are "new").
         let mut delta_start: usize = 0;
+        let mut iteration: usize = 0;
 
         loop {
             let delta_end = named_graphs.quad_count;
             if delta_start >= delta_end {
                 break; // nothing new last round — fixpoint reached
             }
+
+            let delta_size = delta_end - delta_start;
+            log::debug!(
+                "materialise: iteration {} — delta {} quads, store {} total",
+                iteration,
+                delta_size,
+                delta_end
+            );
+            iteration += 1;
 
             // Snapshot the delta so we can mutate named_graphs during the loop.
             let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();

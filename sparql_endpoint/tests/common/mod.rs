@@ -12,7 +12,7 @@ use dag_rdf::datastore::Datastore;
 use sparql_endpoint::{Config, serve_on_listener};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turtle_parser::parse_turtle;
+use turtle_parser::{parse_trig, parse_turtle};
 
 /// A running test server bound to a random loopback port.
 ///
@@ -26,40 +26,57 @@ pub struct TestServer {
 
 #[allow(dead_code)]
 impl TestServer {
-    /// Start a server pre-loaded with `turtle` RDF data.
+    /// Start a read-only server pre-loaded with Turtle data.
     ///
     /// Pass an empty string for an empty store.
     pub async fn start(turtle: &str) -> Self {
+        Self::start_inner(turtle, false, true).await
+    }
+
+    /// Start a writable server (read_only: false) pre-loaded with Turtle data.
+    ///
+    /// Required for any test that exercises PUT, POST, or DELETE on the graph store.
+    pub async fn start_writable(turtle: &str) -> Self {
+        Self::start_inner(turtle, false, false).await
+    }
+
+    /// Start a writable server pre-loaded with TriG data.
+    ///
+    /// Use this when test fixtures need named graphs. TriG extends Turtle with
+    /// `<graph-iri> { ... }` blocks.
+    pub async fn start_writable_trig(trig: &str) -> Self {
+        Self::start_inner(trig, true, false).await
+    }
+
+    async fn start_inner(data: &str, use_trig: bool, read_only: bool) -> Self {
         let mut ds = Datastore::new(1024);
-        if !turtle.is_empty() {
-            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
-                .expect("test fixture turtle must parse");
+        if !data.is_empty() {
+            if use_trig {
+                parse_trig(&mut ds, std::io::BufReader::new(data.as_bytes()))
+                    .expect("test fixture trig must parse");
+            } else {
+                parse_turtle(&mut ds, std::io::BufReader::new(data.as_bytes()))
+                    .expect("test fixture turtle must parse");
+            }
         }
         let store = Arc::new(RwLock::new(ds));
-
-        // Port 0 → OS picks a free port.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind failed");
         let addr = listener.local_addr().expect("local_addr");
         let base_url = format!("http://{}", addr);
-
         let config = Config {
             bind_addr: addr,
             base_iri: base_url.clone(),
-            read_only: true,
+            read_only,
             max_query_timeout_secs: 10,
         };
-
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)
                 .await
                 .expect("server error");
         });
-
-        // Yield once so axum reaches its accept loop before the test sends requests.
         tokio::task::yield_now().await;
-
         TestServer {
             base_url,
             client: reqwest::Client::new(),
@@ -79,6 +96,32 @@ impl TestServer {
             urlencoding::encode(sparql)
         )
     }
+
+    /// Base URL for the Graph Store endpoint: `<base>/rdf-graph-store`.
+    ///
+    /// Append `?default` or `?graph=<encoded-iri>` as needed.
+    pub fn gsp_url(&self) -> String {
+        format!("{}/rdf-graph-store", self.base_url)
+    }
+
+    /// `GET/PUT/POST/DELETE /rdf-graph-store?default` — targets the default graph.
+    ///
+    /// Spec §4.2: https://www.w3.org/TR/sparql11-http-rdf-update/#indirect-graph-identification
+    pub fn gsp_default_url(&self) -> String {
+        format!("{}/rdf-graph-store?default", self.base_url)
+    }
+
+    /// `GET/PUT/POST/DELETE /rdf-graph-store?graph=<encoded-iri>` — targets a named graph.
+    ///
+    /// `graph_iri` must be an absolute IRI; it is percent-encoded here.
+    /// Spec §4.2: https://www.w3.org/TR/sparql11-http-rdf-update/#indirect-graph-identification
+    pub fn gsp_named_graph_url(&self, graph_iri: &str) -> String {
+        format!(
+            "{}/rdf-graph-store?graph={}",
+            self.base_url,
+            urlencoding::encode(graph_iri)
+        )
+    }
 }
 
 // ── Assertion helpers ────────────────────────────────────────────────────────
@@ -86,6 +129,7 @@ impl TestServer {
 /// Assert that `bindings` contains at least one row where `var` has `expected_type`
 /// and `expected_value`.
 #[track_caller]
+#[allow(dead_code)]
 pub fn assert_binding_contains(
     bindings: &[serde_json::Value],
     var: &str,

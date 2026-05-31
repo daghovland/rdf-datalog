@@ -25,8 +25,10 @@ pub fn build_router(state: AppState) -> Router {
         .allow_headers([axum::http::header::ACCEPT, axum::http::header::CONTENT_TYPE]);
 
     Router::new()
+        .route("/", get(crate::frontend::serve_frontend))
         .route("/sparql", get(crate::query::sparql_get))
         .route("/sparql", post(crate::query::sparql_post))
+        .route("/upload", post(crate::upload::upload_turtle))
         .with_state(state)
         .layer(cors)
 }

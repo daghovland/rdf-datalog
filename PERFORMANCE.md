@@ -20,6 +20,23 @@ The IMF ontology (~1400 triples, ~295 rules) is manageable. The Gene Ontology is
 have ~1.7 M triples and generate 50 k–500 k rules, making the materialisation step infeasible
 with the current naive algorithm.
 
+### Gene Ontology memory profile (post B1–B9, release build, no materialisation)
+
+```
+baseline                                        3 MB RSS
+Turtle parse                                 2770 ms  (+530 MB)
+RDF → OWL                                    1123 ms  (+298 MB)
+OWL → Datalog rules (108k rules)              343 ms  (+1 MB)
+Stratification (pure-positive fast-path)      165 ms  (+0 MB)
+DatalogProgram::new (rule_map build)          587 ms  (+340 MB)
+                                              ──────────────────
+TOTAL before materialisation                  1172 MB RSS
+```
+
+The next unresolved question is whether materialisation itself will OOM (it will produce new
+quads by applying 108k rules over 1.4M input triples). The `rule_map` at 1172 MB is the
+pre-materialisation floor; the quad store will grow further during inference.
+
 ---
 
 ## Bottlenecks (root-cause analysis)
@@ -144,6 +161,66 @@ semantics change, not a perf change, and should be a separate labeled commit wit
 
 ---
 
+### B8 — O(n²) stratifier bottleneck for pure-positive programs (CRITICAL)
+
+**File:** `datalog/src/stratifier.rs:74`
+
+```rust
+// O(n²) — 108k × 108k = 11.7 billion calls for Gene Ontology
+for i in 0..rules.len() {
+    if let RuleHead::NormalHead(ref head_pattern) = rules[i].head {
+        let deps = depending_rules(&rules, head_pattern);  // scans all rules
+```
+
+`depending_rules` iterates every rule and calls `quad_patterns_unifiable` on each body atom.
+`quad_patterns_unifiable` allocates two `HashMap`s per call. For 108k rules the outer loop runs
+108k times, each calling `depending_rules` which runs 108k inner iterations: 11.7 billion
+HashMap allocations. The stratifier never completed for the Gene Ontology.
+
+Profiling confirmed: after OWL→Datalog (832 MB RSS, 108k rules, 570 ms), the process hung at
+`RulePartitioner::new` indefinitely.
+
+**Root cause:** For a pure-positive program (no `NotPattern` body atoms), stratification is
+unnecessary. All rules can be evaluated in one stratum; the semi-naive fixpoint converges
+regardless of rule order. The only source of `NotPattern` rules is
+`eli/src/eli2rl.rs:241` — the `owl:maxQualifiedCardinality ≤ 1` (at-most-one) rule for
+`owl:sameAs`. The Gene Ontology does not trigger this axiom type.
+
+**Fix:** In `RulePartitioner::new`, before building the dependency graph, check whether any
+rule has a `NotPattern` body atom. If not (`pure_positive = true`), skip the O(n²) loop
+entirely and store only the `rules` vec. In `order_rules`, return `vec![self.rules]` directly.
+Total cost for the pure-positive detection scan: O(n × avg_body_len), effectively O(n).
+
+**Status: DONE** (see §Implementation log)
+
+---
+
+### B9 — O(n²) rule_map construction via binary `reduce` (HIGH)
+
+**File:** `datalog/src/reasoner.rs:31`
+
+```rust
+let rule_map = rules
+    .iter()
+    .map(get_partial_matches)         // per-rule map
+    .reduce(|a, b| merge_partial_match_maps(vec![a, b]))  // binary fold!
+    .unwrap_or_default();
+```
+
+`reduce` is a left fold: at step k, it merges the k-entry accumulated map with the new
+rule's ~32-entry map by allocating a brand-new HashMap and copying all k+32 entries into it.
+Work per step = O(k); total work = Σ(k=1..n) O(k) = O(n²). For 108k rules:
+~187 billion HashMap entry moves. The memory profile showed this phase was still running after
+60 s even after the stratifier fix.
+
+**Fix:** Replace the reduce with a single in-place fold — iterate all rules once, inserting
+each rule's wildcard patterns directly into one pre-allocated HashMap. O(n × wildcards_per_rule)
+total, no per-merge allocation.
+
+**Status: DONE** (see §Implementation log)
+
+---
+
 ### B6 — Nested HashMap memory overhead in subject/object-predicate indexes (MEDIUM)
 
 **File:** `dag_rdf/src/quadtable.rs:19–22`
@@ -262,6 +339,46 @@ identical axiom multisets.
 
 **IMF timing:** RDF→OWL 2 ms → 1 ms. The gain at Gene Ontology scale is larger (skips ~700 k
 label/comment/annotation triples entirely).
+
+---
+
+### 2026-05-31 — B9: O(n) rule_map construction replacing O(n²) reduce
+
+**Changed:** `datalog/src/reasoner.rs`
+
+Replaced the `rules.iter().map(get_partial_matches).reduce(|a,b| merge(...))` pattern in
+`DatalogProgram::new` with a single in-place fold. All 108k rules' wildcard patterns are now
+inserted directly into one pre-allocated HashMap without any intermediate maps or reallocation.
+Applied the same fix to `add_rule` (previously also called `merge_partial_match_maps`).
+
+`get_partial_matches` and `merge_partial_match_maps` are retained as public API but no longer
+called internally.
+
+**Measured improvement (Gene Ontology, 108k rules, release build):**
+- `DatalogProgram::new`: 587 ms, +340 MB RSS (phase completes; previously hung indefinitely)
+
+---
+
+### 2026-05-31 — B8: Pure-positive fast-path in RulePartitioner
+
+**Changed:** `datalog/src/stratifier.rs`
+
+Added `pure_positive: bool` field to `RulePartitioner`. In `new()`, before building the
+dependency graph, the code now checks whether any rule contains a `RuleAtom::NotPattern` body
+atom. If none do (pure-positive program), the constructor returns immediately with `rule_index`,
+`ordered`, `ready_queue`, and `next_queue` all empty — no O(n²) loop runs at all.
+
+`order_rules()` now has an early return for `pure_positive`: it returns `vec![self.rules]`,
+moving the already-deduplicated rule vec out without further allocation.
+
+For the Gene Ontology's 108,476 rules: the O(n) scan completes in under 1 ms and the full
+11.7-billion-call dependency graph is never built. Programs that do contain negation (including
+the existing `non_stratifiable_negative_cycle_panics` and `stratified_negation_with_positive_recursion`
+tests) take the unchanged Kahn's-algorithm path. All 17 datalog + 12 OWL integration tests pass.
+
+**Measured improvement (Gene Ontology, 108k rules, release build):**
+- `RulePartitioner::new`: 165 ms, +0 MB RSS (previously hung indefinitely)
+- Strata: 1 (correct for pure-positive program)
 
 ---
 
