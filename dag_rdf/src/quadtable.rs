@@ -6,14 +6,13 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use crate::ingress::{GraphElementId, Quad, QuadListIndex, Triple, TripleListIndex};
-use std::collections::HashMap;
+use crate::ingress::{GraphElementId, Quad, QuadListIndex, TripleListIndex};
+use std::collections::{HashMap, HashSet};
 
 pub struct QuadTable {
     pub quad_list: Vec<Quad>,
     pub quad_count: TripleListIndex,
-    pub four_keys_index: HashMap<Quad, QuadListIndex>,
-    pub triple_index: HashMap<Triple, QuadListIndex>,
+    pub four_keys_index: HashSet<Quad>,
     pub triple_id_index: HashMap<GraphElementId, Vec<QuadListIndex>>,
     pub predicate_index: HashMap<GraphElementId, Vec<QuadListIndex>>,
     pub subject_predicate_index:
@@ -28,8 +27,7 @@ impl QuadTable {
         QuadTable {
             quad_list: Vec::with_capacity(init_triples),
             quad_count: 0,
-            four_keys_index: HashMap::with_capacity(init_triples),
-            triple_index: HashMap::new(),
+            four_keys_index: HashSet::with_capacity(init_triples),
             triple_id_index: HashMap::new(),
             predicate_index: HashMap::new(),
             subject_predicate_index: HashMap::new(),
@@ -83,25 +81,20 @@ impl QuadTable {
             .push(triple_index);
     }
 
-    // The Entry API cannot be used here: inserting via Entry holds a mutable
-    // borrow on four_keys_index across calls to self.add_*_index methods.
-    #[allow(clippy::map_entry)]
     pub fn add_quad(&mut self, quad: Quad) {
-        if !self.four_keys_index.contains_key(&quad) {
+        if self.four_keys_index.insert(quad) {
             let current_index = self.quad_count;
             self.add_subject_predicate_index(quad.subject, quad.predicate, current_index);
             self.add_object_predicate_index(quad.obj, quad.predicate, current_index);
             self.add_predicate_index(quad.predicate, current_index);
             self.add_triple_id_index(quad.triple_id, current_index);
-
             self.quad_list.push(quad);
-            self.four_keys_index.insert(quad, current_index);
             self.quad_count += 1;
         }
     }
 
     pub fn contains(&self, q: &Quad) -> bool {
-        self.four_keys_index.contains_key(q)
+        self.four_keys_index.contains(q)
     }
 
     pub fn get_quads_with_subject(
