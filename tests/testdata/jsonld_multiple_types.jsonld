@@ -1,0 +1,11 @@
+{
+  "@context": {
+    "foaf":   "http://xmlns.com/foaf/0.1/",
+    "schema": "http://schema.org/",
+    "ex":     "http://example.org/"
+  },
+  "@id": "http://example.org/alice",
+  "@type": [ "foaf:Person", "schema:Person", "ex:Employee" ],
+  "foaf:name": "Alice",
+  "schema:jobTitle": "Engineer"
+}

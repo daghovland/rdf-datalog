@@ -1,0 +1,11 @@
+{
+  "@context": {
+    "dc": "http://purl.org/dc/elements/1.1/"
+  },
+  "@id": "http://example.org/book/1",
+  "dc:title": [
+    { "@value": "Fundamentals of Linked Data", "@language": "en" },
+    { "@value": "Grundlagen von Linked Data",  "@language": "de" }
+  ],
+  "dc:description": { "@value": "An introductory text.", "@language": "en" }
+}

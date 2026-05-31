@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "name": "http://xmlns.com/foaf/0.1/name",
+    "homepage": { "@id": "http://xmlns.com/foaf/0.1/homepage", "@type": "@id" },
+    "img":      { "@id": "http://xmlns.com/foaf/0.1/img",      "@type": "@id" }
+  },
+  "@id": "http://manu.sporny.org/",
+  "name": "Manu Sporny",
+  "homepage": "http://manu.sporny.org/",
+  "img": "http://manu.sporny.org/images/manu.png"
+}

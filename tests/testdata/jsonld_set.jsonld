@@ -1,0 +1,9 @@
+{
+  "@context": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "nick": { "@id": "foaf:nick", "@container": "@set" }
+  },
+  "@id": "http://example.org/alice",
+  "nick": [ "al", "alice", "ally" ],
+  "foaf:name": "Alice"
+}

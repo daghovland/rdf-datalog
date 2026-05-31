@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "xsd":       "http://www.w3.org/2001/XMLSchema#",
+    "schema":    "http://schema.org/",
+    "birthDate": { "@id": "schema:birthDate", "@type": "xsd:date" },
+    "age":       { "@id": "schema:age",       "@type": "xsd:integer" }
+  },
+  "@id": "http://dbpedia.org/resource/John_Lennon",
+  "schema:name": "John Lennon",
+  "birthDate": "1940-10-09",
+  "age": "40"
+}

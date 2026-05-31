@@ -1,0 +1,9 @@
+[package]
+name = "jsonld-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+serde_json = "1"
+log = "0.4"

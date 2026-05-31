@@ -1,0 +1,20 @@
+{
+  "@context": {
+    "ex":   "http://example.org/",
+    "foaf": "http://xmlns.com/foaf/0.1/"
+  },
+  "@id": "http://example.org/myGraph",
+  "@graph": [
+    {
+      "@id": "http://example.org/alice",
+      "@type": "foaf:Person",
+      "foaf:name": "Alice",
+      "foaf:knows": { "@id": "http://example.org/bob" }
+    },
+    {
+      "@id": "http://example.org/bob",
+      "@type": "foaf:Person",
+      "foaf:name": "Bob"
+    }
+  ]
+}

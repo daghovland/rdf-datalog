@@ -1,0 +1,21 @@
+{
+  "@context": {
+    "ex":     "http://example.org/",
+    "schema": "http://schema.org/",
+    "address": {
+      "@id": "schema:address",
+      "@context": {
+        "street":  "schema:streetAddress",
+        "city":    "schema:addressLocality",
+        "country": "schema:addressCountry"
+      }
+    }
+  },
+  "@id": "http://example.org/alice",
+  "schema:name": "Alice",
+  "address": {
+    "street":  "123 Main St",
+    "city":    "Springfield",
+    "country": "US"
+  }
+}

@@ -1,0 +1,19 @@
+[
+  {
+    "@id":   "http://example.org/alice",
+    "@type": "http://xmlns.com/foaf/0.1/Person",
+    "http://xmlns.com/foaf/0.1/name":  "Alice",
+    "http://xmlns.com/foaf/0.1/knows": { "@id": "http://example.org/bob" }
+  },
+  {
+    "@id":   "http://example.org/bob",
+    "@type": "http://xmlns.com/foaf/0.1/Person",
+    "http://xmlns.com/foaf/0.1/name":  "Bob",
+    "http://xmlns.com/foaf/0.1/knows": { "@id": "http://example.org/alice" }
+  },
+  {
+    "@id":   "http://example.org/carol",
+    "@type": "http://xmlns.com/foaf/0.1/Person",
+    "http://xmlns.com/foaf/0.1/name":  "Carol"
+  }
+]

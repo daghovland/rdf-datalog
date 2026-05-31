@@ -1,0 +1,14 @@
+{
+  "@context": {
+    "foaf":    "http://xmlns.com/foaf/0.1/",
+    "schema":  "http://schema.org/",
+    "details": "@nest"
+  },
+  "@id": "http://example.org/alice",
+  "@type": "foaf:Person",
+  "foaf:name": "Alice",
+  "details": {
+    "schema:jobTitle":  "Engineer",
+    "schema:telephone": "+1-555-0100"
+  }
+}
