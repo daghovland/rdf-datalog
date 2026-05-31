@@ -8,6 +8,8 @@ Contact: hovlanddag@gmail.com
 
 //! JSON-LD 1.1 parser and serialiser.
 
+mod serialize;
+
 use dag_rdf::{Datastore, GraphElementId, IriReference, RdfLiteral, RdfResource, Triple};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -339,14 +341,14 @@ pub fn parse_jsonld<R: Read>(datastore: &mut Datastore, mut reader: R) -> Result
     process_document(datastore, &value, &ctx, None)
 }
 
-pub fn serialize_jsonld(_ds: &Datastore) -> String {
-    unimplemented!("JSON-LD serialisation not yet implemented")
+pub fn serialize_jsonld(ds: &Datastore) -> String {
+    serialize::serialize_jsonld(ds)
 }
-pub fn serialize_jsonld_expanded(_ds: &Datastore) -> String {
-    unimplemented!("JSON-LD expanded form not yet implemented")
+pub fn serialize_jsonld_expanded(ds: &Datastore) -> String {
+    serialize::serialize_jsonld_expanded(ds)
 }
-pub fn serialize_jsonld_flattened(_ds: &Datastore) -> String {
-    unimplemented!("JSON-LD flattened form not yet implemented")
+pub fn serialize_jsonld_flattened(ds: &Datastore) -> String {
+    serialize::serialize_jsonld_flattened(ds)
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────

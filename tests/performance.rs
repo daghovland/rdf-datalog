@@ -552,7 +552,7 @@ fn imf_rules_generation_and_parsing_round_trip() {
     // Stage 2: serialise the generated rules to Datalog text
     let datalog_text: String = generated_rules
         .iter()
-        .map(|r| format!("{} .\n", r))
+        .map(|r| format!("{}\n", r))
         .collect();
 
     // Stage 3: parse the serialised text back and verify rule count matches
