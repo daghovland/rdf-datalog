@@ -497,7 +497,13 @@ docker compose run --rm -p 3030:3030 dagalog --serve
 | `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT |
 | `POST /sparql` | SPARQL 1.1 SELECT (form body or direct) |
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
-| `POST /upload` | Load Turtle data into the default graph |
+| `POST /upload` | Load Turtle data into the default graph (stopgap) |
+| `GET /rdf-graph-store?default` or `?graph=<iri>` | GSP — retrieve a graph as Turtle |
+| `PUT /rdf-graph-store?default` or `?graph=<iri>` | GSP — replace a graph |
+| `POST /rdf-graph-store?default` or `?graph=<iri>` | GSP — merge into a graph |
+| `POST /rdf-graph-store` | GSP — create a new graph (server assigns IRI) |
+| `DELETE /rdf-graph-store?default` or `?graph=<iri>` | GSP — delete a graph |
+| `HEAD /rdf-graph-store?default` or `?graph=<iri>` | GSP — existence check, no body |
 
 Response format negotiated via `Accept`; default `application/sparql-results+json`.
 
@@ -528,7 +534,7 @@ See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
 |---|---|---|
 | P0 | SPARQL 1.1 Protocol — SELECT, content negotiation, CORS | Done |
 | P0 | SPARQL 1.1 Service Description | Done |
-| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Planned |
+| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§5.2–§5.6; direct identification §4.1 not planned) |
 | P2 | VoID dataset description | Planned |
 
 ---

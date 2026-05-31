@@ -15,6 +15,7 @@ Contact: hovlanddag@gmail.com
 //! - P1: SPARQL 1.1 Service Description (GET /sparql with no query param)
 
 pub mod frontend;
+pub mod graph_store;
 pub mod negotiate;
 pub mod query;
 pub mod serialize;

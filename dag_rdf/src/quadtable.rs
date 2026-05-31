@@ -229,6 +229,32 @@ impl QuadTable {
             .filter(move |q| q.triple_id == id)
     }
 
+    /// Return `true` if any quad in this table has `triple_id == graph_id`.
+    pub fn graph_exists(&self, graph_id: GraphElementId) -> bool {
+        self.triple_id_index.contains_key(&graph_id)
+    }
+
+    /// Remove all quads with `triple_id == graph_id` and rebuild indexes.
+    ///
+    /// Equivalent to SPARQL `DROP SILENT GRAPH <graph_id>`.
+    /// O(n) over all quads; acceptable for infrequent PUT / DELETE operations.
+    pub fn remove_graph(&mut self, graph_id: GraphElementId) {
+        if !self.triple_id_index.contains_key(&graph_id) {
+            return;
+        }
+        let kept: Vec<Quad> = self
+            .quad_list
+            .iter()
+            .copied()
+            .filter(|q| q.triple_id != graph_id)
+            .collect();
+        let hint = kept.len() as u32;
+        *self = QuadTable::new(hint);
+        for quad in kept {
+            self.add_quad(quad);
+        }
+    }
+
     /// Iterate over all quads in insertion order.
     pub fn get_all_quads(&self) -> impl Iterator<Item = Quad> + '_ {
         self.quad_list.iter().copied()

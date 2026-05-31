@@ -17,12 +17,12 @@ GSP replaces it with a full REST interface over named graphs.
 
 | Operation | Spec section | Test group | Status |
 |---|---|---|---|
-| `GET ?default` / `GET ?graph=<iri>` | §5.2 [`#http-get`][get] | A (tests A-1 – A-8) | Not started |
-| `PUT ?default` / `PUT ?graph=<iri>` | §5.3 [`#http-put`][put] | B (tests B-1 – B-9) | Not started |
-| `DELETE ?default` / `DELETE ?graph=<iri>` | §5.4 [`#http-delete`][del] | C (tests C-1 – C-5) | Not started |
-| `POST ?default` / `POST ?graph=<iri>` (merge) | §5.5 [`#http-post`][post] | D (tests D-1 – D-12) | Not started |
-| `POST /rdf-graph-store` (create graph) | §5.5 [`#http-post`][post] | D-7 – D-9 | Not started |
-| `HEAD ?default` / `HEAD ?graph=<iri>` | §5.6 [`#http-head`][head] | E (tests E-1 – E-5) | Not started |
+| `GET ?default` / `GET ?graph=<iri>` | §5.2 [`#http-get`][get] | A (tests A-1 – A-8) | ✓ Done |
+| `PUT ?default` / `PUT ?graph=<iri>` | §5.3 [`#http-put`][put] | B (tests B-1 – B-9) | ✓ Done |
+| `DELETE ?default` / `DELETE ?graph=<iri>` | §5.4 [`#http-delete`][del] | C (tests C-1 – C-5) | ✓ Done |
+| `POST ?default` / `POST ?graph=<iri>` (merge) | §5.5 [`#http-post`][post] | D (tests D-1 – D-6, D-10 – D-12) | ✓ Done |
+| `POST /rdf-graph-store` (create graph) | §5.5 [`#http-post`][post] | D-7 – D-9 | ✓ Done |
+| `HEAD ?default` / `HEAD ?graph=<iri>` | §5.6 [`#http-head`][head] | E (tests E-1 – E-5) | ✓ Done |
 | Direct graph identification (`/rdf-graphs/<name>`) | §4.1 [`#direct-graph-identification`][direct] | F (tests F-1 – F-2) | Optional — not planned |
 
 [get]: https://www.w3.org/TR/sparql11-http-rdf-update/#http-get

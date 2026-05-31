@@ -86,7 +86,6 @@ const BAD_TURTLE: &str = "THIS IS NOT VALID TURTLE !!!";
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#indirect-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_default_graph_returns_200() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -105,7 +104,6 @@ async fn gsp_get_default_graph_returns_200() {
 /// the server MUST return one of RDF XML, Turtle, or N-Triples."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#graph-management>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_default_graph_content_type_is_rdf() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -129,7 +127,6 @@ async fn gsp_get_default_graph_content_type_is_rdf() {
 /// preferred representation formats specified in the Accept request-header field."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_default_graph_accept_turtle() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -154,7 +151,6 @@ async fn gsp_get_default_graph_accept_turtle() {
 /// known subject appears somewhere in the Turtle output.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_default_graph_body_contains_triples() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -177,7 +173,6 @@ async fn gsp_get_default_graph_body_contains_triples() {
 /// The graph identified by `?graph=<iri>` must exist and its triples be returned.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_named_graph_returns_200() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -195,7 +190,6 @@ async fn gsp_get_named_graph_returns_200() {
 /// A-6: GET a named graph — body contains the graph's triples.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_named_graph_body_contains_triples() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -221,7 +215,6 @@ async fn gsp_get_named_graph_body_contains_triples() {
 /// Found response code MUST be provided."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_named_graph_nonexistent_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -241,7 +234,6 @@ async fn gsp_get_named_graph_nonexistent_returns_404() {
 /// supported, a 406 Not Acceptable response code SHOULD be returned."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
-#[ignore]
 #[tokio::test]
 async fn gsp_get_unsupported_accept_returns_406() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -263,7 +255,6 @@ async fn gsp_get_unsupported_accept_returns_406() {
 /// inform the user agent via the 201 Created response."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_creates_new_named_graph_returns_201() {
     let server = common::TestServer::start_writable("").await;
@@ -282,7 +273,6 @@ async fn gsp_put_creates_new_named_graph_returns_201() {
 /// B-2: PUT to a new graph — subsequent GET returns the stored triples.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_new_graph_content_retrievable() {
     let server = common::TestServer::start_writable("").await;
@@ -316,7 +306,6 @@ async fn gsp_put_new_graph_content_retrievable() {
 /// or 204 No Content response codes MUST be sent."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_replaces_existing_named_graph() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -341,7 +330,6 @@ async fn gsp_put_replaces_existing_named_graph() {
 /// Spec §5.3 SPARQL equivalent: `DROP SILENT GRAPH <g>; INSERT DATA { GRAPH <g> { … } }`
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_replace_removes_old_triples() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -381,7 +369,6 @@ async fn gsp_put_replace_removes_old_triples() {
 /// Spec §5.3 default-graph equivalent: `DROP SILENT DEFAULT; INSERT DATA { … }`
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_default_graph_success() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -403,7 +390,6 @@ async fn gsp_put_default_graph_success() {
 /// B-6: PUT default graph replaces content — old triples gone, new ones present.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_default_graph_replace_removes_old_triples() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -443,7 +429,6 @@ async fn gsp_put_default_graph_replace_removes_old_triples() {
 /// fails then the server MUST respond with a 400 Bad Request."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_bad_turtle_returns_400() {
     let server = common::TestServer::start_writable("").await;
@@ -466,7 +451,6 @@ async fn gsp_put_bad_turtle_returns_400() {
 /// 415 Unsupported Media Type."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_unsupported_content_type_returns_415() {
     let server = common::TestServer::start_writable("").await;
@@ -488,7 +472,6 @@ async fn gsp_put_unsupported_content_type_returns_415() {
 /// MUST respond with a 400 Bad Request if it is not."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#indirect-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_put_non_absolute_graph_iri_returns_400() {
     let server = common::TestServer::start_writable("").await;
@@ -513,7 +496,6 @@ async fn gsp_put_non_absolute_graph_iri_returns_400() {
 /// the response if the operation succeeded."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
-#[ignore]
 #[tokio::test]
 async fn gsp_delete_named_graph_returns_success() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -537,7 +519,6 @@ async fn gsp_delete_named_graph_returns_success() {
 /// After deletion the graph no longer exists, so GET MUST return 404.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
-#[ignore]
 #[tokio::test]
 async fn gsp_delete_named_graph_subsequent_get_returns_404() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -560,7 +541,6 @@ async fn gsp_delete_named_graph_subsequent_get_returns_404() {
 /// server MUST respond with a 404 Not Found response code."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
-#[ignore]
 #[tokio::test]
 async fn gsp_delete_nonexistent_named_graph_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -579,7 +559,6 @@ async fn gsp_delete_nonexistent_named_graph_returns_404() {
 /// Spec §5.4 SPARQL equivalent: `DROP DEFAULT`.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
-#[ignore]
 #[tokio::test]
 async fn gsp_delete_default_graph_returns_success() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -602,7 +581,6 @@ async fn gsp_delete_default_graph_returns_success() {
 /// but the graph itself remains. GET must return 200, not 404.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
-#[ignore]
 #[tokio::test]
 async fn gsp_delete_default_graph_clears_content() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -640,7 +618,6 @@ async fn gsp_delete_default_graph_clears_content() {
 /// RDF graph content identified by the … encoded IRI."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_merge_default_graph_returns_success() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -664,7 +641,6 @@ async fn gsp_post_merge_default_graph_returns_success() {
 /// Spec §5.5 SPARQL equivalent: `INSERT DATA { … }`
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_merge_default_graph_adds_triples() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -696,7 +672,6 @@ async fn gsp_post_merge_default_graph_adds_triples() {
 /// Unlike PUT, POST merges — it must not remove previously loaded data.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_merge_default_graph_preserves_existing_triples() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -728,7 +703,6 @@ async fn gsp_post_merge_default_graph_preserves_existing_triples() {
 /// Spec §5.5 SPARQL equivalent: `INSERT DATA { GRAPH <g> { … } }`
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_merge_named_graph_returns_success() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -751,7 +725,6 @@ async fn gsp_post_merge_named_graph_returns_success() {
 /// D-5: POST merge into a named graph — new triples appear, old ones preserved.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_merge_named_graph_adds_and_preserves_triples() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -789,7 +762,6 @@ async fn gsp_post_merge_named_graph_adds_and_preserves_triples() {
 /// graph content, the origin server should respond with a 404 Not Found."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_nonexistent_named_graph_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -822,7 +794,6 @@ async fn gsp_post_nonexistent_named_graph_returns_404() {
 /// ```
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_to_graph_store_creates_new_graph_returns_201() {
     let server = common::TestServer::start_writable("").await;
@@ -843,7 +814,6 @@ async fn gsp_post_to_graph_store_creates_new_graph_returns_201() {
 /// header along with a 201 Created code."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_to_graph_store_includes_location_header() {
     let server = common::TestServer::start_writable("").await;
@@ -868,7 +838,6 @@ async fn gsp_post_to_graph_store_includes_location_header() {
 /// the content must be retrievable at that address.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_to_graph_store_content_accessible_at_location() {
     let server = common::TestServer::start_writable("").await;
@@ -910,7 +879,6 @@ async fn gsp_post_to_graph_store_content_accessible_at_location() {
 /// with 204 No Content."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_empty_body_returns_204() {
     let server = common::TestServer::start_writable("").await;
@@ -930,7 +898,6 @@ async fn gsp_post_empty_body_returns_204() {
 /// Spec §5.1: parse failure MUST return 400.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_bad_turtle_returns_400() {
     let server = common::TestServer::start_writable("").await;
@@ -952,7 +919,6 @@ async fn gsp_post_bad_turtle_returns_400() {
 /// 415 Unsupported Media Type."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
-#[ignore]
 #[tokio::test]
 async fn gsp_post_unsupported_content_type_returns_415() {
     let server = common::TestServer::start_writable("").await;
@@ -975,7 +941,6 @@ async fn gsp_post_unsupported_content_type_returns_415() {
 /// MUST NOT return a message-body in the response."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
-#[ignore]
 #[tokio::test]
 async fn gsp_head_existing_named_graph_returns_200() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -992,7 +957,6 @@ async fn gsp_head_existing_named_graph_returns_200() {
 /// E-2: HEAD the default graph — 200 OK.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
-#[ignore]
 #[tokio::test]
 async fn gsp_head_default_graph_returns_200() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -1010,7 +974,6 @@ async fn gsp_head_default_graph_returns_200() {
 /// HEAD is "identical to GET" for status codes; a missing graph must return 404.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
-#[ignore]
 #[tokio::test]
 async fn gsp_head_nonexistent_named_graph_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -1029,7 +992,6 @@ async fn gsp_head_nonexistent_named_graph_returns_404() {
 /// Spec §5.6: "the server MUST NOT return a message-body in the response."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
-#[ignore]
 #[tokio::test]
 async fn gsp_head_response_has_no_body() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -1053,7 +1015,6 @@ async fn gsp_head_response_has_no_body() {
 /// Spec §5.6: "identical to GET" — headers must match.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
-#[ignore]
 #[tokio::test]
 async fn gsp_head_content_type_matches_get() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;
@@ -1160,7 +1121,6 @@ async fn gsp_direct_put_graph_creates_201() {
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#status-codes>
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#security>
-#[ignore]
 #[tokio::test]
 async fn gsp_read_only_put_returns_403_or_405() {
     let server = common::TestServer::start("").await; // read_only: true
@@ -1183,7 +1143,6 @@ async fn gsp_read_only_put_returns_403_or_405() {
 /// G-2: DELETE on a read-only server — 403 or 405.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#security>
-#[ignore]
 #[tokio::test]
 async fn gsp_read_only_delete_returns_403_or_405() {
     let server = common::TestServer::start("").await;
@@ -1204,7 +1163,6 @@ async fn gsp_read_only_delete_returns_403_or_405() {
 /// G-3: POST on a read-only server — 403 or 405.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#security>
-#[ignore]
 #[tokio::test]
 async fn gsp_read_only_post_returns_403_or_405() {
     let server = common::TestServer::start("").await;
@@ -1232,7 +1190,6 @@ async fn gsp_read_only_post_returns_403_or_405() {
 ///
 /// Spec references: §5.3 (PUT), §5.2 (GET), §5.5 (POST merge), §5.4 (DELETE)
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#graph-management>
-#[ignore]
 #[tokio::test]
 async fn gsp_full_lifecycle_named_graph() {
     let server = common::TestServer::start_writable("").await;
@@ -1320,7 +1277,6 @@ async fn gsp_full_lifecycle_named_graph() {
 /// This verifies the graph isolation requirement from §3 Protocol Model.
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#protocol-model>
-#[ignore]
 #[tokio::test]
 async fn gsp_named_and_default_graphs_are_independent() {
     let server = common::TestServer::start_writable(DEFAULT_GRAPH_TURTLE).await;

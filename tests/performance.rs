@@ -682,3 +682,101 @@ fn imf_rules_generation_and_parsing_round_trip() {
         "round-trip rule count must match"
     );
 }
+
+/// Materialisation progress diagnostic for the Gene Ontology.
+///
+/// Runs the pipeline up to materialisation, then executes at most MAX_ITER
+/// semi-naive iterations, printing per-iteration stats (delta size, inferred
+/// quad count, RSS, elapsed).  Stops early on iteration limit so the test
+/// always returns in bounded time even if full convergence would OOM.
+///
+/// Use this test to understand how much inference each iteration produces
+/// before committing to running the full pipeline.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_materialise_progress() {
+    const MAX_ITER: usize = 5;
+
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — materialisation progress ({MAX_ITER} iterations max) ===");
+    println!("  {}", "-".repeat(60));
+
+    // ── Build up to DatalogProgram::new (same as memory_profile) ────────────
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).expect("readable");
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse ok");
+    let ontology_doc = rdf2owl(&mut datastore);
+    let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
+    let rule_count = rules.len();
+
+    let stratifier = RulePartitioner::new(rules);
+    let stratification = stratifier.order_rules();
+
+    let programs: Vec<DatalogProgram> = stratification
+        .into_iter()
+        .map(DatalogProgram::new)
+        .collect();
+
+    report_mem("before materialisation", rss_mb());
+    println!("    rules: {rule_count}  programs: {}", programs.len());
+    println!();
+    println!(
+        "  {:>4}  {:>12}  {:>12}  {:>8}  {:>8}",
+        "iter", "delta_in", "inferred", "store", "RSS MB"
+    );
+    println!("  {}", "-".repeat(60));
+
+    // ── Iterate materialisation one step at a time ────────────────────────────
+    // Seeds ground facts for each stratum first.
+    for quad in programs
+        .iter()
+        .flat_map(|p| p.materialise_seed_facts())
+    {
+        datastore.named_graphs.add_quad(quad);
+    }
+
+    let mut delta_start: usize = 0;
+    let mut total_inferred: usize = 0;
+
+    // We only have one stratum (pure-positive GO), so use programs[0].
+    let program = match programs.first() {
+        Some(p) => p,
+        None => {
+            println!("  (no rules — nothing to materialise)");
+            return;
+        }
+    };
+
+    for iter in 0..MAX_ITER {
+        let t = Instant::now();
+        let delta_in = datastore.named_graphs.quad_count.saturating_sub(delta_start);
+
+        match program.materialise_one_iteration(&mut datastore.named_graphs, delta_start) {
+            None => {
+                println!("  Fixpoint reached after {iter} iterations.");
+                break;
+            }
+            Some((new_start, inferred)) => {
+                total_inferred += inferred;
+                println!(
+                    "  {:>4}  {:>12}  {:>12}  {:>8}  {:>8}  ({} ms)",
+                    iter,
+                    delta_in,
+                    inferred,
+                    datastore.named_graphs.quad_count,
+                    rss_mb(),
+                    t.elapsed().as_millis()
+                );
+                delta_start = new_start;
+            }
+        }
+    }
+
+    println!();
+    println!("  Total inferred after {MAX_ITER} iterations: {total_inferred}");
+    report_mem("after partial materialisation", rss_mb());
+}

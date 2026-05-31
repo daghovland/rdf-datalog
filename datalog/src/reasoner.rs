@@ -82,6 +82,49 @@ impl DatalogProgram {
             .collect()
     }
 
+    /// Return the ground facts encoded directly in rules (body-less rules).
+    /// Callers that want to drive materialisation manually must seed these before
+    /// calling `materialise_one_iteration`.
+    pub fn materialise_seed_facts(&self) -> Vec<dag_rdf::Quad> {
+        self.get_facts()
+    }
+
+    /// Run one semi-naive iteration over `named_graphs`, starting from `delta_start`.
+    ///
+    /// Returns `(new_delta_start, inferred_count)` where `inferred_count` is the number
+    /// of quads added this iteration.  Returns `None` when the fixpoint is reached
+    /// (no new quads were produced in the previous iteration).
+    pub fn materialise_one_iteration(
+        &self,
+        named_graphs: &mut QuadTable,
+        delta_start: usize,
+    ) -> Option<(usize, usize)> {
+        let delta_end = named_graphs.quad_count;
+        if delta_start >= delta_end {
+            return None; // fixpoint reached
+        }
+
+        let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
+
+        for quad in &delta {
+            for rule_match in self.get_rules_for_fact(quad) {
+                let head_pattern = match &rule_match.partial_rule.rule.head {
+                    RuleHead::Contradiction => panic!(
+                        "Contradiction during reasoning: {}",
+                        rule_match.partial_rule.rule
+                    ),
+                    RuleHead::NormalHead(h) => h.clone(),
+                };
+                for sub in evaluate(named_graphs, &rule_match) {
+                    named_graphs.add_quad(apply_substitution_quad(&sub, &head_pattern));
+                }
+            }
+        }
+
+        let new_count = named_graphs.quad_count - delta_end;
+        Some((delta_end, new_count))
+    }
+
     /// Semi-naive forward-chaining materialisation over the quad store.
     ///
     /// Each iteration evaluates rules only against the *delta* — quads newly
@@ -93,44 +136,11 @@ impl DatalogProgram {
             named_graphs.add_quad(quad);
         }
 
-        // delta_start tracks the index into quad_list where the current delta begins.
-        // Initially the entire store is the delta (all input facts are "new").
         let mut delta_start: usize = 0;
-        let mut iteration: usize = 0;
-
         loop {
-            let delta_end = named_graphs.quad_count;
-            if delta_start >= delta_end {
-                break; // nothing new last round — fixpoint reached
-            }
-
-            let delta_size = delta_end - delta_start;
-            log::debug!(
-                "materialise: iteration {} — delta {} quads, store {} total",
-                iteration,
-                delta_size,
-                delta_end
-            );
-            iteration += 1;
-
-            // Snapshot the delta so we can mutate named_graphs during the loop.
-            let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
-            delta_start = delta_end;
-
-            for quad in &delta {
-                for rule_match in self.get_rules_for_fact(quad) {
-                    let head_pattern = match &rule_match.partial_rule.rule.head {
-                        RuleHead::Contradiction => panic!(
-                            "Contradiction during reasoning: {}",
-                            rule_match.partial_rule.rule
-                        ),
-                        RuleHead::NormalHead(h) => h.clone(),
-                    };
-                    for sub in evaluate(named_graphs, &rule_match) {
-                        let new_quad = apply_substitution_quad(&sub, &head_pattern);
-                        named_graphs.add_quad(new_quad); // dedup handled internally
-                    }
-                }
+            match self.materialise_one_iteration(named_graphs, delta_start) {
+                None => break,
+                Some((new_start, _)) => delta_start = new_start,
             }
         }
     }
