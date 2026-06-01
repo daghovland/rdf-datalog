@@ -7,8 +7,8 @@ Contact: hovlanddag@gmail.com
 */
 
 use crate::datalog::{
-    apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate,
-    get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern,
+    apply_substitution_quad, constant_quad_pattern, direct_wildcard_pattern, empty_substitution,
+    evaluate, get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern,
 };
 use crate::stratifier::RulePartitioner;
 use crate::types::{PartialRule, QuadWildcard, Rule, RuleAtom, RuleHead};
@@ -27,18 +27,20 @@ impl DatalogProgram {
         for r in &rules {
             is_safe_rule(r); // panics on unsafe rule
         }
-        // Single-pass build: insert directly into one HashMap instead of
-        // reducing via binary merges (which would be O(n²) for large rule sets).
+        // Single-pass build: one entry per body atom, using the canonical (exact)
+        // wildcard pattern.  Sub-wildcard expansion happens on the FACT side in
+        // get_rules_for_fact, so the rule only needs its direct pattern as a key.
+        // Using all sub-wildcards here would index every rule under (*, *, *, *),
+        // causing every fact to scan every rule — O(facts × rules) = catastrophic.
         let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
         for rule in &rules {
             for atom in &rule.body {
                 if let RuleAtom::PositivePattern(p) = atom {
-                    for wc in wildcard_quad_pattern(p) {
-                        rule_map.entry(wc).or_default().push(PartialRule {
-                            rule: rule.clone(),
-                            match_pattern: p.clone(),
-                        });
-                    }
+                    let wc = direct_wildcard_pattern(p);
+                    rule_map.entry(wc).or_default().push(PartialRule {
+                        rule: rule.clone(),
+                        match_pattern: p.clone(),
+                    });
                 }
             }
         }
@@ -49,12 +51,11 @@ impl DatalogProgram {
         is_safe_rule(&rule);
         for atom in &rule.body {
             if let RuleAtom::PositivePattern(p) = atom {
-                for wc in wildcard_quad_pattern(p) {
-                    self.rule_map.entry(wc).or_default().push(PartialRule {
-                        rule: rule.clone(),
-                        match_pattern: p.clone(),
-                    });
-                }
+                let wc = direct_wildcard_pattern(p);
+                self.rule_map.entry(wc).or_default().push(PartialRule {
+                    rule: rule.clone(),
+                    match_pattern: p.clone(),
+                });
             }
         }
         self.rules.push(rule);

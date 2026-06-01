@@ -445,6 +445,19 @@ fn gene_ontology_axiom_extraction() {
 
     assert!(!ontology.axioms.is_empty(), "expected OWL axioms");
     assert!(!rules.is_empty(), "expected Datalog rules");
+
+    // Print the first 10 rules and the first 5 quads so we can diagnose graph/predicate matching.
+    println!("  --- first 10 rules ---");
+    for r in rules.iter().take(10) {
+        println!("    {}", r);
+    }
+    println!("  --- first 5 input quads (via resource IDs) ---");
+    for q in datastore.named_graphs.quad_list.iter().take(5) {
+        println!(
+            "    g={} s={} p={} o={}",
+            q.triple_id, q.subject, q.predicate, q.obj
+        );
+    }
 }
 
 /// SPARQL query performance over a fully materialised Gene Ontology.
@@ -732,10 +745,7 @@ fn gene_ontology_materialise_progress() {
 
     // ── Iterate materialisation one step at a time ────────────────────────────
     // Seeds ground facts for each stratum first.
-    for quad in programs
-        .iter()
-        .flat_map(|p| p.materialise_seed_facts())
-    {
+    for quad in programs.iter().flat_map(|p| p.materialise_seed_facts()) {
         datastore.named_graphs.add_quad(quad);
     }
 
@@ -753,7 +763,10 @@ fn gene_ontology_materialise_progress() {
 
     for iter in 0..MAX_ITER {
         let t = Instant::now();
-        let delta_in = datastore.named_graphs.quad_count.saturating_sub(delta_start);
+        let delta_in = datastore
+            .named_graphs
+            .quad_count
+            .saturating_sub(delta_start);
 
         match program.materialise_one_iteration(&mut datastore.named_graphs, delta_start) {
             None => {

@@ -13,9 +13,9 @@ pub mod types;
 pub mod unification;
 
 pub use datalog::{
-    apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate, evaluate_pattern,
-    evaluate_positive, get_matches_for_rule, get_partial_matches, get_substitutions, is_fact,
-    is_safe_rule, merge_partial_match_maps, wildcard_quad_pattern,
+    apply_substitution_quad, constant_quad_pattern, direct_wildcard_pattern, empty_substitution,
+    evaluate, evaluate_pattern, evaluate_positive, get_matches_for_rule, get_partial_matches,
+    get_substitutions, is_fact, is_safe_rule, merge_partial_match_maps, wildcard_quad_pattern,
 };
 pub use reasoner::{DatalogProgram, evaluate_rules};
 pub use stratifier::RulePartitioner;

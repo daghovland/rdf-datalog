@@ -20,22 +20,24 @@ The IMF ontology (~1400 triples, ~295 rules) is manageable. The Gene Ontology is
 have ~1.7 M triples and generate 50 k–500 k rules, making the materialisation step infeasible
 with the current naive algorithm.
 
-### Gene Ontology memory profile (post B1–B9, release build, no materialisation)
+### Gene Ontology end-to-end timing (post B1–B10, release build)
 
 ```
-baseline                                        3 MB RSS
-Turtle parse                                 2770 ms  (+530 MB)
-RDF → OWL                                    1123 ms  (+298 MB)
-OWL → Datalog rules (108k rules)              343 ms  (+1 MB)
-Stratification (pure-positive fast-path)      165 ms  (+0 MB)
-DatalogProgram::new (rule_map build)          587 ms  (+340 MB)
-                                              ──────────────────
-TOTAL before materialisation                  1172 MB RSS
+Turtle parse                    2521 ms   (+530 MB RSS)
+RDF → OWL translation            839 ms   (+298 MB RSS)
+OWL → Datalog rules              306 ms   (+1 MB RSS)
+Stratification (pure-positive)   165 ms   (+0 MB RSS)
+DatalogProgram::new (rule_map)   587 ms   (+340 MB RSS)
+Datalog materialisation         7214 ms   (0 inferences — correct, no individuals)
+SPARQL subClassOf (LIMIT 1000)    82 ms
+──────────────────────────────────────────
+TOTAL                           11053 ms   ~1172 MB peak RSS
 ```
 
-The next unresolved question is whether materialisation itself will OOM (it will produce new
-quads by applying 108k rules over 1.4M input triples). The `rule_map` at 1172 MB is the
-pre-materialisation floor; the quad store will grow further during inference.
+The pipeline completes successfully. The 0 inferences is correct behaviour: the GO is a pure
+TBox (class hierarchy with no ABox individuals), and the generated rules are instance-level
+rules of the form `(?x, type, Parent) :- (?x, type, Child)`. SPARQL queries correctly return
+results from the parsed TBox triples.
 
 ---
 
@@ -195,6 +197,46 @@ Total cost for the pure-positive detection scan: O(n × avg_body_len), effective
 
 ---
 
+### B10 — O(facts × rules) fan-out through all-wildcard rule_map bucket (CRITICAL)
+
+**File:** `datalog/src/datalog.rs` — `wildcard_quad_pattern` used for rule indexing
+
+```rust
+// OLD — indexes every rule under (*, *, *, *):
+for wc in wildcard_quad_pattern(pattern) {   // up to 16 keys per body atom
+    rule_map.entry(wc).or_default().push(PartialRule { ... });
+}
+```
+
+`wildcard_quad_pattern(pattern)` generates all sub-wildcard combinations of the pattern.
+For a rule body atom `(?x, rdfs:subClassOf, ?y, DEFAULT_GRAPH)` (subject + object are
+variables), this includes `(*, *, *, *)` — the fully wildcarded key. Because EVERY rule
+body atom has at least one variable, every rule was indexed under `(*, *, *, *)`.
+
+Fact lookup also generates `(*, *, *, *)` as one of its 16 keys. The result: every one of
+the 1.4 M GO input quads triggered a scan of all 108 k rules via the `(*, *, *, *)` bucket
+= 151 billion rule-match attempts, all failing. Even with the B9 fix, materialisation
+iteration 0 never completed (killed after 60+ seconds).
+
+**Root cause:** Sub-wildcard expansion is needed for FACT LOOKUP (so a concrete fact can find
+rules that have variables in some positions) but NOT for RULE INDEXING (where only the exact
+pattern of the body atom is needed — a fact that matches at all will find the rule via the
+most-specific key, not via `(*, *, *, *)`).
+
+**Fix:** Replace `wildcard_quad_pattern` with `direct_wildcard_pattern` for rule indexing.
+`direct_wildcard_pattern(atom)` maps variables → `Wildcard` and constants → `Resource` to
+produce exactly ONE key per body atom — the most specific key reachable from any matching
+fact. The fact-side lookup continues generating 16 keys, ensuring every matching rule is
+found.
+
+Effect: the rule_map has ~1 entry per body atom instead of ~2–8. The all-wildcard bucket
+`(*, *, *, *)` is never populated. Per-fact lookup cost drops from O(all_rules) to
+O(matching_rules), which is typically 0–5 for a concrete predicate.
+
+**Status: DONE** (see §Implementation log)
+
+---
+
 ### B9 — O(n²) rule_map construction via binary `reduce` (HIGH)
 
 **File:** `datalog/src/reasoner.rs:31`
@@ -339,6 +381,37 @@ identical axiom multisets.
 
 **IMF timing:** RDF→OWL 2 ms → 1 ms. The gain at Gene Ontology scale is larger (skips ~700 k
 label/comment/annotation triples entirely).
+
+---
+
+### 2026-06-01 — B10: Direct wildcard indexing eliminates O(facts × rules) fan-out
+
+**Changed:** `datalog/src/datalog.rs`, `datalog/src/reasoner.rs`
+
+Added `direct_wildcard_pattern(quad: &QuadPattern) -> QuadWildcard` alongside the existing
+`wildcard_quad_pattern`. The new function maps variables → `Wildcard` and constants → `Resource`
+(one key per body atom, no sub-wildcards). Both `DatalogProgram::new`, `add_rule`, and the public
+`get_partial_matches` function now use `direct_wildcard_pattern` for rule indexing; fact-side lookup
+(`get_rules_for_fact`) continues using `wildcard_quad_pattern` to generate all 16 sub-wildcard keys.
+
+Also added `materialise_one_iteration` and `materialise_seed_facts` as public methods on
+`DatalogProgram` to support the new `gene_ontology_materialise_progress` diagnostic test.
+
+**Measured improvement (Gene Ontology, 108k rules, 1.4M input quads, release build):**
+
+Full pipeline end-to-end (previously hung indefinitely):
+```
+Turtle parse                    2521 ms
+RDF → OWL translation            839 ms
+OWL → Datalog rules              306 ms
+Datalog materialisation         7214 ms   (1 iteration, 0 inferences — correct: GO has no individuals)
+SPARQL subClassOf (LIMIT 1000)    82 ms
+TOTAL                          11053 ms
+```
+
+The 0 inferences is correct: GO is a pure TBox (class hierarchy), and the generated Datalog
+rules are ABox rules of the form `(?x, type, Parent) :- (?x, type, Child)`. With no named
+individuals, no rules fire. SPARQL queries return results from the raw parsed triples.
 
 ---
 

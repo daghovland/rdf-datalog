@@ -30,8 +30,30 @@ pub fn constant_quad_pattern(quad: &Quad) -> QuadPattern {
     }
 }
 
+/// Compute the single canonical index key for a rule body atom.
+///
+/// Variables become Wildcard; concrete resource IDs stay as Resource.
+/// This is used when INDEXING rule body atoms into the rule_map — one key per atom,
+/// no sub-wildcards.  The fact-side lookup (`wildcard_quad_pattern`) expands concrete
+/// positions into both Resource and Wildcard, so every rule body pattern is reachable.
+pub fn direct_wildcard_pattern(quad: &QuadPattern) -> QuadWildcard {
+    fn to_rw(term: &Term) -> ResourceOrWildcard {
+        match term {
+            Term::Variable(_) => ResourceOrWildcard::Wildcard,
+            Term::Resource(r) => ResourceOrWildcard::Resource(*r),
+        }
+    }
+    QuadWildcard {
+        graph: to_rw(&quad.graph),
+        subject: to_rw(&quad.subject),
+        predicate: to_rw(&quad.predicate),
+        object: to_rw(&quad.object),
+    }
+}
+
 /// Generate all quad wildcard patterns for a quad pattern (up to 16 combinations).
 /// Variables always become Wildcard; constants produce both Resource and Wildcard variants.
+/// Used for FACT-SIDE lookup only — finds all rule body atoms whose canonical key matches.
 pub fn wildcard_quad_pattern(quad: &QuadPattern) -> Vec<QuadWildcard> {
     fn expand(term: &Term) -> Vec<ResourceOrWildcard> {
         match term {
@@ -316,12 +338,11 @@ pub fn get_partial_matches(rule: &Rule) -> HashMap<QuadWildcard, Vec<PartialRule
             RuleAtom::PositivePattern(p) => p,
             _ => continue,
         };
-        for wc in wildcard_quad_pattern(pattern) {
-            map.entry(wc).or_default().push(PartialRule {
-                rule: rule.clone(),
-                match_pattern: pattern.clone(),
-            });
-        }
+        let wc = direct_wildcard_pattern(pattern);
+        map.entry(wc).or_default().push(PartialRule {
+            rule: rule.clone(),
+            match_pattern: pattern.clone(),
+        });
     }
     map
 }

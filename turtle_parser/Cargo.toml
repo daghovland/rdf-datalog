@@ -8,3 +8,4 @@ dag-rdf = { path = "../dag_rdf" }
 rio_turtle = "0.8"
 rio_api = "0.8"
 log = "0.4"
+oxttl = "0.2.3"
