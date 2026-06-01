@@ -236,7 +236,7 @@ ex:hasAge rdfs:range ex:AgeValue .
 ex:Alice ex:hasAge "30" .
 "#;
     let mut ds = ds();
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
     let rules = datalog_parser::parse_file(&testdata("properties.datalog"), &mut ds).unwrap();
     datalog::evaluate_rules(rules, &mut ds);
@@ -268,7 +268,7 @@ ex:Whiskers a ex:Cat .
 ex:Nobody a ex:Fish .
 "#;
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
     assert_eq!(rules.len(), 2);
@@ -305,7 +305,7 @@ ex:Big[?x] :- ex:VeryBig[?x] ."#;
 ex:Elephant a ex:VeryBig ."#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
     let tmp = std::env::temp_dir().join("dagalog_test_rules.datalog");
     std::fs::write(&tmp, src).unwrap();
@@ -327,7 +327,7 @@ fn contradiction_rule_parsed_but_does_not_panic() {
     let rules = datalog_parser::parse_file(&testdata("contradiction.datalog"), &mut ds).unwrap();
     // Should not panic during materialisation
     let ttl = r#"@prefix ex: <https://example.com/> . ex:Alice a ex:ValidClass ."#;
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
     datalog::evaluate_rules(rules, &mut ds); // must not panic
 }
 
@@ -353,7 +353,7 @@ ex:b a ex:person .
 ex:c a ex:person .
 "#;
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
 
     // Verify stratification: the unrelated rule (negates IDB) must be in a later stratum.
@@ -421,7 +421,7 @@ ex:b[?x] :- ex:person[?x], NOT ex:a[?x] .
 "#;
     let mut ds = Datastore::new(10_000);
     let data = "@prefix ex: <http://example.org/> . ex:alice a ex:person .";
-    turtle_parser::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
     datalog::evaluate_rules(rules, &mut ds);
 }

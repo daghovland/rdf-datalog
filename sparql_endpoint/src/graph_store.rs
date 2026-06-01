@@ -17,7 +17,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Specification: <https://www.w3.org/TR/sparql11-http-rdf-update/>
 
-use crate::{AppState, serialize::turtle::serialize_graph};
+use crate::{AppState, serialize::serialize_graph};
 use axum::{
     body::Body,
     extract::{Query, State},
@@ -226,7 +226,7 @@ fn copy_default_graph_to(
 #[allow(clippy::result_large_err)]
 fn parse_turtle_body(body: &[u8]) -> Result<dag_rdf::Datastore, axum::response::Response> {
     let mut tmp = dag_rdf::Datastore::new(256);
-    turtle_parser::parse_turtle(&mut tmp, Cursor::new(body)).map_err(|e| {
+    turtle::parse_turtle(&mut tmp, Cursor::new(body)).map_err(|e| {
         (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response()
     })?;
     Ok(tmp)

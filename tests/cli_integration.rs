@@ -193,7 +193,7 @@ ex:Bob a ex:Employee ;
 ex:Alice a ex:Person ;
     ex:name "Alice" .
 "#;
-    turtle_parser::parse_turtle(&mut ds, data_ttl.as_bytes()).expect("data parse");
+    turtle::parse_turtle(&mut ds, data_ttl.as_bytes()).expect("data parse");
 
     let data_triples = ds.named_graphs.quad_count;
 

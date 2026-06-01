@@ -417,7 +417,7 @@ dependencies = [
  "sparql-endpoint",
  "sparql-parser",
  "tokio",
- "turtle-parser",
+ "turtle",
 ]
 
 [[package]]
@@ -1469,7 +1469,7 @@ dependencies = [
  "log",
  "num-bigint",
  "owl-ontology",
- "turtle-parser",
+ "turtle",
 ]
 
 [[package]]
@@ -1571,23 +1571,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rio_api"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb24af4f2e3226a44cb6f31f547bba67710ddaf7104af89f254ede509b8f26a4"
-
-[[package]]
-name = "rio_turtle"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3f3dc0af61ab4b8e03bbe987dffeadd35eb7233c6e38314679da3a382428838"
-dependencies = [
- "oxilangtag",
- "oxiri",
- "rio_api",
 ]
 
 [[package]]
@@ -1903,7 +1886,7 @@ dependencies = [
  "sparql-parser",
  "tokio",
  "tower-http",
- "turtle-parser",
+ "turtle",
  "urlencoding",
 ]
 
@@ -2236,14 +2219,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "turtle-parser"
+name = "turtle"
 version = "0.1.0"
 dependencies = [
  "dag-rdf",
  "log",
+ "oxrdf",
  "oxttl",
- "rio_api",
- "rio_turtle",
 ]
 
 [[package]]

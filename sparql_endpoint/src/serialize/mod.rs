@@ -1,2 +1,2 @@
 pub mod sparql_json;
-pub mod turtle;
+pub use turtle::serialize_graph;

@@ -14,7 +14,7 @@ use owl_ontology::Axiom;
 use rdf_owl_translator::rdf2owl;
 use std::fs::File;
 use std::io::BufReader;
-use turtle_parser::parse_turtle;
+use turtle::parse_turtle;
 
 fn parse_and_translate(path: &str) -> Vec<Axiom> {
     let file = File::open(path).unwrap_or_else(|_| panic!("Cannot open {}", path));

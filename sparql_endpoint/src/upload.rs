@@ -43,7 +43,7 @@ pub async fn upload_turtle(
 
     let cursor = Cursor::new(body.to_vec());
     let mut store = state.store.write().await;
-    match turtle_parser::parse_turtle(&mut store, cursor) {
+    match turtle::parse_turtle(&mut store, cursor) {
         Ok(()) => (StatusCode::OK, "Data uploaded successfully").into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response(),
     }

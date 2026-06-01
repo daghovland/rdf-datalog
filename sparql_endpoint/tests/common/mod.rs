@@ -12,7 +12,7 @@ use dag_rdf::datastore::Datastore;
 use sparql_endpoint::{Config, serve_on_listener};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turtle_parser::{parse_trig, parse_turtle};
+use turtle::{parse_trig, parse_turtle};
 
 /// A running test server bound to a random loopback port.
 ///

@@ -158,7 +158,7 @@ prefix ex: <https://example.com/data#>
 ex:graph { ex:subject ex:predicate ex:object. }
 "#;
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse must succeed");
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse must succeed");
 
     const PRED: &str = "https://example.com/data#predicate";
     const OBJ: &str = "https://example.com/data#object";
@@ -269,7 +269,7 @@ fn test_datalog_stratified_negation() {
 
 fn parse_inline_ttl(ttl: &str) -> Datastore {
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).expect("inline Turtle must parse");
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("inline Turtle must parse");
     ds
 }
 

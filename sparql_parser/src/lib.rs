@@ -630,7 +630,7 @@ fn parse_numeric_literal(input: &str) -> IResult<&str, RdfLiteral> {
         _ => "",
     };
 
-    // Produce TypedLiteral to match what turtle_parser produces from Turtle data
+    // Produce TypedLiteral to match what the turtle crate produces from Turtle data
     if let Some((_, frac_digits)) = frac {
         let s = format!("{}{}.{}", sign_str, integer_part, frac_digits);
         Ok((

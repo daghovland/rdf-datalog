@@ -38,7 +38,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::time::Instant;
-use turtle_parser::parse_turtle;
+use turtle::parse_turtle;
 
 /// Read current resident set size from /proc/self/status (Linux only).
 fn rss_mb() -> u64 {

@@ -512,7 +512,7 @@ ex:Fido         a ex:Dog .
 ex:Fido         owl:sameAs ex:FidoAlt .
 "#;
         let mut ds = Datastore::new(10_000);
-        turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+        turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
         let ids = WellKnownIds::new(&mut ds.resources);
         let decls = OntologyDeclarations::build(&ds, &ids);
