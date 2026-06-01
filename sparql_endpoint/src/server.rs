@@ -25,8 +25,18 @@ pub fn build_router(state: AppState) -> Router {
         .allow_headers([axum::http::header::ACCEPT, axum::http::header::CONTENT_TYPE]);
 
     Router::new()
+        .route("/", get(crate::frontend::serve_frontend))
         .route("/sparql", get(crate::query::sparql_get))
         .route("/sparql", post(crate::query::sparql_post))
+        .route("/upload", post(crate::upload::upload_turtle))
+        .route(
+            "/rdf-graph-store",
+            get(crate::graph_store::gsp_get)
+                .head(crate::graph_store::gsp_head)
+                .put(crate::graph_store::gsp_put)
+                .post(crate::graph_store::gsp_post)
+                .delete(crate::graph_store::gsp_delete),
+        )
         .with_state(state)
         .layer(cors)
 }

@@ -13,7 +13,7 @@ Contact: hovlanddag@gmail.com
 //! Based on chapters on negation in Abiteboul, Hull, Vianu: "Foundations of
 //! Databases" (1995) and the rule-level variant from Motik et al.
 
-use crate::types::{Rule, RuleHead};
+use crate::types::{Rule, RuleAtom, RuleHead};
 use crate::unification::{PatternEdge, depending_rules};
 use std::collections::{HashMap, VecDeque};
 
@@ -50,6 +50,8 @@ pub struct RulePartitioner {
     ordered: Vec<OrderedRule>,
     ready_queue: VecDeque<usize>,
     next_queue: VecDeque<usize>,
+    /// True when no rule has a NotPattern body atom — lets order_rules skip Kahn's algorithm.
+    pure_positive: bool,
 }
 
 impl RulePartitioner {
@@ -61,6 +63,24 @@ impl RulePartitioner {
                 .filter(|r| seen.insert(r.clone()))
                 .collect()
         };
+
+        // Fast path: if no rule has negation in its body, the program is pure-positive.
+        // Stratification (Kahn's O(n²) dependency graph) is unnecessary — all rules form
+        // one stratum and the semi-naive fixpoint converges regardless of rule order.
+        let pure_positive = !rules
+            .iter()
+            .any(|r| r.body.iter().any(|a| matches!(a, RuleAtom::NotPattern(_))));
+
+        if pure_positive {
+            return RulePartitioner {
+                rules,
+                rule_index: HashMap::new(),
+                ordered: Vec::new(),
+                ready_queue: VecDeque::new(),
+                next_queue: VecDeque::new(),
+                pure_positive: true,
+            };
+        }
 
         let rule_index: HashMap<Rule, usize> = rules
             .iter()
@@ -94,6 +114,7 @@ impl RulePartitioner {
             ordered,
             ready_queue,
             next_queue: VecDeque::new(),
+            pure_positive: false,
         }
     }
 
@@ -212,6 +233,15 @@ impl RulePartitioner {
     /// Return the stratified sequence of rule partitions. Each partition must
     /// be fully materialised before the next one can start.
     pub fn order_rules(mut self) -> Vec<Vec<Rule>> {
+        // Pure-positive programs need no stratification — one stratum is always correct.
+        if self.pure_positive {
+            return if self.rules.is_empty() {
+                vec![]
+            } else {
+                vec![self.rules]
+            };
+        }
+
         let mut stratification = Vec::new();
 
         if self.ready_queue.is_empty() {

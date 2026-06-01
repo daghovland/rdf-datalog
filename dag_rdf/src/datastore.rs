@@ -7,7 +7,7 @@ Contact: hovlanddag@gmail.com
 */
 
 use crate::ingress::{DEFAULT_GRAPH_ELEMENT_ID, GraphElementId, Quad, Triple};
-use crate::{GraphElement, GraphElementManager, QuadTable, RdfLiteral, RdfResource};
+use crate::{GraphElement, GraphElementManager, IriReference, QuadTable, RdfLiteral, RdfResource};
 
 /// Top-level RDF dataset store, mirroring DagSemTools.Rdf.Datastore.
 ///
@@ -164,6 +164,33 @@ impl Datastore {
 
     pub fn contains_quad(&self, quad: &Quad) -> bool {
         self.named_graphs.contains(quad)
+    }
+
+    // ── Graph management ─────────────────────────────────────────────────────
+
+    /// Look up the `GraphElementId` for a named graph IRI, returning `None` if
+    /// the IRI has never been interned (graph was never written to).
+    pub fn lookup_named_graph_id(&self, iri: &str) -> Option<GraphElementId> {
+        let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.to_owned())));
+        self.resources.resource_map.get(&elem).copied()
+    }
+
+    /// Return `true` if the graph identified by `graph_id` has at least one quad.
+    ///
+    /// The default graph (`DEFAULT_GRAPH_ELEMENT_ID`) is always considered to
+    /// exist, even when empty, matching SPARQL DROP DEFAULT semantics.
+    pub fn named_graph_exists(&self, graph_id: GraphElementId) -> bool {
+        if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+            return true;
+        }
+        self.named_graphs.graph_exists(graph_id)
+    }
+
+    /// Remove all quads belonging to graph `graph_id`.
+    ///
+    /// Equivalent to SPARQL `DROP SILENT GRAPH <g>` / `DROP SILENT DEFAULT`.
+    pub fn remove_graph(&mut self, graph_id: GraphElementId) {
+        self.named_graphs.remove_graph(graph_id);
     }
 
     // ── Reified triple queries ────────────────────────────────────────────────

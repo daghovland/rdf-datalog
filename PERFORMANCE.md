@@ -20,6 +20,25 @@ The IMF ontology (~1400 triples, ~295 rules) is manageable. The Gene Ontology is
 have ~1.7 M triples and generate 50 k–500 k rules, making the materialisation step infeasible
 with the current naive algorithm.
 
+### Gene Ontology end-to-end timing (post B1–B10, release build)
+
+```
+Turtle parse                    2521 ms   (+530 MB RSS)
+RDF → OWL translation            839 ms   (+298 MB RSS)
+OWL → Datalog rules              306 ms   (+1 MB RSS)
+Stratification (pure-positive)   165 ms   (+0 MB RSS)
+DatalogProgram::new (rule_map)   587 ms   (+340 MB RSS)
+Datalog materialisation         7214 ms   (0 inferences — correct, no individuals)
+SPARQL subClassOf (LIMIT 1000)    82 ms
+──────────────────────────────────────────
+TOTAL                           11053 ms   ~1172 MB peak RSS
+```
+
+The pipeline completes successfully. The 0 inferences is correct behaviour: the GO is a pure
+TBox (class hierarchy with no ABox individuals), and the generated rules are instance-level
+rules of the form `(?x, type, Parent) :- (?x, type, Child)`. SPARQL queries correctly return
+results from the parsed TBox triples.
+
 ---
 
 ## Bottlenecks (root-cause analysis)
@@ -96,19 +115,151 @@ quad.
 
 ---
 
-### B5 — Multiple full-datastore scans during RDF → OWL translation (HIGH)
+### B5 — Full-quad scan for axiom extraction in RDF → OWL translation (HIGH)
 
-**File:** `rdf_owl_translator/src/class_expression_parser.rs`
+**Original diagnosis corrected:** The initial plan described six "full scans" in
+`OntologyDeclarations::build()`. On investigation, all six `build_*_declarations()` calls use
+indexed lookups (`get_triples_with_object_predicate`) which are already O(matching triples),
+not O(total triples). They are not a bottleneck.
 
-`OntologyDeclarations::build()` calls six separate `build_*_declarations()` functions, each
-performing a full or partial scan of the quad store. For 1.7 M triples this is 6–7 serial O(n)
-passes.
+The real full scan was in `rdf2owl()` itself:
 
-**Fix:** Single-pass dispatch — one iteration over all quads, dispatching by predicate into all
-six declaration maps simultaneously. The existing `predicate_index` can narrow the scan for
-many declaration types.
+```rust
+// OLD — iterates all 1.7 M quads:
+datastore.named_graphs.get_all_quads()
+    .filter(|q| q.triple_id == DEFAULT_GRAPH_ELEMENT_ID)
+    .filter_map(|q| extract_axiom(...))
+```
 
-**Status: PLANNED** (see §Planned work)
+`extract_axiom` additionally did O(len_IRI) string comparison per triple to dispatch on
+predicate.
+
+**Fix implemented:**
+
+1. **`axiom_structural_predicate_ids(ids)`** — a function co-located with `extract_axiom` that
+   returns the 13 predicate IDs handled by named match arms. This is the single authoritative
+   list; drift between the list and the match arms is immediately visible.
+
+2. **`extract_axioms_indexed`** — replaces the `get_all_quads()` loop in `rdf2owl()`. Builds a
+   `HashSet` of structural predicates + declared object/data property predicates, then iterates
+   only triples with those predicates using the `predicate_index`. Triples with non-axiom
+   predicates (rdfs:label, rdfs:comment, annotation properties) are skipped entirely.
+
+3. **ID-based dispatch in `extract_axiom`** — match arms now compare `triple.predicate` and
+   `triple.obj` as `GraphElementId` (u32) instead of calling `get_named_resource` + string
+   comparison. Also added missing `owl_same_as_id` to `WellKnownIds`.
+
+4. **Equivalence test** — `rdf_owl_translator/src/axiom_parser.rs` (cfg(test)) asserts that the
+   indexed and full-scan paths produce the same axiom multiset on diverse test data covering:
+   SubClassOf, DisjointWith, EquivalentClass, Domain, Range, ClassAssertion, SameIndividual.
+
+**Status: DONE**
+
+**Design tradeoff surfaced:** Blank-node `rdf:type` objects are still rejected (returning None)
+in the ClassAssertion arm, preserving the original behavior. This means `x rdf:type _:restriction1`
+does not become a ClassAssertion even when `_:restriction1` is a parsed anonymous restriction.
+This is arguably incorrect OWL 2 semantics (the restriction IS a valid class), but fixing it is a
+semantics change, not a perf change, and should be a separate labeled commit with its own test.
+
+---
+
+### B8 — O(n²) stratifier bottleneck for pure-positive programs (CRITICAL)
+
+**File:** `datalog/src/stratifier.rs:74`
+
+```rust
+// O(n²) — 108k × 108k = 11.7 billion calls for Gene Ontology
+for i in 0..rules.len() {
+    if let RuleHead::NormalHead(ref head_pattern) = rules[i].head {
+        let deps = depending_rules(&rules, head_pattern);  // scans all rules
+```
+
+`depending_rules` iterates every rule and calls `quad_patterns_unifiable` on each body atom.
+`quad_patterns_unifiable` allocates two `HashMap`s per call. For 108k rules the outer loop runs
+108k times, each calling `depending_rules` which runs 108k inner iterations: 11.7 billion
+HashMap allocations. The stratifier never completed for the Gene Ontology.
+
+Profiling confirmed: after OWL→Datalog (832 MB RSS, 108k rules, 570 ms), the process hung at
+`RulePartitioner::new` indefinitely.
+
+**Root cause:** For a pure-positive program (no `NotPattern` body atoms), stratification is
+unnecessary. All rules can be evaluated in one stratum; the semi-naive fixpoint converges
+regardless of rule order. The only source of `NotPattern` rules is
+`eli/src/eli2rl.rs:241` — the `owl:maxQualifiedCardinality ≤ 1` (at-most-one) rule for
+`owl:sameAs`. The Gene Ontology does not trigger this axiom type.
+
+**Fix:** In `RulePartitioner::new`, before building the dependency graph, check whether any
+rule has a `NotPattern` body atom. If not (`pure_positive = true`), skip the O(n²) loop
+entirely and store only the `rules` vec. In `order_rules`, return `vec![self.rules]` directly.
+Total cost for the pure-positive detection scan: O(n × avg_body_len), effectively O(n).
+
+**Status: DONE** (see §Implementation log)
+
+---
+
+### B10 — O(facts × rules) fan-out through all-wildcard rule_map bucket (CRITICAL)
+
+**File:** `datalog/src/datalog.rs` — `wildcard_quad_pattern` used for rule indexing
+
+```rust
+// OLD — indexes every rule under (*, *, *, *):
+for wc in wildcard_quad_pattern(pattern) {   // up to 16 keys per body atom
+    rule_map.entry(wc).or_default().push(PartialRule { ... });
+}
+```
+
+`wildcard_quad_pattern(pattern)` generates all sub-wildcard combinations of the pattern.
+For a rule body atom `(?x, rdfs:subClassOf, ?y, DEFAULT_GRAPH)` (subject + object are
+variables), this includes `(*, *, *, *)` — the fully wildcarded key. Because EVERY rule
+body atom has at least one variable, every rule was indexed under `(*, *, *, *)`.
+
+Fact lookup also generates `(*, *, *, *)` as one of its 16 keys. The result: every one of
+the 1.4 M GO input quads triggered a scan of all 108 k rules via the `(*, *, *, *)` bucket
+= 151 billion rule-match attempts, all failing. Even with the B9 fix, materialisation
+iteration 0 never completed (killed after 60+ seconds).
+
+**Root cause:** Sub-wildcard expansion is needed for FACT LOOKUP (so a concrete fact can find
+rules that have variables in some positions) but NOT for RULE INDEXING (where only the exact
+pattern of the body atom is needed — a fact that matches at all will find the rule via the
+most-specific key, not via `(*, *, *, *)`).
+
+**Fix:** Replace `wildcard_quad_pattern` with `direct_wildcard_pattern` for rule indexing.
+`direct_wildcard_pattern(atom)` maps variables → `Wildcard` and constants → `Resource` to
+produce exactly ONE key per body atom — the most specific key reachable from any matching
+fact. The fact-side lookup continues generating 16 keys, ensuring every matching rule is
+found.
+
+Effect: the rule_map has ~1 entry per body atom instead of ~2–8. The all-wildcard bucket
+`(*, *, *, *)` is never populated. Per-fact lookup cost drops from O(all_rules) to
+O(matching_rules), which is typically 0–5 for a concrete predicate.
+
+**Status: DONE** (see §Implementation log)
+
+---
+
+### B9 — O(n²) rule_map construction via binary `reduce` (HIGH)
+
+**File:** `datalog/src/reasoner.rs:31`
+
+```rust
+let rule_map = rules
+    .iter()
+    .map(get_partial_matches)         // per-rule map
+    .reduce(|a, b| merge_partial_match_maps(vec![a, b]))  // binary fold!
+    .unwrap_or_default();
+```
+
+`reduce` is a left fold: at step k, it merges the k-entry accumulated map with the new
+rule's ~32-entry map by allocating a brand-new HashMap and copying all k+32 entries into it.
+Work per step = O(k); total work = Σ(k=1..n) O(k) = O(n²). For 108k rules:
+~187 billion HashMap entry moves. The memory profile showed this phase was still running after
+60 s even after the stratifier fix.
+
+**Fix:** Replace the reduce with a single in-place fold — iterate all rules once, inserting
+each rule's wildcard patterns directly into one pre-allocated HashMap. O(n × wildcards_per_rule)
+total, no per-merge allocation.
+
+**Status: DONE** (see §Implementation log)
 
 ---
 
@@ -206,16 +357,112 @@ reduction for ontologies with many subclass chains.
 
 ---
 
+### 2026-05-31 — B5: Predicate-indexed axiom extraction + ID-based dispatch
+
+**Changed:** `rdf_owl_translator/src/axiom_parser.rs`, `rdf_owl_translator/src/translator.rs`,
+`rdf_owl_translator/src/ingress.rs`
+
+Three coordinated changes:
+
+1. **`axiom_structural_predicate_ids(ids)`** added to `axiom_parser.rs` — the single
+   authoritative list of the 13 predicate IDs handled by named arms of `extract_axiom`.
+
+2. **`extract_axioms_indexed`** in `translator.rs` replaces the `get_all_quads()` full scan.
+   Collects structural predicates + declared object/data property predicates into a `HashSet`,
+   then iterates only triples with those predicates using the `predicate_index`. Skips rdfs:label,
+   rdfs:comment, annotation-property triples, and any other non-axiom predicate.
+
+3. **ID-based dispatch in `extract_axiom`** — predicate and rdf:type-object matching now compares
+   `GraphElementId` (u32) instead of calling `get_named_resource` + O(n) string comparison.
+   Added missing `owl_same_as_id` to `WellKnownIds`.
+
+Added an in-crate equivalence test that asserts the indexed path and the full-scan produce
+identical axiom multisets.
+
+**IMF timing:** RDF→OWL 2 ms → 1 ms. The gain at Gene Ontology scale is larger (skips ~700 k
+label/comment/annotation triples entirely).
+
+---
+
+### 2026-06-01 — B10: Direct wildcard indexing eliminates O(facts × rules) fan-out
+
+**Changed:** `datalog/src/datalog.rs`, `datalog/src/reasoner.rs`
+
+Added `direct_wildcard_pattern(quad: &QuadPattern) -> QuadWildcard` alongside the existing
+`wildcard_quad_pattern`. The new function maps variables → `Wildcard` and constants → `Resource`
+(one key per body atom, no sub-wildcards). Both `DatalogProgram::new`, `add_rule`, and the public
+`get_partial_matches` function now use `direct_wildcard_pattern` for rule indexing; fact-side lookup
+(`get_rules_for_fact`) continues using `wildcard_quad_pattern` to generate all 16 sub-wildcard keys.
+
+Also added `materialise_one_iteration` and `materialise_seed_facts` as public methods on
+`DatalogProgram` to support the new `gene_ontology_materialise_progress` diagnostic test.
+
+**Measured improvement (Gene Ontology, 108k rules, 1.4M input quads, release build):**
+
+Full pipeline end-to-end (previously hung indefinitely):
+```
+Turtle parse                    2521 ms
+RDF → OWL translation            839 ms
+OWL → Datalog rules              306 ms
+Datalog materialisation         7214 ms   (1 iteration, 0 inferences — correct: GO has no individuals)
+SPARQL subClassOf (LIMIT 1000)    82 ms
+TOTAL                          11053 ms
+```
+
+The 0 inferences is correct: GO is a pure TBox (class hierarchy), and the generated Datalog
+rules are ABox rules of the form `(?x, type, Parent) :- (?x, type, Child)`. With no named
+individuals, no rules fire. SPARQL queries return results from the raw parsed triples.
+
+---
+
+### 2026-05-31 — B9: O(n) rule_map construction replacing O(n²) reduce
+
+**Changed:** `datalog/src/reasoner.rs`
+
+Replaced the `rules.iter().map(get_partial_matches).reduce(|a,b| merge(...))` pattern in
+`DatalogProgram::new` with a single in-place fold. All 108k rules' wildcard patterns are now
+inserted directly into one pre-allocated HashMap without any intermediate maps or reallocation.
+Applied the same fix to `add_rule` (previously also called `merge_partial_match_maps`).
+
+`get_partial_matches` and `merge_partial_match_maps` are retained as public API but no longer
+called internally.
+
+**Measured improvement (Gene Ontology, 108k rules, release build):**
+- `DatalogProgram::new`: 587 ms, +340 MB RSS (phase completes; previously hung indefinitely)
+
+---
+
+### 2026-05-31 — B8: Pure-positive fast-path in RulePartitioner
+
+**Changed:** `datalog/src/stratifier.rs`
+
+Added `pure_positive: bool` field to `RulePartitioner`. In `new()`, before building the
+dependency graph, the code now checks whether any rule contains a `RuleAtom::NotPattern` body
+atom. If none do (pure-positive program), the constructor returns immediately with `rule_index`,
+`ordered`, `ready_queue`, and `next_queue` all empty — no O(n²) loop runs at all.
+
+`order_rules()` now has an early return for `pure_positive`: it returns `vec![self.rules]`,
+moving the already-deduplicated rule vec out without further allocation.
+
+For the Gene Ontology's 108,476 rules: the O(n) scan completes in under 1 ms and the full
+11.7-billion-call dependency graph is never built. Programs that do contain negation (including
+the existing `non_stratifiable_negative_cycle_panics` and `stratified_negation_with_positive_recursion`
+tests) take the unchanged Kahn's-algorithm path. All 17 datalog + 12 OWL integration tests pass.
+
+**Measured improvement (Gene Ontology, 108k rules, release build):**
+- `RulePartitioner::new`: 165 ms, +0 MB RSS (previously hung indefinitely)
+- Strata: 1 (correct for pure-positive program)
+
+---
+
 ## Planned work
 
 ### P1 — Single-pass RDF → OWL translation (B5)
 
-Replace the six sequential `build_*_declarations()` scans with a single pass. Use the
-`predicate_index` to narrow iteration where possible (e.g., only quads with `rdf:type` for
-class declarations). This requires refactoring `OntologyDeclarations::build()` to accumulate
-into all six maps in one pass.
-
-**Estimate:** 1–2 days. Expected speedup: 3–6× for the RDF→OWL phase.
+**Completed as B5** (see §Implementation log). The `build_*_declarations()` functions were
+found to already use indexed queries and are not a bottleneck. The real win was replacing the
+`get_all_quads()` axiom scan with predicate-indexed iteration and switching predicate dispatch
+from string comparison to `GraphElementId` (u32) comparison.
 
 ### P2 — Flat SP/OP indexes (B6)
 

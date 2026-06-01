@@ -12,10 +12,33 @@ Contact: hovlanddag@gmail.com
 
 use crate::class_expression_parser::OntologyDeclarations;
 use crate::ingress::{WellKnownIds, get_rdf_list_elements, try_get_individual};
+use dag_rdf::GraphElementId;
 use dag_rdf::datastore::Datastore;
 use dag_rdf::ingress::Triple;
-use ingress::*;
 use owl_ontology::*;
+
+/// All predicate IDs that `extract_axiom` handles in its non-wildcard arms.
+///
+/// Co-located with `extract_axiom` so the list and the match stay in sync.
+/// `rdf2owl` iterates exactly these predicates (plus declared object/data
+/// property predicates) to avoid scanning triples that can never produce axioms.
+pub fn axiom_structural_predicate_ids(ids: &WellKnownIds) -> Vec<GraphElementId> {
+    vec![
+        ids.rdf_type_id,
+        ids.rdfs_sub_class_of_id,
+        ids.owl_equivalent_class_id,
+        ids.owl_disjoint_with_id,
+        ids.owl_disjoint_union_of_id,
+        ids.rdfs_sub_property_of_id,
+        ids.owl_property_chain_axiom_id,
+        ids.owl_equivalent_property_id,
+        ids.owl_property_disjoint_with_id,
+        ids.rdfs_domain_id,
+        ids.rdfs_range_id,
+        ids.owl_object_inverse_of_id,
+        ids.owl_same_as_id,
+    ]
+}
 
 /// Get any axiom annotations for a triple (Table 17 in the spec).
 fn get_axiom_annotations(
@@ -48,6 +71,8 @@ fn get_axiom_annotations(
 
 /// Extract a single OWL axiom from an RDF triple, if applicable.
 /// Returns None if the triple doesn't encode an OWL axiom.
+///
+/// Dispatch is by `GraphElementId` (u32) rather than IRI string for O(1) matching.
 pub fn extract_axiom(
     datastore: &Datastore,
     ids: &WellKnownIds,
@@ -55,53 +80,48 @@ pub fn extract_axiom(
     triple: &Triple,
 ) -> Option<Axiom> {
     let res = &datastore.resources;
-
-    let predicate_iri = res.get_named_resource(triple.predicate)?;
-    let predicate_str = predicate_iri.0.as_str();
-
     let axiom_anns = get_axiom_annotations(datastore, ids, decls, triple);
 
-    match predicate_str {
+    match triple.predicate {
         // ── rdf:type ────────────────────────────────────────────────────────
-        s if s == RDF_TYPE => {
-            let obj_iri = res.get_named_resource(triple.obj)?;
-            match obj_iri.0.as_str() {
-                s if s == OWL_CLASS => {
+        p if p == ids.rdf_type_id => {
+            match triple.obj {
+                o if o == ids.owl_class_id => {
                     let subj_iri = res.get_named_resource(triple.subject)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::ClassDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
-                s if s == RDFS_DATATYPE => {
+                o if o == ids.rdfs_datatype_id => {
                     let subj_iri = res.get_named_resource(triple.subject)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::DatatypeDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
-                s if s == OWL_OBJECT_PROPERTY => {
+                o if o == ids.owl_object_property_id => {
                     let subj_iri = res.get_named_resource(triple.subject)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::ObjectPropertyDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
-                s if s == OWL_DATATYPE_PROPERTY => {
+                o if o == ids.owl_datatype_property_id => {
                     let subj_iri = res.get_named_resource(triple.subject)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::DataPropertyDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
-                s if s == OWL_ANNOTATION_PROPERTY => {
+                o if o == ids.owl_annotation_property_id => {
                     let subj_iri = res.get_named_resource(triple.subject)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::AnnotationPropertyDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
-                s if s == OWL_NAMED_INDIVIDUAL => {
+                o if o == ids.owl_named_individual_id => {
                     let subj_gel = res.get_graph_element(triple.subject);
                     let individual = try_get_individual(subj_gel);
                     Some(Axiom::AxiomDeclaration((
@@ -109,8 +129,7 @@ pub fn extract_axiom(
                         Entity::NamedIndividualDeclaration(individual),
                     )))
                 }
-                s if s == OWL_ALL_DISJOINT_CLASSES => {
-                    // owl:members list of class expressions
+                o if o == ids.owl_all_disjoint_classes_id => {
                     let members_triples: Vec<Triple> = datastore
                         .get_triples_with_subject_predicate(triple.subject, ids.owl_members_id)
                         .collect();
@@ -135,7 +154,7 @@ pub fn extract_axiom(
                         _ => panic!("Multiple owl:members on owl:AllDisjointClasses"),
                     }
                 }
-                s if s == OWL_ALL_DISJOINT_PROPERTIES => {
+                o if o == ids.owl_all_disjoint_properties_id => {
                     let members_triples: Vec<Triple> = datastore
                         .get_triples_with_subject_predicate(triple.subject, ids.owl_members_id)
                         .collect();
@@ -160,7 +179,7 @@ pub fn extract_axiom(
                         _ => panic!("Multiple owl:members on owl:AllDisjointProperties"),
                     }
                 }
-                s if s == OWL_FUNCTIONAL_PROPERTY => Some(decls.object_or_data_property(
+                o if o == ids.owl_functional_property_id => Some(decls.object_or_data_property(
                     triple.subject,
                     res,
                     |ope| {
@@ -175,37 +194,37 @@ pub fn extract_axiom(
                         ))
                     },
                 )),
-                s if s == OWL_INVERSE_FUNCTIONAL_PROPERTY => {
+                o if o == ids.owl_inverse_functional_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::InverseFunctionalObjectProperty(axiom_anns, ope),
                     ))
                 }
-                s if s == OWL_REFLEXIVE_PROPERTY => {
+                o if o == ids.owl_reflexive_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::ReflexiveObjectProperty(axiom_anns, ope),
                     ))
                 }
-                s if s == OWL_IRREFLEXIVE_PROPERTY => {
+                o if o == ids.owl_irreflexive_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::IrreflexiveObjectProperty(axiom_anns, ope),
                     ))
                 }
-                s if s == OWL_SYMMETRIC_PROPERTY => {
+                o if o == ids.owl_symmetric_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::SymmetricObjectProperty(axiom_anns, ope),
                     ))
                 }
-                s if s == OWL_ASYMMETRIC_PROPERTY => {
+                o if o == ids.owl_asymmetric_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::AsymmetricObjectProperty(axiom_anns, ope),
                     ))
                 }
-                s if s == OWL_TRANSITIVE_PROPERTY => {
+                o if o == ids.owl_transitive_property_id => {
                     let ope = decls.object_property_expression(triple.subject, res);
                     Some(Axiom::AxiomObjectPropertyAxiom(
                         ObjectPropertyAxiom::TransitiveObjectProperty(axiom_anns, ope),
@@ -213,6 +232,8 @@ pub fn extract_axiom(
                 }
                 _ => {
                     // ClassAssertion: :x rdf:type C
+                    // Preserve original semantics: blank-node objects return None.
+                    res.get_named_resource(triple.obj)?;
                     let ce = decls.class_expression(triple.obj, res);
                     let subj_gel = res.get_graph_element(triple.subject);
                     let individual = try_get_individual(subj_gel);
@@ -224,7 +245,7 @@ pub fn extract_axiom(
         }
 
         // ── rdfs:subClassOf ─────────────────────────────────────────────────
-        s if s == RDFS_SUB_CLASS_OF => {
+        p if p == ids.rdfs_sub_class_of_id => {
             let sub_ce = decls.class_expression(triple.subject, res);
             let sup_ce = decls.class_expression(triple.obj, res);
             Some(Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
@@ -233,19 +254,16 @@ pub fn extract_axiom(
         }
 
         // ── owl:equivalentClass ─────────────────────────────────────────────
-        s if s == OWL_EQUIVALENT_CLASS => {
-            // Could be class or datatype definition
-            if let Some(dr) = decls.data_ranges.get(&triple.obj) {
-                // Datatype definition: subj ≡ dr
-                if let Some(DataRange::NamedDataRange(dtype)) =
-                    decls.data_ranges.get(&triple.subject)
-                {
-                    return Some(Axiom::AxiomDatatypeDefinition(
-                        axiom_anns,
-                        dtype.clone(),
-                        dr.clone(),
-                    ));
-                }
+        p if p == ids.owl_equivalent_class_id => {
+            if let (Some(dr), Some(DataRange::NamedDataRange(dtype))) = (
+                decls.data_ranges.get(&triple.obj),
+                decls.data_ranges.get(&triple.subject),
+            ) {
+                return Some(Axiom::AxiomDatatypeDefinition(
+                    axiom_anns,
+                    dtype.clone(),
+                    dr.clone(),
+                ));
             }
             let sub_ce = decls.class_expression(triple.subject, res);
             let obj_ce = decls.class_expression(triple.obj, res);
@@ -256,7 +274,7 @@ pub fn extract_axiom(
         }
 
         // ── owl:disjointWith ────────────────────────────────────────────────
-        s if s == OWL_DISJOINT_WITH => {
+        p if p == ids.owl_disjoint_with_id => {
             let sub_ce = decls.class_expression(triple.subject, res);
             let obj_ce = decls.class_expression(triple.obj, res);
             Some(Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
@@ -266,7 +284,7 @@ pub fn extract_axiom(
         }
 
         // ── owl:disjointUnionOf ─────────────────────────────────────────────
-        s if s == OWL_DISJOINT_UNION_OF => {
+        p if p == ids.owl_disjoint_union_of_id => {
             let class_iri = res.get_named_resource(triple.subject)?;
             let list = get_rdf_list_elements(
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
@@ -285,7 +303,7 @@ pub fn extract_axiom(
         }
 
         // ── rdfs:subPropertyOf ──────────────────────────────────────────────
-        s if s == RDFS_SUB_PROPERTY_OF => {
+        p if p == ids.rdfs_sub_property_of_id => {
             let obj_ope = decls.object_property_expression(triple.obj, res);
             Some(decls.object_or_data_property(
                 triple.subject,
@@ -309,7 +327,7 @@ pub fn extract_axiom(
         }
 
         // ── owl:propertyChainAxiom ──────────────────────────────────────────
-        s if s == OWL_PROPERTY_CHAIN_AXIOM => {
+        p if p == ids.owl_property_chain_axiom_id => {
             let list = get_rdf_list_elements(
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
@@ -330,7 +348,7 @@ pub fn extract_axiom(
         }
 
         // ── owl:equivalentProperty ─────────────────────────────────────────
-        s if s == OWL_EQUIVALENT_PROPERTY => Some(decls.object_or_data_property(
+        p if p == ids.owl_equivalent_property_id => Some(decls.object_or_data_property(
             triple.subject,
             res,
             |ope| {
@@ -350,7 +368,7 @@ pub fn extract_axiom(
         )),
 
         // ── owl:propertyDisjointWith ────────────────────────────────────────
-        s if s == OWL_PROPERTY_DISJOINT_WITH => {
+        p if p == ids.owl_property_disjoint_with_id => {
             let ope1 = decls.object_property_expression(triple.subject, res);
             let ope2 = decls.object_property_expression(triple.obj, res);
             Some(Axiom::AxiomObjectPropertyAxiom(
@@ -359,7 +377,7 @@ pub fn extract_axiom(
         }
 
         // ── rdfs:domain ─────────────────────────────────────────────────────
-        s if s == RDFS_DOMAIN => {
+        p if p == ids.rdfs_domain_id => {
             let range_ce = decls.class_expression(triple.obj, res);
             Some(decls.object_or_data_property(
                 triple.subject,
@@ -381,7 +399,7 @@ pub fn extract_axiom(
         }
 
         // ── rdfs:range ──────────────────────────────────────────────────────
-        s if s == RDFS_RANGE => Some(decls.object_or_data_property(
+        p if p == ids.rdfs_range_id => Some(decls.object_or_data_property(
             triple.subject,
             res,
             |ope| {
@@ -401,7 +419,7 @@ pub fn extract_axiom(
         )),
 
         // ── owl:inverseOf ───────────────────────────────────────────────────
-        s if s == OWL_OBJECT_INVERSE_OF => {
+        p if p == ids.owl_object_inverse_of_id => {
             let ope1 = decls.object_property_expression(triple.subject, res);
             let ope2 = decls.object_property_expression(triple.obj, res);
             Some(Axiom::AxiomObjectPropertyAxiom(
@@ -410,7 +428,7 @@ pub fn extract_axiom(
         }
 
         // ── owl:sameAs ──────────────────────────────────────────────────────
-        s if s == OWL_SAME_AS => {
+        p if p == ids.owl_same_as_id => {
             let ind1 = try_get_individual(res.get_graph_element(triple.subject));
             let ind2 = try_get_individual(res.get_graph_element(triple.obj));
             Some(Axiom::AxiomAssertion(Assertion::SameIndividual(
@@ -421,7 +439,6 @@ pub fn extract_axiom(
 
         // ── Data / Object property assertions ───────────────────────────────
         _ => {
-            // Check if predicate is a known object or data property
             let is_obj_prop = decls
                 .object_property_expressions
                 .contains_key(&triple.predicate);
@@ -447,5 +464,93 @@ pub fn extract_axiom(
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::class_expression_parser::OntologyDeclarations;
+    use crate::ingress::WellKnownIds;
+    use dag_rdf::Datastore;
+
+    fn sorted_axiom_debug_strings(axioms: &[Axiom]) -> Vec<String> {
+        let mut v: Vec<String> = axioms.iter().map(|a| format!("{a:?}")).collect();
+        v.sort();
+        v
+    }
+
+    /// Verify that the indexed path produces the same axiom multiset as a direct
+    /// full-scan on the same data.  Run against a variety of axiom types to catch
+    /// missing entries in `axiom_structural_predicate_ids`.
+    #[test]
+    fn indexed_matches_full_scan() {
+        let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/ont> a owl:Ontology .
+
+ex:Animal       a owl:Class .
+ex:Dog          a owl:Class .
+ex:Cat          a owl:Class .
+ex:hasOwner     a owl:ObjectProperty .
+ex:hasWeight    a owl:DatatypeProperty .
+ex:label        a owl:AnnotationProperty .
+ex:Fido         a owl:NamedIndividual .
+ex:Whiskers     a owl:NamedIndividual .
+
+ex:Dog          rdfs:subClassOf ex:Animal .
+ex:Cat          rdfs:subClassOf ex:Animal .
+ex:Dog          owl:disjointWith ex:Cat .
+ex:Dog          owl:equivalentClass ex:Canine .
+ex:hasOwner     rdfs:domain ex:Pet .
+ex:hasOwner     rdfs:range  ex:Person .
+
+ex:Fido         a ex:Dog .
+ex:Fido         owl:sameAs ex:FidoAlt .
+"#;
+        let mut ds = Datastore::new(10_000);
+        turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+        let ids = WellKnownIds::new(&mut ds.resources);
+        let decls = OntologyDeclarations::build(&ds, &ids);
+
+        // Indexed path
+        use std::collections::HashSet;
+        let mut pred_ids: HashSet<GraphElementId> =
+            axiom_structural_predicate_ids(&ids).into_iter().collect();
+        pred_ids.extend(decls.object_property_expressions.keys().copied());
+        pred_ids.extend(decls.data_property_expressions.keys().copied());
+        let indexed: Vec<Axiom> = pred_ids
+            .iter()
+            .flat_map(|&p| {
+                ds.get_triples_with_predicate(p)
+                    .filter_map(|t| extract_axiom(&ds, &ids, &decls, &t))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        // Full-scan path (reference)
+        let full_scan: Vec<Axiom> = ds
+            .named_graphs
+            .get_all_quads()
+            .filter(|q| q.triple_id == dag_rdf::DEFAULT_GRAPH_ELEMENT_ID)
+            .filter_map(|q| {
+                let triple = dag_rdf::ingress::Triple {
+                    subject: q.subject,
+                    predicate: q.predicate,
+                    obj: q.obj,
+                };
+                extract_axiom(&ds, &ids, &decls, &triple)
+            })
+            .collect();
+
+        assert_eq!(
+            sorted_axiom_debug_strings(&indexed),
+            sorted_axiom_debug_strings(&full_scan),
+            "indexed and full-scan paths produced different axiom multisets"
+        );
     }
 }

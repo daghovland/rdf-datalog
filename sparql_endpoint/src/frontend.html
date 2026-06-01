@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dagalog</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 960px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+      background: #fafafa;
+    }
+    header { border-bottom: 2px solid #222; padding-bottom: 0.75rem; margin-bottom: 1.5rem; }
+    header h1 { margin: 0; font-size: 1.6rem; }
+    header p { margin: 0.25rem 0 0; color: #555; font-size: 0.9rem; }
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    textarea {
+      width: 100%;
+      font-family: "Fira Mono", "Consolas", monospace;
+      font-size: 0.85rem;
+      padding: 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: vertical;
+      background: #f8f8f8;
+    }
+    textarea:focus { outline: 2px solid #445; background: #fff; }
+    .actions { margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; }
+    button {
+      padding: 0.4rem 1.1rem;
+      background: #222;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #444; }
+    button:disabled { background: #aaa; cursor: default; }
+    .hint { font-size: 0.8rem; color: #777; }
+    .result-area { margin-top: 1rem; }
+    .msg { font-family: monospace; font-size: 0.85rem; padding: 0.5rem 0.75rem; border-radius: 4px; }
+    .msg.ok  { background: #eafaea; color: #1a5c1a; border: 1px solid #a8d8a8; }
+    .msg.err { background: #fdecea; color: #7a1a1a; border: 1px solid #f0a0a0; }
+    .count   { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+    th { background: #f0f0f0; text-align: left; padding: 0.35rem 0.6rem; border: 1px solid #ccc; white-space: nowrap; }
+    td { padding: 0.35rem 0.6rem; border: 1px solid #ddd; word-break: break-all; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .uri { color: #005a9c; }
+    .literal { color: #333; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Dagalog</h1>
+    <p>RDF triplestore with OWL-RL reasoning and SPARQL 1.1</p>
+  </header>
+
+  <div class="card">
+    <h2>SPARQL Query</h2>
+    <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
+    <div class="actions">
+      <button id="run-btn" onclick="runQuery()">Run Query</button>
+      <span class="hint">SELECT queries only &mdash; results as JSON table</span>
+    </div>
+    <div class="result-area" id="query-result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Upload RDF Data</h2>
+    <textarea id="turtle" rows="7" placeholder="Paste Turtle data here&#10;&#10;@prefix ex: &lt;http://example.org/&gt; .&#10;ex:Alice a ex:Person ."></textarea>
+    <div class="actions">
+      <button id="upload-btn" onclick="uploadData()">Upload Turtle</button>
+      <span class="hint">Parsed and merged into the default graph</span>
+    </div>
+    <div class="result-area" id="upload-result"></div>
+  </div>
+
+  <script>
+    function showMsg(container, text, ok) {
+      container.innerHTML = '';
+      const p = document.createElement('p');
+      p.className = 'msg ' + (ok ? 'ok' : 'err');
+      p.textContent = text;
+      container.appendChild(p);
+    }
+
+    async function runQuery() {
+      const query = document.getElementById('query').value.trim();
+      if (!query) return;
+      const btn = document.getElementById('run-btn');
+      const container = document.getElementById('query-result');
+      btn.disabled = true;
+      btn.textContent = 'Running…';
+      container.innerHTML = '';
+      try {
+        const resp = await fetch('/sparql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/sparql-query',
+            'Accept': 'application/sparql-results+json'
+          },
+          body: query
+        });
+        const text = await resp.text();
+        if (!resp.ok) {
+          showMsg(container, 'Error ' + resp.status + ': ' + text, false);
+          return;
+        }
+        let data;
+        try { data = JSON.parse(text); }
+        catch { showMsg(container, 'Response is not valid JSON: ' + text, false); return; }
+        renderTable(container, data);
+      } catch (e) {
+        showMsg(container, 'Request failed: ' + e.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Query';
+      }
+    }
+
+    function renderTable(container, data) {
+      const vars = (data.head && data.head.vars) ? data.head.vars : [];
+      const bindings = (data.results && data.results.bindings) ? data.results.bindings : [];
+      const countEl = document.createElement('p');
+      countEl.className = 'count';
+      countEl.textContent = bindings.length + ' result' + (bindings.length === 1 ? '' : 's');
+      container.appendChild(countEl);
+      if (bindings.length === 0 || vars.length === 0) return;
+      const table = document.createElement('table');
+      const thead = table.createTHead();
+      const hrow = thead.insertRow();
+      for (const v of vars) {
+        const th = document.createElement('th');
+        th.textContent = v;
+        hrow.appendChild(th);
+      }
+      const tbody = table.createTBody();
+      for (const binding of bindings) {
+        const row = tbody.insertRow();
+        for (const v of vars) {
+          const td = row.insertCell();
+          const val = binding[v];
+          if (val) {
+            if (val.type === 'uri') {
+              const a = document.createElement('a');
+              a.href = val.value;
+              a.textContent = '<' + val.value + '>';
+              a.className = 'uri';
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              td.appendChild(a);
+            } else {
+              const span = document.createElement('span');
+              span.className = 'literal';
+              span.textContent = val.value;
+              td.appendChild(span);
+            }
+          }
+        }
+      }
+      container.appendChild(table);
+    }
+
+    async function uploadData() {
+      const turtle = document.getElementById('turtle').value.trim();
+      if (!turtle) return;
+      const btn = document.getElementById('upload-btn');
+      const container = document.getElementById('upload-result');
+      btn.disabled = true;
+      btn.textContent = 'Uploading…';
+      try {
+        const resp = await fetch('/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/turtle; charset=utf-8' },
+          body: turtle
+        });
+        const text = await resp.text();
+        showMsg(container, text, resp.ok);
+      } catch (e) {
+        showMsg(container, 'Request failed: ' + e.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload Turtle';
+      }
+    }
+  </script>
+</body>
+</html>

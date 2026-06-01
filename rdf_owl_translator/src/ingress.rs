@@ -82,6 +82,7 @@ pub struct WellKnownIds {
     pub owl_negative_property_assertion_id: GraphElementId,
     pub owl_all_different_id: GraphElementId,
     pub owl_annotation_id: GraphElementId,
+    pub owl_same_as_id: GraphElementId,
 }
 
 fn iri_id(res: &mut GraphElementManager, iri: &str) -> GraphElementId {
@@ -152,6 +153,7 @@ impl WellKnownIds {
             owl_negative_property_assertion_id: iri_id(res, OWL_NEGATIVE_PROPERTY_ASSERTION),
             owl_all_different_id: iri_id(res, OWL_ALL_DIFFERENT),
             owl_annotation_id: iri_id(res, OWL_ANNOTATION),
+            owl_same_as_id: iri_id(res, OWL_SAME_AS),
         }
     }
 }

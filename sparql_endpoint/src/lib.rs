@@ -14,11 +14,14 @@ Contact: hovlanddag@gmail.com
 //! - P0: Content negotiation (SPARQL JSON, N-Triples, Turtle)
 //! - P1: SPARQL 1.1 Service Description (GET /sparql with no query param)
 
+pub mod frontend;
+pub mod graph_store;
 pub mod negotiate;
 pub mod query;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
+pub mod upload;
 
 use dag_rdf::datastore::Datastore;
 use std::net::SocketAddr;

@@ -11,4 +11,4 @@ num-bigint = "0.4"
 log = "0.4"
 
 [dev-dependencies]
-turtle-parser = { path = "../turtle_parser" }
+turtle = { path = "../turtle" }

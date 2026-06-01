@@ -174,7 +174,7 @@ fn readme_jsonld_serialize_roundtrip() {
     "#;
 
     let mut ds1 = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds1, ttl.as_bytes()).expect("Turtle parse must succeed");
+    turtle::parse_turtle(&mut ds1, ttl.as_bytes()).expect("Turtle parse must succeed");
 
     // Serialise to JSON-LD
     let jsonld = jsonld_parser::serialize_jsonld(&ds1);
@@ -247,7 +247,7 @@ fn readme_turtle_parse_basic() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse must succeed");
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse must succeed");
 
     let result = run_sparql_query(
         &ds,
@@ -273,7 +273,7 @@ fn readme_trig_named_graph() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse must succeed");
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse must succeed");
 
     let result = run_sparql_query(
         &ds,
@@ -296,7 +296,7 @@ fn readme_sparql_filter() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
 
     let result = run_sparql_query(
         &ds,
@@ -324,7 +324,7 @@ fn readme_sparql_optional() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
 
     let result = run_sparql_query(
         &ds,
@@ -352,7 +352,7 @@ fn readme_sparql_graph_clause() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse");
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("TriG parse");
 
     let result = run_sparql_query(
         &ds,
@@ -376,7 +376,7 @@ fn readme_sparql_distinct_limit() {
     "#;
 
     let mut ds = Datastore::new(10_000);
-    turtle_parser::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse");
 
     let result = run_sparql_query(
         &ds,

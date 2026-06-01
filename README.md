@@ -65,6 +65,40 @@ cargo test -p dag-rdf
 
 ---
 
+## Installation
+
+**Prerequisites:** Rust toolchain 1.85 or later (the workspace uses Rust edition 2024).
+Install via [rustup](https://rustup.rs/) if needed.
+
+### Install from Git (no local clone required)
+
+```sh
+cargo install --git https://github.com/daghovland/rdf-datalog dagalog
+```
+
+This places the `dagalog` binary in `~/.cargo/bin/`, which `rustup` adds to
+`$PATH` automatically.
+
+### Install from a local checkout
+
+```sh
+git clone https://github.com/daghovland/rdf-datalog
+cd rdf-datalog
+cargo install --path .
+```
+
+### Build a release binary manually
+
+```sh
+cargo build --release
+# Binary is at target/release/dagalog
+sudo cp target/release/dagalog /usr/local/bin/
+# or
+cp target/release/dagalog ~/.local/bin/   # if ~/.local/bin is in your PATH
+```
+
+---
+
 ## JSON-LD 1.1
 
 ### Parsing
@@ -410,13 +444,66 @@ dagalog --data data.ttl --serve --port 8080
 
 ---
 
+## Running with Docker
+
+A `Dockerfile` and `docker-compose.yml` are included in the repository.
+
+### Build and run locally
+
+```sh
+# Build the image
+docker build -t dagalog .
+
+# Start an empty server on port 3030
+docker run -p 3030:3030 dagalog
+
+# Load a local Turtle file at startup
+docker run -p 3030:3030 -v ./data:/data dagalog --serve --data /data/my.ttl
+```
+
+Open <http://localhost:3030> in your browser for the interactive UI.
+
+### With docker-compose
+
+The default `docker-compose.yml` mounts a local `./data/` directory and
+loads `./data/dataset.ttl` on startup:
+
+```sh
+docker compose up
+```
+
+To start with an empty store instead, override the command:
+
+```sh
+docker compose run --rm -p 3030:3030 dagalog --serve
+```
+
+### Environment variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `DAGALOG_PORT` | Port to listen on | `3030` |
+| `DAGALOG_READ_ONLY` | Disable the upload endpoint | `false` |
+
+(Full env-var config support is planned — see [`SERVER.md`](SERVER.md).)
+
+---
+
 ## SPARQL HTTP endpoint
 
 | Route | Description |
 |---|---|
+| `GET /` | Browser UI (query + upload) |
 | `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT |
 | `POST /sparql` | SPARQL 1.1 SELECT (form body or direct) |
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
+| `POST /upload` | Load Turtle data into the default graph (stopgap) |
+| `GET /rdf-graph-store?default` or `?graph=<iri>` | GSP — retrieve a graph as Turtle |
+| `PUT /rdf-graph-store?default` or `?graph=<iri>` | GSP — replace a graph |
+| `POST /rdf-graph-store?default` or `?graph=<iri>` | GSP — merge into a graph |
+| `POST /rdf-graph-store` | GSP — create a new graph (server assigns IRI) |
+| `DELETE /rdf-graph-store?default` or `?graph=<iri>` | GSP — delete a graph |
+| `HEAD /rdf-graph-store?default` or `?graph=<iri>` | GSP — existence check, no body |
 
 Response format negotiated via `Accept`; default `application/sparql-results+json`.
 
@@ -447,7 +534,7 @@ See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
 |---|---|---|
 | P0 | SPARQL 1.1 Protocol — SELECT, content negotiation, CORS | Done |
 | P0 | SPARQL 1.1 Service Description | Done |
-| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Planned |
+| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§5.2–§5.6; direct identification §4.1 not planned) |
 | P2 | VoID dataset description | Planned |
 
 ---

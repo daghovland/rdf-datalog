@@ -198,7 +198,7 @@ fn run(cli: Cli) -> Result<(), String> {
         let config = sparql_endpoint::Config {
             bind_addr,
             base_iri,
-            read_only: true,
+            read_only: false,
             max_query_timeout_secs: 30,
         };
         let store = Arc::new(tokio::sync::RwLock::new(datastore));

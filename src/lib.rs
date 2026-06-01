@@ -65,9 +65,9 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     let reader = BufReader::new(file);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext {
-        "trig" => turtle_parser::parse_trig(datastore, reader)
+        "trig" => turtle::parse_trig(datastore, reader)
             .map_err(|e| format!("TriG parse error in {}: {}", path.display(), e)),
-        _ => turtle_parser::parse_turtle(datastore, reader)
+        _ => turtle::parse_turtle(datastore, reader)
             .map_err(|e| format!("Turtle parse error in {}: {}", path.display(), e)),
     }
 }
@@ -383,7 +383,7 @@ ex:Bob a ex:Employee ;
 
     fn load_family() -> Datastore {
         let mut ds = Datastore::new(10_000);
-        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
+        turtle::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
         ds
     }
 
@@ -409,7 +409,7 @@ SELECT ?person WHERE { ?person a ex:Person . }
     #[test]
     fn sparql_with_reasoning() {
         let mut ds = Datastore::new(10_000);
-        turtle_parser::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
+        turtle::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
         // Ontology IS the data file here; re-load for reasoning
         let ontology_doc = rdf2owl(&mut ds);
         let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);

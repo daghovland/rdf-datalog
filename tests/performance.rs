@@ -28,7 +28,7 @@ Contact: hovlanddag@gmail.com
 //! normal `cargo test` run.
 
 use dag_rdf::Datastore;
-use datalog::evaluate_rules;
+use datalog::{DatalogProgram, RulePartitioner, evaluate_rules};
 use datalog_parser::parse_file as parse_datalog_file;
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
@@ -38,7 +38,28 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::time::Instant;
-use turtle_parser::parse_turtle;
+use turtle::parse_turtle;
+
+/// Read current resident set size from /proc/self/status (Linux only).
+fn rss_mb() -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in status.lines() {
+        if line.starts_with("VmRSS:") {
+            let kb: u64 = line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
+            return kb / 1024;
+        }
+    }
+    0
+}
+
+fn report_mem(label: &str, rss: u64) {
+    println!("  {:<40} {:>8} MB RSS", label, rss);
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,6 +169,94 @@ fn run_sparql(
         .1;
     let result = execute(&query, datastore).expect("SPARQL execution must succeed");
     result.rows
+}
+
+// ── Gene Ontology memory-profile diagnostic ──────────────────────────────────
+
+/// Memory profile for the Gene Ontology pipeline up to (but not including)
+/// materialisation.  Reports RSS after each phase so we can identify which
+/// phase causes the OOM.
+///
+/// Safe to run: no materialisation means no quad explosion.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_memory_profile() {
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — memory profile (no materialisation) ===");
+    println!("  {}", "-".repeat(60));
+
+    let rss0 = rss_mb();
+    report_mem("baseline", rss0);
+
+    // Phase 1: parse
+    let t0 = Instant::now();
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).expect("readable");
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse ok");
+    let triple_count = datastore.named_graphs.quad_count;
+    let rss1 = rss_mb();
+    report("Turtle parse", t0.elapsed().as_millis());
+    report_mem("after parse", rss1);
+    println!("    triples: {}", triple_count);
+
+    // Phase 2: RDF → OWL
+    let t1 = Instant::now();
+    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology = &ontology_doc.ontology;
+    let axiom_count = ontology.axioms.len();
+    let rss2 = rss_mb();
+    report("RDF → OWL", t1.elapsed().as_millis());
+    report_mem("after rdf2owl", rss2);
+    println!("    axioms: {}", axiom_count);
+
+    // Phase 3: OWL → Datalog rules
+    let t2 = Instant::now();
+    let rules = owl2datalog(&mut datastore.resources, ontology);
+    let rule_count = rules.len();
+    let rss3 = rss_mb();
+    report("OWL → Datalog rules", t2.elapsed().as_millis());
+    report_mem("after rule gen", rss3);
+    println!("    rules: {}", rule_count);
+
+    // Phase 4: stratification
+    let t3 = Instant::now();
+    let stratifier = RulePartitioner::new(rules);
+    let stratification = stratifier.order_rules();
+    let strata_count = stratification.len();
+    let rss4 = rss_mb();
+    report("Stratification", t3.elapsed().as_millis());
+    report_mem("after stratification", rss4);
+    println!("    strata: {}", strata_count);
+
+    // Phase 5: build rule_map (DatalogProgram::new) — no materialisation
+    let t4 = Instant::now();
+    let mut programs: Vec<DatalogProgram> = Vec::new();
+    for partition in stratification {
+        programs.push(DatalogProgram::new(partition));
+    }
+    let rss5 = rss_mb();
+    report("DatalogProgram::new (rule_map)", t4.elapsed().as_millis());
+    report_mem("after rule_map build", rss5);
+
+    println!();
+    println!("  Memory deltas:");
+    println!("    parse          {:>+6} MB", rss1 as i64 - rss0 as i64);
+    println!("    rdf2owl        {:>+6} MB", rss2 as i64 - rss1 as i64);
+    println!("    rule gen       {:>+6} MB", rss3 as i64 - rss2 as i64);
+    println!("    stratification {:>+6} MB", rss4 as i64 - rss3 as i64);
+    println!("    rule_map build {:>+6} MB", rss5 as i64 - rss4 as i64);
+    println!("    TOTAL          {:>+6} MB", rss5 as i64 - rss0 as i64);
+    println!();
+
+    assert!(triple_count > 100_000);
+    assert!(axiom_count > 0);
+    assert!(rule_count > 0);
+    // Hold programs alive so their memory is attributed above.
+    drop(programs);
 }
 
 // ── Gene Ontology performance test ────────────────────────────────────────────
@@ -336,6 +445,19 @@ fn gene_ontology_axiom_extraction() {
 
     assert!(!ontology.axioms.is_empty(), "expected OWL axioms");
     assert!(!rules.is_empty(), "expected Datalog rules");
+
+    // Print the first 10 rules and the first 5 quads so we can diagnose graph/predicate matching.
+    println!("  --- first 10 rules ---");
+    for r in rules.iter().take(10) {
+        println!("    {}", r);
+    }
+    println!("  --- first 5 input quads (via resource IDs) ---");
+    for q in datastore.named_graphs.quad_list.iter().take(5) {
+        println!(
+            "    g={} s={} p={} o={}",
+            q.triple_id, q.subject, q.predicate, q.obj
+        );
+    }
 }
 
 /// SPARQL query performance over a fully materialised Gene Ontology.
@@ -572,4 +694,102 @@ fn imf_rules_generation_and_parsing_round_trip() {
         parsed_rules.len(),
         "round-trip rule count must match"
     );
+}
+
+/// Materialisation progress diagnostic for the Gene Ontology.
+///
+/// Runs the pipeline up to materialisation, then executes at most MAX_ITER
+/// semi-naive iterations, printing per-iteration stats (delta size, inferred
+/// quad count, RSS, elapsed).  Stops early on iteration limit so the test
+/// always returns in bounded time even if full convergence would OOM.
+///
+/// Use this test to understand how much inference each iteration produces
+/// before committing to running the full pipeline.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn gene_ontology_materialise_progress() {
+    const MAX_ITER: usize = 5;
+
+    let path = test_data("go.ttl");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Gene Ontology — materialisation progress ({MAX_ITER} iterations max) ===");
+    println!("  {}", "-".repeat(60));
+
+    // ── Build up to DatalogProgram::new (same as memory_profile) ────────────
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).expect("readable");
+    parse_turtle(&mut datastore, BufReader::new(file)).expect("parse ok");
+    let ontology_doc = rdf2owl(&mut datastore);
+    let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
+    let rule_count = rules.len();
+
+    let stratifier = RulePartitioner::new(rules);
+    let stratification = stratifier.order_rules();
+
+    let programs: Vec<DatalogProgram> = stratification
+        .into_iter()
+        .map(DatalogProgram::new)
+        .collect();
+
+    report_mem("before materialisation", rss_mb());
+    println!("    rules: {rule_count}  programs: {}", programs.len());
+    println!();
+    println!(
+        "  {:>4}  {:>12}  {:>12}  {:>8}  {:>8}",
+        "iter", "delta_in", "inferred", "store", "RSS MB"
+    );
+    println!("  {}", "-".repeat(60));
+
+    // ── Iterate materialisation one step at a time ────────────────────────────
+    // Seeds ground facts for each stratum first.
+    for quad in programs.iter().flat_map(|p| p.materialise_seed_facts()) {
+        datastore.named_graphs.add_quad(quad);
+    }
+
+    let mut delta_start: usize = 0;
+    let mut total_inferred: usize = 0;
+
+    // We only have one stratum (pure-positive GO), so use programs[0].
+    let program = match programs.first() {
+        Some(p) => p,
+        None => {
+            println!("  (no rules — nothing to materialise)");
+            return;
+        }
+    };
+
+    for iter in 0..MAX_ITER {
+        let t = Instant::now();
+        let delta_in = datastore
+            .named_graphs
+            .quad_count
+            .saturating_sub(delta_start);
+
+        match program.materialise_one_iteration(&mut datastore.named_graphs, delta_start) {
+            None => {
+                println!("  Fixpoint reached after {iter} iterations.");
+                break;
+            }
+            Some((new_start, inferred)) => {
+                total_inferred += inferred;
+                println!(
+                    "  {:>4}  {:>12}  {:>12}  {:>8}  {:>8}  ({} ms)",
+                    iter,
+                    delta_in,
+                    inferred,
+                    datastore.named_graphs.quad_count,
+                    rss_mb(),
+                    t.elapsed().as_millis()
+                );
+                delta_start = new_start;
+            }
+        }
+    }
+
+    println!();
+    println!("  Total inferred after {MAX_ITER} iterations: {total_inferred}");
+    report_mem("after partial materialisation", rss_mb());
 }

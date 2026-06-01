@@ -7,12 +7,11 @@ Contact: hovlanddag@gmail.com
 */
 
 use crate::datalog::{
-    apply_substitution_quad, constant_quad_pattern, empty_substitution, evaluate,
-    get_matches_for_rule, get_partial_matches, is_fact, is_safe_rule, merge_partial_match_maps,
-    wildcard_quad_pattern,
+    apply_substitution_quad, constant_quad_pattern, direct_wildcard_pattern, empty_substitution,
+    evaluate, get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern,
 };
 use crate::stratifier::RulePartitioner;
-use crate::types::{PartialRule, QuadWildcard, Rule, RuleHead};
+use crate::types::{PartialRule, QuadWildcard, Rule, RuleAtom, RuleHead};
 use dag_rdf::{Datastore, QuadTable};
 use std::collections::HashMap;
 
@@ -28,18 +27,37 @@ impl DatalogProgram {
         for r in &rules {
             is_safe_rule(r); // panics on unsafe rule
         }
-        let rule_map = rules
-            .iter()
-            .map(get_partial_matches)
-            .reduce(|a, b| merge_partial_match_maps(vec![a, b]))
-            .unwrap_or_default();
+        // Single-pass build: one entry per body atom, using the canonical (exact)
+        // wildcard pattern.  Sub-wildcard expansion happens on the FACT side in
+        // get_rules_for_fact, so the rule only needs its direct pattern as a key.
+        // Using all sub-wildcards here would index every rule under (*, *, *, *),
+        // causing every fact to scan every rule — O(facts × rules) = catastrophic.
+        let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
+        for rule in &rules {
+            for atom in &rule.body {
+                if let RuleAtom::PositivePattern(p) = atom {
+                    let wc = direct_wildcard_pattern(p);
+                    rule_map.entry(wc).or_default().push(PartialRule {
+                        rule: rule.clone(),
+                        match_pattern: p.clone(),
+                    });
+                }
+            }
+        }
         DatalogProgram { rules, rule_map }
     }
 
     pub fn add_rule(&mut self, rule: Rule) {
         is_safe_rule(&rule);
-        let new_map = get_partial_matches(&rule);
-        self.rule_map = merge_partial_match_maps(vec![std::mem::take(&mut self.rule_map), new_map]);
+        for atom in &rule.body {
+            if let RuleAtom::PositivePattern(p) = atom {
+                let wc = direct_wildcard_pattern(p);
+                self.rule_map.entry(wc).or_default().push(PartialRule {
+                    rule: rule.clone(),
+                    match_pattern: p.clone(),
+                });
+            }
+        }
         self.rules.push(rule);
     }
 
@@ -65,6 +83,49 @@ impl DatalogProgram {
             .collect()
     }
 
+    /// Return the ground facts encoded directly in rules (body-less rules).
+    /// Callers that want to drive materialisation manually must seed these before
+    /// calling `materialise_one_iteration`.
+    pub fn materialise_seed_facts(&self) -> Vec<dag_rdf::Quad> {
+        self.get_facts()
+    }
+
+    /// Run one semi-naive iteration over `named_graphs`, starting from `delta_start`.
+    ///
+    /// Returns `(new_delta_start, inferred_count)` where `inferred_count` is the number
+    /// of quads added this iteration.  Returns `None` when the fixpoint is reached
+    /// (no new quads were produced in the previous iteration).
+    pub fn materialise_one_iteration(
+        &self,
+        named_graphs: &mut QuadTable,
+        delta_start: usize,
+    ) -> Option<(usize, usize)> {
+        let delta_end = named_graphs.quad_count;
+        if delta_start >= delta_end {
+            return None; // fixpoint reached
+        }
+
+        let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
+
+        for quad in &delta {
+            for rule_match in self.get_rules_for_fact(quad) {
+                let head_pattern = match &rule_match.partial_rule.rule.head {
+                    RuleHead::Contradiction => panic!(
+                        "Contradiction during reasoning: {}",
+                        rule_match.partial_rule.rule
+                    ),
+                    RuleHead::NormalHead(h) => h.clone(),
+                };
+                for sub in evaluate(named_graphs, &rule_match) {
+                    named_graphs.add_quad(apply_substitution_quad(&sub, &head_pattern));
+                }
+            }
+        }
+
+        let new_count = named_graphs.quad_count - delta_end;
+        Some((delta_end, new_count))
+    }
+
     /// Semi-naive forward-chaining materialisation over the quad store.
     ///
     /// Each iteration evaluates rules only against the *delta* — quads newly
@@ -76,34 +137,11 @@ impl DatalogProgram {
             named_graphs.add_quad(quad);
         }
 
-        // delta_start tracks the index into quad_list where the current delta begins.
-        // Initially the entire store is the delta (all input facts are "new").
         let mut delta_start: usize = 0;
-
         loop {
-            let delta_end = named_graphs.quad_count;
-            if delta_start >= delta_end {
-                break; // nothing new last round — fixpoint reached
-            }
-
-            // Snapshot the delta so we can mutate named_graphs during the loop.
-            let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
-            delta_start = delta_end;
-
-            for quad in &delta {
-                for rule_match in self.get_rules_for_fact(quad) {
-                    let head_pattern = match &rule_match.partial_rule.rule.head {
-                        RuleHead::Contradiction => panic!(
-                            "Contradiction during reasoning: {}",
-                            rule_match.partial_rule.rule
-                        ),
-                        RuleHead::NormalHead(h) => h.clone(),
-                    };
-                    for sub in evaluate(named_graphs, &rule_match) {
-                        let new_quad = apply_substitution_quad(&sub, &head_pattern);
-                        named_graphs.add_quad(new_quad); // dedup handled internally
-                    }
-                }
+            match self.materialise_one_iteration(named_graphs, delta_start) {
+                None => break,
+                Some((new_start, _)) => delta_start = new_start,
             }
         }
     }
