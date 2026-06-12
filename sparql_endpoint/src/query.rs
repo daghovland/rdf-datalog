@@ -15,7 +15,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::{
     AppState,
-    negotiate::{SelectFormat, negotiate_select_format},
+    negotiate::negotiate_select_format,
     serialize::sparql_json::{ask_to_sparql_json, to_sparql_json},
     service_desc::service_description_turtle,
 };

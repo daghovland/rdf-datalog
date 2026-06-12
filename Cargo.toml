@@ -19,7 +19,7 @@ datalog-parser = { path = "datalog_parser" }
 sparql-parser = { path = "sparql_parser" }
 sparql-endpoint = { path = "sparql_endpoint" }
 log = "0.4"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]

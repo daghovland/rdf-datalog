@@ -9,7 +9,7 @@ Contact: hovlanddag@gmail.com
 use crate::AppState;
 use axum::{
     Router,
-    routing::{delete, get, post, put},
+    routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
 

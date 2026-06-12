@@ -3,6 +3,9 @@ name = "sparql-endpoint"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+browser-tests = ["dep:fantoccini"]
+
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 sparql-parser = { path = "../sparql_parser" }
@@ -12,9 +15,10 @@ tokio = { version = "1.52", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 serde_json = "1"
 urlencoding = "2"
+fantoccini = { version = "0.22", optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.13", features = ["json"] }
 urlencoding = "2"
-thirtyfour = { version = "0.37", default-features = false, features = ["reqwest", "rustls"] }
+tokio = { version = "1", features = ["full"] }
 serde_json = "1"

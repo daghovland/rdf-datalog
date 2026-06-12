@@ -14,7 +14,10 @@ fn test_parse_simple_select() {
         projection,
         where_clause,
         ..
-    } = query;
+    } = query
+    else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(projection.len(), 1);
     assert_eq!(
@@ -49,7 +52,10 @@ fn test_parse_with_prefix() {
         projection,
         where_clause,
         ..
-    } = query;
+    } = query
+    else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(projection.len(), 1);
     if let ProjectionElement::Variable(v) = &projection[0] {
@@ -83,7 +89,9 @@ fn test_parse_sparql12_graph_clause_with_iri() {
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 GRAPH clause");
-    let Query::Select { where_clause, .. } = query;
+    let Query::Select { where_clause, .. } = query else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(where_clause.len(), 1);
     match &where_clause[0] {
@@ -115,7 +123,10 @@ fn test_parse_sparql12_graph_clause_with_variable_graph_name() {
         projection,
         where_clause,
         ..
-    } = query;
+    } = query
+    else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(projection.len(), 2);
     assert_eq!(where_clause.len(), 1);
@@ -146,7 +157,9 @@ fn test_parse_semicolon_comma_and_property_path() {
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse shorthand and path");
-    let Query::Select { where_clause, .. } = query;
+    let Query::Select { where_clause, .. } = query else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(where_clause.len(), 1);
     match &where_clause[0] {
@@ -177,7 +190,9 @@ fn test_parse_sparql12_optional_with_bound_filter() {
 
     let (_, query) =
         parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 OPTIONAL/FILTER example");
-    let Query::Select { where_clause, .. } = query;
+    let Query::Select { where_clause, .. } = query else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(where_clause.len(), 3);
     assert!(matches!(where_clause[0], QueryComponent::BGP(_)));
@@ -200,7 +215,9 @@ fn test_parse_sparql12_union_example() {
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 UNION example");
-    let Query::Select { where_clause, .. } = query;
+    let Query::Select { where_clause, .. } = query else {
+        panic!("expected Select query");
+    };
 
     assert_eq!(where_clause.len(), 1);
     assert!(matches!(where_clause[0], QueryComponent::Union(_, _)));

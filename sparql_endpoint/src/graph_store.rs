@@ -255,11 +255,6 @@ pub(crate) fn parse_rdf_body(
     Ok(tmp)
 }
 
-#[allow(clippy::result_large_err)]
-fn parse_turtle_body(body: &[u8]) -> Result<dag_rdf::Datastore, axum::response::Response> {
-    parse_rdf_body(body, UploadFormat::Turtle)
-}
-
 // ── Handlers ─────────────────────────────────────────────────────────────────
 //
 // Each public handler is a thin wrapper that extracts axum State/Query then
