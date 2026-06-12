@@ -49,7 +49,10 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::graph_store::direct_gsp_get).put(crate::graph_store::direct_gsp_put),
         )
         // ── Admin API (`/$/...`) ─────────────────────────────────────────────
-        .route("/$/ping", get(crate::admin::admin_ping).post(crate::admin::admin_ping))
+        .route(
+            "/$/ping",
+            get(crate::admin::admin_ping).post(crate::admin::admin_ping),
+        )
         .route("/$/server", get(crate::admin::admin_server))
         .route(
             "/$/datasets",

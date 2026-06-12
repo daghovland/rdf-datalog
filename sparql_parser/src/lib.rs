@@ -21,7 +21,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 pub mod execute;
-pub use execute::{execute, SelectResult, SolutionRow};
+pub use execute::{execute, QueryResult, SelectResult, SolutionRow};
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
@@ -49,7 +49,23 @@ pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'
     let (mut input, _) = many0(parse_prefix(ctx))(input)?;
     input = multispace0(input)?.0;
 
-    // Only SELECT is supported right now
+    // ASK query: ASK [WHERE] GroupGraphPattern
+    if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("ASK")(input) {
+        let boundary = rest
+            .chars()
+            .next()
+            .map(|c| c.is_whitespace() || c == '{')
+            .unwrap_or(true);
+        if boundary {
+            let (rest, _) = multispace0(rest)?;
+            let (rest, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(rest)?;
+            let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
+            let (rest, _) = multispace0(rest)?;
+            return Ok((rest, Query::Ask { where_clause }));
+        }
+    }
+
+    // SELECT query
     let (input, _) = tag_no_case("SELECT")(input)?;
     let (input, _) = multispace1(input)?;
 

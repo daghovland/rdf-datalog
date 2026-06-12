@@ -526,6 +526,44 @@ async fn main() {
 
 ---
 
+## Web UI
+
+Navigate to `http://localhost:3030` in your browser for the interactive interface.
+
+| Feature | Description |
+|---|---|
+| SPARQL query editor | Configurable prefix manager (persisted), auto-prepend prefixes, query history |
+| Resource browser | Click any IRI in results to explore its properties and back-links |
+| Graph visualisation | Three-variable queries render as an interactive node-edge graph |
+| Turtle upload | Paste Turtle directly into the upload panel |
+| Store statistics | Live triple count shown in the page header |
+
+### Resource browser
+
+Clicking any IRI in query results opens a resource page (`/?resource=<iri>`) showing:
+
+- `rdfs:label` as the page heading when present
+- `rdf:type` class memberships shown as badges
+- All outgoing properties (`?p ?o`) — collapsible table
+- All incoming back-links (`?s ?p`) — collapsible table (capped at 200)
+
+All IRIs on the resource page are also clickable, enabling linked-data browsing through
+the knowledge graph.
+
+### Graph view
+
+When a SELECT query returns exactly three variables (treated as subject, predicate, object),
+a **Graph** tab appears next to the Table tab. The graph is rendered via
+[Cytoscape.js](https://js.cytoscape.org/) (loaded from CDN on first use):
+
+- **Blue nodes** — URI resources (click to open the resource browser)
+- **Grey nodes** — blank nodes
+- **Directed edges** — labelled with the shortened predicate name
+
+Graphs are capped at 200 nodes; add `LIMIT` to reduce the dataset.
+
+---
+
 ## Protocol compliance
 
 See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.

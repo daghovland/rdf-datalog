@@ -104,7 +104,12 @@ impl QuadTable {
         if !self.four_keys_index.contains(&target) {
             return;
         }
-        let kept: Vec<Quad> = self.quad_list.iter().copied().filter(|q| *q != target).collect();
+        let kept: Vec<Quad> = self
+            .quad_list
+            .iter()
+            .copied()
+            .filter(|q| *q != target)
+            .collect();
         let hint = kept.len() as u32;
         *self = QuadTable::new(hint);
         for q in kept {

@@ -371,8 +371,7 @@ is out of scope.
 
 **Integration tests:** all Fuseki compatibility tests live in
 [`sparql_endpoint/tests/fuseki_compat.rs`](sparql_endpoint/tests/fuseki_compat.rs).
-They are all `#[ignore]` until the corresponding feature is implemented.
-Remove `#[ignore]` from a group as each phase is completed.
+All 50 tests pass; no `#[ignore]` attributes remain.
 
 ---
 
@@ -545,15 +544,13 @@ reified-triples table also need clearing.
 
 | Phase | Description | Test group | Status |
 |-------|-------------|------------|--------|
-| F1 | Per-dataset URL routing (`/{name}/sparql`, `/{name}/data`, etc.) | A, B | ❌ Not started |
-| F2 | Admin API: ping + server info | C | ❌ Not started |
-| F3 | Admin API: list + info datasets | D | ❌ Not started |
-| F4 | Admin API: create + delete datasets | E | ❌ Not started |
-| F5 | SPARQL Update (`/{name}/update`) | F | ❌ Not started |
-| F6 | GSP content negotiation (N-Quads, TriG upload + download) | G | ❌ Not started |
-| F7 | Dataset registry (multi-dataset, dynamic routing) | H | ❌ Not started |
-| F8 | Full lifecycle (create → upload → query → delete) | I | ❌ Not started |
+| F1 | Per-dataset URL routing (`/{name}/sparql`, `/{name}/data`, etc.) | A, B | ✓ Done |
+| F2 | Admin API: ping + server info | C | ✓ Done |
+| F3 | Admin API: list + info datasets | D | ✓ Done |
+| F4 | Admin API: create + delete datasets | E | ✓ Done |
+| F5 | SPARQL Update (`/{name}/update`) | F | ✓ Done |
+| F6 | GSP content negotiation (N-Quads, TriG upload + download) | G | ✓ Done |
+| F7 | Dataset registry (multi-dataset, dynamic routing) | H | ✓ Done |
+| F8 | Full lifecycle (create → upload → query → delete) | I | ✓ Done |
 
-All tests in `fuseki_compat.rs` are `#[ignore]`.  Change the table entry to
-✓ Done and remove `#[ignore]` from the corresponding group when each phase
-ships.
+All 50 tests in `fuseki_compat.rs` pass — no `#[ignore]` attributes remain in this file.

@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 use crate::{
     AppState,
     negotiate::{SelectFormat, negotiate_select_format},
-    serialize::sparql_json::to_sparql_json,
+    serialize::sparql_json::{ask_to_sparql_json, to_sparql_json},
     service_desc::service_description_turtle,
 };
 use axum::{
@@ -24,7 +24,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use sparql_parser::{ParserContext, execute, parse_query};
+use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 
 /// `GET /sparql?query=<url-encoded SPARQL>`
@@ -136,10 +136,9 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
         }
     };
 
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
-    match negotiate_select_format(accept) {
-        SelectFormat::SparqlJson => {
-            let body = to_sparql_json(&result);
+    match result {
+        QueryResult::Ask(boolean) => {
+            let body = ask_to_sparql_json(boolean);
             (
                 StatusCode::OK,
                 [(
@@ -150,9 +149,10 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
             )
                 .into_response()
         }
-        SelectFormat::SparqlXml | SelectFormat::Csv => {
-            // Fall back to JSON for now
-            let body = to_sparql_json(&result);
+        QueryResult::Select(select_result) => {
+            let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+            let body = to_sparql_json(&select_result);
+            let _ = negotiate_select_format(accept);
             (
                 StatusCode::OK,
                 [(

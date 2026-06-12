@@ -197,13 +197,14 @@ fn graph_response_parts(
             body,
         )
             .into_response(),
-        Some(RdfFormat::TriG) => (
-            StatusCode::OK,
-            [("content-type", "application/trig")],
-            body,
+        Some(RdfFormat::TriG) => {
+            (StatusCode::OK, [("content-type", "application/trig")], body).into_response()
+        }
+        None => (
+            StatusCode::NOT_ACCEPTABLE,
+            "No supported RDF format in Accept",
         )
             .into_response(),
-        None => (StatusCode::NOT_ACCEPTABLE, "No supported RDF format in Accept").into_response(),
     }
 }
 
@@ -249,7 +250,8 @@ pub(crate) fn parse_rdf_body(
         UploadFormat::NQuads => turtle::parse_nquads(&mut tmp, Cursor::new(body)),
         UploadFormat::TriG => turtle::parse_trig(&mut tmp, Cursor::new(body)),
     };
-    result.map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
+    result
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
     Ok(tmp)
 }
 

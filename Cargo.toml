@@ -1,6 +1,7 @@
 [workspace]
 members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "jsonld_parser", "."]
 
+
 [package]
 name = "dagalog"
 version = "0.1.0"

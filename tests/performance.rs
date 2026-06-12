@@ -32,7 +32,7 @@ use datalog::{DatalogProgram, RulePartitioner, evaluate_rules};
 use datalog_parser::parse_file as parse_datalog_file;
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
-use sparql_parser::{ParserContext, execute, parse_query};
+use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -167,8 +167,10 @@ fn run_sparql(
     let query = parse_query(query_str, &mut ctx)
         .expect("SPARQL query must parse")
         .1;
-    let result = execute(&query, datastore).expect("SPARQL execution must succeed");
-    result.rows
+    match execute(&query, datastore).expect("SPARQL execution must succeed") {
+        QueryResult::Select(r) => r.rows,
+        QueryResult::Ask(_) => panic!("expected SELECT result"),
+    }
 }
 
 // ── Gene Ontology memory-profile diagnostic ──────────────────────────────────

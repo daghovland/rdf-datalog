@@ -31,8 +31,14 @@ pub struct SelectResult {
     pub rows: Vec<SolutionRow>,
 }
 
+/// The result of executing a SPARQL query (SELECT or ASK).
+pub enum QueryResult {
+    Select(SelectResult),
+    Ask(bool),
+}
+
 /// Execute a parsed SPARQL query against `datastore`.
-pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, String> {
+pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, String> {
     match query {
         Query::Select {
             projection,
@@ -84,7 +90,17 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<SelectResult, Str
                 rows.truncate(*lim as usize);
             }
 
-            Ok(SelectResult { variables, rows })
+            Ok(QueryResult::Select(SelectResult { variables, rows }))
+        }
+        Query::Ask { where_clause } => {
+            let initial: Vec<PartialSub> = vec![HashMap::new()];
+            let solutions = eval_components(
+                where_clause,
+                initial,
+                datastore,
+                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+            );
+            Ok(QueryResult::Ask(!solutions.is_empty()))
         }
     }
 }
