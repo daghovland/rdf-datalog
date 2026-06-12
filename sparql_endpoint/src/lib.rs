@@ -6,24 +6,23 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! SPARQL 1.1 HTTP endpoint.
-//!
-//! Implements:
-//! - P0: SPARQL 1.1 Protocol (GET/POST /sparql for SELECT/ASK/CONSTRUCT/DESCRIBE)
-//! - P0: CORS headers
-//! - P0: Content negotiation (SPARQL JSON, N-Triples, Turtle)
-//! - P1: SPARQL 1.1 Service Description (GET /sparql with no query param)
+//! SPARQL 1.1 HTTP endpoint + Fuseki-compatible admin API.
 
+pub mod admin;
+pub mod dataset_routes;
 pub mod frontend;
 pub mod graph_store;
 pub mod negotiate;
 pub mod query;
+pub mod registry;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
+pub mod sparql_update;
 pub mod upload;
 
 use dag_rdf::datastore::Datastore;
+use registry::DatasetRegistry;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -55,29 +54,32 @@ impl Default for Config {
 /// Shared application state threaded through all handlers.
 #[derive(Clone)]
 pub struct AppState {
+    /// The default dataset store (the `"ds"` entry in the registry).
+    /// Kept for backward compatibility with existing `/sparql` and `/rdf-graph-store` routes.
     pub store: Arc<RwLock<Datastore>>,
+    /// All named datasets, including `"ds"` which aliases `store`.
+    pub registry: Arc<RwLock<DatasetRegistry>>,
     pub config: Config,
 }
 
 /// Start the SPARQL endpoint server.
-///
-/// Builds the axum router and binds to `config.bind_addr`.
-/// This function does not return until the server shuts down.
 pub async fn serve(store: Arc<RwLock<Datastore>>, config: Config) -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     serve_on_listener(store, config, listener).await
 }
 
-/// Start the server on an already-bound listener.
-///
-/// Useful for tests: bind to port 0, read the OS-assigned port from
-/// `listener.local_addr()`, then pass the listener here.
+/// Start the server on an already-bound listener (useful for tests).
 pub async fn serve_on_listener(
     store: Arc<RwLock<Datastore>>,
     config: Config,
     listener: tokio::net::TcpListener,
 ) -> Result<(), std::io::Error> {
-    let state = AppState { store, config };
+    let registry = DatasetRegistry::new_with_default(store.clone());
+    let state = AppState {
+        store,
+        registry: Arc::new(RwLock::new(registry)),
+        config,
+    };
     let app = server::build_router(state);
     axum::serve(listener, app).await
 }

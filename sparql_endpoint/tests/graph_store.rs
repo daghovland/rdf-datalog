@@ -1049,16 +1049,19 @@ async fn gsp_head_content_type_matches_get() {
     );
 }
 
-// ── F: Direct Graph Identification (§4.1, optional feature) ─────────────────
+// ── F: Direct Graph Identification (§4.1) ────────────────────────────────────
 //
-// §4.1 describes an *optional* mode where the request URI itself IS the graph
+// §4.1 describes an optional mode where the request URI itself IS the graph
 // IRI (e.g. `GET http://example.com/rdf-graphs/employees` rather than
 // `GET /rdf-graph-store?graph=http://example.com/rdf-graphs/employees`).
 //
-// These tests are included for spec completeness. They are also `#[ignore]`
-// on top of the `#[ignore]` that is already expected of all GSP tests — the
-// feature may not be implemented at all if §4.2 indirect identification is
-// sufficient.
+// Route: `GET /rdf-graphs/*path` and `PUT /rdf-graphs/*path`.
+// The graph IRI is `{base_iri}/rdf-graphs/{path}`.
+//
+// Implementation: `graph_store::direct_gsp_get` / `direct_gsp_put`.
+// Note on F-1: direct-identification GET requires the graph IRI to contain the
+// server's dynamically-bound port, so the test creates the graph with PUT
+// first rather than pre-loading a TriG fixture at startup.
 
 /// F-1: Direct GET — the request URI identifies the named graph directly.
 ///
@@ -1069,16 +1072,26 @@ async fn gsp_head_content_type_matches_get() {
 /// Accept: text/turtle; charset=utf-8
 /// ```
 ///
+/// For direct identification the graph IRI equals the full request URL, which
+/// contains the server's dynamically assigned port. A startup TriG fixture
+/// cannot encode that port, so this test first creates the graph with PUT
+/// (separately tested by F-2) and then verifies GET returns 200.
+///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_direct_get_graph_returns_200() {
-    // This test assumes the server routes /rdf-graphs/<name> to named graphs
-    // where the full request IRI is used as the graph IRI — an optional feature.
-    let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
-    // Under direct identification, NAMED_GRAPH_IRI == the request URL, so we
-    // construct it relative to the server's base.
+    let server = common::TestServer::start_writable("").await;
     let url = format!("{}/rdf-graphs/graph1", server.base_url);
+    // Setup: create the graph via PUT so its IRI equals the request URL.
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    // Assertion: GET the same URL and expect 200 with an RDF body.
     let resp = server
         .client
         .get(&url)
@@ -1087,6 +1100,8 @@ async fn gsp_direct_get_graph_returns_200() {
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap_or("");
+    assert!(ct.contains("text/turtle"), "unexpected content-type: {ct}");
 }
 
 /// F-2: Direct PUT — store a new graph at a URL that becomes its IRI.
@@ -1095,7 +1110,6 @@ async fn gsp_direct_get_graph_returns_200() {
 /// Graph Store via its Graph IRI."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_direct_put_graph_creates_201() {
     let server = common::TestServer::start_writable("").await;

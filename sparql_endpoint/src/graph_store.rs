@@ -125,14 +125,10 @@ fn resolve_write_target(
 enum RdfFormat {
     Turtle,
     NTriples,
+    NQuads,
+    TriG,
 }
 
-/// Negotiate an RDF serialisation format from an `Accept` header value.
-///
-/// Returns `None` if the client's `Accept` excludes all supported RDF formats
-/// (caller should respond `406 Not Acceptable`).
-///
-/// Supported: `text/turtle`, `application/n-triples`, `*/*`, `text/*`.
 fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
     let accept = match accept {
         None | Some("") => return Some(RdfFormat::Turtle),
@@ -143,52 +139,71 @@ fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
         match mime {
             "text/turtle" | "text/*" | "*/*" => return Some(RdfFormat::Turtle),
             "application/n-triples" => return Some(RdfFormat::NTriples),
+            "application/n-quads" => return Some(RdfFormat::NQuads),
+            "application/trig" => return Some(RdfFormat::TriG),
             _ => {}
         }
     }
     None
 }
 
-fn is_turtle_content_type(ct: &str) -> bool {
+/// Recognised RDF upload content-types.
+pub(crate) fn rdf_upload_format(ct: &str) -> Option<UploadFormat> {
     let mime = ct.split(';').next().unwrap_or("").trim();
-    matches!(
-        mime,
-        "text/turtle" | "application/x-turtle" | "application/n-triples" | "application/rdf+xml"
-    )
+    match mime {
+        "text/turtle" | "application/x-turtle" | "application/rdf+xml" => {
+            Some(UploadFormat::Turtle)
+        }
+        "application/n-triples" => Some(UploadFormat::NTriples),
+        "application/n-quads" => Some(UploadFormat::NQuads),
+        "application/trig" => Some(UploadFormat::TriG),
+        _ => None,
+    }
+}
+
+pub(crate) enum UploadFormat {
+    Turtle,
+    NTriples,
+    NQuads,
+    TriG,
 }
 
 // ── Shared graph serialisation ────────────────────────────────────────────────
 
-/// Build the GET response body for a graph, or a 406 if the Accept is unsatisfied.
 fn graph_response_parts(
     store: &dag_rdf::Datastore,
     graph_id: GraphElementId,
     accept: Option<&str>,
 ) -> axum::response::Response {
+    // serialize_graph produces valid N-Triples (fully-expanded, one triple per line).
+    // That output is also valid N-Quads (default graph) and valid TriG.
+    let body = serialize_graph(store, graph_id);
     match negotiate_rdf_format(accept) {
-        Some(RdfFormat::Turtle) => {
-            let body = serialize_graph(store, graph_id);
-            (
-                StatusCode::OK,
-                [("content-type", "text/turtle; charset=utf-8")],
-                body,
-            )
-                .into_response()
-        }
-        Some(RdfFormat::NTriples) => {
-            let body = serialize_graph(store, graph_id);
-            (
-                StatusCode::OK,
-                [("content-type", "application/n-triples")],
-                body,
-            )
-                .into_response()
-        }
-        None => (
-            StatusCode::NOT_ACCEPTABLE,
-            "No supported RDF format in Accept",
+        Some(RdfFormat::Turtle) => (
+            StatusCode::OK,
+            [("content-type", "text/turtle; charset=utf-8")],
+            body,
         )
             .into_response(),
+        Some(RdfFormat::NTriples) => (
+            StatusCode::OK,
+            [("content-type", "application/n-triples")],
+            body,
+        )
+            .into_response(),
+        Some(RdfFormat::NQuads) => (
+            StatusCode::OK,
+            [("content-type", "application/n-quads")],
+            body,
+        )
+            .into_response(),
+        Some(RdfFormat::TriG) => (
+            StatusCode::OK,
+            [("content-type", "application/trig")],
+            body,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_ACCEPTABLE, "No supported RDF format in Accept").into_response(),
     }
 }
 
@@ -220,26 +235,47 @@ fn copy_default_graph_to(
     }
 }
 
-/// Parse `body` as Turtle into a temporary `Datastore`.
-///
-/// Returns `Err(400-response)` on parse failure.
+/// Parse `body` using the format indicated by `fmt` into a temporary `Datastore`.
 #[allow(clippy::result_large_err)]
-fn parse_turtle_body(body: &[u8]) -> Result<dag_rdf::Datastore, axum::response::Response> {
+pub(crate) fn parse_rdf_body(
+    body: &[u8],
+    fmt: UploadFormat,
+) -> Result<dag_rdf::Datastore, axum::response::Response> {
     let mut tmp = dag_rdf::Datastore::new(256);
-    turtle::parse_turtle(&mut tmp, Cursor::new(body)).map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response()
-    })?;
+    let result = match fmt {
+        UploadFormat::Turtle | UploadFormat::NTriples => {
+            turtle::parse_turtle(&mut tmp, Cursor::new(body))
+        }
+        UploadFormat::NQuads => turtle::parse_nquads(&mut tmp, Cursor::new(body)),
+        UploadFormat::TriG => turtle::parse_trig(&mut tmp, Cursor::new(body)),
+    };
+    result.map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
     Ok(tmp)
 }
 
-// ── Handlers ─────────────────────────────────────────────────────────────────
+#[allow(clippy::result_large_err)]
+fn parse_turtle_body(body: &[u8]) -> Result<dag_rdf::Datastore, axum::response::Response> {
+    parse_rdf_body(body, UploadFormat::Turtle)
+}
 
-/// `GET /rdf-graph-store?default` or `?graph=<iri>`
-///
-/// Spec §5.2: <https://www.w3.org/TR/sparql11-http-rdf-update/#http-get>
+// ── Handlers ─────────────────────────────────────────────────────────────────
+//
+// Each public handler is a thin wrapper that extracts axum State/Query then
+// delegates to a `_inner` function.  The `_inner` functions take a plain
+// `AppState` (and raw params), so per-dataset route handlers can call them
+// after substituting the dataset-specific store.
+
 pub async fn gsp_get(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    gsp_get_inner(state, params, headers).await
+}
+
+pub async fn gsp_get_inner(
+    state: AppState,
+    params: HashMap<String, String>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
@@ -252,14 +288,17 @@ pub async fn gsp_get(
     graph_response_parts(&store, graph_id, accept)
 }
 
-/// `HEAD /rdf-graph-store?default` or `?graph=<iri>`
-///
-/// Spec §5.6: "identical to GET except that the server MUST NOT return a
-/// message-body."
-/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
 pub async fn gsp_head(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    gsp_head_inner(state, params, headers).await
+}
+
+pub async fn gsp_head_inner(
+    state: AppState,
+    params: HashMap<String, String>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
@@ -269,20 +308,23 @@ pub async fn gsp_head(
         Err(r) => return r,
     };
     let accept = headers.get("accept").and_then(|v| v.to_str().ok());
-    // Build the same response as GET, then strip the body.
     let get_resp = graph_response_parts(&store, graph_id, accept);
     let (parts, _body) = get_resp.into_parts();
     Response::from_parts(parts, Body::empty())
 }
 
-/// `PUT /rdf-graph-store?default` or `?graph=<iri>`
-///
-/// Spec §5.3: drop existing content, insert the payload.
-/// New graph → 201 Created; existing graph → 204 No Content.
-/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-put>
 pub async fn gsp_put(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    gsp_put_inner(state, params, headers, body).await
+}
+
+pub async fn gsp_put_inner(
+    state: AppState,
+    params: HashMap<String, String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
@@ -293,15 +335,18 @@ pub async fn gsp_put(
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if !is_turtle_content_type(ct) {
-        return (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Content-Type must be text/turtle or application/n-triples",
-        )
-            .into_response();
-    }
+    let fmt = match rdf_upload_format(ct) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Unsupported Content-Type for RDF upload",
+            )
+                .into_response();
+        }
+    };
 
-    let tmp = match parse_turtle_body(&body) {
+    let tmp = match parse_rdf_body(&body, fmt) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -313,7 +358,6 @@ pub async fn gsp_put(
         Err(r) => return r,
     };
 
-    // DROP SILENT + INSERT DATA
     store.remove_graph(graph_id);
     copy_default_graph_to(&tmp, &mut store, graph_id);
 
@@ -324,13 +368,16 @@ pub async fn gsp_put(
     }
 }
 
-/// `DELETE /rdf-graph-store?default` or `?graph=<iri>`
-///
-/// Spec §5.4: drop the graph; 404 if named graph does not exist.
-/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
 pub async fn gsp_delete(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    gsp_delete_inner(state, params).await
+}
+
+pub async fn gsp_delete_inner(
+    state: AppState,
+    params: HashMap<String, String>,
 ) -> axum::response::Response {
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -363,14 +410,18 @@ pub async fn gsp_delete(
         .into_response()
 }
 
-/// `POST /rdf-graph-store`        → create a new graph (server assigns IRI)
-/// `POST /rdf-graph-store?default` → merge into the default graph
-/// `POST /rdf-graph-store?graph=<iri>` → merge into named graph (404 if absent)
-///
-/// Spec §5.5: <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
 pub async fn gsp_post(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    gsp_post_inner(state, params, headers, body).await
+}
+
+pub async fn gsp_post_inner(
+    state: AppState,
+    params: HashMap<String, String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
@@ -382,33 +433,33 @@ pub async fn gsp_post(
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if !is_turtle_content_type(ct) {
-        return (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Content-Type must be text/turtle or application/n-triples",
-        )
-            .into_response();
-    }
+    let fmt = match rdf_upload_format(ct) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Unsupported Content-Type for RDF upload",
+            )
+                .into_response();
+        }
+    };
 
-    // Empty body → 204 No Content (spec §5.5)
     if body.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    let tmp = match parse_turtle_body(&body) {
+    let tmp = match parse_rdf_body(&body, fmt) {
         Ok(t) => t,
         Err(r) => return r,
     };
 
     let mut store = state.store.write().await;
 
-    // POST to ?default → merge into default graph
     if params.contains_key("default") {
         copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // POST to ?graph=<iri> → merge into named graph (404 if absent)
     if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
@@ -422,7 +473,7 @@ pub async fn gsp_post(
         };
     }
 
-    // POST to the Graph Store itself → create a new graph with a server-assigned IRI
+    // No param → create new graph with server-assigned IRI
     let new_iri = {
         let ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -434,13 +485,86 @@ pub async fn gsp_post(
     let graph_id = store.resources.add_resource(elem);
     copy_default_graph_to(&tmp, &mut store, graph_id);
 
-    // Return 201 with Location pointing to the indirect-identification URL
     let location = format!(
         "{}/rdf-graph-store?graph={}",
         state.config.base_iri,
         percent_encode(&new_iri)
     );
     (StatusCode::CREATED, [("location", location.as_str())], "").into_response()
+}
+
+// ── Direct graph identification (§4.1, optional) ─────────────────────────────
+//
+// In the direct model the request URI IS the named graph IRI.
+// Route: /rdf-graphs/{*path}
+//
+// Spec §4.1: <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
+
+/// Build the graph IRI for a direct-identification request.
+fn direct_graph_iri(base_iri: &str, path: &str) -> String {
+    format!("{}/rdf-graphs/{}", base_iri.trim_end_matches('/'), path)
+}
+
+/// `GET /rdf-graphs/*path` — retrieve a named graph by its request URI.
+pub async fn direct_gsp_get(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
+    let store = state.store.read().await;
+    match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => {
+            let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+            graph_response_parts(&store, id, accept)
+        }
+        _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    }
+}
+
+/// `PUT /rdf-graphs/*path` — replace (or create) a named graph at its request URI.
+///
+/// Returns 201 Created for new graphs, 204 No Content for replacements.
+pub async fn direct_gsp_put(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+    let ct = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let fmt = match rdf_upload_format(ct) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Unsupported Content-Type for RDF upload",
+            )
+                .into_response();
+        }
+    };
+    let tmp = match parse_rdf_body(&body, fmt) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
+    let mut store = state.store.write().await;
+    // Check new-ness before interning (interning would make the lookup return Some).
+    let is_new = store.lookup_named_graph_id(&graph_iri).is_none();
+    let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri)));
+    let graph_id = store.resources.add_resource(elem);
+    store.remove_graph(graph_id);
+    copy_default_graph_to(&tmp, &mut store, graph_id);
+    if is_new {
+        StatusCode::CREATED.into_response()
+    } else {
+        StatusCode::NO_CONTENT.into_response()
+    }
 }
 
 /// Percent-encode all bytes that are not unreserved URI characters.

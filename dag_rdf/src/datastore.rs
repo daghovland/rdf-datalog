@@ -193,6 +193,11 @@ impl Datastore {
         self.named_graphs.remove_graph(graph_id);
     }
 
+    /// Remove a single quad from named_graphs; no-op if absent.
+    pub fn remove_quad(&mut self, quad: crate::ingress::Quad) {
+        self.named_graphs.remove_quad(quad);
+    }
+
     // ── Reified triple queries ────────────────────────────────────────────────
 
     pub fn get_reified_triples_with_id(

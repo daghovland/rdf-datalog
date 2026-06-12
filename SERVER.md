@@ -23,7 +23,7 @@ GSP replaces it with a full REST interface over named graphs.
 | `POST ?default` / `POST ?graph=<iri>` (merge) | §5.5 [`#http-post`][post] | D (tests D-1 – D-6, D-10 – D-12) | ✓ Done |
 | `POST /rdf-graph-store` (create graph) | §5.5 [`#http-post`][post] | D-7 – D-9 | ✓ Done |
 | `HEAD ?default` / `HEAD ?graph=<iri>` | §5.6 [`#http-head`][head] | E (tests E-1 – E-5) | ✓ Done |
-| Direct graph identification (`/rdf-graphs/<name>`) | §4.1 [`#direct-graph-identification`][direct] | F (tests F-1 – F-2) | Optional — not planned |
+| Direct graph identification (`/rdf-graphs/<name>`) | §4.1 [`#direct-graph-identification`][direct] | F (tests F-1 – F-2) | ✓ Done (GET, PUT) |
 
 [get]: https://www.w3.org/TR/sparql11-http-rdf-update/#http-get
 [put]: https://www.w3.org/TR/sparql11-http-rdf-update/#http-put
@@ -34,8 +34,7 @@ GSP replaces it with a full REST interface over named graphs.
 
 All 46 tests live in
 [`sparql_endpoint/tests/graph_store.rs`](sparql_endpoint/tests/graph_store.rs).
-They are all `#[ignore]` until the implementation is in place. Remove
-`#[ignore]` from a test group after implementing the corresponding operation.
+All tests pass — no `#[ignore]` attributes remain in this file.
 
 ### Endpoint table
 
