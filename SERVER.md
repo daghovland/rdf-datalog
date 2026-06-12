@@ -348,7 +348,213 @@ produce images that run natively on both x86-64 servers and Apple Silicon.
 1. **GSP** (`graph_store.rs`) — most immediately useful; replaces `/upload`.
 2. **Env-var config + Dockerfile** — enables reproducible deployments.
 3. **Published Docker image** (§5) — wire up the GitHub Actions workflow once the Dockerfile is stable.
-4. **API-key auth** — minimal security for public deployments.
-5. **Dataset registry** — multi-tenancy; requires a `Datastore::remove_graph` API first.
-6. **OIDC auth** — only needed when dataset-level access control matters.
-7. **Persistence / snapshots** — when data must survive restarts.
+4. **Fuseki-compatible routing** (§6 Phase F1) — per-dataset URL paths.
+5. **Admin API** (§6 Phase F2) — dataset create/delete/list.
+6. **SPARQL Update** (§6 Phase F3) — INSERT/DELETE DATA, CLEAR, DROP.
+7. **API-key auth** — minimal security for public deployments.
+8. **Dataset registry** (§6 Phase F5) — multi-tenancy; requires Phase F1 + F2 first.
+9. **OIDC auth** — only needed when dataset-level access control matters.
+10. **Persistence / snapshots** — when data must survive restarts.
+
+---
+
+## 6. Fuseki Drop-in Compatibility
+
+The goal is for any HTTP client that works against an Apache Jena Fuseki
+in-memory instance to work unmodified against dagalog.  This includes standard
+clients such as Apache Jena's own `UpdateExecutionHTTP`, rdflib's
+`SPARQLUpdateStore`, and Comunica.
+
+**Fuseki documentation:** <https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html>
+
+**Scope:** in-memory datasets (`dbType=mem`) only.  TDB2 on-disk persistence
+is out of scope.
+
+**Integration tests:** all Fuseki compatibility tests live in
+[`sparql_endpoint/tests/fuseki_compat.rs`](sparql_endpoint/tests/fuseki_compat.rs).
+They are all `#[ignore]` until the corresponding feature is implemented.
+Remove `#[ignore]` from a group as each phase is completed.
+
+---
+
+### 6.1 Fuseki URL structure
+
+Fuseki exposes every dataset under a configurable path prefix.  A default
+single-dataset in-memory server is typically started as:
+
+```sh
+fuseki-server --mem /ds
+```
+
+which gives the dataset the name `/ds` and exposes these service endpoints:
+
+| Service | URL | Methods |
+|---------|-----|---------|
+| Query | `/{name}/sparql` | GET, POST |
+| Query (alias) | `/{name}/query` | GET, POST |
+| Update | `/{name}/update` | POST |
+| GSP read-write | `/{name}/data` | GET, PUT, POST, DELETE, HEAD |
+| GSP read-only | `/{name}/get` | GET, HEAD |
+
+dagalog must support exactly these paths.  The current `/sparql` and
+`/rdf-graph-store` paths can be kept as aliases for backward compatibility.
+
+---
+
+### 6.2 Admin API (`/$/...`)
+
+Fuseki exposes a management API under the special prefix `/$/ `.  All admin
+endpoints return JSON.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/$/ping` | GET, POST | Liveness check — returns `"OK"` |
+| `/$/server` | GET | Server info (version, uptime, datasets) |
+| `/$/datasets` | GET | List all datasets |
+| `/$/datasets` | POST | Create a new dataset |
+| `/$/datasets/{name}` | GET | Info for one dataset |
+| `/$/datasets/{name}` | DELETE | Remove a dataset |
+
+#### Creating a dataset (`POST /$/datasets`)
+
+Form-encoded body with two parameters:
+
+| Parameter | Required | Values |
+|-----------|----------|--------|
+| `dbName` | yes | URL path name, e.g. `/ds` or `mydata` |
+| `dbType` | yes | `mem` (in-memory, supported); `tdb2` (out of scope) |
+
+Returns `200 OK` on success (not 201).
+
+#### Dataset list response (`GET /$/datasets`)
+
+```json
+{
+  "datasets": [
+    {
+      "ds.name": "/ds",
+      "ds.state": "active",
+      "ds.services": [
+        { "srv.type": "query",  "srv.description": "SPARQL 1.1 Query",
+          "srv.endpoints": ["query", "sparql"] },
+        { "srv.type": "update", "srv.description": "SPARQL 1.1 Update",
+          "srv.endpoints": ["update"] },
+        { "srv.type": "gsp-rw", "srv.description": "Graph Store Protocol (Read-Write)",
+          "srv.endpoints": ["data"] },
+        { "srv.type": "gsp-r",  "srv.description": "Graph Store Protocol (Read only)",
+          "srv.endpoints": ["get"] }
+      ]
+    }
+  ]
+}
+```
+
+#### Dataset info response (`GET /$/datasets/{name}`)
+
+Returns a single object matching the element shape above (no wrapping `datasets` array).
+
+---
+
+### 6.3 SPARQL Update (`/{name}/update`)
+
+The SPARQL 1.1 Update language must be parsed and executed.  Required
+operations for a drop-in replacement:
+
+| Operation | Example |
+|-----------|---------|
+| `INSERT DATA` | `INSERT DATA { <s> <p> <o> }` |
+| `DELETE DATA` | `DELETE DATA { <s> <p> <o> }` |
+| `INSERT/DELETE WHERE` | `DELETE { ?s ?p ?o } WHERE { ?s ?p ?o }` |
+| `CLEAR` | `CLEAR DEFAULT`, `CLEAR GRAPH <g>`, `CLEAR ALL` |
+| `DROP` | `DROP GRAPH <g>`, `DROP ALL` |
+| `CREATE` | `CREATE GRAPH <g>` |
+| `LOAD` | `LOAD <url> INTO GRAPH <g>` (HTTP URL loading; skip for in-memory-only) |
+| `COPY`, `MOVE`, `ADD` | graph-to-graph copy/move/merge |
+
+**Parser note:** The current `sparql_parser` crate is SELECT-only.  SPARQL
+Update is a separate grammar.  The simplest path is to add an `update` module
+alongside the existing `parse_query` entry point rather than extending the
+SELECT parser.
+
+**Endpoint behaviour:**
+
+| Content-Type | Body |
+|---|---|
+| `application/sparql-update` | Raw SPARQL Update string |
+| `application/x-www-form-urlencoded` | `update=<percent-encoded string>` |
+
+Returns `200 OK` on success, `400 Bad Request` for parse errors, `500` for
+execution errors.
+
+---
+
+### 6.4 GSP content negotiation on `/{name}/data`
+
+The Fuseki `/data` endpoint accepts and produces more formats than the current
+`/rdf-graph-store` implementation.  Required additions:
+
+**GET (Accept):**
+
+| MIME type | Format | Status |
+|-----------|--------|--------|
+| `text/turtle` | Turtle | ✓ Done |
+| `application/n-triples` | N-Triples | ✓ Done |
+| `application/n-quads` | N-Quads | ❌ Needed |
+| `application/trig` | TriG | ❌ Needed |
+
+**PUT/POST (Content-Type accepted):**
+
+| MIME type | Format | Status |
+|-----------|--------|--------|
+| `text/turtle` | Turtle | ✓ Done |
+| `application/n-triples` | N-Triples | ❌ Needed |
+| `application/n-quads` | N-Quads | ❌ Needed |
+| `application/trig` | TriG | ❌ Needed |
+
+The `turtle` crate now exports `parse_ntriples`, `parse_nquads`, and
+`parse_trig` — they just need to be wired into the GSP upload path alongside
+the existing `parse_turtle` call.
+
+---
+
+### 6.5 Dataset registry (multi-dataset)
+
+Today dagalog holds a single `Arc<RwLock<Datastore>>`.  Fuseki is
+multi-dataset.  The architecture change:
+
+```rust
+pub struct DatasetRegistry {
+    datasets: HashMap<String, Arc<RwLock<Datastore>>>,
+}
+```
+
+Routes become `/{name}/sparql`, `/{name}/data`, etc., where `{name}` is
+matched dynamically and looked up in the registry.  404 when the dataset does
+not exist.
+
+The single-dataset `Config::default()` starts a registry with one entry named
+`/ds`, preserving backward-compatible behaviour for the Docker image and CLI.
+
+**Prerequisite:** `Datastore::drop_all` or a graph-level clear is needed so
+`DELETE /$/datasets/{name}` can release memory.  The existing
+`Datastore::remove_graph` covers named graphs; the default graph and
+reified-triples table also need clearing.
+
+---
+
+### 6.6 Implementation phases and test groups
+
+| Phase | Description | Test group | Status |
+|-------|-------------|------------|--------|
+| F1 | Per-dataset URL routing (`/{name}/sparql`, `/{name}/data`, etc.) | A, B | ❌ Not started |
+| F2 | Admin API: ping + server info | C | ❌ Not started |
+| F3 | Admin API: list + info datasets | D | ❌ Not started |
+| F4 | Admin API: create + delete datasets | E | ❌ Not started |
+| F5 | SPARQL Update (`/{name}/update`) | F | ❌ Not started |
+| F6 | GSP content negotiation (N-Quads, TriG upload + download) | G | ❌ Not started |
+| F7 | Dataset registry (multi-dataset, dynamic routing) | H | ❌ Not started |
+| F8 | Full lifecycle (create → upload → query → delete) | I | ❌ Not started |
+
+All tests in `fuseki_compat.rs` are `#[ignore]`.  Change the table entry to
+✓ Done and remove `#[ignore]` from the corresponding group when each phase
+ships.

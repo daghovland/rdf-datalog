@@ -122,6 +122,86 @@ impl TestServer {
             urlencoding::encode(graph_iri)
         )
     }
+
+    // ── Fuseki-compatible URL builders ───────────────────────────────────────
+    //
+    // These mirror Apache Jena Fuseki's per-dataset service URLs.
+    // Spec: https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html
+
+    /// `GET/POST /{name}/sparql` — Fuseki per-dataset query endpoint.
+    ///
+    /// Also accessible as `/{name}/query` (alias).
+    pub fn dataset_sparql_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/sparql", self.base_url)
+    }
+
+    /// `GET/POST /{name}/query` — alias for the query endpoint.
+    pub fn dataset_query_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/query", self.base_url)
+    }
+
+    /// `POST /{name}/update` — Fuseki per-dataset SPARQL Update endpoint.
+    pub fn dataset_update_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/update", self.base_url)
+    }
+
+    /// `GET/PUT/POST/DELETE/HEAD /{name}/data` — Fuseki GSP read-write endpoint.
+    pub fn dataset_data_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/data", self.base_url)
+    }
+
+    /// `GET/PUT/POST/DELETE/HEAD /{name}/data?default` — default graph on dataset.
+    pub fn dataset_data_default_url(&self, dataset: &str) -> String {
+        format!("{}?default", self.dataset_data_url(dataset))
+    }
+
+    /// `GET/PUT/POST/DELETE/HEAD /{name}/data?graph=<iri>` — named graph on dataset.
+    pub fn dataset_data_graph_url(&self, dataset: &str, graph_iri: &str) -> String {
+        format!(
+            "{}?graph={}",
+            self.dataset_data_url(dataset),
+            urlencoding::encode(graph_iri)
+        )
+    }
+
+    /// `GET/HEAD /{name}/get` — Fuseki GSP read-only endpoint.
+    pub fn dataset_get_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/get", self.base_url)
+    }
+
+    /// `GET /$/ping` — Fuseki liveness check.
+    ///
+    /// Returns `"OK"` with 200.
+    /// Spec: https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html#server-information
+    pub fn admin_ping_url(&self) -> String {
+        format!("{}/$/ping", self.base_url)
+    }
+
+    /// `GET /$/server` — Fuseki server info (version, uptime, datasets).
+    pub fn admin_server_url(&self) -> String {
+        format!("{}/$/server", self.base_url)
+    }
+
+    /// `GET|POST /$/datasets` — list or create datasets.
+    ///
+    /// POST body: `dbName=/{name}&dbType=mem` (form-encoded).
+    /// Spec: https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html#datasets-and-services
+    pub fn admin_datasets_url(&self) -> String {
+        format!("{}/$/datasets", self.base_url)
+    }
+
+    /// `GET|DELETE /$/datasets/{name}` — info or delete one dataset.
+    ///
+    /// `name` should not include a leading `/`.
+    pub fn admin_dataset_url(&self, name: &str) -> String {
+        let n = name.trim_start_matches('/');
+        format!("{}/$/datasets/{n}", self.base_url)
+    }
 }
 
 // ── Assertion helpers ────────────────────────────────────────────────────────
