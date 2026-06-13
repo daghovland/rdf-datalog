@@ -22,10 +22,16 @@ cargo test test_add_and_get_resource
 cargo run
 
 # End-of-task quality checks (run before handing work back)
-# Match CI strictness to avoid push/PR surprises.
+# These mirror the CI jobs in .github/workflows/ci.yml exactly.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo test --workspace --release
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo audit
+# Note: the CI minimal-versions job requires nightly and mutates Cargo.lock;
+# run it manually only when adding/removing dependencies:
+#   cargo +nightly update -Z minimal-versions && cargo check --workspace --all-targets
 
 ```
 
