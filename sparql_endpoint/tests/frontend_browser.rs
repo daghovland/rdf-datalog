@@ -256,7 +256,10 @@ async fn clicking_iri_in_results_navigates_to_resource_browser() {
         "resource browser never loaded"
     );
     let cur = driver.current_url().await.unwrap();
-    assert!(cur.as_str().contains("resource="), "URL should contain resource=, got: {cur}");
+    assert!(
+        cur.as_str().contains("resource="),
+        "URL should contain resource=, got: {cur}"
+    );
     driver.quit().await.unwrap();
 }
 
@@ -343,7 +346,10 @@ async fn two_variable_query_has_no_graph_tab() {
     assert!(wait_for_text(&driver, "#query-result .count", 4000).await);
     tokio::time::sleep(Duration::from_millis(200)).await;
     let tab = driver.find(By::Css("#tab-graph")).await;
-    assert!(tab.is_err(), "Graph tab should NOT appear for 2-variable query");
+    assert!(
+        tab.is_err(),
+        "Graph tab should NOT appear for 2-variable query"
+    );
     driver.quit().await.unwrap();
 }
 
