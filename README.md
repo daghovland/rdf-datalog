@@ -569,11 +569,25 @@ Navigate to `http://localhost:3030` in your browser for the interactive interfac
 
 | Feature | Description |
 |---|---|
-| SPARQL query editor | Configurable prefix manager (persisted), auto-prepend prefixes, query history |
-| Resource browser | Click any IRI in results to explore its properties and back-links |
+| SPARQL query editor | Prefix manager (persisted), query templates, Ctrl+Enter shortcut, query history |
+| Result export | Download results as CSV or JSON |
+| Resource browser | Click any IRI to explore its properties and back-links |
+| Class hierarchy | `/?view=classes` — collapsible tree of `rdfs:subClassOf` relationships |
 | Graph visualisation | Three-variable queries render as an interactive node-edge graph |
-| Turtle upload | Paste Turtle directly into the upload panel |
+| Turtle upload | Paste Turtle or drag-and-drop `.ttl`/`.owl`/`.jsonld` files |
 | Store statistics | Live triple count shown in the page header |
+
+### Query editor
+
+- **Prefix manager** — collapsible panel above the textarea; pre-populated with common
+  prefixes (rdf, rdfs, owl, xsd, skos, dc, foaf, schema). Prefixes are persisted to
+  `localStorage` and automatically prepended to every submitted query.
+- **Query templates** — dropdown with example queries (all triples, all classes, class
+  hierarchy, labels).
+- **Ctrl+Enter** — keyboard shortcut to run the query.
+- **Query history** — last 50 queries stored in `localStorage`, shown in a collapsible
+  panel below the textarea. Click any entry to restore it.
+- **Export** — "Download CSV" and "Download JSON" buttons appear beneath every result table.
 
 ### Resource browser
 
@@ -584,13 +598,17 @@ Clicking any IRI in query results opens a resource page (`/?resource=<iri>`) sho
 - All outgoing properties (`?p ?o`) — collapsible table
 - All incoming back-links (`?s ?p`) — collapsible table (capped at 200)
 
-All IRIs on the resource page are also clickable, enabling linked-data browsing through
-the knowledge graph.
+All IRIs on the resource page are also clickable, enabling linked-data browsing.
+
+### Class hierarchy
+
+`/?view=classes` runs `SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }` and
+renders the result as a collapsible `<details>` tree. Useful for exploring OWL ontologies.
 
 ### Graph view
 
-When a SELECT query returns exactly three variables (treated as subject, predicate, object),
-a **Graph** tab appears next to the Table tab. The graph is rendered via
+When a SELECT query returns exactly three variables (subject, predicate, object), a **Graph**
+tab appears next to the Table tab. The graph is rendered via
 [Cytoscape.js](https://js.cytoscape.org/) (loaded from CDN on first use):
 
 - **Blue nodes** — URI resources (click to open the resource browser)

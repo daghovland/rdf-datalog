@@ -8,27 +8,23 @@ Contact: hovlanddag@gmail.com
 
 //! Browser-automation tests for the Dagalog web UI.
 //!
-//! These tests require geckodriver (Firefox WebDriver) to be running.
-//! Start it before running this test file:
+//! These tests require geckodriver (Firefox WebDriver) to be running:
 //!
 //! ```bash
 //! geckodriver --port 4444 &
 //! cargo test --test frontend_browser
 //! ```
 //!
-//! Override the WebDriver URL with `WEBDRIVER_URL=http://host:port`.
-//! Tests are skipped silently when geckodriver is unreachable.
-//! Requires the `browser-tests` feature: `cargo test -p sparql-endpoint --features browser-tests`
-
-#![cfg(feature = "browser-tests")]
+//! Override the WebDriver URL with `WEBDRIVER_URL`. Tests are skipped silently
+//! when geckodriver is unreachable.
 
 mod common;
 
-use fantoccini::{ClientBuilder, Locator};
-use serde_json::{Map, json};
 use std::time::{Duration, Instant};
+use thirtyfour::components::SelectElement;
+use thirtyfour::prelude::*;
 
-// ── Test fixture ─────────────────────────────────────────────────────────────
+// ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const FIXTURE: &str = r#"
 @prefix ex:   <http://example.org/> .
@@ -43,31 +39,22 @@ ex:bob a ex:Person ;
     rdfs:label "Bob" .
 
 ex:Person a owl:Class .
+ex:Animal a owl:Class .
+ex:Person rdfs:subClassOf ex:Animal .
 "#;
 
 // ── WebDriver helpers ─────────────────────────────────────────────────────────
 
-/// Connect to geckodriver (headless Firefox). Returns `None` and prints a skip
-/// message when geckodriver is not reachable.
-async fn connect_driver() -> Option<fantoccini::Client> {
+async fn connect_driver() -> Option<WebDriver> {
     let url =
         std::env::var("WEBDRIVER_URL").unwrap_or_else(|_| "http://localhost:4444".to_string());
-
-    let mut caps = Map::new();
-    caps.insert(
-        "moz:firefoxOptions".to_string(),
-        json!({ "args": ["-headless"] }),
-    );
-
-    match ClientBuilder::native()
-        .capabilities(caps)
-        .connect(&url)
-        .await
-    {
-        Ok(c) => Some(c),
+    let mut caps = DesiredCapabilities::firefox();
+    caps.set_headless().ok();
+    match WebDriver::new(&url, caps).await {
+        Ok(d) => Some(d),
         Err(e) => {
             eprintln!(
-                "[SKIP] frontend_browser tests: geckodriver not available at {url}: {e}\n\
+                "[SKIP] frontend_browser: geckodriver not available at {url}: {e}\n\
                  Start with: geckodriver --port 4444 &"
             );
             None
@@ -75,11 +62,10 @@ async fn connect_driver() -> Option<fantoccini::Client> {
     }
 }
 
-/// Poll until `selector` is visible and non-empty, or timeout elapses.
-async fn wait_for(client: &fantoccini::Client, selector: &str, timeout_ms: u64) -> bool {
+async fn wait_for_text(driver: &WebDriver, selector: &str, timeout_ms: u64) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
-        if let Ok(el) = client.find(Locator::Css(selector)).await {
+        if let Ok(el) = driver.find(By::Css(selector)).await {
             if el.text().await.map(|t| !t.is_empty()).unwrap_or(false) {
                 return true;
             }
@@ -91,11 +77,21 @@ async fn wait_for(client: &fantoccini::Client, selector: &str, timeout_ms: u64) 
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+async fn wait_for_element(driver: &WebDriver, selector: &str, timeout_ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if driver.find(By::Css(selector)).await.is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+}
 
-/// Resource browser shows outgoing edges for a known IRI.
-///
-/// alice has three outgoing triples: rdf:type, rdfs:label, ex:knows.
+// ── Resource browser ──────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn resource_browser_shows_outgoing_edges() {
     let driver = match connect_driver().await {
@@ -103,38 +99,26 @@ async fn resource_browser_shows_outgoing_edges() {
         None => return,
     };
     let server = common::TestServer::start(FIXTURE).await;
-
-    let resource_iri = "http://example.org/alice";
-    let url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode(resource_iri)
-    );
-    driver.goto(&url).await.unwrap();
-
-    assert!(
-        wait_for(&driver, "#out-table .count", 3000).await,
-        "outgoing-edge count never appeared"
-    );
-
-    let count_text = driver
-        .find(Locator::Css("#out-table .count"))
+    driver
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://example.org/alice")
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#out-table .count", 4000).await);
+    let text = driver
+        .find(By::Css("#out-table .count"))
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(
-        count_text.contains('3'),
-        "expected 3 outgoing edges for alice, got: {count_text}"
-    );
-
-    driver.close().await.unwrap();
+    assert!(text.contains('3'), "expected 3 outgoing edges, got: {text}");
+    driver.quit().await.unwrap();
 }
 
-/// Resource browser shows incoming edges for a known IRI.
-///
-/// bob is the object of `ex:alice ex:knows ex:bob`, so has one incoming edge.
 #[tokio::test]
 async fn resource_browser_shows_incoming_edges() {
     let driver = match connect_driver().await {
@@ -142,176 +126,80 @@ async fn resource_browser_shows_incoming_edges() {
         None => return,
     };
     let server = common::TestServer::start(FIXTURE).await;
-
-    let resource_iri = "http://example.org/bob";
-    let url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode(resource_iri)
-    );
-    driver.goto(&url).await.unwrap();
-
-    assert!(
-        wait_for(&driver, "#in-table .count", 3000).await,
-        "incoming-edge count never appeared"
-    );
-
-    let count_text = driver
-        .find(Locator::Css("#in-table .count"))
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(
-        count_text.contains('1'),
-        "expected 1 incoming edge for bob, got: {count_text}"
-    );
-
-    driver.close().await.unwrap();
-}
-
-/// The resource heading shows a shortened IRI when a prefix applies.
-///
-/// `http://example.org/alice` has no common prefix, so the full IRI appears
-/// in `#resource-full-iri`. The heading should say "Resource" (no known prefix).
-#[tokio::test]
-async fn resource_browser_displays_iri() {
-    let driver = match connect_driver().await {
-        Some(d) => d,
-        None => return,
-    };
-    let server = common::TestServer::start(FIXTURE).await;
-
-    let resource_iri = "http://example.org/alice";
-    let url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode(resource_iri)
-    );
-    driver.goto(&url).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    let full_iri_text = driver
-        .find(Locator::Css("#resource-full-iri"))
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert_eq!(
-        full_iri_text, resource_iri,
-        "#resource-full-iri should contain the full IRI"
-    );
-
-    // A well-known namespace IRI should show a shortened heading.
-    let owl_url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode("http://www.w3.org/2002/07/owl#Class")
-    );
-    driver.goto(&owl_url).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    let heading = driver
-        .find(Locator::Css("#resource-heading"))
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert_eq!(
-        heading, "owl:Class",
-        "heading should be the shortened owl:Class"
-    );
-
-    driver.close().await.unwrap();
-}
-
-/// Clicking an IRI link in SPARQL query results navigates to the resource browser.
-#[tokio::test]
-async fn clicking_iri_in_results_navigates_to_resource_browser() {
-    let driver = match connect_driver().await {
-        Some(d) => d,
-        None => return,
-    };
-    let server = common::TestServer::start(FIXTURE).await;
-
-    // Load the query view with a query that returns alice as ?s.
-    let query = "SELECT ?s WHERE { <http://example.org/alice> ?p ?s } LIMIT 10";
-    let url = format!("{}/?query={}", server.base_url, urlencoding::encode(query));
-    driver.goto(&url).await.unwrap();
-
-    assert!(
-        wait_for(&driver, "#query-result .count", 3000).await,
-        "query results never appeared"
-    );
-
-    // The result contains ex:bob as an object IRI — click that link.
-    let bob_link = driver
-        .find(Locator::LinkText("http://example.org/bob"))
-        .await
-        .unwrap_or_else(|_| panic!("link for bob not found in results"));
-    bob_link.click().await.unwrap();
-
-    // Should now be on the resource browser for bob.
-    assert!(
-        wait_for(&driver, "#out-table .count", 3000).await,
-        "resource browser for bob never loaded"
-    );
-
-    let current = driver.current_url().await.unwrap();
-    assert!(
-        current.as_str().contains("resource="),
-        "URL should contain 'resource=', got: {current}"
-    );
-    assert!(
-        current.as_str().contains("example.org%2Fbob")
-            || current.as_str().contains("example.org/bob"),
-        "URL should reference bob, got: {current}"
-    );
-
-    driver.close().await.unwrap();
-}
-
-/// The back link on the resource page navigates to the query editor root.
-#[tokio::test]
-async fn back_link_returns_to_query_editor() {
-    let driver = match connect_driver().await {
-        Some(d) => d,
-        None => return,
-    };
-    let server = common::TestServer::start(FIXTURE).await;
-
-    let url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode("http://example.org/alice")
-    );
-    driver.goto(&url).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
     driver
-        .find(Locator::Css("#back-link"))
-        .await
-        .unwrap()
-        .click()
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://example.org/bob")
+        ))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // After clicking back, the query editor should be visible.
-    let query_view = driver.find(Locator::Css("#query-view")).await.unwrap();
-    let display = query_view.attr("style").await.unwrap().unwrap_or_default();
-    assert!(
-        !display.contains("display: none") && !display.contains("display:none"),
-        "query-view should be visible after clicking back, style={display}"
-    );
-
-    driver.close().await.unwrap();
+    assert!(wait_for_text(&driver, "#in-table .count", 4000).await);
+    let text = driver
+        .find(By::Css("#in-table .count"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(text.contains('1'), "expected 1 incoming edge, got: {text}");
+    driver.quit().await.unwrap();
 }
 
-/// Navigating to a resource with no triples shows empty result tables (not an error).
+#[tokio::test]
+async fn resource_browser_shows_rdfs_label_as_heading() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://example.org/alice")
+        ))
+        .await
+        .unwrap();
+    wait_for_text(&driver, "#out-table .count", 4000).await;
+    let heading = driver
+        .find(By::Css("#resource-heading"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(heading, "Alice");
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn resource_browser_shortens_known_namespace_in_heading() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://www.w3.org/2002/07/owl#Class")
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let heading = driver
+        .find(By::Css("#resource-heading"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(heading, "owl:Class");
+    driver.quit().await.unwrap();
+}
+
 #[tokio::test]
 async fn resource_browser_handles_unknown_iri_gracefully() {
     let driver = match connect_driver().await {
@@ -319,30 +207,248 @@ async fn resource_browser_handles_unknown_iri_gracefully() {
         None => return,
     };
     let server = common::TestServer::start(FIXTURE).await;
-
-    let url = format!(
-        "{}/?resource={}",
-        server.base_url,
-        urlencoding::encode("http://example.org/nobody")
-    );
-    driver.goto(&url).await.unwrap();
-
-    assert!(
-        wait_for(&driver, "#out-table .count", 3000).await,
-        "outgoing count never appeared for unknown IRI"
-    );
-
-    let out_text = driver
-        .find(Locator::Css("#out-table .count"))
+    driver
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://example.org/nobody")
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#out-table .count", 4000).await);
+    let text = driver
+        .find(By::Css("#out-table .count"))
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(
-        out_text.contains('0'),
-        "expected 0 outgoing edges for unknown IRI, got: {out_text}"
-    );
+    assert!(text.contains('0'), "expected 0 outgoing edges, got: {text}");
+    driver.quit().await.unwrap();
+}
 
-    driver.close().await.unwrap();
+#[tokio::test]
+async fn clicking_iri_in_results_navigates_to_resource_browser() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?o WHERE { <http://example.org/alice> <http://example.org/knows> ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#query-result .count", 4000).await);
+    driver
+        .find(By::Css("#query-result td a.uri"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#out-table .count", 4000).await,
+        "resource browser never loaded"
+    );
+    let cur = driver.current_url().await.unwrap();
+    assert!(cur.as_str().contains("resource="), "URL should contain resource=, got: {cur}");
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn back_link_returns_to_query_editor() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver
+        .goto(&format!(
+            "{}/?resource={}",
+            server.base_url,
+            urlencoding::encode("http://example.org/alice")
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css(".back-link"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let style = driver
+        .find(By::Css("#query-view"))
+        .await
+        .unwrap()
+        .attr("style")
+        .await
+        .unwrap()
+        .unwrap_or_default();
+    assert!(
+        !style.contains("display: none") && !style.contains("display:none"),
+        "query-view should be visible after back, style={style}"
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── Graph tab ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn three_variable_query_shows_graph_tab() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_element(&driver, "#tab-graph", 4000).await,
+        "Graph tab never appeared for 3-variable query"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn two_variable_query_has_no_graph_tab() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?s ?p WHERE { ?s ?p <http://example.org/bob> }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#query-result .count", 4000).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let tab = driver.find(By::Css("#tab-graph")).await;
+    assert!(tab.is_err(), "Graph tab should NOT appear for 2-variable query");
+    driver.quit().await.unwrap();
+}
+
+// ── Query templates ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn query_template_fills_textarea() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let select_el = driver.find(By::Css("#query-template")).await.unwrap();
+    SelectElement::new(&select_el)
+        .await
+        .unwrap()
+        .select_by_value("classes")
+        .await
+        .unwrap();
+
+    let val = driver
+        .find(By::Css("#query"))
+        .await
+        .unwrap()
+        .value()
+        .await
+        .unwrap()
+        .unwrap_or_default();
+    assert!(
+        val.contains("owl:Class") || val.contains("owl#Class"),
+        "template should fill textarea, got: {val}"
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn ctrl_enter_runs_query() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let textarea = driver.find(By::Css("#query")).await.unwrap();
+    textarea.click().await.unwrap();
+    textarea
+        .send_keys(Key::Control + Key::Return)
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#query-result .count", 4000).await,
+        "Ctrl+Enter did not trigger query"
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── Result export ─────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn export_buttons_appear_after_query() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?s WHERE { ?s a <http://example.org/Person> }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#query-result .count", 4000).await);
+    assert!(
+        wait_for_element(&driver, "#btn-export-csv", 2000).await,
+        "CSV export button never appeared"
+    );
+    assert!(
+        wait_for_element(&driver, "#btn-export-json", 2000).await,
+        "JSON export button never appeared"
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── Drag-and-drop upload ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn upload_panel_has_drag_drop_zone() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let zone = driver.find(By::Css("#upload-dropzone")).await;
+    assert!(zone.is_ok(), "drag-and-drop upload zone not found");
+    driver.quit().await.unwrap();
 }

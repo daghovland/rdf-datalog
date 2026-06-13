@@ -4,39 +4,11 @@ This document covers the remaining implementation areas for the HTTP server.
 Completed work (GSP, Fuseki-compatible routing, admin API, SPARQL Update,
 multi-dataset registry, Dockerfile) is documented in [`README.md`](README.md).
 
----
-
-## 1. Authentication
-
-The server currently has no access control.  Two realistic tiers:
-
-### Tier 1 — API key (simple, ship first)
-
-- Add an `api_key: Option<String>` field to `Config`.
-- Middleware (`tower_http::validate_request::ValidateRequestHeaderLayer` or a
-  custom `axum::middleware`) checks `Authorization: Bearer <key>` on all
-  mutating requests (PUT/POST/DELETE `/rdf-graph-store`, `/{name}/update`, etc.).
-- Read endpoints remain unauthenticated unless a `require_auth_for_reads: bool`
-  flag is set.
-- Key is configured via `--api-key <KEY>` CLI flag or `DAGALOG_API_KEY` env var.
-
-### Tier 2 — OAuth2 / OIDC (for multi-user deployments)
-
-- Use `axum-oidc` or `tower-oidc` to validate JWT bearer tokens.
-- Claims map to read / write / admin roles.
-- `Config` gains `oidc_issuer: Option<Url>` and `oidc_audience: Option<String>`.
-- Roles can be scoped per dataset when datasets are implemented.
-
-### Considerations
-
-- SPARQL 1.1 Protocol defines no auth mechanism — auth is a transport concern.
-  Returning `401 Unauthorized` with `WWW-Authenticate: Bearer` is standard.
-- The browser UI needs to store and send the token; add an input field in the
-  frontend once auth is active.
+Authorization is covered in detail in [`AUTH.md`](AUTH.md).
 
 ---
 
-## 2. Persistence
+## 1. Persistence
 
 The current in-memory `Datastore` is lost on restart. Long-term options:
 
@@ -123,11 +95,11 @@ produce images that run natively on both x86-64 servers and Apple Silicon.
 |------|-------------|--------|
 | 1 | GSP (`graph_store.rs`) | ✓ Done |
 | 2 | Env-var config (`DAGALOG_PORT`, `DAGALOG_READ_ONLY`, …) | ✓ Done |
-| 3 | Published Docker image (GitHub Actions `docker.yml`) | ❌ Remaining |
+| 3 | Published Docker image (GitHub Actions `docker.yml`) | ✓ Done |
 | 4 | Fuseki-compatible routing (`/{name}/sparql`, `/{name}/data`, …) | ✓ Done |
 | 5 | Admin API (`/$/ping`, `/$/datasets`, …) | ✓ Done |
 | 6 | SPARQL Update (`/{name}/update`) | ✓ Done |
-| 7 | API-key auth | ❌ Remaining |
+| 7 | API-key auth (see [`AUTH.md`](AUTH.md) steps A–D) | ❌ Remaining |
 | 8 | Dataset registry (multi-dataset, dynamic routing) | ✓ Done |
-| 9 | OIDC auth | ❌ Remaining |
+| 9 | Entra ID / RBAC auth (see [`AUTH.md`](AUTH.md) steps E–H) | ❌ Remaining |
 | 10 | Persistence / snapshots | ❌ Remaining |

@@ -46,7 +46,11 @@ pub fn build_router(state: AppState) -> Router {
         // ── Direct graph identification (§4.1) ───────────────────────────────
         .route(
             "/rdf-graphs/{*path}",
-            get(crate::graph_store::direct_gsp_get).put(crate::graph_store::direct_gsp_put),
+            get(crate::graph_store::direct_gsp_get)
+                .head(crate::graph_store::direct_gsp_head)
+                .put(crate::graph_store::direct_gsp_put)
+                .post(crate::graph_store::direct_gsp_post)
+                .delete(crate::graph_store::direct_gsp_delete),
         )
         // ── Admin API (`/$/...`) ─────────────────────────────────────────────
         .route(

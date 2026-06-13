@@ -15,9 +15,14 @@
       background: #fafafa;
     }
     header { border-bottom: 2px solid #222; padding-bottom: 0.75rem; margin-bottom: 1.5rem; }
-    header h1 { margin: 0; font-size: 1.6rem; }
-    header p  { margin: 0.25rem 0 0; color: #555; font-size: 0.9rem; }
-    .triple-count { color: #888; }
+    header h1 { margin: 0; font-size: 1.6rem; display: inline; }
+    .header-top { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    .triple-count { color: #888; font-size: 0.9rem; }
+    nav { margin-top: 0.5rem; display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; }
+    .nav-link { padding: 0.35rem 0.9rem 0.35rem 0; font-size: 0.85rem; color: #555;
+                text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .nav-link:hover { color: #222; }
+    .nav-link.active { color: #222; border-bottom-color: #222; font-weight: 600; }
     .card {
       background: #fff;
       border: 1px solid #ddd;
@@ -37,7 +42,7 @@
       background: #f8f8f8;
     }
     textarea:focus { outline: 2px solid #445; background: #fff; }
-    .actions { margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; }
+    .actions { margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
     button {
       padding: 0.4rem 1.1rem;
       background: #222;
@@ -72,7 +77,6 @@
     details summary::-webkit-details-marker { display: none; }
     details summary::before { content: '\25B6\00A0'; font-size: 0.65rem; opacity: 0.6; }
     details[open] summary::before { content: '\25BC\00A0'; }
-    /* Resource browser card summaries look like h2 */
     .resource-section summary {
       font-weight: 600;
       font-size: 1.05rem;
@@ -98,6 +102,12 @@
     .pfx-name { width: 5.5rem; }
     .pfx-uri  { flex: 1; font-family: "Fira Mono","Consolas",monospace; }
     .prefix-add button { padding: 0.25rem 0.7rem; font-size: 0.8rem; }
+    /* Query templates */
+    #query-template {
+      font-size: 0.82rem; padding: 0.25rem 0.4rem;
+      border: 1px solid #ccc; border-radius: 4px;
+      background: #fff; cursor: pointer; color: #444;
+    }
     /* Query history */
     .history-panel { margin-top: 0.75rem; }
     .history-panel > summary { font-size: 0.85rem; color: #666; }
@@ -111,6 +121,11 @@
     .history-query { display: block; font-family: "Fira Mono","Consolas",monospace;
                      font-size: 0.78rem; color: #333; white-space: nowrap;
                      overflow: hidden; text-overflow: ellipsis; }
+    /* Result export buttons */
+    .export-bar { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+    .btn-export { padding: 0.3rem 0.8rem; background: #f0f0f0; color: #333;
+                  border: 1px solid #ccc; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
+    .btn-export:hover { background: #e0e0e0; }
     /* Resource browser */
     .back-link { display: inline-block; margin-bottom: 0.75rem; font-size: 0.85rem;
                  color: #555; text-decoration: none; }
@@ -123,6 +138,13 @@
     .resource-types { margin: 0.4rem 0 0.2rem; }
     .type-badge { display: inline-block; background: #dce8f5; border-radius: 10px;
                   padding: 0.1rem 0.45rem; font-size: 0.75rem; margin-right: 0.3rem; }
+    /* Class hierarchy */
+    #class-tree details, #class-tree div { padding-left: 1.2rem; margin: 0.15rem 0; font-size: 0.85rem; }
+    #class-tree > details, #class-tree > div { padding-left: 0; }
+    #class-tree summary { list-style: none; cursor: pointer; }
+    #class-tree summary::-webkit-details-marker { display: none; }
+    #class-tree summary::before { content: '\25B6\00A0'; font-size: 0.6rem; opacity: 0.5; }
+    #class-tree details[open] > summary::before { content: '\25BC\00A0'; }
     /* Graph view tabs */
     .tab-bar { display: flex; border-bottom: 2px solid #e0e0e0; margin-bottom: 0.75rem; gap: 0; }
     .tab { padding: 0.4rem 1.1rem; background: none; border: none;
@@ -135,12 +157,26 @@
           background: #f8f8f8; cursor: grab; margin-top: 0.5rem; }
     #cy:active { cursor: grabbing; }
     .graph-hint { font-size: 0.78rem; color: #888; margin: 0.3rem 0 0; }
+    /* Drag-and-drop upload */
+    .drop-zone { position: relative; }
+    .drop-zone.drag-over textarea { border-color: #2b6cb0; background: #eef3ff; }
+    .drop-overlay { position: absolute; inset: 0; display: none; align-items: center;
+                    justify-content: center; background: rgba(43,108,176,0.08);
+                    border: 2px dashed #2b6cb0; border-radius: 4px; font-size: 0.9rem;
+                    color: #2b6cb0; pointer-events: none; }
+    .drop-zone.drag-over .drop-overlay { display: flex; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Dagalog</h1>
-    <p>RDF triplestore with OWL-RL reasoning and SPARQL 1.1<span id="triple-count" class="triple-count"></span></p>
+    <div class="header-top">
+      <h1>Dagalog</h1>
+      <span id="triple-count" class="triple-count"></span>
+    </div>
+    <nav id="main-nav">
+      <a href="/" class="nav-link" id="nav-query">Query</a>
+      <a href="/?view=classes" class="nav-link" id="nav-classes">Class Hierarchy</a>
+    </nav>
   </header>
 
   <!-- ── Query editor view (default) ───────────────────────────────────────── -->
@@ -156,10 +192,20 @@
           <button onclick="addPrefix()">Add</button>
         </div>
       </details>
+      <div style="margin-bottom:0.4rem">
+        <select id="query-template" onchange="applyTemplate(this)">
+          <option value="">— Templates —</option>
+          <option value="triples">All triples (LIMIT 10)</option>
+          <option value="classes">All classes</option>
+          <option value="hierarchy">Class hierarchy</option>
+          <option value="labels">Labels (LIMIT 50)</option>
+          <option value="instances">Instances of owl:Class</option>
+        </select>
+      </div>
       <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
       <div class="actions">
         <button id="run-btn" onclick="runQuery()">Run Query</button>
-        <span class="hint">Prefix declarations are added automatically</span>
+        <span class="hint">Ctrl+Enter to run &middot; prefixes auto-prepended</span>
       </div>
       <details class="history-panel" id="history-details">
         <summary>History</summary>
@@ -170,8 +216,11 @@
 
     <div class="card">
       <h2>Upload RDF Data</h2>
-      <textarea id="turtle" rows="7"
-        placeholder="Paste Turtle data here&#10;&#10;@prefix ex: &lt;http://example.org/&gt; .&#10;ex:Alice a ex:Person ."></textarea>
+      <div class="drop-zone" id="upload-dropzone">
+        <textarea id="turtle" rows="6"
+          placeholder="Paste Turtle data here — or drag and drop a .ttl / .owl / .jsonld file&#10;&#10;@prefix ex: &lt;http://example.org/&gt; .&#10;ex:Alice a ex:Person ."></textarea>
+        <div class="drop-overlay">Drop file to load</div>
+      </div>
       <div class="actions">
         <button id="upload-btn" onclick="uploadData()">Upload Turtle</button>
         <span class="hint">Parsed and merged into the default graph</span>
@@ -204,6 +253,16 @@
     </div>
   </div>
 
+  <!-- ── Class hierarchy view ───────────────────────────────────────────────── -->
+  <div id="classes-view" style="display:none">
+    <div class="card">
+      <a href="/" class="back-link">&#8592; Back to queries</a>
+      <h2>Class Hierarchy</h2>
+      <p class="hint">Classes connected by <code>rdfs:subClassOf</code>. Click any class to browse its resource page.</p>
+      <div id="class-tree" style="margin-top:0.75rem"></div>
+    </div>
+  </div>
+
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
     const RDF_TYPE   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
@@ -223,6 +282,14 @@
       ['foaf',    'http://xmlns.com/foaf/0.1/'],
       ['schema',  'https://schema.org/'],
     ];
+
+    const TEMPLATES = {
+      triples:   'SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10',
+      classes:   'SELECT DISTINCT ?c WHERE { ?c a owl:Class }',
+      hierarchy: 'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }',
+      labels:    'SELECT ?s ?label WHERE { ?s rdfs:label ?label } LIMIT 50',
+      instances: 'SELECT ?i WHERE { ?i a owl:Class } LIMIT 50',
+    };
 
     // ── Prefix manager ─────────────────────────────────────────────────────────
     function getStoredPrefixes() {
@@ -284,6 +351,13 @@
         if (iri.startsWith(ns)) return pfx + ':' + iri.slice(ns.length);
       }
       return iri;
+    }
+
+    // ── Query templates ────────────────────────────────────────────────────────
+    function applyTemplate(sel) {
+      if (!sel.value) return;
+      document.getElementById('query').value = TEMPLATES[sel.value] || '';
+      sel.value = '';
     }
 
     // ── Query history ──────────────────────────────────────────────────────────
@@ -413,6 +487,52 @@
       container.appendChild(p);
     }
 
+    // ── Result export ──────────────────────────────────────────────────────────
+    function addExportButtons(container, data) {
+      const vars     = data.head?.vars ?? [];
+      const bindings = data.results?.bindings ?? [];
+      if (bindings.length === 0) return;
+
+      const bar = document.createElement('div');
+      bar.className = 'export-bar';
+
+      const csvBtn = document.createElement('button');
+      csvBtn.id = 'btn-export-csv';
+      csvBtn.className = 'btn-export';
+      csvBtn.textContent = 'Download CSV';
+      csvBtn.addEventListener('click', () => {
+        const rows = [vars.join(',')];
+        for (const b of bindings) {
+          rows.push(vars.map(v => {
+            const val = b[v];
+            if (!val) return '';
+            const s = val.type === 'bnode' ? '_:' + val.value : val.value;
+            return '"' + s.replace(/"/g, '""') + '"';
+          }).join(','));
+        }
+        triggerDownload(rows.join('\r\n'), 'results.csv', 'text/csv');
+      });
+
+      const jsonBtn = document.createElement('button');
+      jsonBtn.id = 'btn-export-json';
+      jsonBtn.className = 'btn-export';
+      jsonBtn.textContent = 'Download JSON';
+      jsonBtn.addEventListener('click', () => {
+        triggerDownload(JSON.stringify(data, null, 2), 'results.json', 'application/json');
+      });
+
+      bar.append(csvBtn, jsonBtn);
+      container.appendChild(bar);
+    }
+
+    function triggerDownload(content, filename, type) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([content], { type }));
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
     // ── Store statistics ───────────────────────────────────────────────────────
     async function loadStats() {
       try {
@@ -420,7 +540,7 @@
         const n = data.results?.bindings?.[0]?.n?.value;
         if (n != null) {
           document.getElementById('triple-count').textContent =
-            ' — ' + Number(n).toLocaleString() + ' triples';
+            Number(n).toLocaleString() + ' triples';
         }
       } catch { /* ignore */ }
     }
@@ -429,9 +549,7 @@
     let cyInstance  = null;
     let lastResults = null;
 
-    function isGraphLike(vars) {
-      return vars.length === 3;
-    }
+    function isGraphLike(vars) { return vars.length === 3; }
 
     let cytoscapeLoading = null;
     function ensureCytoscape() {
@@ -472,13 +590,7 @@
       const container = document.getElementById('cy');
       if (!container) return;
       container.textContent = 'Rendering graph…';
-
-      try {
-        await ensureCytoscape();
-      } catch (e) {
-        container.textContent = e.message;
-        return;
-      }
+      try { await ensureCytoscape(); } catch (e) { container.textContent = e.message; return; }
 
       const vars     = data.head?.vars ?? [];
       const bindings = data.results?.bindings ?? [];
@@ -493,13 +605,11 @@
         const sId = s.type === 'bnode' ? '_:' + s.value : s.value;
         const oId = o.type === 'bnode' ? '_:' + o.value : o.value;
         if (!nodeMap.has(sId)) nodeMap.set(sId, {
-          id: sId,
-          label: s.type === 'uri' ? shortenIri(s.value) : '_:' + s.value,
+          id: sId, label: s.type === 'uri' ? shortenIri(s.value) : '_:' + s.value,
           iri: s.type === 'uri' ? s.value : null,
         });
         if (!nodeMap.has(oId)) nodeMap.set(oId, {
-          id: oId,
-          label: o.type === 'uri' ? shortenIri(o.value) : '_:' + o.value,
+          id: oId, label: o.type === 'uri' ? shortenIri(o.value) : '_:' + o.value,
           iri: o.type === 'uri' ? o.value : null,
         });
         edges.push({ s: sId, p: shortenIri(p.value), o: oId });
@@ -507,7 +617,6 @@
 
       const nodes = [...nodeMap.values()];
       const warnEl = document.getElementById('graph-warning');
-
       if (nodes.length > GRAPH_NODE_LIMIT) {
         warnEl.style.display = '';
         warnEl.textContent =
@@ -520,16 +629,12 @@
         warnEl.style.display = 'none';
       }
 
-      if (nodes.length === 0) {
-        container.textContent = 'No nodes to display.';
-        return;
-      }
+      if (nodes.length === 0) { container.textContent = 'No nodes to display.'; return; }
 
       const elements = [
         ...nodes.map(n => ({ group: 'nodes', data: { id: n.id, label: n.label, iri: n.iri } })),
         ...edges.map((e, i) => ({
-          group: 'edges',
-          data: { id: 'e' + i, source: e.s, target: e.o, label: e.p },
+          group: 'edges', data: { id: 'e' + i, source: e.s, target: e.o, label: e.p },
         })),
       ];
 
@@ -539,60 +644,27 @@
         container,
         elements,
         style: [
-          {
-            selector: 'node',
-            style: {
-              label: 'data(label)',
-              'font-size': '11px',
-              'background-color': '#718096',
-              color: '#fff',
-              'text-halign': 'center',
-              'text-valign': 'center',
-              width: 'label',
-              height: 'label',
-              padding: '8px',
-              shape: 'round-rectangle',
-              'text-wrap': 'wrap',
-              'text-max-width': '140px',
-              'border-width': 0,
-            },
-          },
-          {
-            selector: 'node[?iri]',
-            style: { 'background-color': '#2b6cb0', cursor: 'pointer' },
-          },
-          {
-            selector: 'node:selected',
-            style: { 'background-color': '#1a365d', 'border-width': 2, 'border-color': '#fff' },
-          },
-          {
-            selector: 'edge',
-            style: {
-              label: 'data(label)',
-              'font-size': '9px',
-              color: '#555',
-              'text-rotation': 'autorotate',
-              'text-background-color': '#fff',
-              'text-background-opacity': 0.85,
-              'text-background-padding': '2px',
-              'curve-style': 'bezier',
-              'target-arrow-shape': 'triangle',
-              'line-color': '#b0b0b0',
-              'target-arrow-color': '#b0b0b0',
-              'arrow-scale': 0.9,
-              width: 1.5,
-            },
-          },
+          { selector: 'node', style: {
+            label: 'data(label)', 'font-size': '11px', 'background-color': '#718096',
+            color: '#fff', 'text-halign': 'center', 'text-valign': 'center',
+            width: 'label', height: 'label', padding: '8px', shape: 'round-rectangle',
+            'text-wrap': 'wrap', 'text-max-width': '140px', 'border-width': 0,
+          }},
+          { selector: 'node[?iri]', style: { 'background-color': '#2b6cb0', cursor: 'pointer' }},
+          { selector: 'node:selected', style: { 'background-color': '#1a365d', 'border-width': 2, 'border-color': '#fff' }},
+          { selector: 'edge', style: {
+            label: 'data(label)', 'font-size': '9px', color: '#555',
+            'text-rotation': 'autorotate', 'text-background-color': '#fff',
+            'text-background-opacity': 0.85, 'text-background-padding': '2px',
+            'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+            'line-color': '#b0b0b0', 'target-arrow-color': '#b0b0b0',
+            'arrow-scale': 0.9, width: 1.5,
+          }},
         ],
         layout: {
-          name: 'cose',
-          padding: 30,
-          animate: false,
-          nodeOverlap: 20,
-          componentSpacing: 50,
-          nodeRepulsion: () => 8000,
-          edgeElasticity: () => 100,
-          idealEdgeLength: () => 80,
+          name: 'cose', padding: 30, animate: false, nodeOverlap: 20,
+          componentSpacing: 50, nodeRepulsion: () => 8000,
+          edgeElasticity: () => 100, idealEdgeLength: () => 80,
         },
       });
 
@@ -632,9 +704,12 @@
               '<div class="cy-wrap"><div id="cy"></div></div>' +
               '<p class="graph-hint">Scroll to zoom · drag to pan · click a node to browse</p>' +
             '</div>';
-          renderTable(document.getElementById('result-table-pane'), data, null);
+          const tablePane = document.getElementById('result-table-pane');
+          renderTable(tablePane, data, null);
+          addExportButtons(tablePane, data);
         } else {
           renderTable(container, data, null);
+          addExportButtons(container, data);
         }
         saveHistory(rawQuery, count);
       } catch (e) {
@@ -673,6 +748,7 @@
     async function showResourceView(iri) {
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = '';
+      document.getElementById('classes-view').style.display  = 'none';
 
       document.getElementById('resource-heading').textContent =
         shortenIri(iri) !== iri ? shortenIri(iri) : 'Resource';
@@ -717,19 +793,120 @@
       else renderTable(inEl, inData, document.getElementById('in-count'));
     }
 
+    // ── Class hierarchy view ───────────────────────────────────────────────────
+    async function showClassesView() {
+      document.getElementById('query-view').style.display    = 'none';
+      document.getElementById('resource-view').style.display = 'none';
+      document.getElementById('classes-view').style.display  = '';
+      document.getElementById('nav-query').classList.remove('active');
+      document.getElementById('nav-classes').classList.add('active');
+
+      const treeEl = document.getElementById('class-tree');
+      treeEl.textContent = 'Loading…';
+
+      try {
+        const data = await sparqlFetch(
+          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }'
+        );
+        const bindings = data.results?.bindings ?? [];
+
+        const children = new Map();
+        const allClasses = new Set();
+        for (const b of bindings) {
+          const child = b.child?.value, parent = b.parent?.value;
+          if (!child || !parent) continue;
+          allClasses.add(child);
+          allClasses.add(parent);
+          if (!children.has(parent)) children.set(parent, new Set());
+          children.get(parent).add(child);
+        }
+
+        if (allClasses.size === 0) {
+          treeEl.textContent = 'No rdfs:subClassOf triples found.';
+          return;
+        }
+
+        const hasParent = new Set(bindings.map(b => b.child?.value).filter(Boolean));
+        const roots = [...allClasses].filter(c => !hasParent.has(c)).sort();
+
+        treeEl.innerHTML = '';
+
+        function renderNode(iri, depth) {
+          const kids = [...(children.get(iri) || [])].sort();
+          if (kids.length > 0) {
+            const det = document.createElement('details');
+            det.open = depth < 2;
+            det.style.paddingLeft = depth > 0 ? '1.2rem' : '0';
+            const sum = document.createElement('summary');
+            sum.appendChild(makeIriLink(iri));
+            det.appendChild(sum);
+            for (const k of kids) det.appendChild(renderNode(k, depth + 1));
+            return det;
+          } else {
+            const div = document.createElement('div');
+            div.style.paddingLeft = depth > 0 ? '1.2rem' : '0';
+            div.appendChild(makeIriLink(iri));
+            return div;
+          }
+        }
+
+        for (const root of roots) treeEl.appendChild(renderNode(root, 0));
+      } catch (e) {
+        treeEl.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    // ── Drag-and-drop upload ───────────────────────────────────────────────────
+    function initDropZone() {
+      const zone = document.getElementById('upload-dropzone');
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+      zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+          document.getElementById('turtle').value = ev.target.result;
+        };
+        reader.readAsText(file);
+      });
+    }
+
+    // ── Keyboard shortcut ──────────────────────────────────────────────────────
+    function initKeyboardShortcuts() {
+      document.getElementById('query').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          runQuery();
+        }
+      });
+    }
+
     // ── Page-load routing ──────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', () => {
       renderPrefixList();
       renderHistory();
       loadStats();
+      initDropZone();
+      initKeyboardShortcuts();
+
       const params   = new URLSearchParams(location.search);
       const resource = params.get('resource');
       const query    = params.get('query');
+      const view     = params.get('view');
+
       if (resource) {
         showResourceView(resource);
-      } else if (query) {
-        document.getElementById('query').value = query;
-        runQuery();
+      } else if (view === 'classes') {
+        showClassesView();
+      } else {
+        document.getElementById('nav-query').classList.add('active');
+        if (query) {
+          document.getElementById('query').value = query;
+          runQuery();
+        }
       }
     });
   </script>

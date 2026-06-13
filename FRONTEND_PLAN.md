@@ -7,7 +7,7 @@ All improvements described here work within that architecture (no build tooling,
 
 ---
 
-## Current state
+## Current state (all implemented)
 
 | Feature | Status |
 |---|---|
@@ -17,102 +17,48 @@ All improvements described here work within that architecture (no build tooling,
 | Prefix shortening in results (with full-IRI tooltip) | ✓ |
 | Prefix manager (localStorage, collapsible) | ✓ |
 | Auto-prepend prefixes to submitted queries | ✓ |
+| Query templates dropdown | ✓ |
+| Ctrl+Enter keyboard shortcut | ✓ |
 | Query history (localStorage, max 50) | ✓ |
+| Result CSV export | ✓ |
+| Result JSON export | ✓ |
 | Triple count in header | ✓ |
 | Turtle upload | ✓ |
+| Drag-and-drop file upload (.ttl/.owl/.jsonld) | ✓ |
 | Resource browser (`/?resource=<iri>`) | ✓ |
 | `rdfs:label` as resource heading | ✓ |
 | `rdf:type` class badges on resource page | ✓ |
 | Collapsible outgoing / incoming edge tables | ✓ |
 | Graph view tab (Cytoscape.js, 3-variable queries) | ✓ |
-| Class hierarchy view (`/classes`) | ✗ |
-| DESCRIBE query | ✗ (parser not implemented) |
+| Class hierarchy view (`/?view=classes`) | ✓ |
 
 ---
 
-## P2 — Graph visualisation (remaining)
+## Possible future improvements
 
-### Class hierarchy view
+### Syntax highlighting (P3 stretch goal)
 
-A dedicated panel or page (`/classes`) that runs:
-```sparql
-SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }
-```
-and renders a collapsible tree using Cytoscape's `dagre` layout or a simple `<details>`-based
-HTML tree. This is particularly useful for OWL ontologies like the Gene Ontology where the
-class hierarchy is the primary structure.
+Replace the plain `<textarea>` with **CodeMirror 6** (MIT, CDN-embeddable).
+Would provide SPARQL keyword highlighting, bracket matching, and better multi-line editing.
+CDN import via `<script type="module">` — no build step needed.
 
-`dagre` layout requires the `cytoscape-dagre` plugin (also CDN-embeddable) plus `dagre` itself:
+### Class hierarchy with dagre layout
+
+The current class hierarchy uses a `<details>`-based collapsible tree.
+A richer Cytoscape + `dagre` layout would give a proper hierarchical graph view.
+Requires two additional CDN scripts:
+
 ```html
 <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 ```
 
----
+### Named-graph upload target
 
-## P3 — Query experience improvements
+Add a "Target graph" input to the upload panel. Passes a `graph=<iri>` query parameter
+to `/upload`, routing to the Graph Store Protocol PUT/POST handler for a named graph.
 
-### Syntax highlighting in the textarea
+### DESCRIBE query support
 
-Replace the plain `<textarea>` with **CodeMirror 6** (MIT, CDN-embeddable).  Provides:
-- SPARQL keyword highlighting.
-- Bracket matching, auto-indent.
-- Ctrl+Enter to run the query.
-- Much better editing experience for multi-line queries.
-
-CDN import via `<script type="module">` — no build step needed.
-
-### Query templates / examples dropdown
-
-A `<select>` dropdown above the textarea with named example queries:
-
-| Label | Query |
-|---|---|
-| All triples (LIMIT 10) | `SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10` |
-| All classes | `SELECT DISTINCT ?c WHERE { ?c a owl:Class }` |
-| Class hierarchy | `SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }` |
-| Instances of class… | `SELECT ?i WHERE { ?i a <CLASS> }` |
-| Labels | `SELECT ?s ?label WHERE { ?s rdfs:label ?label } LIMIT 50` |
-
-Selecting an entry fills the textarea.
-
-### Keyboard shortcut
-
-`Ctrl+Enter` (or `Cmd+Enter` on Mac) runs the query. CodeMirror makes this trivial;
-with a plain textarea it requires a `keydown` handler.
-
-### Result export
-
-"Download CSV" and "Download JSON" buttons appear beneath the result table.
-The CSV is assembled client-side from the `bindings` array (no server changes needed).
-
----
-
-## P4 — Upload UX improvements
-
-### Drag-and-drop file upload
-
-Allow dragging a `.ttl`, `.owl`, or `.jsonld` file onto the upload card. The file content
-fills the textarea (small files) or is POSTed directly to `/upload` (large files via
-`FormData`). Content-type is inferred from the file extension.
-
-### Named-graph upload
-
-Add a "Target graph" input (default: default graph). Passes a `graph=<iri>` query parameter
-to `/upload`, which the server routes to the Graph Store Protocol PUT/POST handler on the
-appropriate named graph.
-
----
-
-## Implementation order (remaining)
-
-| Step | Work | Complexity |
-|---|---|---|
-| 8 | Class hierarchy page `/classes` (P2) | ~60 lines JS |
-| 9 | CodeMirror query editor (P3) | ~40 lines JS + CDN import |
-| 10 | Query templates dropdown (P3) | ~30 lines JS |
-| 11 | Result CSV/JSON export (P3) | ~30 lines JS |
-| 12 | Drag-and-drop upload (P4) | ~50 lines JS |
-
-All steps require only frontend changes (no server-side work).
-The single-file architecture (`frontend.html` with inline CSS/JS) stays intact throughout.
+Requires implementing DESCRIBE in the SPARQL parser. Would let the resource browser
+use `DESCRIBE <iri>` instead of two manual SELECT queries.

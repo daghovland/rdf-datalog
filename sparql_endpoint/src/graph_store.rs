@@ -564,6 +564,86 @@ pub async fn direct_gsp_put(
     }
 }
 
+/// `DELETE /rdf-graphs/*path` — remove the named graph whose IRI is the request URI.
+///
+/// Returns 204 No Content on success, 404 if the graph does not exist.
+pub async fn direct_gsp_delete(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> axum::response::Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+    let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
+    let mut store = state.store.write().await;
+    match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => {
+            store.remove_graph(id);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    }
+}
+
+/// `HEAD /rdf-graphs/*path` — return headers only for the graph at the request URI.
+pub async fn direct_gsp_head(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
+    let store = state.store.read().await;
+    let id = match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => id,
+        _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    };
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+    let get_resp = graph_response_parts(&store, id, accept);
+    let (parts, _body) = get_resp.into_parts();
+    Response::from_parts(parts, Body::empty())
+}
+
+/// `POST /rdf-graphs/*path` — merge triples into the named graph at the request URI.
+///
+/// Returns 200/204 on success, 404 if the graph does not exist, 415 for an
+/// unsupported Content-Type, 400 for a parse error.
+pub async fn direct_gsp_post(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+    let ct = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let fmt = match rdf_upload_format(ct) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Unsupported Content-Type for RDF upload",
+            )
+                .into_response();
+        }
+    };
+    let tmp = match parse_rdf_body(&body, fmt) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
+    let mut store = state.store.write().await;
+    let graph_id = match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => id,
+        _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    };
+    copy_default_graph_to(&tmp, &mut store, graph_id);
+    StatusCode::NO_CONTENT.into_response()
+}
+
 /// Percent-encode all bytes that are not unreserved URI characters.
 fn percent_encode(s: &str) -> String {
     s.bytes()
