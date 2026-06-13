@@ -443,6 +443,42 @@ async fn export_buttons_appear_after_query() {
     driver.quit().await.unwrap();
 }
 
+// ── Class hierarchy view ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn class_hierarchy_view_renders_subclass_tree() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=classes", server.base_url))
+        .await
+        .unwrap();
+    // The tree should not say "No rdfs:subClassOf triples found"
+    assert!(
+        wait_for_text(&driver, "#class-tree", 4000).await,
+        "class-tree never populated"
+    );
+    let text = driver
+        .find(By::Css("#class-tree"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !text.contains("No rdfs:subClassOf triples found"),
+        "class hierarchy reported no subClassOf triples, got: {text}"
+    );
+    assert!(
+        text.contains("Animal") || text.contains("Person"),
+        "expected Animal or Person in class tree, got: {text}"
+    );
+    driver.quit().await.unwrap();
+}
+
 // ── Drag-and-drop upload ──────────────────────────────────────────────────────
 
 #[tokio::test]

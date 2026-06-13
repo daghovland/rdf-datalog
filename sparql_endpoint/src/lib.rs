@@ -14,6 +14,7 @@ pub mod frontend;
 pub mod graph_store;
 pub mod negotiate;
 pub mod query;
+pub mod query_builder;
 pub mod registry;
 pub mod serialize;
 pub mod server;

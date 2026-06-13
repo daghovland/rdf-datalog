@@ -102,3 +102,38 @@ async fn test_post_form_multi_triple_join() {
     common::assert_binding_contains(bindings, "age", "literal", "30");
     common::assert_binding_contains(bindings, "age", "literal", "25");
 }
+
+/// Regression test: the Class Hierarchy view sends a prefixed query without
+/// relying on user-managed prefix state, so it must include the PREFIX inline.
+/// Verify that `PREFIX rdfs: ... SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }`
+/// returns the subClassOf pair loaded from Turtle.
+#[tokio::test]
+async fn class_hierarchy_query_with_inline_prefix_returns_subclass_pairs() {
+    let turtle = r#"
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        <http://example.org/Person> rdfs:subClassOf <http://example.org/Animal> .
+    "#;
+    let server = common::TestServer::start(turtle).await;
+
+    let sparql = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+                  SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }";
+
+    let resp = server
+        .client
+        .post(server.sparql_url())
+        .header("content-type", "application/sparql-query")
+        .body(sparql)
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+
+    assert_eq!(bindings.len(), 1, "expected 1 subClassOf pair, got: {bindings:#?}");
+    common::assert_binding_contains(bindings, "child", "uri", "http://example.org/Person");
+    common::assert_binding_contains(bindings, "parent", "uri", "http://example.org/Animal");
+}

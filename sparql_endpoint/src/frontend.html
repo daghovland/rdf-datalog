@@ -253,6 +253,24 @@
     </div>
   </div>
 
+  <!-- ── QB self-test harness view (Layer 3a) ─────────────────────────────────
+       Developer-only page: /?view=build-selftest
+       Runs QB_SELF_TESTS in-browser and writes a JSON summary to
+       #qb-test-results so the thirtyfour test can read it.              -->
+  <div id="build-selftest-view" style="display:none">
+    <div class="card">
+      <a href="/" class="back-link">&#8592; Back to queries</a>
+      <h2>Query Builder Self-Tests</h2>
+      <p class="hint">
+        Runs <code>QB_SELF_TESTS</code> against <code>generateSparql()</code>
+        and writes a JSON result to <code>#qb-test-results</code>.
+      </p>
+      <pre id="qb-test-results" style="font-family:'Fira Mono',monospace;font-size:0.85rem;
+           background:#f8f8f8;border:1px solid #ddd;border-radius:4px;padding:0.75rem;
+           white-space:pre-wrap"></pre>
+    </div>
+  </div>
+
   <!-- ── Class hierarchy view ───────────────────────────────────────────────── -->
   <div id="classes-view" style="display:none">
     <div class="card">
@@ -806,7 +824,7 @@
 
       try {
         const data = await sparqlFetch(
-          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }'
+          'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }'
         );
         const bindings = data.results?.bindings ?? [];
 
