@@ -1,0 +1,12 @@
+# SHACL spec §4.5.4 — sh:lessThanOrEquals shapes graph (LessThanOrEqualsExampleShape).
+# Source: https://www.w3.org/TR/shacl/#LessThanOrEqualsConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:LessThanOrEqualsExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:startDate ;
+        sh:lessThanOrEquals ex:endDate ;
+    ] .

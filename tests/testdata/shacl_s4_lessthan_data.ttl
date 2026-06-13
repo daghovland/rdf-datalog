@@ -1,0 +1,15 @@
+# SHACL spec §4.5.3 — sh:lessThan data graph (LessThanExampleShape).
+# Source: https://www.w3.org/TR/shacl/#LessThanConstraintComponent
+# sh:lessThan: each value of ex:startDate must be strictly less than ex:endDate.
+# ex:Alice startDate 2020-01-01 < endDate 2020-12-31 → conforms.
+# ex:Bob   startDate 2020-06-01 > endDate 2020-01-01 → 1 violation.
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice
+    ex:startDate "2020-01-01"^^xsd:date ;
+    ex:endDate   "2020-12-31"^^xsd:date .
+
+ex:Bob
+    ex:startDate "2020-06-01"^^xsd:date ;
+    ex:endDate   "2020-01-01"^^xsd:date .

@@ -1,0 +1,12 @@
+# SHACL spec §4.5.2 — sh:disjoint shapes graph (DisjointExampleShape).
+# Source: https://www.w3.org/TR/shacl/#DisjointConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:DisjointExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:prefLabel ;
+        sh:disjoint ex:altLabel ;
+    ] .

@@ -140,6 +140,9 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
         QueryResult::Ask(_) => {
             Err("ASK queries are not supported via run_sparql_query".to_string())
         }
+        QueryResult::Construct(_) => {
+            Err("CONSTRUCT queries are not supported via run_sparql_query".to_string())
+        }
     }
 }
 

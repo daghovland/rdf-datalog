@@ -1,0 +1,16 @@
+# SHACL spec §4.8.1 — sh:closed shapes graph (ClosedExampleShape).
+# Source: https://www.w3.org/TR/shacl/#ClosedConstraintComponent
+# sh:closed true with sh:ignoredProperties (rdf:type): only ex:name is permitted.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:ClosedExampleShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Animal ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+    ] .

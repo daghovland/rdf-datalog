@@ -1,0 +1,9 @@
+# SHACL spec §2.1.3.2 — sh:targetClass data graph.
+# Source: https://www.w3.org/TR/shacl/#targetClass
+# ex:Alice is an ex:Person (targeted) with no ex:name → 1 violation.
+# ex:NewYork is an ex:Place (not targeted as Person) → no violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person .
+ex:Bob a ex:Person ; ex:name "Bob" .
+ex:NewYork a ex:Place .

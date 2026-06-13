@@ -15,6 +15,11 @@ pub enum Query {
     Ask {
         where_clause: Vec<QueryComponent>,
     },
+    Construct {
+        /// Template triple patterns; empty means short form (use WHERE BGPs as template).
+        template: Vec<TriplePattern>,
+        where_clause: Vec<QueryComponent>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

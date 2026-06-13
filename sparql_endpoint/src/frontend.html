@@ -202,6 +202,21 @@
     .btn-remove-node { padding: 0.1rem 0.4rem; font-size: 0.72rem; background: #eee;
                        color: #666; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
     .btn-remove-node:hover { background: #fdd; color: #900; border-color: #f99; }
+    /* Class picker autocomplete dropdown */
+    .qb-picker-wrap { position: relative; margin-top: 0.25rem; }
+    .qb-picker-wrap .qb-class-input { margin-top: 0; }
+    .qb-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+                   background: #fff; border: 1px solid #ccc; border-top: none;
+                   border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto;
+                   box-shadow: 0 4px 10px rgba(0,0,0,.1); }
+    .qb-dropdown-item { padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.83rem; }
+    .qb-dropdown-item:hover, .qb-dropdown-item.focused { background: #eef3ff; }
+    .qb-item-short { font-weight: 500; color: #222; }
+    .qb-item-iri { font-size: 0.71rem; color: #888; font-family: "Fira Mono","Consolas",monospace; }
+    /* Type-badge query builder link on resource page */
+    .qb-type-link { font-size: 0.72rem; color: #2b6cb0; text-decoration: none;
+                    margin-right: 0.2rem; vertical-align: middle; opacity: 0.7; }
+    .qb-type-link:hover { opacity: 1; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -296,11 +311,14 @@
   <div id="build-view" style="display:none">
     <div class="card">
       <h2>Query Builder</h2>
-      <label for="class-picker" class="hint">Start with a class:</label>
-      <input id="class-picker" list="class-list" class="qb-class-input"
-             placeholder="Type or select a class IRI…" autocomplete="off"
-             onchange="onClassSelect(this.value)" />
-      <datalist id="class-list"></datalist>
+      <label class="hint">Start with a class:</label>
+      <div class="qb-picker-wrap">
+        <input id="class-picker" class="qb-class-input"
+               placeholder="Filter classes…" autocomplete="off"
+               oninput="filterQbClasses(this.value)"
+               onkeydown="qbPickerKeydown(event)" />
+        <div id="class-dropdown" class="qb-dropdown" style="display:none"></div>
+      </div>
       <div id="node-canvas" class="qb-canvas" style="margin-top:0.75rem"></div>
     </div>
 
@@ -513,12 +531,16 @@
         method: 'POST',
         headers: {
           'Content-Type': 'application/sparql-query',
-          'Accept': 'application/sparql-results+json',
+          'Accept': 'application/sparql-results+json, text/turtle;q=0.9, application/n-triples;q=0.8',
         },
         body: query,
       });
       const text = await resp.text();
       if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + text);
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('text/turtle') || ct.includes('application/n-triples') || ct.includes('application/rdf')) {
+        return { type: 'rdf', text };
+      }
       return JSON.parse(text);
     }
 
@@ -783,6 +805,17 @@
       lastResults = null;
       try {
         const data  = await sparqlFetch(query);
+
+        if (data.type === 'rdf') {
+          const pre = document.createElement('pre');
+          pre.className = 'msg ok';
+          pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:0.8rem';
+          pre.textContent = data.text || '(empty result)';
+          container.appendChild(pre);
+          saveHistory(rawQuery, null);
+          return;
+        }
+
         const vars  = data.head?.vars ?? [];
         const count = data.results?.bindings?.length ?? null;
 
@@ -879,6 +912,12 @@
           span.textContent = shortenIri(t);
           span.title = t;
           typesEl.appendChild(span);
+          const link = document.createElement('a');
+          link.className = 'qb-type-link';
+          link.href = '/?view=build&class=' + encodeURIComponent(t);
+          link.title = 'Build query from ' + shortenIri(t);
+          link.textContent = 'Build query';
+          typesEl.appendChild(link);
         }
       }
 
@@ -1046,7 +1085,7 @@
 
     // ── Build view lifecycle ───────────────────────────────────────────────────
 
-    async function showBuildView() {
+    async function showBuildView(preselectedClass) {
       document.getElementById('query-view').style.display         = 'none';
       document.getElementById('resource-view').style.display      = 'none';
       document.getElementById('classes-view').style.display       = 'none';
@@ -1056,30 +1095,101 @@
         document.getElementById(id)?.classList.remove('active'));
       document.getElementById('nav-build').classList.add('active');
       await loadQbClasses();
+      if (preselectedClass) {
+        const found = qbClassList.find(c => c.iri === preselectedClass);
+        document.getElementById('class-picker').value =
+          found ? found.short : preselectedClass;
+        document.getElementById('class-dropdown').style.display = 'none';
+        await onClassSelect(preselectedClass);
+      }
     }
+
+    let qbClassList = [];  // [{iri, short}] populated by loadQbClasses
+    let qbFocusedItem = -1;  // keyboard navigation index in dropdown
 
     async function loadQbClasses() {
       try {
         const data = await sparqlFetch(
           'SELECT DISTINCT ?c WHERE { ' +
           '{ ?c a <http://www.w3.org/2002/07/owl#Class> } UNION { [] a ?c } ' +
-          '} LIMIT 200'
+          '} LIMIT 500'
         );
-        const dl = document.getElementById('class-list');
-        dl.innerHTML = '';
+        qbClassList = [];
         for (const b of data.results?.bindings ?? []) {
           if (b.c?.type !== 'uri') continue;
-          const opt = document.createElement('option');
-          opt.value = b.c.value;
-          opt.label = shortenIri(b.c.value);
-          dl.appendChild(opt);
+          qbClassList.push({ iri: b.c.value, short: shortenIri(b.c.value) });
         }
+        qbClassList.sort((a, b) => a.short.localeCompare(b.short));
+        filterQbClasses(document.getElementById('class-picker').value);
       } catch { /* silently ignore */ }
     }
 
+    function filterQbClasses(text) {
+      const q = text.trim().toLowerCase();
+      const dd = document.getElementById('class-dropdown');
+      const matches = q
+        ? qbClassList.filter(c =>
+            c.short.toLowerCase().includes(q) || c.iri.toLowerCase().includes(q))
+        : qbClassList;
+      if (matches.length === 0) { dd.style.display = 'none'; return; }
+      dd.innerHTML = '';
+      qbFocusedItem = -1;
+      for (const c of matches.slice(0, 80)) {
+        const item = document.createElement('div');
+        item.className = 'qb-dropdown-item';
+        item.innerHTML =
+          '<span class="qb-item-short">' + escHtml(c.short) + '</span>' +
+          '<span class="qb-item-iri">'   + escHtml(c.iri)   + '</span>';
+        item.addEventListener('mousedown', e => {
+          e.preventDefault();  // keep focus on input
+          selectQbClass(c.iri, c.short);
+        });
+        dd.appendChild(item);
+      }
+      dd.style.display = '';
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function selectQbClass(iri, short) {
+      document.getElementById('class-picker').value = short;
+      document.getElementById('class-dropdown').style.display = 'none';
+      onClassSelect(iri);
+    }
+
+    function qbPickerKeydown(e) {
+      const dd = document.getElementById('class-dropdown');
+      if (dd.style.display === 'none') return;
+      const items = dd.querySelectorAll('.qb-dropdown-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        qbFocusedItem = Math.min(qbFocusedItem + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
+        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        qbFocusedItem = Math.max(qbFocusedItem - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
+        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (qbFocusedItem >= 0 && items[qbFocusedItem]) {
+          items[qbFocusedItem].dispatchEvent(new MouseEvent('mousedown'));
+        }
+      } else if (e.key === 'Escape') {
+        dd.style.display = 'none';
+      }
+    }
+
     async function onClassSelect(classIri) {
-      const iri = classIri.trim();
-      if (!iri.startsWith('http')) return;
+      let iri = classIri.trim();
+      if (!iri.startsWith('http')) {
+        const found = qbClassList.find(c => c.short === iri || c.iri === iri);
+        if (!found) return;
+        iri = found.iri;
+      }
       qbNodeSeq    = 0;
       const root   = { varName: 's', classIri: iri, dataProps: [], links: [], _objProps: [] };
       qbRootNode   = root;
@@ -1499,6 +1609,11 @@
       loadStats();
       initDropZone();
       initKeyboardShortcuts();
+      document.addEventListener('click', e => {
+        if (!e.target.closest('.qb-picker-wrap')) {
+          document.getElementById('class-dropdown').style.display = 'none';
+        }
+      });
 
       const params   = new URLSearchParams(location.search);
       const resource = params.get('resource');
@@ -1508,7 +1623,7 @@
       if (resource) {
         showResourceView(resource);
       } else if (view === 'build') {
-        showBuildView();
+        showBuildView(params.get('class') || undefined);
       } else if (view === 'classes') {
         showClassesView();
       } else if (view === 'build-selftest') {

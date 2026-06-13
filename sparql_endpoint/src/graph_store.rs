@@ -17,7 +17,13 @@ Contact: hovlanddag@gmail.com
 //!
 //! Specification: <https://www.w3.org/TR/sparql11-http-rdf-update/>
 
-use crate::{AppState, serialize::serialize_graph};
+use crate::{
+    AppState,
+    serialize::{
+        serialize_graph, serialize_nquads, serialize_nquads_graph, serialize_trig,
+        serialize_trig_graph,
+    },
+};
 use axum::{
     body::Body,
     extract::{Query, State},
@@ -175,31 +181,31 @@ fn graph_response_parts(
     graph_id: GraphElementId,
     accept: Option<&str>,
 ) -> axum::response::Response {
-    // serialize_graph produces valid N-Triples (fully-expanded, one triple per line).
-    // That output is also valid N-Quads (default graph) and valid TriG.
-    let body = serialize_graph(store, graph_id);
     match negotiate_rdf_format(accept) {
         Some(RdfFormat::Turtle) => (
             StatusCode::OK,
             [("content-type", "text/turtle; charset=utf-8")],
-            body,
+            serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NTriples) => (
             StatusCode::OK,
             [("content-type", "application/n-triples")],
-            body,
+            serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NQuads) => (
             StatusCode::OK,
             [("content-type", "application/n-quads")],
-            body,
+            serialize_nquads_graph(store, graph_id),
         )
             .into_response(),
-        Some(RdfFormat::TriG) => {
-            (StatusCode::OK, [("content-type", "application/trig")], body).into_response()
-        }
+        Some(RdfFormat::TriG) => (
+            StatusCode::OK,
+            [("content-type", "application/trig")],
+            serialize_trig_graph(store, graph_id),
+        )
+            .into_response(),
         None => (
             StatusCode::NOT_ACCEPTABLE,
             "No supported RDF format in Accept",
@@ -276,12 +282,36 @@ pub async fn gsp_get_inner(
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+
+    // No graph param → whole-dataset response for multi-graph formats (Fuseki extension).
+    if !params.contains_key("default") && !params.contains_key("graph") {
+        return match negotiate_rdf_format(accept) {
+            Some(RdfFormat::NQuads) => (
+                StatusCode::OK,
+                [("content-type", "application/n-quads")],
+                serialize_nquads(&store),
+            )
+                .into_response(),
+            Some(RdfFormat::TriG) => (
+                StatusCode::OK,
+                [("content-type", "application/trig")],
+                serialize_trig(&store),
+            )
+                .into_response(),
+            _ => (
+                StatusCode::BAD_REQUEST,
+                "GET /rdf-graph-store requires ?default or ?graph=<iri>",
+            )
+                .into_response(),
+        };
+    }
+
     let graph_id = match resolve_read_target(&params, &store) {
         Ok(ReadTarget::Default) => DEFAULT_GRAPH_ELEMENT_ID,
         Ok(ReadTarget::Named(id)) => id,
         Err(r) => return r,
     };
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
     graph_response_parts(&store, graph_id, accept)
 }
 
@@ -299,12 +329,29 @@ pub async fn gsp_head_inner(
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+
+    // Mirror gsp_get_inner: no-param whole-dataset for HEAD too.
+    if !params.contains_key("default") && !params.contains_key("graph") {
+        let ct = match negotiate_rdf_format(accept) {
+            Some(RdfFormat::NQuads) => "application/n-quads",
+            Some(RdfFormat::TriG) => "application/trig",
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "GET /rdf-graph-store requires ?default or ?graph=<iri>",
+                )
+                    .into_response();
+            }
+        };
+        return (StatusCode::OK, [("content-type", ct)], "").into_response();
+    }
+
     let graph_id = match resolve_read_target(&params, &store) {
         Ok(ReadTarget::Default) => DEFAULT_GRAPH_ELEMENT_ID,
         Ok(ReadTarget::Named(id)) => id,
         Err(r) => return r,
     };
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
     let get_resp = graph_response_parts(&store, graph_id, accept);
     let (parts, _body) = get_resp.into_parts();
     Response::from_parts(parts, Body::empty())

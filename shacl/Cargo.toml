@@ -1,0 +1,10 @@
+[package]
+name = "shacl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+datalog = { path = "../datalog" }
+ingress = { path = "../ingress" }
+log = "0.4"

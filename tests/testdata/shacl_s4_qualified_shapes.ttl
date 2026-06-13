@@ -1,0 +1,14 @@
+# SHACL spec §4.7.3 — sh:qualifiedValueShape shapes graph (QualifiedExampleShape).
+# Source: https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent
+# Requires at least 2 ex:parent values that satisfy sh:nodeKind sh:IRI.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:QualifiedExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:nodeKind sh:IRI ] ;
+        sh:qualifiedMinCount 2 ;
+    ] .

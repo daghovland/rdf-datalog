@@ -1,0 +1,12 @@
+# SHACL spec §4.6.1 — sh:not shapes graph (NotExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# Each target node must NOT be an instance of ex:LegalPerson.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NotExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:not [
+        sh:class ex:LegalPerson ;
+    ] .

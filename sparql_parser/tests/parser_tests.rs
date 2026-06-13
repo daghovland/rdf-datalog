@@ -1,5 +1,5 @@
-use sparql_parser::ast::*;
-use sparql_parser::{parse_query, ParserContext};
+use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
+use sparql_parser::{ast::*, execute, parse_query, ParserContext, QueryResult};
 use std::collections::HashMap;
 
 #[test]
@@ -221,4 +221,420 @@ fn test_parse_sparql12_union_example() {
 
     assert_eq!(where_clause.len(), 1);
     assert!(matches!(where_clause[0], QueryComponent::Union(_, _)));
+}
+
+/// Wildcard CONSTRUCT: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` is valid SPARQL
+/// and should parse as a full-form Construct with 1 template triple and 1 WHERE component.
+#[test]
+fn construct_wildcard_spo_parses() {
+    let sparql = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("should parse wildcard CONSTRUCT");
+    let Query::Construct {
+        template,
+        where_clause,
+    } = query
+    else {
+        panic!("expected Construct query");
+    };
+    assert_eq!(template.len(), 1, "one template triple");
+    assert_eq!(where_clause.len(), 1, "one WHERE component");
+    let tp = &template[0];
+    assert!(
+        matches!(tp.subject, Term::Variable(_)),
+        "subject is variable"
+    );
+    assert!(
+        matches!(tp.predicate, Term::Variable(_)),
+        "predicate is variable"
+    );
+    assert!(matches!(tp.object, Term::Variable(_)), "object is variable");
+}
+
+// ── CONSTRUCT parser tests ────────────────────────────────────────────────────
+
+/// W3C SPARQL 1.1 §10.2.1: full form with IRI template.
+#[test]
+fn construct_full_form_parses() {
+    let sparql = r#"
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        PREFIX vcard: <http://www.w3.org/2006/vcard/ns#>
+        CONSTRUCT { <http://example.org/person#Alice> vcard:FN ?name }
+        WHERE     { ?x foaf:name ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
+    let Query::Construct {
+        template,
+        where_clause,
+    } = query
+    else {
+        panic!("expected Construct query");
+    };
+    assert_eq!(template.len(), 1);
+    assert_eq!(where_clause.len(), 1);
+}
+
+/// W3C SPARQL 1.1 §10.2.4: short form — CONSTRUCT WHERE { ... }.
+#[test]
+fn construct_short_form_parses() {
+    let sparql = r#"
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        CONSTRUCT WHERE { ?s foaf:name ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
+    let Query::Construct { template, .. } = query else {
+        panic!("expected Construct");
+    };
+    assert!(
+        template.is_empty(),
+        "short form must produce empty template in AST"
+    );
+}
+
+/// Full form with multiple template triples and blank nodes.
+#[test]
+fn construct_blank_node_template_parses() {
+    let sparql = r#"
+        PREFIX foaf:  <http://xmlns.com/foaf/0.1/>
+        PREFIX vcard: <http://www.w3.org/2006/vcard/ns#>
+        CONSTRUCT {
+            ?x  vcard:N _:v .
+            _:v vcard:givenName ?gname .
+            _:v vcard:familyName ?fname
+        }
+        WHERE { ?x foaf:firstName ?gname ; foaf:lastName ?fname }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
+    let Query::Construct { template, .. } = query else {
+        panic!("expected Construct");
+    };
+    assert_eq!(template.len(), 3);
+}
+
+// ── CONSTRUCT executor tests ──────────────────────────────────────────────────
+
+fn make_iri(iri: &str) -> GraphElement {
+    GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.to_string())))
+}
+
+fn make_literal(s: &str) -> GraphElement {
+    GraphElement::GraphLiteral(RdfLiteral::LiteralString(s.to_string()))
+}
+
+fn add_iri(ds: &mut Datastore, iri: &str) -> dag_rdf::GraphElementId {
+    ds.add_node_resource(RdfResource::Iri(IriReference(iri.to_string())))
+}
+
+fn add_literal(ds: &mut Datastore, s: &str) -> dag_rdf::GraphElementId {
+    ds.add_literal_resource(RdfLiteral::LiteralString(s.to_string()))
+}
+
+/// W3C SPARQL 1.1 §10.2.1: simple IRI template maps data to vcard triples.
+#[test]
+fn construct_iri_template_produces_correct_triples() {
+    let mut ds = Datastore::new(64);
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let foaf_name = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/name");
+    let name_val = add_literal(&mut ds, "Alice");
+    ds.add_triple(dag_rdf::Triple {
+        subject: alice,
+        predicate: foaf_name,
+        obj: name_val,
+    });
+
+    let sparql = r#"
+        PREFIX foaf:  <http://xmlns.com/foaf/0.1/>
+        PREFIX vcard: <http://www.w3.org/2006/vcard/ns#>
+        CONSTRUCT { <http://example.org/person#Alice> vcard:FN ?name }
+        WHERE     { <http://example.org/alice> foaf:name ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(triples.len(), 1);
+    assert_eq!(
+        triples[0].subject,
+        make_iri("http://example.org/person#Alice")
+    );
+    assert_eq!(
+        triples[0].predicate,
+        make_iri("http://www.w3.org/2006/vcard/ns#FN")
+    );
+    assert_eq!(triples[0].object, make_literal("Alice"));
+}
+
+/// W3C SPARQL 1.1 §10.2.1: blank-node template generates fresh nodes per solution.
+///
+/// Two solutions (Alice and Bob) produce distinct blank nodes for the same template label.
+#[test]
+fn construct_blank_node_template_fresh_per_solution() {
+    let mut ds = Datastore::new(64);
+    let foaf_first = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/firstName");
+    let foaf_last = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/lastName");
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let alice_first = add_literal(&mut ds, "Alice");
+    let alice_last = add_literal(&mut ds, "Smith");
+    ds.add_triple(dag_rdf::Triple {
+        subject: alice,
+        predicate: foaf_first,
+        obj: alice_first,
+    });
+    ds.add_triple(dag_rdf::Triple {
+        subject: alice,
+        predicate: foaf_last,
+        obj: alice_last,
+    });
+    let bob = add_iri(&mut ds, "http://example.org/bob");
+    let bob_first = add_literal(&mut ds, "Bob");
+    let bob_last = add_literal(&mut ds, "Jones");
+    ds.add_triple(dag_rdf::Triple {
+        subject: bob,
+        predicate: foaf_first,
+        obj: bob_first,
+    });
+    ds.add_triple(dag_rdf::Triple {
+        subject: bob,
+        predicate: foaf_last,
+        obj: bob_last,
+    });
+
+    let sparql = r#"
+        PREFIX foaf:  <http://xmlns.com/foaf/0.1/>
+        PREFIX vcard: <http://www.w3.org/2006/vcard/ns#>
+        CONSTRUCT {
+            ?x  vcard:N _:v .
+            _:v vcard:givenName ?gname .
+            _:v vcard:familyName ?fname
+        }
+        WHERE { ?x foaf:firstName ?gname ; foaf:lastName ?fname }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(triples.len(), 6, "2 solutions × 3 template triples = 6");
+
+    // Collect the blank-node IDs used as objects of vcard:N triples
+    let vcard_n = make_iri("http://www.w3.org/2006/vcard/ns#N");
+    let bnode_ids: Vec<u32> = triples
+        .iter()
+        .filter_map(|t| {
+            if t.predicate == vcard_n {
+                if let GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) = &t.object {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+    assert_eq!(bnode_ids.len(), 2, "one vcard:N triple per person");
+    assert_ne!(
+        bnode_ids[0], bnode_ids[1],
+        "blank nodes must be distinct across solutions"
+    );
+}
+
+/// W3C SPARQL 1.1 §10.2.4: short form returns the WHERE pattern triples.
+#[test]
+fn construct_short_form_returns_all_triples() {
+    let mut ds = Datastore::new(64);
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let foaf_name = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/name");
+    let name_val = add_literal(&mut ds, "Alice");
+    ds.add_triple(dag_rdf::Triple {
+        subject: alice,
+        predicate: foaf_name,
+        obj: name_val,
+    });
+
+    let sparql = r#"
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        CONSTRUCT WHERE { ?s foaf:name ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(triples.len(), 1);
+    assert_eq!(triples[0].subject, make_iri("http://example.org/alice"));
+    assert_eq!(
+        triples[0].predicate,
+        make_iri("http://xmlns.com/foaf/0.1/name")
+    );
+    assert_eq!(triples[0].object, make_literal("Alice"));
+}
+
+/// No matching solutions → empty output (no error).
+#[test]
+fn construct_no_solutions_produces_empty_result() {
+    let ds = Datastore::new(64);
+    let sparql = "CONSTRUCT { <http://example.org/s> <http://example.org/p> <http://example.org/o> } WHERE { ?s <http://example.org/missing> ?o }";
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+    assert!(triples.is_empty());
+}
+
+/// Unbound variable in template → triple is silently skipped (spec §10.2.1).
+#[test]
+fn construct_unbound_template_variable_is_skipped() {
+    let mut ds = Datastore::new(64);
+    let s = add_iri(&mut ds, "http://example.org/s");
+    let p = add_iri(&mut ds, "http://example.org/p");
+    let o = add_literal(&mut ds, "val");
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o,
+    });
+
+    let sparql = r#"
+        CONSTRUCT { ?s <http://example.org/q> ?unbound }
+        WHERE     { ?s <http://example.org/p> ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+    assert!(
+        triples.is_empty(),
+        "unbound variable must cause triple to be skipped"
+    );
+}
+
+/// CONSTRUCT { ?s ?p ?o } WHERE { GRAPH <iri> { ?s ?p ?o } } — the IRecordBackend pattern.
+#[test]
+fn construct_graph_clause_returns_named_graph_triples() {
+    let mut ds = Datastore::new(64);
+    let g = add_iri(&mut ds, "http://example.org/graph1");
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let foaf_name = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/name");
+    let name_val = add_literal(&mut ds, "Alice");
+    ds.add_named_graph_triple(
+        g,
+        dag_rdf::Triple {
+            subject: alice,
+            predicate: foaf_name,
+            obj: name_val,
+        },
+    );
+
+    let sparql = r#"
+        CONSTRUCT { ?s ?p ?o }
+        WHERE { GRAPH <http://example.org/graph1> { ?s ?p ?o } }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(triples.len(), 1);
+    assert_eq!(triples[0].subject, make_iri("http://example.org/alice"));
+    assert_eq!(
+        triples[0].predicate,
+        make_iri("http://xmlns.com/foaf/0.1/name")
+    );
+    assert_eq!(triples[0].object, make_literal("Alice"));
+}
+
+/// Literal in subject position of an instantiated template triple → silently skipped (§10.2.1).
+#[test]
+fn construct_literal_in_subject_is_skipped() {
+    let mut ds = Datastore::new(64);
+    let s = add_iri(&mut ds, "http://example.org/s");
+    let p = add_iri(&mut ds, "http://example.org/p");
+    let o = add_literal(&mut ds, "val");
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o,
+    });
+
+    // ?name resolves to a literal; using it as subject must be silently dropped
+    let sparql = r#"
+        CONSTRUCT { ?name <http://example.org/q> <http://example.org/r> }
+        WHERE     { ?s <http://example.org/p> ?name }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+    assert!(
+        triples.is_empty(),
+        "literal subject must be silently skipped"
+    );
+}
+
+/// Output triples are deduplicated when multiple solutions produce the same constant triple.
+#[test]
+fn construct_deduplicates_output_triples() {
+    let mut ds = Datastore::new(64);
+    let s1 = add_iri(&mut ds, "http://example.org/s1");
+    let s2 = add_iri(&mut ds, "http://example.org/s2");
+    let p = add_iri(&mut ds, "http://example.org/p");
+    let o = add_iri(&mut ds, "http://example.org/o");
+    ds.add_triple(dag_rdf::Triple {
+        subject: s1,
+        predicate: p,
+        obj: o,
+    });
+    ds.add_triple(dag_rdf::Triple {
+        subject: s2,
+        predicate: p,
+        obj: o,
+    });
+
+    let sparql = r#"
+        CONSTRUCT { <http://example.org/const> <http://example.org/p2> <http://example.org/o2> }
+        WHERE { ?s <http://example.org/p> <http://example.org/o> }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+    assert_eq!(
+        triples.len(),
+        1,
+        "duplicate output triples must be collapsed to one"
+    );
 }

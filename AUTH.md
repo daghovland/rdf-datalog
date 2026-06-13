@@ -3,12 +3,12 @@
 This document covers access-control for the HTTP server.  Three tiers are
 planned, in order of complexity:
 
-| Tier | Mechanism | When to use |
-|------|-----------|-------------|
-| 0 | None (current) | Local / trusted-network deployments |
-| 1 | Static API key | Single-tenant, simple deployments |
-| 2 | Generic OIDC (Azure Entra ID, Google, Keycloak, Auth0, …) | Multi-user, any cloud or on-prem |
-| 3 | Managed Identity | Service-to-service inside Azure (no credentials) |
+| Tier | Mechanism | Status | When to use |
+|------|-----------|--------|-------------|
+| 0 | None | Default | Local / trusted-network deployments |
+| 1 | Static API key | **Implemented** (library API; CLI flag pending) | Single-tenant, simple deployments |
+| 2 | Generic OIDC (Azure Entra ID, Google, Keycloak, Auth0, …) | Planned | Multi-user, any cloud or on-prem |
+| 3 | Managed Identity | Planned | Service-to-service inside Azure (no credentials) |
 
 ---
 
@@ -31,54 +31,86 @@ auth credentials — no token can unlock mutating endpoints.
 
 ## Tier 1 — Static API key
 
-### Design
+### Implementation
 
-- `Config` gains `api_key: Option<String>` and `require_auth_for_reads: bool`.
-- When `api_key` is set, all `Write` + `Admin` operations require
-  `Authorization: Bearer <key>`.  Reads stay open unless
-  `require_auth_for_reads` is also set.
-- The comparison must use constant-time equality (the `subtle` crate or
-  `crypto_common::constant_time_eq`) to prevent timing attacks.
+Implemented in `sparql_endpoint/src/auth.rs`.  Available through the library
+`Config.auth` field; CLI flags are not yet wired (see implementation order).
 
-### Config changes (`sparql_endpoint/src/lib.rs`)
+### Config (`sparql_endpoint/src/lib.rs`)
 
 ```rust
+#[derive(Clone, Debug, Default)]
+pub enum AuthConfig {
+    #[default]
+    None,
+    ApiKey {
+        key: String,
+        require_for_reads: bool,   // false = writes protected, reads open
+    },
+}
+
 pub struct Config {
     // … existing fields …
-    pub api_key: Option<String>,
-    pub require_auth_for_reads: bool,
+    pub auth: AuthConfig,
 }
 ```
 
-### CLI / env vars
+### CLI / env vars (pending)
+
+These are planned but not yet wired in `src/main.rs`:
 
 | CLI flag | Env var | Description |
 |----------|---------|-------------|
 | `--api-key <KEY>` | `DAGALOG_API_KEY` | Shared secret; omit to disable auth |
 | `--require-auth-for-reads` | `DAGALOG_AUTH_READS` | Protect GET endpoints too |
 
-### Middleware sketch (`sparql_endpoint/src/auth.rs`)
+### Permission classifier (`sparql_endpoint/src/auth.rs`)
+
+Every request is classified before the auth check.  The critical insight:
+`POST /sparql` and `POST /{name}/sparql` are SPARQL *query* endpoints (reads),
+not updates.  Only `POST /{name}/update` and `POST /upload` are writes.
 
 ```rust
-pub async fn require_write_auth<B>(
+pub enum Permission { Read, Write, Admin }
+
+pub fn classify(method: &Method, path: &str) -> Permission {
+    // Admin: POST /$/datasets, DELETE /$/datasets/*
+    // Write: POST …/update, POST /upload, PUT/DELETE (non-admin), POST on GSP endpoints
+    // Read: everything else, including POST /sparql and POST /{name}/sparql
+}
+```
+
+### Middleware (`sparql_endpoint/src/auth.rs`)
+
+Applied globally via `middleware::from_fn_with_state` in `server.rs`:
+
+```rust
+pub async fn auth_middleware(
     State(state): State<AppState>,
-    request: Request<B>,
-    next: Next<B>,
+    request: axum::extract::Request,
+    next: Next,
 ) -> Response {
-    let Some(ref key) = state.config.api_key else {
-        return next.run(request).await;   // auth disabled
-    };
-    match extract_bearer(request.headers()) {
-        Some(token) if constant_eq(token.as_bytes(), key.as_bytes()) => {
-            next.run(request).await
+    let required = classify(request.method(), request.uri().path());
+    match &state.config.auth {
+        AuthConfig::None => next.run(request).await,
+        AuthConfig::ApiKey { key, require_for_reads } => {
+            let needs_check = match required {
+                Permission::Write | Permission::Admin => true,
+                Permission::Read => *require_for_reads,
+            };
+            if !needs_check { return next.run(request).await; }
+            match extract_bearer(request.headers()) {
+                Some(token) if constant_time_eq(token.as_bytes(), key.as_bytes()) => {
+                    next.run(request).await
+                }
+                _ => unauthorized_response(),  // 401 + WWW-Authenticate: Bearer
+            }
         }
-        _ => unauthorized_response(),
     }
 }
 ```
 
-Apply via `.route_layer(axum::middleware::from_fn_with_state(state, require_write_auth))`
-on all mutating routes in `server.rs`.
+The key comparison uses `subtle::ConstantTimeEq` to prevent timing attacks.
 
 ---
 
@@ -467,67 +499,51 @@ must handle dot-separated claim paths.
 
 ## Testing
 
-### Tier 1 — API key tests
+### Tier 1 — API key tests (implemented)
 
-**Unit tests (`sparql_endpoint/src/auth.rs` or `tests/api_key.rs`)**
+**Unit tests — permission classifier (`sparql_endpoint/src/auth.rs`)**
 
-Use `axum::test::TestClient` (or `tower::ServiceExt::oneshot`) to drive
-the router without binding a port.
+16 tests covering every path through `classify()`:
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `get_sparql_is_read` | `GET /sparql` | `Read` |
+| `post_sparql_query_is_read` *(canary)* | `POST /sparql` | `Read` |
+| `post_dataset_sparql_is_read` | `POST /ds/sparql` | `Read` |
+| `post_dataset_query_is_read` | `POST /ds/query` | `Read` |
+| `post_update_is_write` | `POST /ds/update` | `Write` |
+| `post_upload_is_write` | `POST /upload` | `Write` |
+| `put_gsp_is_write` | `PUT /rdf-graph-store` | `Write` |
+| `delete_gsp_is_write` | `DELETE /rdf-graph-store` | `Write` |
+| `post_gsp_is_write` | `POST /rdf-graph-store` | `Write` |
+| `put_dataset_data_is_write` | `PUT /ds/data` | `Write` |
+| `delete_dataset_data_is_write` | `DELETE /ds/data` | `Write` |
+| `post_dataset_data_is_write` | `POST /ds/data` | `Write` |
+| `post_datasets_is_admin` | `POST /$/datasets` | `Admin` |
+| `delete_dataset_is_admin` | `DELETE /$/datasets/myds` | `Admin` |
+| `get_datasets_is_read` | `GET /$/datasets` | `Read` |
+| `get_server_info_is_read` | `GET /$/server` | `Read` |
+
+**Integration tests (`sparql_endpoint/tests/auth.rs`)**
+
+8 tests using `TestServer` helpers (bind to a random loopback port) and
+`reqwest` for real HTTP requests:
 
 | Test | Setup | Expected |
 |------|-------|----------|
-| No auth configured — write allowed | `api_key: None` | 200 |
-| Correct key on write endpoint | `Authorization: Bearer correct` | 200 |
-| Wrong key on write endpoint | `Authorization: Bearer wrong` | 401 |
-| Missing header on write endpoint | no `Authorization` header | 401 |
-| Correct key on read endpoint, reads unprotected | `require_for_reads: false` | 200 without key |
-| Correct key on read endpoint, reads protected | `require_for_reads: true` | 401 without key |
-| Timing: key comparison is constant-time | measure many correct/wrong key timings | Δt < noise floor |
+| `no_auth_write_allowed` | `AuthConfig::None` | write returns non-401 |
+| `api_key_correct_write_allowed` | correct `Bearer` token | write returns non-401 |
+| `api_key_wrong_write_returns_401` | wrong `Bearer` token | 401 |
+| `api_key_missing_write_returns_401` | no `Authorization` header | 401 |
+| `api_key_reads_open_by_default` | `require_for_reads: false` | GET /sparql non-401 without key |
+| `post_sparql_query_no_key_allowed` *(canary)* | POST /sparql with SELECT | non-401 without key |
+| `api_key_reads_protected_when_flag_set` | `require_for_reads: true` | GET /sparql returns 401 without key |
+| `api_key_correct_read_allowed_when_protected` | `require_for_reads: true` + correct key | non-401 |
 
 ```rust
-#[tokio::test]
-async fn api_key_wrong_returns_401() {
-    let app = build_test_app(Config {
-        auth: AuthConfig::ApiKey {
-            key: "secret".into(),
-            require_for_reads: false,
-        },
-        ..Config::default()
-    });
-    let response = app
-        .oneshot(
-            Request::post("/sparql/update")
-                .header("Authorization", "Bearer wrong")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-```
-
-**Integration test (end-to-end with a real HTTP listener)**
-
-Spawn a `tokio::task` with `sparql_endpoint::run(config)`, wait for it to
-bind, then use `reqwest` to issue real HTTP requests:
-
-```rust
-let url = spawn_server_with_key("test-key").await;
-let client = reqwest::Client::new();
-
-// Unauthenticated write → 401
-let r = client.post(format!("{url}/sparql/update")).send().await?;
-assert_eq!(r.status(), 401);
-
-// Authenticated write → 200 (or 400 if body is empty, not 401)
-let r = client
-    .post(format!("{url}/sparql/update"))
-    .bearer_auth("test-key")
-    .body("INSERT DATA { <s> <p> <o> }")
-    .send()
-    .await?;
-assert_ne!(r.status(), 401);
+// TestServer helpers (sparql_endpoint/tests/common/mod.rs):
+TestServer::start_writable_with_key(turtle, api_key).await          // writes protected, reads open
+TestServer::start_writable_with_key_protect_reads(turtle, api_key).await  // all requests protected
 ```
 
 ### Tier 2 — OIDC / JWT tests
@@ -648,17 +664,19 @@ Then `curl -H "Authorization: Bearer $(gcloud auth print-identity-token ...)"`.
 
 ## Implementation order
 
-| Step | Description |
-|------|-------------|
-| A | Add `AuthConfig` enum + `api_key` to `Config`; extend CLI with `--api-key` |
-| B | Implement `require_write_auth` middleware; wire into `server.rs` |
-| C | Add `require_auth_for_reads` flag; protect GET endpoints when set |
-| D | Add API key input to browser UI |
-| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery |
-| F | Implement JWKS cache (`JwksCache`) and `validate_jwt` |
-| G | Implement `oidc_auth` middleware; inject `Claims` extension |
-| H | Write unit tests for API key middleware (tower `oneshot`) |
-| I | Write unit tests for JWT validation (test RSA key pair + `wiremock`) |
-| J | Write integration test suite with embedded OIDC mock |
-| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) |
-| L | Document Managed Identity setup for Azure Container Apps / AKS |
+| Step | Description | Status |
+|------|-------------|--------|
+| A | Add `AuthConfig` enum + `auth` field to `Config` | ✓ Done |
+| A′ | Extend CLI binary with `--api-key` / `DAGALOG_API_KEY` env var | Pending |
+| B | Implement `classify()` + `auth_middleware`; wire globally into `server.rs` | ✓ Done |
+| C | `require_for_reads` flag — protect read endpoints when set | ✓ Done (library) |
+| D | Add API key input to browser UI | Pending |
+| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery | Pending |
+| F | Implement JWKS cache (`JwksCache`) and `validate_jwt` | Pending |
+| G | Implement `oidc_auth` middleware; inject `Claims` extension | Pending |
+| H | Unit tests for `classify()` (16 tests in `auth.rs`) | ✓ Done |
+| H′ | Integration tests for API key middleware (8 tests in `tests/auth.rs`) | ✓ Done |
+| I | Unit tests for JWT validation (test RSA key pair + `wiremock`) | Pending |
+| J | Integration test suite with embedded OIDC mock | Pending |
+| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) | Pending |
+| L | Document Managed Identity setup for Azure Container Apps / AKS | Pending |

@@ -1,0 +1,10 @@
+# SHACL spec §2.1.3.5 — sh:targetObjectsOf shapes graph.
+# Source: https://www.w3.org/TR/shacl/#targetObjectsOf
+# Targets objects of ex:knows. Requires sh:nodeKind sh:IRI.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NodeKindExampleShape
+    a sh:NodeShape ;
+    sh:targetObjectsOf ex:knows ;
+    sh:nodeKind sh:IRI .

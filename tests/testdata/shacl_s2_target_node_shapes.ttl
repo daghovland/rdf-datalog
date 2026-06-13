@@ -1,0 +1,13 @@
+# SHACL spec §2.1.3.1 — sh:targetNode shapes graph.
+# Source: https://www.w3.org/TR/shacl/#targetNode
+# Only ex:Alice is targeted. Requires at least one ex:name value.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:PersonShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+    ] .

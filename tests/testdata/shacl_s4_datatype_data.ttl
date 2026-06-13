@@ -1,0 +1,11 @@
+# SHACL spec §4.1.2 — sh:datatype data graph (DatatypeExampleShape).
+# Source: https://www.w3.org/TR/shacl/#DatatypeConstraintComponent
+# ex:Alice ex:age "23"^^xsd:integer → correct datatype → conforms.
+# ex:Bob  ex:age "twenty two"     → plain literal, wrong datatype → 1 violation.
+# ex:Carol ex:age "23"^^xsd:int   → xsd:int not xsd:integer → 1 violation.
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:age "23"^^xsd:integer .
+ex:Bob   ex:age "twenty two" .
+ex:Carol ex:age "23"^^xsd:int .

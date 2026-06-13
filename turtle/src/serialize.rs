@@ -12,8 +12,8 @@ Contact: hovlanddag@gmail.com
 //! fully expanded), so the body is valid Turtle while staying simple to generate.
 
 use dag_rdf::{
-    Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource,
-    DEFAULT_GRAPH_ELEMENT_ID, DEFAULT_GRAPH_IRI,
+    DEFAULT_GRAPH_ELEMENT_ID, DEFAULT_GRAPH_IRI, Datastore, GraphElement, GraphElementId,
+    RdfLiteral, RdfResource,
 };
 
 /// Serialize all quads with `triple_id == graph_id` to a Turtle string.
@@ -227,6 +227,59 @@ pub fn serialize_trig(store: &Datastore) -> String {
     out
 }
 
+// ── Single-graph N-Quads / TriG ──────────────────────────────────────────────
+
+/// Serialize one named graph as N-Quads, including the graph IRI as the 4th field.
+///
+/// For the default graph (`graph_id == DEFAULT_GRAPH_ELEMENT_ID`) the 4th field
+/// is omitted, making each line a valid N-Triples line (which is also valid N-Quads).
+pub fn serialize_nquads_graph(store: &Datastore, graph_id: GraphElementId) -> String {
+    let g = if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+        None
+    } else {
+        graph_term(store.resources.get_graph_element(graph_id))
+    };
+    let mut out = String::new();
+    for quad in store.named_graphs.get_graph(graph_id) {
+        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let p = predicate_term(store.resources.get_graph_element(quad.predicate));
+        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let (Some(s), Some(p), Some(o)) = (s, p, o) else {
+            continue;
+        };
+        match &g {
+            None => out.push_str(&format!("{s} {p} {o} .\n")),
+            Some(g) => out.push_str(&format!("{s} {p} {o} {g} .\n")),
+        }
+    }
+    out
+}
+
+/// Serialize one named graph as TriG.
+///
+/// Named graphs are wrapped in a `GRAPH <iri> { ... }` block.
+/// For the default graph the output is bare triples (no `GRAPH` keyword),
+/// which is valid TriG.
+pub fn serialize_trig_graph(store: &Datastore, graph_id: GraphElementId) -> String {
+    if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+        return serialize_graph(store, graph_id);
+    }
+    let Some(g) = graph_term(store.resources.get_graph_element(graph_id)) else {
+        return String::new();
+    };
+    let mut out = format!("GRAPH {g} {{\n");
+    for quad in store.named_graphs.get_graph(graph_id) {
+        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let p = predicate_term(store.resources.get_graph_element(quad.predicate));
+        let o = object_term(store.resources.get_graph_element(quad.obj));
+        if let (Some(s), Some(p), Some(o)) = (s, p, o) {
+            out.push_str(&format!("    {s} {p} {o} .\n"));
+        }
+    }
+    out.push_str("}\n");
+    out
+}
+
 // ── shared graph-term helper ──────────────────────────────────────────────────
 
 fn graph_term(elem: &GraphElement) -> Option<String> {
@@ -237,9 +290,7 @@ fn graph_term(elem: &GraphElement) -> Option<String> {
             }
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
-        GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => {
-            Some(format!("_:b{id}"))
-        }
+        GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
         _ => None,
     }
 }
@@ -314,7 +365,11 @@ mod tests {
         let o = ds.add_node_resource(RdfResource::Iri(IriReference(
             "http://example/o".to_owned(),
         )));
-        ds.add_triple(Triple { subject: s, predicate: p, obj: o });
+        ds.add_triple(Triple {
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
         let out = serialize_nquads(&ds);
         // Exactly one line, ends with " ." — no fourth field
         assert_eq!(out.lines().count(), 1, "expected 1 line, got: {out}");
@@ -340,7 +395,14 @@ mod tests {
         let g = ds.add_node_resource(RdfResource::Iri(IriReference(
             "http://example/g".to_owned(),
         )));
-        ds.add_named_graph_triple(g, Triple { subject: s, predicate: p, obj: o });
+        ds.add_named_graph_triple(
+            g,
+            Triple {
+                subject: s,
+                predicate: p,
+                obj: o,
+            },
+        );
         let out = serialize_nquads(&ds);
         assert_eq!(out.lines().count(), 1, "expected 1 line, got: {out}");
         assert!(
@@ -367,7 +429,10 @@ mod tests {
             ds2.named_graphs.quad_count, 1,
             "roundtrip must preserve triple count"
         );
-        assert!(out.contains("@en"), "language tag must survive roundtrip, got: {out}");
+        assert!(
+            out.contains("@en"),
+            "language tag must survive roundtrip, got: {out}"
+        );
     }
 
     /// Typed literals must survive an N-Quads roundtrip (N-Quads §2.5).
@@ -419,11 +484,13 @@ mod tests {
         );
         // Named graphs must be preserved
         assert!(
-            ds2.lookup_named_graph_id("http://example.org/bob").is_some(),
+            ds2.lookup_named_graph_id("http://example.org/bob")
+                .is_some(),
             "bob graph must survive roundtrip"
         );
         assert!(
-            ds2.lookup_named_graph_id("http://example.org/alice").is_some(),
+            ds2.lookup_named_graph_id("http://example.org/alice")
+                .is_some(),
             "alice graph must survive roundtrip"
         );
     }
@@ -450,13 +517,20 @@ mod tests {
         let o = ds.add_node_resource(RdfResource::Iri(IriReference(
             "http://example/o".to_owned(),
         )));
-        ds.add_triple(Triple { subject: s, predicate: p, obj: o });
+        ds.add_triple(Triple {
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
         let out = serialize_trig(&ds);
         assert!(
             !out.contains("GRAPH"),
             "default graph must not use GRAPH keyword, got: {out}"
         );
-        assert!(out.contains("<http://example/s>"), "subject must appear, got: {out}");
+        assert!(
+            out.contains("<http://example/s>"),
+            "subject must appear, got: {out}"
+        );
     }
 
     /// Named-graph triples must be wrapped in a GRAPH block (TriG §2.2).
@@ -475,10 +549,23 @@ mod tests {
         let g = ds.add_node_resource(RdfResource::Iri(IriReference(
             "http://example/g".to_owned(),
         )));
-        ds.add_named_graph_triple(g, Triple { subject: s, predicate: p, obj: o });
+        ds.add_named_graph_triple(
+            g,
+            Triple {
+                subject: s,
+                predicate: p,
+                obj: o,
+            },
+        );
         let out = serialize_trig(&ds);
-        assert!(out.contains("GRAPH <http://example/g>"), "must have GRAPH block, got: {out}");
-        assert!(out.contains('{') && out.contains('}'), "block must have braces, got: {out}");
+        assert!(
+            out.contains("GRAPH <http://example/g>"),
+            "must have GRAPH block, got: {out}"
+        );
+        assert!(
+            out.contains('{') && out.contains('}'),
+            "block must have braces, got: {out}"
+        );
     }
 
     /// W3C TriG spec §2 example: 8 triples in 2 named graphs, plus default graph.
@@ -530,11 +617,13 @@ PREFIX schema: <http://schema.org/>
             "roundtrip must preserve all 8 triples; output:\n{out}"
         );
         assert!(
-            ds2.lookup_named_graph_id("http://example.org/bob").is_some(),
+            ds2.lookup_named_graph_id("http://example.org/bob")
+                .is_some(),
             "bob graph must survive TriG roundtrip"
         );
         assert!(
-            ds2.lookup_named_graph_id("http://example.org/alice").is_some(),
+            ds2.lookup_named_graph_id("http://example.org/alice")
+                .is_some(),
             "alice graph must survive TriG roundtrip"
         );
     }

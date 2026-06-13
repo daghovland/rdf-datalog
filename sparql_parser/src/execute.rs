@@ -19,6 +19,7 @@ use dag_rdf::{
 };
 use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// A single bound solution: variable name → concrete graph element.
 pub type SolutionRow = HashMap<String, GraphElement>;
@@ -31,10 +32,19 @@ pub struct SelectResult {
     pub rows: Vec<SolutionRow>,
 }
 
-/// The result of executing a SPARQL query (SELECT or ASK).
+/// A single resolved (ground) triple from a CONSTRUCT result.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResolvedTriple {
+    pub subject: GraphElement,
+    pub predicate: GraphElement,
+    pub object: GraphElement,
+}
+
+/// The result of executing a SPARQL query (SELECT, ASK, or CONSTRUCT).
 pub enum QueryResult {
     Select(SelectResult),
     Ask(bool),
+    Construct(Vec<ResolvedTriple>),
 }
 
 /// Execute a parsed SPARQL query against `datastore`.
@@ -101,6 +111,68 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
             );
             Ok(QueryResult::Ask(!solutions.is_empty()))
+        }
+        Query::Construct {
+            template,
+            where_clause,
+        } => {
+            let initial: Vec<PartialSub> = vec![HashMap::new()];
+            let solutions = eval_components(
+                where_clause,
+                initial,
+                datastore,
+                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+            );
+
+            let effective_template: Vec<TriplePattern> = if template.is_empty() {
+                collect_bgps_from_components(where_clause)
+            } else {
+                template.clone()
+            };
+
+            let mut output: HashSet<ResolvedTriple> = HashSet::new();
+            let mut bnode_counter: u32 = 0;
+
+            for sub in &solutions {
+                let mut bnode_map: HashMap<u32, u32> = HashMap::new();
+                for tp in &effective_template {
+                    let s = bind_template_term(
+                        &tp.subject,
+                        sub,
+                        datastore,
+                        &mut bnode_map,
+                        &mut bnode_counter,
+                    );
+                    let p = bind_template_term(
+                        &tp.predicate,
+                        sub,
+                        datastore,
+                        &mut bnode_map,
+                        &mut bnode_counter,
+                    );
+                    let o = bind_template_term(
+                        &tp.object,
+                        sub,
+                        datastore,
+                        &mut bnode_map,
+                        &mut bnode_counter,
+                    );
+                    if let (Some(s), Some(p), Some(o)) = (s, p, o) {
+                        let subject_ok = !matches!(s, GraphElement::GraphLiteral(_));
+                        let pred_ok =
+                            matches!(p, GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(_)));
+                        if subject_ok && pred_ok {
+                            output.insert(ResolvedTriple {
+                                subject: s,
+                                predicate: p,
+                                object: o,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Ok(QueryResult::Construct(output.into_iter().collect()))
         }
     }
 }
@@ -732,4 +804,51 @@ fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
         }
     }
     None
+}
+
+// ── CONSTRUCT helpers ─────────────────────────────────────────────────────────
+
+/// Collect all BGP triple patterns from a component list (for CONSTRUCT WHERE short form).
+fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePattern> {
+    let mut out = Vec::new();
+    for comp in components {
+        if let QueryComponent::BGP(tps) = comp {
+            out.extend(tps.clone());
+        }
+    }
+    out
+}
+
+/// Resolve a template term to a concrete `GraphElement`, remapping blank nodes per solution.
+///
+/// Returns `None` if the term is an unbound variable (triple is silently skipped).
+fn bind_template_term(
+    term: &Term,
+    sub: &PartialSub,
+    datastore: &Datastore,
+    bnode_map: &mut HashMap<u32, u32>,
+    bnode_counter: &mut u32,
+) -> Option<GraphElement> {
+    match term {
+        Term::Variable(v) => {
+            let id = sub.get(v)?;
+            Some(datastore.resources.get_graph_element(*id).clone())
+        }
+        Term::Constant(gel) => {
+            if let GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(orig_id)) = gel
+            {
+                // Each solution gets a fresh blank node for each distinct label.
+                let fresh_id = bnode_map.entry(*orig_id).or_insert_with(|| {
+                    let id = *bnode_counter;
+                    *bnode_counter += 1;
+                    id
+                });
+                Some(GraphElement::NodeOrEdge(
+                    dag_rdf::RdfResource::AnonymousBlankNode(*fresh_id),
+                ))
+            } else {
+                Some(gel.clone())
+            }
+        }
+    }
 }

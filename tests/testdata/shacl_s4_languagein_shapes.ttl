@@ -1,0 +1,13 @@
+# SHACL spec §4.4.4 — sh:languageIn shapes graph (LanguageInExampleShape).
+# Source: https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
+# sh:languageIn takes an RDF list of BCP-47 language tags.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:LanguageInExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:label ;
+        sh:languageIn ("en" "de") ;
+    ] .

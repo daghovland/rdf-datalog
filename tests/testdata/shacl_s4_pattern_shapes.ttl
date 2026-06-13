@@ -1,0 +1,13 @@
+# SHACL spec §4.4.3 — sh:pattern shapes graph (PatternExampleShape).
+# Source: https://www.w3.org/TR/shacl/#PatternConstraintComponent
+# Note: "\\" in Turtle encodes a literal backslash; the actual pattern is "^B\d{4}$".
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:PatternExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:bCode ;
+        sh:pattern "^B\\d{4}$" ;
+    ] .

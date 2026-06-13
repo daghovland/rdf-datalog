@@ -1,0 +1,13 @@
+# SHACL spec §4.6.3 — sh:or shapes graph (OrExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# Each target node must be either an ex:Employee or an ex:Customer.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:OrExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:or (
+        [ sh:class ex:Employee ]
+        [ sh:class ex:Customer ]
+    ) .

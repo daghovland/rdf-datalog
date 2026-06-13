@@ -1,0 +1,14 @@
+# SHACL spec §4.3 — value range shapes graph (NumericRangeExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-range
+# Covers sh:minInclusive (§4.3.2) and sh:maxInclusive (§4.3.4).
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NumericRangeExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Bob, ex:Alice, ex:Ted ;
+    sh:property [
+        sh:path ex:age ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 150 ;
+    ] .

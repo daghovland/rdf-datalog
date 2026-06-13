@@ -1,0 +1,12 @@
+# SHACL spec §4.4.5 — sh:uniqueLang shapes graph (UniqueLangExampleShape).
+# Source: https://www.w3.org/TR/shacl/#UniqueLangConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:UniqueLangExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:label ;
+        sh:uniqueLang true ;
+    ] .

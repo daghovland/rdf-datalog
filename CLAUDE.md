@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Test-driven development
+
+Implementation of new features follow test-driven development and go in these phases
+
+2. First a plan is created in a markdown document
+2. THen tests are created, necessary code for the tests to compile is stubbed, the tests are ignored and no implementation is done
+3. Implementation is done by going through all tests in some order that makes sence, probably from easiest first or after some phase or feature grouping.  For each test, unignore it, make enough code to implement and make it green, finally check for code smells. Only then go on to the next test.
+
+Each agent session only works on 
+Always create tests that cover new functionality before creating the functionality. The tests are initially ignored and tests are usually checked by the user before implementaiton.
+
+
 ## Commands
 
 ```bash

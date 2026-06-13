@@ -1,0 +1,10 @@
+# SHACL spec §4.3 — value range data graph (NumericRangeExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-range
+# ex:Bob   ex:age 23  → within [0, 150] → conforms.
+# ex:Alice ex:age 220 → exceeds maxInclusive 150 → 1 violation.
+# ex:Ted   ex:age "twenty one" → non-numeric; range comparison not applicable → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Bob   ex:age 23 .
+ex:Alice ex:age 220 .
+ex:Ted   ex:age "twenty one" .

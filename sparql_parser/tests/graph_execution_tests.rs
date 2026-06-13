@@ -26,7 +26,7 @@ fn run_query(ds: &Datastore, query: &str) -> sparql_parser::SelectResult {
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     match execute(&parsed, ds).expect("query should execute") {
         QueryResult::Select(r) => r,
-        QueryResult::Ask(_) => panic!("expected SELECT result"),
+        QueryResult::Ask(_) | QueryResult::Construct(_) => panic!("expected SELECT result"),
     }
 }
 
@@ -176,4 +176,36 @@ SELECT * WHERE {
         "internal path variables must not be projected: {:?}",
         result.variables
     );
+}
+
+/// Regression: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` over the default graph
+/// returns all default-graph triples as `QueryResult::Construct`.
+#[test]
+fn construct_wildcard_returns_default_graph_triples() {
+    let mut ds = Datastore::new(1_000);
+    add_quad(
+        &mut ds,
+        "urn:x-arq:DefaultGraph",
+        "http://example.org/alice",
+        "http://xmlns.com/foaf/0.1/name",
+        "http://example.org/name/alice",
+    );
+
+    let query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, parsed) = parse_query(query, &mut ctx).expect("should parse");
+    let result = execute(&parsed, &ds).expect("should execute");
+    let QueryResult::Construct(triples) = result else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(triples.len(), 1, "one default-graph triple");
+    assert_eq!(triples[0].subject, iri_node("http://example.org/alice"));
+    assert_eq!(
+        triples[0].predicate,
+        iri_node("http://xmlns.com/foaf/0.1/name")
+    );
+    assert_eq!(triples[0].object, iri_node("http://example.org/name/alice"));
 }

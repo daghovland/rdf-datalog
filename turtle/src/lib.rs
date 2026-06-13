@@ -7,7 +7,9 @@ Contact: hovlanddag@gmail.com
 */
 
 pub mod serialize;
-pub use serialize::{serialize_graph, serialize_nquads, serialize_trig};
+pub use serialize::{
+    serialize_graph, serialize_nquads, serialize_nquads_graph, serialize_trig, serialize_trig_graph,
+};
 
 use dag_rdf::{Datastore, GraphElementId, IriReference, RdfLiteral, RdfResource, Triple};
 use oxrdf::{GraphName, Literal, NamedOrBlankNode, Term};

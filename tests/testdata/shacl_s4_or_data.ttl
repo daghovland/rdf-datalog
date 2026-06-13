@@ -1,0 +1,11 @@
+# SHACL spec §4.6.3 — sh:or data graph (OrExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# sh:or: the node must conform to AT LEAST ONE shape in the list.
+# ex:Alice a ex:Employee → conforms to first shape → conforms.
+# ex:Bob   a ex:Customer → conforms to second shape → conforms.
+# ex:Carol a ex:Supplier → neither Employee nor Customer → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Employee .
+ex:Bob   a ex:Customer .
+ex:Carol a ex:Supplier .

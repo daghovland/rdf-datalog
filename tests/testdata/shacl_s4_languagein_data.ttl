@@ -1,0 +1,10 @@
+# SHACL spec §4.4.4 — sh:languageIn data graph (LanguageInExampleShape).
+# Source: https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
+# ex:Alice ex:label "Alice"@en → "en" is in ("en", "de") → conforms.
+# ex:Bob   ex:label "Bob"@fr  → "fr" is not in ("en", "de") → 1 violation.
+# ex:Carol ex:label "Carol"@de → "de" is in ("en", "de") → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:label "Alice"@en .
+ex:Bob   ex:label "Bob"@fr .
+ex:Carol ex:label "Carol"@de .

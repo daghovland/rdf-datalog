@@ -1,0 +1,12 @@
+# SHACL spec §4.2.2 — sh:maxCount shapes graph (MaxCountExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MaxCountConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MaxCountExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:birthDate ;
+        sh:maxCount 1 ;
+    ] .

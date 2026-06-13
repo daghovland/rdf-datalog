@@ -1,0 +1,9 @@
+# SHACL spec §4.5.1 — sh:equals data graph (EqualsExampleShape).
+# Source: https://www.w3.org/TR/shacl/#EqualsConstraintComponent
+# sh:equals: the set of values for ex:firstName must equal the set for ex:givenName.
+# ex:Alice firstName {"Alice"} = givenName {"Alice"} → conforms.
+# ex:Bob   firstName {"Bob"} ≠ givenName {"Bobby"} → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:firstName "Alice" ; ex:givenName "Alice" .
+ex:Bob   ex:firstName "Bob"   ; ex:givenName "Bobby" .

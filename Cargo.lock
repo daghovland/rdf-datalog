@@ -449,6 +449,7 @@ dependencies = [
  "owl2rl2datalog",
  "rdf-owl-translator",
  "serde_json",
+ "shacl",
  "sparql-endpoint",
  "sparql-parser",
  "tokio",
@@ -1917,6 +1918,16 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "shacl"
+version = "0.1.0"
+dependencies = [
+ "dag-rdf",
+ "datalog",
+ "ingress",
+ "log",
 ]
 
 [[package]]

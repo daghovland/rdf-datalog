@@ -1,0 +1,12 @@
+# SHACL spec §4.8.2 — sh:hasValue shapes graph (HasValueExampleShape).
+# Source: https://www.w3.org/TR/shacl/#HasValueConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:HasValueExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:role ;
+        sh:hasValue ex:Admin ;
+    ] .

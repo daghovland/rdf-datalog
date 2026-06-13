@@ -1,0 +1,9 @@
+# SHACL spec §4.6.2 — sh:and data graph (AndExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# sh:and: the node must conform to ALL shapes in the list.
+# ex:Alice has both ex:firstName and ex:lastName → conforms to both sub-shapes → conforms.
+# ex:Bob   has only ex:firstName (no ex:lastName) → fails second sub-shape → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:firstName "Alice" ; ex:lastName "Cooper" .
+ex:Bob   ex:firstName "Bob" .

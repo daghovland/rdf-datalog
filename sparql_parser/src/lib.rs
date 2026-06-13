@@ -21,7 +21,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 pub mod execute;
-pub use execute::{execute, QueryResult, SelectResult, SolutionRow};
+pub use execute::{execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow};
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
@@ -62,6 +62,48 @@ pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'
             let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
             let (rest, _) = multispace0(rest)?;
             return Ok((rest, Query::Ask { where_clause }));
+        }
+    }
+
+    // CONSTRUCT query: CONSTRUCT [{ template }] [WHERE] { pattern }
+    if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("CONSTRUCT")(input) {
+        let boundary = rest
+            .chars()
+            .next()
+            .map(|c| c.is_whitespace() || c == '{')
+            .unwrap_or(true);
+        if boundary {
+            let (rest, _) = multispace0(rest)?;
+
+            // Parse optional explicit template block (full form) or leave empty (short form).
+            let (rest, template) = if rest.starts_with('{') {
+                let (rest, components) = parse_group_graph_pattern(ctx)(rest)?;
+                let tps: Vec<TriplePattern> = components
+                    .into_iter()
+                    .flat_map(|c| {
+                        if let QueryComponent::BGP(tps) = c {
+                            tps
+                        } else {
+                            vec![]
+                        }
+                    })
+                    .collect();
+                (rest, tps)
+            } else {
+                (rest, vec![])
+            };
+
+            let (rest, _) = multispace0(rest)?;
+            let (rest, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(rest)?;
+            let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
+            let (rest, _) = multispace0(rest)?;
+            return Ok((
+                rest,
+                Query::Construct {
+                    template,
+                    where_clause,
+                },
+            ));
         }
     }
 
@@ -520,7 +562,8 @@ fn parse_prefixed_name<'a>(
         let lower = prefix.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
-            "filter"
+            // "_" is the reserved blank-node prefix (_:label); not a declared prefix.
+            "_" | "filter"
                 | "optional"
                 | "union"
                 | "minus"
