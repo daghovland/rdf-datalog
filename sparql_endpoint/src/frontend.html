@@ -902,6 +902,177 @@
       });
     }
 
+    // ── Query builder — generation stub (QB Phase 1 implements this) ──────────
+    //
+    // `root` shape mirrors `QueryNode` in sparql_endpoint/src/query_builder.rs:
+    //   { varName: string, classIri: string,
+    //     dataProps: [{ propIri, varName, checked }],
+    //     links:     [{ propIri, target: <another root> }] }
+    //
+    // Output format (full IRIs, 2-space indent, no trailing newline):
+    //   SELECT ?s ?s_label WHERE {
+    //     ?s a <http://example.org/Person> .
+    //     OPTIONAL { ?s <http://…/label> ?s_label }
+    //   }
+    function generateSparql(_root) {
+      // Stub — replace with real implementation in QB Phase 1.
+      return '';
+    }
+
+    // ── QB self-test harness (Layer 3a) ────────────────────────────────────────
+    //
+    // Each entry: { name: string, fn: () => void }
+    // fn() must throw on failure.  assertEq / assertHas helpers are below.
+    //
+    // MIRROR: every case here must match a #[test] in query_builder.rs.
+    // Add to QB_SELF_TESTS when implementing each phase; the Rust test for
+    // the harness (qb_js_self_test_suite_passes) stays #[ignore] until QB
+    // Phase 1 is complete and generateSparql returns real output.
+
+    function assertEq(actual, expected) {
+      if (actual !== expected) {
+        throw new Error(
+          'Expected:\n' + JSON.stringify(expected) +
+          '\n\nActual:\n'   + JSON.stringify(actual)
+        );
+      }
+    }
+    function assertHas(str, sub) {
+      if (!str.includes(sub))
+        throw new Error('Expected output to contain ' + JSON.stringify(sub) +
+                        '\n\nActual:\n' + JSON.stringify(str));
+    }
+    function assertLacks(str, sub) {
+      if (str.includes(sub))
+        throw new Error('Expected output NOT to contain ' + JSON.stringify(sub) +
+                        '\n\nActual:\n' + JSON.stringify(str));
+    }
+
+    // ── QB Phase 1 self-tests ─────────────────────────────────────────────────
+    // Add to QB_SELF_TESTS and uncomment when implementing Phase 1.
+    // (Entries are present but will fail until generateSparql is real.)
+    const QB_SELF_TESTS = [
+      // -- QB Phase 1 --
+      {
+        name: 'single node, no props',
+        fn() {
+          const root = { varName: 's', classIri: 'http://example.org/Person', dataProps: [], links: [] };
+          assertEq(generateSparql(root),
+            'SELECT ?s WHERE {\n  ?s a <http://example.org/Person> .\n}');
+        },
+      },
+      {
+        name: 'single node, one checked data prop',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person',
+            dataProps: [{ propIri: 'http://www.w3.org/2000/01/rdf-schema#label', varName: 's_label', checked: true }],
+            links: [],
+          };
+          assertEq(generateSparql(root),
+            'SELECT ?s ?s_label WHERE {\n  ?s a <http://example.org/Person> .\n  OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label }\n}');
+        },
+      },
+      {
+        name: 'unchecked data prop excluded from output',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person',
+            dataProps: [{ propIri: 'http://www.w3.org/2000/01/rdf-schema#label', varName: 's_label', checked: false }],
+            links: [],
+          };
+          const out = generateSparql(root);
+          assertLacks(out, '?s_label');
+          assertLacks(out, 'OPTIONAL');
+        },
+      },
+      {
+        name: 'multiple checked data props each get own OPTIONAL',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person',
+            dataProps: [
+              { propIri: 'http://www.w3.org/2000/01/rdf-schema#label', varName: 's_label', checked: true },
+              { propIri: 'http://example.org/age', varName: 's_age', checked: true },
+            ],
+            links: [],
+          };
+          assertEq(generateSparql(root),
+            'SELECT ?s ?s_label ?s_age WHERE {\n  ?s a <http://example.org/Person> .\n  OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label }\n  OPTIONAL { ?s <http://example.org/age> ?s_age }\n}');
+        },
+      },
+      // -- QB Phase 2 --
+      {
+        name: 'two-node chain via object prop',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person', dataProps: [],
+            links: [{
+              propIri: 'http://example.org/knows',
+              target: { varName: 'n1', classIri: 'http://example.org/Person', dataProps: [], links: [] },
+            }],
+          };
+          assertEq(generateSparql(root),
+            'SELECT ?s ?n1 WHERE {\n  ?s a <http://example.org/Person> .\n  ?s <http://example.org/knows> ?n1 .\n  ?n1 a <http://example.org/Person> .\n}');
+        },
+      },
+      {
+        name: 'two-node chain with data props on both nodes',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person',
+            dataProps: [{ propIri: 'http://www.w3.org/2000/01/rdf-schema#label', varName: 's_label', checked: true }],
+            links: [{
+              propIri: 'http://example.org/knows',
+              target: {
+                varName: 'n1', classIri: 'http://example.org/Person',
+                dataProps: [{ propIri: 'http://www.w3.org/2000/01/rdf-schema#label', varName: 'n1_label', checked: true }],
+                links: [],
+              },
+            }],
+          };
+          assertEq(generateSparql(root),
+            'SELECT ?s ?s_label ?n1 ?n1_label WHERE {\n  ?s a <http://example.org/Person> .\n  OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label }\n  ?s <http://example.org/knows> ?n1 .\n  ?n1 a <http://example.org/Person> .\n  OPTIONAL { ?n1 <http://www.w3.org/2000/01/rdf-schema#label> ?n1_label }\n}');
+        },
+      },
+      {
+        name: 'fan-out: two object links from root, both in SELECT',
+        fn() {
+          const root = {
+            varName: 's', classIri: 'http://example.org/Person', dataProps: [],
+            links: [
+              { propIri: 'http://example.org/worksFor',
+                target: { varName: 'n1', classIri: 'http://example.org/Company', dataProps: [], links: [] } },
+              { propIri: 'http://example.org/knows',
+                target: { varName: 'n2', classIri: 'http://example.org/Person',  dataProps: [], links: [] } },
+            ],
+          };
+          const out = generateSparql(root);
+          assertHas(out, 'SELECT ?s ?n1 ?n2 WHERE');
+          assertHas(out, '?s <http://example.org/worksFor> ?n1 .');
+          assertHas(out, '?s <http://example.org/knows> ?n2 .');
+          assertHas(out, '?n1 a <http://example.org/Company> .');
+          assertHas(out, '?n2 a <http://example.org/Person> .');
+        },
+      },
+    ];
+
+    function runQbSelfTests() {
+      const results = { passed: 0, failed: 0, errors: [] };
+      for (const t of QB_SELF_TESTS) {
+        try {
+          t.fn();
+          results.passed++;
+        } catch (e) {
+          results.failed++;
+          results.errors.push({ name: t.name, error: String(e) });
+        }
+      }
+      const el = document.getElementById('qb-test-results');
+      if (el) el.textContent = JSON.stringify(results, null, 2);
+      return results;
+    }
+
     // ── Page-load routing ──────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', () => {
       renderPrefixList();
@@ -919,6 +1090,9 @@
         showResourceView(resource);
       } else if (view === 'classes') {
         showClassesView();
+      } else if (view === 'build-selftest') {
+        document.getElementById('build-selftest-view').style.display = '';
+        runQbSelfTests();
       } else {
         document.getElementById('nav-query').classList.add('active');
         if (query) {

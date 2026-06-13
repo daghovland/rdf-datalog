@@ -65,10 +65,10 @@ async fn connect_driver() -> Option<WebDriver> {
 async fn wait_for_text(driver: &WebDriver, selector: &str, timeout_ms: u64) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
-        if let Ok(el) = driver.find(By::Css(selector)).await {
-            if el.text().await.map(|t| !t.is_empty()).unwrap_or(false) {
-                return true;
-            }
+        if let Ok(el) = driver.find(By::Css(selector)).await
+            && el.text().await.map(|t| !t.is_empty()).unwrap_or(false)
+        {
+            return true;
         }
         if Instant::now() >= deadline {
             return false;
@@ -492,5 +492,456 @@ async fn upload_panel_has_drag_drop_zone() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let zone = driver.find(By::Css("#upload-dropzone")).await;
     assert!(zone.is_ok(), "drag-and-drop upload zone not found");
+    driver.quit().await.unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Visual Query Builder — browser tests (Layer 3a + 3b).
+// All ignored; activate a phase with:
+//   grep -n "QB Phase 1" sparql_endpoint/tests/frontend_browser.rs
+//
+// QB_FIXTURE is richer than FIXTURE: two classes, object + data properties.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const QB_FIXTURE: &str = r#"
+@prefix ex:   <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+
+ex:alice a ex:Person ; rdfs:label "Alice" ; ex:age "30" ;
+         ex:knows ex:bob ; ex:worksFor ex:acme .
+ex:bob   a ex:Person ; rdfs:label "Bob"   ; ex:age "25" .
+ex:acme  a ex:Company ; rdfs:label "Acme Corp" ; ex:revenue "1000000" .
+
+ex:Person  a owl:Class .
+ex:Company a owl:Class .
+"#;
+
+// ── QB Layer 3a: JS self-test harness ────────────────────────────────────────
+// Un-ignore after QB Phase 1 implements generateSparql() so QB_SELF_TESTS pass.
+
+#[tokio::test]
+#[ignore = "QB Phase 1: generateSparql stub causes QB_SELF_TESTS failures"]
+async fn qb_js_self_test_suite_passes() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start("").await;
+    driver
+        .goto(&format!("{}/?view=build-selftest", server.base_url))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#qb-test-results", 5000).await,
+        "#qb-test-results never populated"
+    );
+    let json_text = driver
+        .find(By::Css("#qb-test-results"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let results: serde_json::Value =
+        serde_json::from_str(&json_text).expect("#qb-test-results must be valid JSON");
+    assert_eq!(
+        results["failed"],
+        0,
+        "JS self-tests failed:\n{}",
+        serde_json::to_string_pretty(&results["errors"]).unwrap_or_default()
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── QB Phase 1: class picker + single-level property pane ────────────────────
+// Un-ignore when Phase 1 HTML+JS is implemented (#build-view, #class-picker,
+// #data-prop-list, #obj-prop-list, #qb-generated, #btn-qb-run, #qb-results).
+
+#[tokio::test]
+#[ignore = "QB Phase 1: build view not yet implemented"]
+async fn qb_build_view_is_reachable() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let view = driver.find(By::Css("#build-view")).await;
+    assert!(view.is_ok(), "#build-view not found");
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 1: build view not yet implemented"]
+async fn qb_class_picker_populates_from_store() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_element(&driver, "#class-list option", 4000).await,
+        "#class-list option never appeared"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 1: build view not yet implemented"]
+async fn qb_selecting_class_populates_property_panes() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(
+        wait_for_element(&driver, "#data-prop-list .prop-row", 4000).await,
+        "data-prop-list never populated"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 1: build view not yet implemented"]
+async fn qb_checking_data_prop_updates_sparql_preview() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#qb-generated", 2000).await);
+    let sparql = driver
+        .find(By::Css("#qb-generated"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        sparql.contains("OPTIONAL"),
+        "#qb-generated should contain OPTIONAL, got:\n{sparql}"
+    );
+    driver.quit().await.unwrap()
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 1: build view not yet implemented"]
+async fn qb_run_button_executes_generated_query_and_shows_results() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#btn-qb-run"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#qb-results .count", 4000).await,
+        "result count never appeared after Run"
+    );
+    let err = driver.find(By::Css("#qb-results .msg.err")).await;
+    assert!(err.is_err(), "Run must not produce an error banner");
+    driver.quit().await.unwrap();
+}
+
+// ── QB Phase 2: multi-hop object-property expansion ──────────────────────────
+// Un-ignore when Phase 2 is implemented (#node-canvas .node-card, .btn-follow,
+// .btn-remove-node, active-node switching).
+
+#[tokio::test]
+#[ignore = "QB Phase 2: multi-hop not yet implemented"]
+async fn qb_following_obj_prop_adds_second_node_card() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#obj-prop-list .btn-follow", 4000).await);
+    driver
+        .find(By::Css("#obj-prop-list .btn-follow"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let cards = driver
+        .find_all(By::Css("#node-canvas .node-card"))
+        .await
+        .unwrap();
+    assert_eq!(
+        cards.len(),
+        2,
+        "expected 2 node cards after following an object prop"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 2: multi-hop not yet implemented"]
+async fn qb_clicking_second_card_shifts_active_node() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#obj-prop-list .btn-follow", 4000).await);
+    driver
+        .find(By::Css("#obj-prop-list .btn-follow"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let cards = driver
+        .find_all(By::Css("#node-canvas .node-card"))
+        .await
+        .unwrap();
+    assert_eq!(cards.len(), 2);
+    cards[1].click().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let classes = cards[1].class_name().await.unwrap().unwrap_or_default();
+    assert!(
+        classes.contains("active"),
+        "second card should be .active after click, classes={classes}"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 2: multi-hop not yet implemented"]
+async fn qb_removing_linked_node_shrinks_generated_sparql() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#obj-prop-list .btn-follow", 4000).await);
+    driver
+        .find(By::Css("#obj-prop-list .btn-follow"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let before = driver
+        .find(By::Css("#qb-generated"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    driver
+        .find(By::Css(
+            "#node-canvas .node-card:last-child .btn-remove-node",
+        ))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let after = driver
+        .find(By::Css("#qb-generated"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        before.len() > after.len(),
+        "SPARQL should shrink after removing a node (before={}, after={})",
+        before.len(),
+        after.len()
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── QB Phase 3: data-property filters ────────────────────────────────────────
+// Un-ignore when Phase 3 is implemented (.prop-filter-input, FILTER in output).
+
+#[tokio::test]
+#[ignore = "QB Phase 3: filter inputs not yet implemented"]
+async fn qb_filter_input_appears_when_prop_checked() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let filter = driver
+        .find(By::Css("#data-prop-list .prop-filter-input"))
+        .await;
+    assert!(
+        filter.is_ok(),
+        "filter input should appear after checking a data property"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "QB Phase 3: filter inputs not yet implemented"]
+async fn qb_filter_text_appears_in_generated_sparql() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    driver
+        .find(By::Css("#data-prop-list .prop-filter-input"))
+        .await
+        .unwrap()
+        .send_keys("Alice")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let sparql = driver
+        .find(By::Css("#qb-generated"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        sparql.contains("FILTER"),
+        "#qb-generated should contain FILTER after typing filter value:\n{sparql}"
+    );
     driver.quit().await.unwrap();
 }

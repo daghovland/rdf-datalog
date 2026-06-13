@@ -133,7 +133,11 @@ async fn class_hierarchy_query_with_inline_prefix_returns_subclass_pairs() {
         .as_array()
         .expect("bindings array");
 
-    assert_eq!(bindings.len(), 1, "expected 1 subClassOf pair, got: {bindings:#?}");
+    assert_eq!(
+        bindings.len(),
+        1,
+        "expected 1 subClassOf pair, got: {bindings:#?}"
+    );
     common::assert_binding_contains(bindings, "child", "uri", "http://example.org/Person");
     common::assert_binding_contains(bindings, "parent", "uri", "http://example.org/Animal");
 }

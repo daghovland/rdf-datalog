@@ -19,6 +19,7 @@ use turtle::{parse_trig, parse_turtle};
 /// Dropping this value cancels the background server task.
 pub struct TestServer {
     pub base_url: String,
+    #[allow(dead_code)]
     pub client: reqwest::Client,
     // Kept alive so the server task runs for the duration of the test.
     _handle: tokio::task::JoinHandle<()>,
