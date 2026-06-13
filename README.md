@@ -16,6 +16,9 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
 | SPARQL 1.1 HTTP endpoint | ✓ |
+| SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD) | ✓ |
+| SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/…) | ✓ |
+| Multi-dataset server (Fuseki-compatible routing and admin API) | ✓ |
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
 | Custom Datalog rules with stratified negation | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
@@ -480,16 +483,20 @@ docker compose run --rm -p 3030:3030 dagalog --serve
 
 ### Environment variables
 
-| Variable | Description | Default |
-|---|---|---|
-| `DAGALOG_PORT` | Port to listen on | `3030` |
-| `DAGALOG_READ_ONLY` | Disable the upload endpoint | `false` |
+All CLI flags can also be set via environment variables (CLI flags take precedence):
 
-(Full env-var config support is planned — see [`SERVER.md`](SERVER.md).)
+| Variable | CLI flag | Description | Default |
+|---|---|---|---|
+| `DAGALOG_PORT` | `--port` | Port to listen on | `3030` |
+| `DAGALOG_BASE_IRI` | `--base-iri` | Base IRI for the Service Description | `http://localhost:PORT` |
+| `DAGALOG_READ_ONLY` | `--read-only` | Disable all mutating endpoints | `false` |
+| `DAGALOG_QUERY_TIMEOUT` | `--query-timeout` | Maximum query time in seconds | `30` |
 
 ---
 
 ## SPARQL HTTP endpoint
+
+### Root endpoints
 
 | Route | Description |
 |---|---|
@@ -497,13 +504,43 @@ docker compose run --rm -p 3030:3030 dagalog --serve
 | `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT |
 | `POST /sparql` | SPARQL 1.1 SELECT (form body or direct) |
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
-| `POST /upload` | Load Turtle data into the default graph (stopgap) |
-| `GET /rdf-graph-store?default` or `?graph=<iri>` | GSP — retrieve a graph as Turtle |
-| `PUT /rdf-graph-store?default` or `?graph=<iri>` | GSP — replace a graph |
-| `POST /rdf-graph-store?default` or `?graph=<iri>` | GSP — merge into a graph |
-| `POST /rdf-graph-store` | GSP — create a new graph (server assigns IRI) |
-| `DELETE /rdf-graph-store?default` or `?graph=<iri>` | GSP — delete a graph |
-| `HEAD /rdf-graph-store?default` or `?graph=<iri>` | GSP — existence check, no body |
+| `POST /upload` | Load Turtle data into the default graph (legacy alias) |
+
+### Graph Store Protocol (GSP)
+
+| Route | Description |
+|---|---|
+| `GET /rdf-graph-store?default` or `?graph=<iri>` | Retrieve a graph (Turtle or N-Triples) |
+| `PUT /rdf-graph-store?default` or `?graph=<iri>` | Replace a graph |
+| `POST /rdf-graph-store?default` or `?graph=<iri>` | Merge triples into a graph |
+| `POST /rdf-graph-store` | Create a new graph (server assigns IRI, returns `Location` header) |
+| `DELETE /rdf-graph-store?default` or `?graph=<iri>` | Delete a graph |
+| `HEAD /rdf-graph-store?default` or `?graph=<iri>` | Existence check, no body |
+| `GET /rdf-graphs/{name}` | Direct graph identification (§4.1) |
+| `PUT /rdf-graphs/{name}` | Direct graph identification — replace |
+
+### Fuseki-compatible per-dataset routes
+
+The server exposes a `default` dataset at `/ds` (and any datasets created via the admin API):
+
+| Route | Description |
+|---|---|
+| `GET /{name}/sparql` or `/{name}/query` | SPARQL SELECT |
+| `POST /{name}/sparql` or `/{name}/query` | SPARQL SELECT (form or direct body) |
+| `POST /{name}/update` | SPARQL Update (INSERT/DELETE/CLEAR/DROP/…) |
+| `GET|PUT|POST|DELETE|HEAD /{name}/data` | GSP read-write |
+| `GET|HEAD /{name}/get` | GSP read-only |
+
+### Admin API (`/$/…`)
+
+| Route | Description |
+|---|---|
+| `GET /$/ping` | Liveness check |
+| `GET /$/server` | Server info (version, dataset list) |
+| `GET /$/datasets` | List all datasets |
+| `POST /$/datasets` | Create a dataset (form body: `dbName=…&dbType=mem`) |
+| `GET /$/datasets/{name}` | Dataset info |
+| `DELETE /$/datasets/{name}` | Drop a dataset |
 
 Response format negotiated via `Accept`; default `application/sparql-results+json`.
 
@@ -526,6 +563,62 @@ async fn main() {
 
 ---
 
+## Web UI
+
+Navigate to `http://localhost:3030` in your browser for the interactive interface.
+
+| Feature | Description |
+|---|---|
+| SPARQL query editor | Prefix manager (persisted), query templates, Ctrl+Enter shortcut, query history |
+| Result export | Download results as CSV or JSON |
+| Resource browser | Click any IRI to explore its properties and back-links |
+| Class hierarchy | `/?view=classes` — collapsible tree of `rdfs:subClassOf` relationships |
+| Graph visualisation | Three-variable queries render as an interactive node-edge graph |
+| Turtle upload | Paste Turtle or drag-and-drop `.ttl`/`.owl`/`.jsonld` files |
+| Store statistics | Live triple count shown in the page header |
+
+### Query editor
+
+- **Prefix manager** — collapsible panel above the textarea; pre-populated with common
+  prefixes (rdf, rdfs, owl, xsd, skos, dc, foaf, schema). Prefixes are persisted to
+  `localStorage` and automatically prepended to every submitted query.
+- **Query templates** — dropdown with example queries (all triples, all classes, class
+  hierarchy, labels).
+- **Ctrl+Enter** — keyboard shortcut to run the query.
+- **Query history** — last 50 queries stored in `localStorage`, shown in a collapsible
+  panel below the textarea. Click any entry to restore it.
+- **Export** — "Download CSV" and "Download JSON" buttons appear beneath every result table.
+
+### Resource browser
+
+Clicking any IRI in query results opens a resource page (`/?resource=<iri>`) showing:
+
+- `rdfs:label` as the page heading when present
+- `rdf:type` class memberships shown as badges
+- All outgoing properties (`?p ?o`) — collapsible table
+- All incoming back-links (`?s ?p`) — collapsible table (capped at 200)
+
+All IRIs on the resource page are also clickable, enabling linked-data browsing.
+
+### Class hierarchy
+
+`/?view=classes` runs `SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent }` and
+renders the result as a collapsible `<details>` tree. Useful for exploring OWL ontologies.
+
+### Graph view
+
+When a SELECT query returns exactly three variables (subject, predicate, object), a **Graph**
+tab appears next to the Table tab. The graph is rendered via
+[Cytoscape.js](https://js.cytoscape.org/) (loaded from CDN on first use):
+
+- **Blue nodes** — URI resources (click to open the resource browser)
+- **Grey nodes** — blank nodes
+- **Directed edges** — labelled with the shortened predicate name
+
+Graphs are capped at 200 nodes; add `LIMIT` to reduce the dataset.
+
+---
+
 ## Protocol compliance
 
 See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
@@ -534,7 +627,9 @@ See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
 |---|---|---|
 | P0 | SPARQL 1.1 Protocol — SELECT, content negotiation, CORS | Done |
 | P0 | SPARQL 1.1 Service Description | Done |
-| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§5.2–§5.6; direct identification §4.1 not planned) |
+| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§4.1 direct identification + §5.2–§5.6) |
+| P1 | SPARQL 1.1 Update | Done (INSERT/DELETE/CLEAR/DROP/CREATE/COPY/MOVE/ADD) |
+| P1 | Fuseki-compatible dataset routing and admin API | Done |
 | P2 | VoID dataset description | Planned |
 
 ---

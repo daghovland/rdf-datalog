@@ -12,6 +12,9 @@ pub enum Query {
         offset: Option<u64>,
         distinct: bool,
     },
+    Ask {
+        where_clause: Vec<QueryComponent>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

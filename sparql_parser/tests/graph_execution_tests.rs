@@ -1,5 +1,5 @@
 use dag_rdf::{Datastore, GraphElement, IriReference, Quad, RdfResource};
-use sparql_parser::{execute, parse_query, ParserContext};
+use sparql_parser::{execute, parse_query, ParserContext, QueryResult};
 use std::collections::HashMap;
 
 fn iri_node(iri: &str) -> GraphElement {
@@ -24,7 +24,10 @@ fn run_query(ds: &Datastore, query: &str) -> sparql_parser::SelectResult {
         prefixes: HashMap::new(),
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
-    execute(&parsed, ds).expect("query should execute")
+    match execute(&parsed, ds).expect("query should execute") {
+        QueryResult::Select(r) => r,
+        QueryResult::Ask(_) => panic!("expected SELECT result"),
+    }
 }
 
 #[test]

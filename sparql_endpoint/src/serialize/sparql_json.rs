@@ -14,6 +14,13 @@ use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
 use serde_json::{Value, json};
 use sparql_parser::SelectResult;
 
+/// Serialize an ASK result as a SPARQL JSON result document.
+///
+/// Spec: <https://www.w3.org/TR/sparql11-results-json/#select-encode-terms-variables>
+pub fn ask_to_sparql_json(result: bool) -> String {
+    serde_json::json!({ "head": {}, "boolean": result }).to_string()
+}
+
 /// Serialize a `SelectResult` as a SPARQL JSON result document.
 pub fn to_sparql_json(result: &SelectResult) -> String {
     let vars: Vec<Value> = result.variables.iter().map(|v| json!(v)).collect();

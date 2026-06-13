@@ -15,8 +15,8 @@ Contact: hovlanddag@gmail.com
 
 use crate::{
     AppState,
-    negotiate::{SelectFormat, negotiate_select_format},
-    serialize::sparql_json::to_sparql_json,
+    negotiate::negotiate_select_format,
+    serialize::sparql_json::{ask_to_sparql_json, to_sparql_json},
     service_desc::service_description_turtle,
 };
 use axum::{
@@ -24,19 +24,25 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use sparql_parser::{ParserContext, execute, parse_query};
+use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 
 /// `GET /sparql?query=<url-encoded SPARQL>`
-///
-/// If the `query` parameter is absent and the client wants Turtle/RDF, returns
-/// the SPARQL Service Description instead.
 pub async fn sparql_get(
     State(state): State<AppState>,
+    params: AxumQuery<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    sparql_get_with_state(state, params, headers).await
+}
+
+/// Inner implementation of sparql_get — accepts a direct AppState so
+/// per-dataset route handlers can reuse it.
+pub async fn sparql_get_with_state(
+    state: AppState,
     AxumQuery(params): AxumQuery<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    // Service Description: no query param
     if !params.contains_key("query") {
         let accept = headers.get("accept").and_then(|v| v.to_str().ok());
         let wants_rdf = accept
@@ -58,12 +64,18 @@ pub async fn sparql_get(
     run_select_query(query_str, &headers, &state).await
 }
 
-/// POST /sparql
-///
-/// Handles both `application/x-www-form-urlencoded` (query=...) and
-/// `application/sparql-query` (raw body).
+/// `POST /sparql`
 pub async fn sparql_post(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    sparql_post_with_state(state, headers, body).await
+}
+
+/// Inner implementation of sparql_post.
+pub async fn sparql_post_with_state(
+    state: AppState,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
@@ -84,14 +96,9 @@ pub async fn sparql_post(
             Ok(s) => s,
             Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in body").into_response(),
         };
-        // Parse form-encoded: find query= parameter
         let query_val = body_str.split('&').find_map(|part| {
             let (k, v) = part.split_once('=')?;
-            if k == "query" {
-                Some(v.replace('+', " "))
-            } else {
-                None
-            }
+            (k == "query").then(|| v.replace('+', " "))
         });
         match query_val {
             Some(q) => urlencoding_decode(&q),
@@ -129,10 +136,9 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
         }
     };
 
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
-    match negotiate_select_format(accept) {
-        SelectFormat::SparqlJson => {
-            let body = to_sparql_json(&result);
+    match result {
+        QueryResult::Ask(boolean) => {
+            let body = ask_to_sparql_json(boolean);
             (
                 StatusCode::OK,
                 [(
@@ -143,9 +149,10 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
             )
                 .into_response()
         }
-        SelectFormat::SparqlXml | SelectFormat::Csv => {
-            // Fall back to JSON for now
-            let body = to_sparql_json(&result);
+        QueryResult::Select(select_result) => {
+            let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+            let body = to_sparql_json(&select_result);
+            let _ = negotiate_select_format(accept);
             (
                 StatusCode::OK,
                 [(

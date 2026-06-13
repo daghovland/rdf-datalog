@@ -1049,16 +1049,18 @@ async fn gsp_head_content_type_matches_get() {
     );
 }
 
-// ── F: Direct Graph Identification (§4.1, optional feature) ─────────────────
+// ── F: Direct Graph Identification (§4.1) ────────────────────────────────────
 //
-// §4.1 describes an *optional* mode where the request URI itself IS the graph
+// §4.1 describes an optional mode where the request URI itself IS the graph
 // IRI (e.g. `GET http://example.com/rdf-graphs/employees` rather than
 // `GET /rdf-graph-store?graph=http://example.com/rdf-graphs/employees`).
 //
-// These tests are included for spec completeness. They are also `#[ignore]`
-// on top of the `#[ignore]` that is already expected of all GSP tests — the
-// feature may not be implemented at all if §4.2 indirect identification is
-// sufficient.
+// Route: `GET|PUT|DELETE|HEAD|POST /rdf-graphs/*path`.
+// The graph IRI is `{base_iri}/rdf-graphs/{path}`.
+//
+// Implementation: `graph_store::direct_gsp_*`.
+// Note: direct-identification tests require the graph IRI to contain the
+// server's dynamically-bound port, so graphs are created with PUT first.
 
 /// F-1: Direct GET — the request URI identifies the named graph directly.
 ///
@@ -1069,16 +1071,26 @@ async fn gsp_head_content_type_matches_get() {
 /// Accept: text/turtle; charset=utf-8
 /// ```
 ///
+/// For direct identification the graph IRI equals the full request URL, which
+/// contains the server's dynamically assigned port. A startup TriG fixture
+/// cannot encode that port, so this test first creates the graph with PUT
+/// (separately tested by F-2) and then verifies GET returns 200.
+///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_direct_get_graph_returns_200() {
-    // This test assumes the server routes /rdf-graphs/<name> to named graphs
-    // where the full request IRI is used as the graph IRI — an optional feature.
-    let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
-    // Under direct identification, NAMED_GRAPH_IRI == the request URL, so we
-    // construct it relative to the server's base.
+    let server = common::TestServer::start_writable("").await;
     let url = format!("{}/rdf-graphs/graph1", server.base_url);
+    // Setup: create the graph via PUT so its IRI equals the request URL.
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    // Assertion: GET the same URL and expect 200 with an RDF body.
     let resp = server
         .client
         .get(&url)
@@ -1087,6 +1099,8 @@ async fn gsp_direct_get_graph_returns_200() {
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap_or("");
+    assert!(ct.contains("text/turtle"), "unexpected content-type: {ct}");
 }
 
 /// F-2: Direct PUT — store a new graph at a URL that becomes its IRI.
@@ -1095,7 +1109,6 @@ async fn gsp_direct_get_graph_returns_200() {
 /// Graph Store via its Graph IRI."
 ///
 /// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
-#[ignore]
 #[tokio::test]
 async fn gsp_direct_put_graph_creates_201() {
     let server = common::TestServer::start_writable("").await;
@@ -1109,6 +1122,205 @@ async fn gsp_direct_put_graph_creates_201() {
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 201);
+}
+
+/// F-3: Direct DELETE — removes a graph that was created with PUT.
+///
+/// Spec §4.1: all Graph Store operations apply to the graph identified by the
+/// request URI. DELETE must return 200 or 204 on success.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
+#[tokio::test]
+async fn gsp_direct_delete_existing_graph_returns_success() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/delete-me", server.base_url);
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    let resp = server
+        .client
+        .delete(&url)
+        .send()
+        .await
+        .expect("request failed");
+    assert!(
+        resp.status() == 200 || resp.status() == 204,
+        "expected 200 or 204, got {}",
+        resp.status()
+    );
+}
+
+/// F-4: Direct DELETE — subsequent GET returns 404.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#direct-graph-identification>
+#[tokio::test]
+async fn gsp_direct_delete_graph_then_get_returns_404() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/delete-then-get", server.base_url);
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    server
+        .client
+        .delete(&url)
+        .send()
+        .await
+        .expect("DELETE failed");
+    let resp = server.client.get(&url).send().await.expect("GET failed");
+    assert_eq!(resp.status(), 404);
+}
+
+/// F-5: Direct DELETE on a non-existent graph — 404 Not Found.
+///
+/// Mirrors the indirect-GSP behaviour: deleting a graph that does not exist
+/// must return 404.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-delete>
+#[tokio::test]
+async fn gsp_direct_delete_nonexistent_graph_returns_404() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/no-such-graph", server.base_url);
+    let resp = server
+        .client
+        .delete(&url)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+/// F-6: Direct HEAD — returns 200 with no body for an existing graph.
+///
+/// Spec §5.6: "identical to GET except that the server MUST NOT return a
+/// message-body in the response."
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
+#[tokio::test]
+async fn gsp_direct_head_existing_graph_returns_200_no_body() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/head-graph", server.base_url);
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    let resp = server
+        .client
+        .head(&url)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.bytes().await.expect("body bytes");
+    assert!(
+        body.is_empty(),
+        "HEAD must return no body, got {} bytes",
+        body.len()
+    );
+}
+
+/// F-7: Direct HEAD on a non-existent graph — 404 Not Found.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-head>
+#[tokio::test]
+async fn gsp_direct_head_nonexistent_graph_returns_404() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/no-such-graph", server.base_url);
+    let resp = server
+        .client
+        .head(&url)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+/// F-8: Direct POST — merges triples into an existing graph.
+///
+/// Spec §5.5: POST to a graph IRI that exists merges the payload into it.
+/// New triples are added; old triples are preserved.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
+#[tokio::test]
+async fn gsp_direct_post_merges_into_existing_graph() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/merge-graph", server.base_url);
+    // Seed the graph with charlie.
+    server
+        .client
+        .put(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("PUT setup failed");
+    // Merge diana in.
+    let resp = server
+        .client
+        .post(&url)
+        .header("content-type", "text/turtle")
+        .body(MERGE_TURTLE)
+        .send()
+        .await
+        .expect("request failed");
+    assert!(
+        resp.status() == 200 || resp.status() == 204,
+        "expected 200 or 204, got {}",
+        resp.status()
+    );
+    // Both charlie and diana must be present.
+    let body = server
+        .client
+        .get(&url)
+        .header("accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET failed")
+        .text()
+        .await
+        .expect("body text");
+    assert!(
+        body.contains("http://example.org/charlie"),
+        "charlie must survive POST merge, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/diana"),
+        "diana must appear after POST merge, got:\n{body}"
+    );
+}
+
+/// F-9: Direct POST on a non-existent graph — 404 Not Found.
+///
+/// Mirrors the indirect GSP `?graph=<iri>` POST behaviour: merging into a
+/// graph that does not yet exist is not allowed.
+///
+/// <https://www.w3.org/TR/sparql11-http-rdf-update/#http-post>
+#[tokio::test]
+async fn gsp_direct_post_nonexistent_graph_returns_404() {
+    let server = common::TestServer::start_writable("").await;
+    let url = format!("{}/rdf-graphs/no-such-graph", server.base_url);
+    let resp = server
+        .client
+        .post(&url)
+        .header("content-type", "text/turtle")
+        .body(WRITE_TURTLE)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
 }
 
 // ── G: Read-only server rejects write operations (§5.1, §6) ─────────────────

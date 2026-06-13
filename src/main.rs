@@ -80,13 +80,31 @@ struct Cli {
     #[arg(long = "serve")]
     serve: bool,
 
-    /// Port to listen on when --serve is set [default: 3030]
-    #[arg(long = "port", value_name = "PORT", default_value = "3030")]
+    /// Port to listen on when --serve is set
+    #[arg(
+        long = "port",
+        value_name = "PORT",
+        default_value = "3030",
+        env = "DAGALOG_PORT"
+    )]
     port: u16,
 
-    /// Base IRI for the SPARQL Service Description [default: http://localhost:PORT]
-    #[arg(long = "base-iri", value_name = "IRI")]
+    /// Base IRI for the SPARQL Service Description
+    #[arg(long = "base-iri", value_name = "IRI", env = "DAGALOG_BASE_IRI")]
     base_iri: Option<String>,
+
+    /// Disable all mutating endpoints (PUT, POST, DELETE, SPARQL Update)
+    #[arg(long = "read-only", env = "DAGALOG_READ_ONLY")]
+    read_only: bool,
+
+    /// Maximum query execution time in seconds
+    #[arg(
+        long = "query-timeout",
+        value_name = "SECS",
+        default_value = "30",
+        env = "DAGALOG_QUERY_TIMEOUT"
+    )]
+    query_timeout: u64,
 }
 
 fn main() {
@@ -198,8 +216,8 @@ fn run(cli: Cli) -> Result<(), String> {
         let config = sparql_endpoint::Config {
             bind_addr,
             base_iri,
-            read_only: false,
-            max_query_timeout_secs: 30,
+            read_only: cli.read_only,
+            max_query_timeout_secs: cli.query_timeout,
         };
         let store = Arc::new(tokio::sync::RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

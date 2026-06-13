@@ -97,6 +97,26 @@ impl QuadTable {
         self.four_keys_index.contains(q)
     }
 
+    /// Remove a single quad.  No-op if the quad is not present.
+    ///
+    /// Rebuilds all indexes; O(n) in the number of quads.
+    pub fn remove_quad(&mut self, target: Quad) {
+        if !self.four_keys_index.contains(&target) {
+            return;
+        }
+        let kept: Vec<Quad> = self
+            .quad_list
+            .iter()
+            .copied()
+            .filter(|q| *q != target)
+            .collect();
+        let hint = kept.len() as u32;
+        *self = QuadTable::new(hint);
+        for q in kept {
+            self.add_quad(q);
+        }
+    }
+
     pub fn get_quads_with_subject(
         &self,
         subject: GraphElementId,
