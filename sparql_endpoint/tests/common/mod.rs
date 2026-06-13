@@ -9,7 +9,7 @@ Contact: hovlanddag@gmail.com
 //! Shared helpers for sparql_endpoint integration tests.
 
 use dag_rdf::datastore::Datastore;
-use sparql_endpoint::{Config, serve_on_listener};
+use sparql_endpoint::{AuthConfig, Config, serve_on_listener};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
@@ -31,14 +31,14 @@ impl TestServer {
     ///
     /// Pass an empty string for an empty store.
     pub async fn start(turtle: &str) -> Self {
-        Self::start_inner(turtle, false, true).await
+        Self::start_inner(turtle, false, true, AuthConfig::None).await
     }
 
     /// Start a writable server (read_only: false) pre-loaded with Turtle data.
     ///
     /// Required for any test that exercises PUT, POST, or DELETE on the graph store.
     pub async fn start_writable(turtle: &str) -> Self {
-        Self::start_inner(turtle, false, false).await
+        Self::start_inner(turtle, false, false, AuthConfig::None).await
     }
 
     /// Start a writable server pre-loaded with TriG data.
@@ -46,10 +46,38 @@ impl TestServer {
     /// Use this when test fixtures need named graphs. TriG extends Turtle with
     /// `<graph-iri> { ... }` blocks.
     pub async fn start_writable_trig(trig: &str) -> Self {
-        Self::start_inner(trig, true, false).await
+        Self::start_inner(trig, true, false, AuthConfig::None).await
     }
 
-    async fn start_inner(data: &str, use_trig: bool, read_only: bool) -> Self {
+    /// Start a writable server protected by a static API key (reads are open).
+    pub async fn start_writable_with_key(turtle: &str, api_key: &str) -> Self {
+        Self::start_inner(
+            turtle,
+            false,
+            false,
+            AuthConfig::ApiKey {
+                key: api_key.to_string(),
+                require_for_reads: false,
+            },
+        )
+        .await
+    }
+
+    /// Start a writable server where both reads and writes require the API key.
+    pub async fn start_writable_with_key_protect_reads(turtle: &str, api_key: &str) -> Self {
+        Self::start_inner(
+            turtle,
+            false,
+            false,
+            AuthConfig::ApiKey {
+                key: api_key.to_string(),
+                require_for_reads: true,
+            },
+        )
+        .await
+    }
+
+    async fn start_inner(data: &str, use_trig: bool, read_only: bool, auth: AuthConfig) -> Self {
         let mut ds = Datastore::new(1024);
         if !data.is_empty() {
             if use_trig {
@@ -71,6 +99,7 @@ impl TestServer {
             base_iri: base_url.clone(),
             read_only,
             max_query_timeout_secs: 10,
+            auth,
         };
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)

@@ -8,7 +8,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::AppState;
 use axum::{
-    Router,
+    Router, middleware,
     routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -25,7 +25,11 @@ pub fn build_router(state: AppState) -> Router {
             axum::http::Method::HEAD,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([axum::http::header::ACCEPT, axum::http::header::CONTENT_TYPE]);
+        .allow_headers([
+            axum::http::header::ACCEPT,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ]);
 
     Router::new()
         // ── Frontend + legacy upload ─────────────────────────────────────────
@@ -96,6 +100,10 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::dataset_routes::dataset_data_get)
                 .head(crate::dataset_routes::dataset_data_head),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::auth_middleware,
+        ))
         .with_state(state)
         .layer(cors)
 }

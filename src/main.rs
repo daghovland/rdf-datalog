@@ -218,6 +218,7 @@ fn run(cli: Cli) -> Result<(), String> {
             base_iri,
             read_only: cli.read_only,
             max_query_timeout_secs: cli.query_timeout,
+            auth: sparql_endpoint::AuthConfig::None,
         };
         let store = Arc::new(tokio::sync::RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

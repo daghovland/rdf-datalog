@@ -165,6 +165,43 @@
                     border: 2px dashed #2b6cb0; border-radius: 4px; font-size: 0.9rem;
                     color: #2b6cb0; pointer-events: none; }
     .drop-zone.drag-over .drop-overlay { display: flex; }
+    /* ── Query builder ──────────────────────────────────────────────────────── */
+    .qb-class-input { width: 100%; margin-top: 0.25rem; font-size: 0.85rem;
+                      font-family: "Fira Mono","Consolas",monospace;
+                      padding: 0.5rem 0.6rem; border: 1px solid #ccc;
+                      border-radius: 4px; background: #f8f8f8; }
+    .qb-class-input:focus { outline: 2px solid #445; background: #fff; }
+    .qb-canvas { display: flex; align-items: flex-start; gap: 0;
+                 overflow-x: auto; padding: 0.5rem 0 0.75rem; min-height: 80px; }
+    .node-card { background: #fff; border: 2px solid #ddd; border-radius: 6px;
+                 padding: 0.75rem 1rem; min-width: 160px; cursor: pointer; flex-shrink: 0; }
+    .node-card.active { border-color: #2b6cb0;
+                        box-shadow: 0 0 0 3px rgba(43,108,176,.12); }
+    .node-card h3 { margin: 0 0 0.2rem; font-size: 0.9rem; color: #222; }
+    .node-card .node-var { font-size: 0.75rem; color: #888;
+                            font-family: "Fira Mono","Consolas",monospace; }
+    .qb-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    .qb-prop-h { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.4rem; color: #333; }
+    .qb-prop-row { display: flex; align-items: center; gap: 0.4rem;
+                   padding: 0.15rem 0; font-size: 0.82rem; }
+    .qb-prop-label { flex: 1; }
+    .qb-prop-var { font-family: "Fira Mono","Consolas",monospace;
+                   font-size: 0.75rem; color: #888; }
+    .btn-follow { padding: 0.2rem 0.6rem; font-size: 0.78rem; background: #eef3ff;
+                  color: #2b6cb0; border: 1px solid #b0c4e8; border-radius: 3px; cursor: pointer; }
+    .btn-follow:hover:not(:disabled) { background: #dce8f5; }
+    .btn-follow:disabled { opacity: 0.45; cursor: default; }
+    #qb-generated { font-family: "Fira Mono","Consolas",monospace; font-size: 0.78rem;
+                    background: #f8f8f8; border: 1px solid #ddd; border-radius: 4px;
+                    padding: 0.6rem; white-space: pre; overflow-x: auto;
+                    min-height: 4rem; margin-bottom: 0.75rem; color: #222; }
+    #qb-results { margin-top: 0.75rem; }
+    .node-arrow { display: flex; align-items: center; padding: 0 0.4rem;
+                  font-size: 0.75rem; color: #777; white-space: nowrap; flex-shrink: 0; }
+    .btn-follow.linked { background: #e6f4ea; color: #276749; border-color: #9dd5b0; cursor: default; }
+    .btn-remove-node { padding: 0.1rem 0.4rem; font-size: 0.72rem; background: #eee;
+                       color: #666; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
+    .btn-remove-node:hover { background: #fdd; color: #900; border-color: #f99; }
   </style>
 </head>
 <body>
@@ -176,6 +213,7 @@
     <nav id="main-nav">
       <a href="/" class="nav-link" id="nav-query">Query</a>
       <a href="/?view=classes" class="nav-link" id="nav-classes">Class Hierarchy</a>
+      <a href="/?view=build" class="nav-link" id="nav-build">Query Builder</a>
     </nav>
   </header>
 
@@ -250,6 +288,45 @@
         <summary>Incoming edges <span class="badge" id="in-count"></span></summary>
         <div id="in-table"></div>
       </details>
+    </div>
+  </div>
+
+  <!-- ── Query builder view (QB Phase 1+) ─────────────────────────────────────
+       Accessed via /?view=build.  Phase 1: class picker + property panes.    -->
+  <div id="build-view" style="display:none">
+    <div class="card">
+      <h2>Query Builder</h2>
+      <label for="class-picker" class="hint">Start with a class:</label>
+      <input id="class-picker" list="class-list" class="qb-class-input"
+             placeholder="Type or select a class IRI…" autocomplete="off"
+             onchange="onClassSelect(this.value)" />
+      <datalist id="class-list"></datalist>
+      <div id="node-canvas" class="qb-canvas" style="margin-top:0.75rem"></div>
+    </div>
+
+    <div id="qb-props-card" class="card" style="display:none">
+      <div class="qb-bottom">
+        <div>
+          <p class="qb-prop-h">Data properties</p>
+          <div id="data-prop-list"></div>
+        </div>
+        <div>
+          <p class="qb-prop-h">Object properties
+            <span class="hint" style="font-weight:normal"> (Phase 2)</span>
+          </p>
+          <div id="obj-prop-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="qb-sparql-card" class="card" style="display:none">
+      <h2>Generated SPARQL</h2>
+      <pre id="qb-generated"></pre>
+      <div class="actions">
+        <button id="btn-qb-run" onclick="runBuilderQuery()">Run</button>
+        <button class="btn-export" onclick="editInSparql()">Edit in SPARQL editor</button>
+      </div>
+      <div id="qb-results"></div>
     </div>
   </div>
 
@@ -767,6 +844,7 @@
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = '';
       document.getElementById('classes-view').style.display  = 'none';
+      document.getElementById('build-view').style.display    = 'none';
 
       document.getElementById('resource-heading').textContent =
         shortenIri(iri) !== iri ? shortenIri(iri) : 'Resource';
@@ -816,7 +894,9 @@
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = 'none';
       document.getElementById('classes-view').style.display  = '';
+      document.getElementById('build-view').style.display    = 'none';
       document.getElementById('nav-query').classList.remove('active');
+      document.getElementById('nav-build').classList.remove('active');
       document.getElementById('nav-classes').classList.add('active');
 
       const treeEl = document.getElementById('class-tree');
@@ -902,7 +982,7 @@
       });
     }
 
-    // ── Query builder — generation stub (QB Phase 1 implements this) ──────────
+    // ── Query builder — SPARQL generation ─────────────────────────────────────
     //
     // `root` shape mirrors `QueryNode` in sparql_endpoint/src/query_builder.rs:
     //   { varName: string, classIri: string,
@@ -914,9 +994,348 @@
     //     ?s a <http://example.org/Person> .
     //     OPTIONAL { ?s <http://…/label> ?s_label }
     //   }
-    function generateSparql(_root) {
-      // Stub — replace with real implementation in QB Phase 1.
-      return '';
+    //
+    // MIRROR: keep in sync with generate_sparql() in query_builder.rs.
+    function generateSparql(root) {
+      const selectVars = [];
+      const bodyLines  = [];
+      function collectNode(node) {
+        selectVars.push('?' + node.varName);
+        bodyLines.push('  ?' + node.varName + ' a <' + node.classIri + '> .');
+        for (const dp of node.dataProps) {
+          if (dp.checked) {
+            selectVars.push('?' + dp.varName);
+            const f = dp.filter?.trim();
+            if (f) {
+              const escaped = f.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              bodyLines.push('  ?' + node.varName + ' <' + dp.propIri + '> ?' + dp.varName + ' .');
+              bodyLines.push('  FILTER(regex(?' + dp.varName + ', "' + escaped + '", "i"))');
+            } else {
+              bodyLines.push(
+                '  OPTIONAL { ?' + node.varName +
+                ' <' + dp.propIri + '> ?' + dp.varName + ' }'
+              );
+            }
+          }
+        }
+        for (const link of node.links) {
+          bodyLines.push(
+            '  ?' + node.varName + ' <' + link.propIri +
+            '> ?' + link.target.varName + ' .'
+          );
+          collectNode(link.target);
+        }
+      }
+      collectNode(root);
+      return 'SELECT ' + selectVars.join(' ') + ' WHERE {\n' +
+             bodyLines.join('\n') + '\n}';
+    }
+
+    // ── Query builder — state ──────────────────────────────────────────────────
+    // Each QueryNode: { varName, classIri, dataProps, links, _objProps }
+    // _objProps stores discovered object-property IRIs (UI only, not in generate_sparql).
+
+    let qbRootNode   = null;   // root of the query graph
+    let qbActiveNode = null;   // currently focused node (property panes reflect this)
+    let qbNodeSeq    = 0;      // counter for auto-naming linked nodes (n1, n2, …)
+
+    function iriLocalName(iri) {
+      const sep = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+      return iri.slice(sep + 1).toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'val';
+    }
+
+    // ── Build view lifecycle ───────────────────────────────────────────────────
+
+    async function showBuildView() {
+      document.getElementById('query-view').style.display         = 'none';
+      document.getElementById('resource-view').style.display      = 'none';
+      document.getElementById('classes-view').style.display       = 'none';
+      document.getElementById('build-selftest-view').style.display = 'none';
+      document.getElementById('build-view').style.display         = '';
+      ['nav-query', 'nav-classes'].forEach(id =>
+        document.getElementById(id)?.classList.remove('active'));
+      document.getElementById('nav-build').classList.add('active');
+      await loadQbClasses();
+    }
+
+    async function loadQbClasses() {
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?c WHERE { ' +
+          '{ ?c a <http://www.w3.org/2002/07/owl#Class> } UNION { [] a ?c } ' +
+          '} LIMIT 200'
+        );
+        const dl = document.getElementById('class-list');
+        dl.innerHTML = '';
+        for (const b of data.results?.bindings ?? []) {
+          if (b.c?.type !== 'uri') continue;
+          const opt = document.createElement('option');
+          opt.value = b.c.value;
+          opt.label = shortenIri(b.c.value);
+          dl.appendChild(opt);
+        }
+      } catch { /* silently ignore */ }
+    }
+
+    async function onClassSelect(classIri) {
+      const iri = classIri.trim();
+      if (!iri.startsWith('http')) return;
+      qbNodeSeq    = 0;
+      const root   = { varName: 's', classIri: iri, dataProps: [], links: [], _objProps: [] };
+      qbRootNode   = root;
+      qbActiveNode = root;
+      await discoverQbProperties(root);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+      document.getElementById('qb-props-card').style.display  = '';
+      document.getElementById('qb-sparql-card').style.display = '';
+    }
+
+    // ── Property discovery ─────────────────────────────────────────────────────
+
+    async function discoverQbProperties(node) {
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?p ?o WHERE { ?s a <' + node.classIri + '> . ?s ?p ?o } LIMIT 200'
+        );
+        const dataSet = new Map();
+        const objSet  = new Set();
+        for (const b of data.results?.bindings ?? []) {
+          if (!b.p || !b.o) continue;
+          if (b.o.type === 'literal') dataSet.set(b.p.value, true);
+          if (b.o.type === 'uri')     objSet.add(b.p.value);
+        }
+        node.dataProps = [...dataSet.keys()].map(propIri => ({
+          propIri,
+          varName: node.varName + '_' + iriLocalName(propIri),
+          checked: false,
+          filter:  '',
+        }));
+        node._objProps = [...objSet];
+      } catch { /* ignore */ }
+    }
+
+    // ── Canvas rendering ───────────────────────────────────────────────────────
+
+    function renderQbNodeCanvas() {
+      const canvas = document.getElementById('node-canvas');
+      canvas.innerHTML = '';
+      if (!qbRootNode) return;
+
+      function buildCard(node, parentLink) {
+        if (parentLink) {
+          const arrow = document.createElement('div');
+          arrow.className = 'node-arrow';
+          arrow.textContent = '── ' + shortenIri(parentLink.propIri) + ' ──►';
+          canvas.appendChild(arrow);
+        }
+        const card = document.createElement('div');
+        card.className = 'node-card' + (node === qbActiveNode ? ' active' : '');
+        card.addEventListener('click', () => setActiveNode(node));
+
+        const h3 = document.createElement('h3');
+        h3.textContent = shortenIri(node.classIri);
+        h3.title = node.classIri;
+
+        const varEl = document.createElement('div');
+        varEl.className = 'node-var';
+        varEl.textContent = '?' + node.varName;
+
+        card.append(h3, varEl);
+
+        if (node !== qbRootNode) {
+          const acts = document.createElement('div');
+          acts.style.cssText = 'margin-top:0.35rem';
+          const rmBtn = document.createElement('button');
+          rmBtn.className = 'btn-remove-node';
+          rmBtn.textContent = '× Remove';
+          rmBtn.addEventListener('click', e => { e.stopPropagation(); removeQbNode(node); });
+          acts.appendChild(rmBtn);
+          card.appendChild(acts);
+        }
+        canvas.appendChild(card);
+        for (const link of node.links) buildCard(link.target, link);
+      }
+
+      buildCard(qbRootNode, null);
+    }
+
+    function setActiveNode(node) {
+      if (qbActiveNode === node) return;
+      qbActiveNode = node;
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+    }
+
+    // ── Property panes ─────────────────────────────────────────────────────────
+
+    function renderQbPropertyPanes() {
+      renderQbDataProps();
+      renderQbObjProps();
+    }
+
+    function renderQbDataProps() {
+      const list  = document.getElementById('data-prop-list');
+      list.innerHTML = '';
+      const props = qbActiveNode?.dataProps ?? [];
+      if (props.length === 0) {
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:0.8rem;color:#888;margin:0';
+        p.textContent = 'No data properties found.';
+        list.appendChild(p);
+        return;
+      }
+      for (const dp of props) {
+        const row = document.createElement('div');
+        row.className = 'qb-prop-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = dp.checked;
+        const filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.className = 'prop-filter-input';
+        filterInput.placeholder = 'filter…';
+        filterInput.value = dp.filter || '';
+        filterInput.style.cssText =
+          'display:none;font-size:0.75rem;padding:0.15rem 0.3rem;' +
+          'border:1px solid #ccc;border-radius:3px;width:7rem;margin-left:0.3rem;';
+        filterInput.addEventListener('input', () => {
+          dp.filter = filterInput.value;
+          regenerateSparql();
+        });
+        cb.addEventListener('change', () => {
+          dp.checked = cb.checked;
+          filterInput.style.display = cb.checked ? '' : 'none';
+          regenerateSparql();
+        });
+        if (dp.checked) filterInput.style.display = '';
+        const lbl = document.createElement('span');
+        lbl.className = 'qb-prop-label';
+        lbl.textContent = shortenIri(dp.propIri);
+        lbl.title = dp.propIri;
+        const varEl = document.createElement('span');
+        varEl.className = 'qb-prop-var';
+        varEl.textContent = '→ ?' + dp.varName;
+        row.append(cb, lbl, varEl, filterInput);
+        list.appendChild(row);
+      }
+    }
+
+    function renderQbObjProps() {
+      const list = document.getElementById('obj-prop-list');
+      list.innerHTML = '';
+      const objProps = qbActiveNode?._objProps ?? [];
+      if (objProps.length === 0) {
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:0.8rem;color:#888;margin:0';
+        p.textContent = 'No object properties found.';
+        list.appendChild(p);
+        return;
+      }
+      for (const propIri of objProps) {
+        const row = document.createElement('div');
+        row.className = 'qb-prop-row';
+        const btn = document.createElement('button');
+        const alreadyLinked = qbActiveNode.links.some(l => l.propIri === propIri);
+        btn.className = 'btn-follow' + (alreadyLinked ? ' linked' : '');
+        btn.title = propIri;
+        if (alreadyLinked) {
+          btn.textContent = shortenIri(propIri) + ' (linked)';
+        } else {
+          btn.textContent = '+ ' + shortenIri(propIri) + ' →';
+          btn.addEventListener('click', () => followObjectProp(propIri));
+        }
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
+    }
+
+    // ── Multi-hop expansion ────────────────────────────────────────────────────
+
+    async function followObjectProp(propIri) {
+      const sourceNode = qbActiveNode;
+      // Discover the most common target class
+      let targetClass = null;
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?type WHERE { ?s a <' + sourceNode.classIri + '> . ' +
+          '?s <' + propIri + '> ?o . ?o a ?type } LIMIT 20'
+        );
+        const b = data.results?.bindings?.[0];
+        if (b?.type?.type === 'uri') targetClass = b.type.value;
+      } catch { /* ignore */ }
+
+      qbNodeSeq++;
+      const varName = 'n' + qbNodeSeq;
+      const newNode = {
+        varName,
+        classIri: targetClass ?? 'http://www.w3.org/2002/07/owl#Thing',
+        dataProps: [], links: [], _objProps: [],
+      };
+      sourceNode.links.push({ propIri, target: newNode });
+      qbActiveNode = newNode;
+      await discoverQbProperties(newNode);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+    }
+
+    function isDescendantOrSelf(subtree, target) {
+      if (subtree === target) return true;
+      return subtree.links.some(l => isDescendantOrSelf(l.target, target));
+    }
+
+    function removeQbNode(node) {
+      function removeFromParent(parent) {
+        const idx = parent.links.findIndex(l => l.target === node);
+        if (idx !== -1) { parent.links.splice(idx, 1); return true; }
+        return parent.links.some(l => removeFromParent(l.target));
+      }
+      if (isDescendantOrSelf(node, qbActiveNode)) qbActiveNode = qbRootNode;
+      removeFromParent(qbRootNode);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+    }
+
+    // ── SPARQL regeneration + run + export ─────────────────────────────────────
+
+    function regenerateSparql() {
+      const pre = document.getElementById('qb-generated');
+      if (!qbRootNode) { pre.textContent = ''; return; }
+      pre.textContent = generateSparql(qbRootNode);
+    }
+
+    async function runBuilderQuery() {
+      const sparql = document.getElementById('qb-generated').textContent.trim();
+      if (!sparql) return;
+      const btn       = document.getElementById('btn-qb-run');
+      const container = document.getElementById('qb-results');
+      btn.disabled    = true;
+      btn.textContent = 'Running…';
+      container.innerHTML = '';
+      try {
+        const data = await sparqlFetch(sparql);
+        renderTable(container, data, null);
+        addExportButtons(container, data);
+      } catch (e) {
+        showMsg(container, e.message, false);
+      } finally {
+        btn.disabled    = false;
+        btn.textContent = 'Run';
+      }
+    }
+
+    function editInSparql() {
+      const sparql = document.getElementById('qb-generated').textContent.trim();
+      if (!sparql) return;
+      document.getElementById('query').value = sparql;
+      document.getElementById('build-view').style.display  = 'none';
+      document.getElementById('query-view').style.display  = '';
+      document.getElementById('nav-build').classList.remove('active');
+      document.getElementById('nav-query').classList.add('active');
+      history.pushState({}, '', '/');
     }
 
     // ── QB self-test harness (Layer 3a) ────────────────────────────────────────
@@ -1088,6 +1507,8 @@
 
       if (resource) {
         showResourceView(resource);
+      } else if (view === 'build') {
+        showBuildView();
       } else if (view === 'classes') {
         showClassesView();
       } else if (view === 'build-selftest') {

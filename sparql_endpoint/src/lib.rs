@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! SPARQL 1.1 HTTP endpoint + Fuseki-compatible admin API.
 
 pub mod admin;
+pub mod auth;
 pub mod dataset_routes;
 pub mod frontend;
 pub mod graph_store;
@@ -28,6 +29,21 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Authentication/authorization mode for the HTTP server.
+#[derive(Clone, Debug, Default)]
+pub enum AuthConfig {
+    /// No authentication required (default — suitable for local/trusted deployments).
+    #[default]
+    None,
+    /// Static Bearer token.  All mutating operations require `Authorization: Bearer <key>`.
+    ApiKey {
+        /// The shared secret clients must supply.
+        key: String,
+        /// When `true`, read-only operations (GET /sparql, etc.) also require the key.
+        require_for_reads: bool,
+    },
+}
+
 /// Runtime configuration for the SPARQL endpoint.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -39,6 +55,8 @@ pub struct Config {
     pub read_only: bool,
     /// Maximum query execution time in seconds (default: 30).
     pub max_query_timeout_secs: u64,
+    /// Authentication mode (default: none).
+    pub auth: AuthConfig,
 }
 
 impl Default for Config {
@@ -48,6 +66,7 @@ impl Default for Config {
             base_iri: "http://localhost:3030".to_string(),
             read_only: true,
             max_query_timeout_secs: 30,
+            auth: AuthConfig::None,
         }
     }
 }

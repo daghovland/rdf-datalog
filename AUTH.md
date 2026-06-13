@@ -7,7 +7,7 @@ planned, in order of complexity:
 |------|-----------|-------------|
 | 0 | None (current) | Local / trusted-network deployments |
 | 1 | Static API key | Single-tenant, simple deployments |
-| 2 | Azure Entra ID + App Roles | Multi-user, Azure-hosted deployments |
+| 2 | Generic OIDC (Azure Entra ID, Google, Keycloak, Auth0, …) | Multi-user, any cloud or on-prem |
 | 3 | Managed Identity | Service-to-service inside Azure (no credentials) |
 
 ---
@@ -331,6 +331,321 @@ read-only query results; only mutating actions prompt for credentials.
 
 ---
 
+## Tier 2b — Generic OIDC providers (Google, Keycloak, Auth0, …)
+
+The Entra ID design is a thin specialisation of standard OIDC JWT validation.
+Generalising it to support any OIDC provider requires only:
+
+1. Replacing the Azure-specific JWKS URL with an auto-discovered one.
+2. Making `issuer` and `audience` configurable instead of derived from a
+   tenant ID.
+
+### Generalised config
+
+```rust
+pub struct OidcConfig {
+    /// Base URL of the identity provider, e.g.
+    ///   "https://accounts.google.com"
+    ///   "https://login.microsoftonline.com/{tenant}/v2.0"
+    ///   "https://keycloak.example.com/realms/myrealm"
+    pub issuer: String,
+
+    /// Optional override for the JWKS URI.  When `None` the server fetches
+    /// `{issuer}/.well-known/openid-configuration` and reads `jwks_uri`.
+    pub jwks_uri: Option<String>,
+
+    /// Expected value of the `aud` claim (client_id or resource URI).
+    pub audience: String,
+
+    /// JWT claim that holds the role list.  Entra ID uses `"roles"`;
+    /// Keycloak puts realm roles under `"realm_access.roles"`.
+    /// Google tokens do not carry roles — use `groups_claim` instead.
+    pub roles_claim: String,            // default "roles"
+
+    pub read_role:  String,             // default "dagalog.Read"
+    pub write_role: String,             // default "dagalog.Write"
+    pub admin_role: String,             // default "dagalog.Admin"
+}
+
+pub enum AuthConfig {
+    None,
+    ApiKey { key: String, require_for_reads: bool },
+    Oidc(OidcConfig),
+}
+```
+
+`EntraConfig` becomes a builder helper that populates `OidcConfig` with the
+Azure-specific issuer URL and `roles_claim`.
+
+### OIDC discovery
+
+On startup (or first request), fetch and cache the provider metadata:
+
+```rust
+let meta_url = format!("{}/.well-known/openid-configuration", cfg.issuer);
+let meta: OidcMetadata = reqwest::get(&meta_url).await?.json().await?;
+// Validate: meta.issuer == cfg.issuer (reject lookalike URLs)
+// Cache: meta.jwks_uri — used by JwksCache::fetch_or_refresh
+```
+
+### CLI / env vars (generic OIDC)
+
+| CLI flag | Env var | Description |
+|----------|---------|-------------|
+| `--oidc-issuer <URL>` | `DAGALOG_OIDC_ISSUER` | Provider base URL |
+| `--oidc-audience <STR>` | `DAGALOG_OIDC_AUDIENCE` | Expected `aud` value |
+| `--oidc-jwks-uri <URL>` | `DAGALOG_OIDC_JWKS_URI` | Override JWKS URL |
+| `--oidc-roles-claim <STR>` | `DAGALOG_OIDC_ROLES_CLAIM` | Claim with roles (default `roles`) |
+| `--oidc-read-role <NAME>` | `DAGALOG_OIDC_READ_ROLE` | default `dagalog.Read` |
+| `--oidc-write-role <NAME>` | `DAGALOG_OIDC_WRITE_ROLE` | default `dagalog.Write` |
+| `--oidc-admin-role <NAME>` | `DAGALOG_OIDC_ADMIN_ROLE` | default `dagalog.Admin` |
+
+### Google Identity example
+
+Google issues standard RS256 JWTs for service accounts and for the
+Identity-Aware Proxy (IAP).  Two usage patterns:
+
+**Service account (server-to-server)**
+
+```sh
+# Acquire a token scoped to your dagalog deployment
+gcloud auth print-identity-token --audiences="https://dagalog.example.com"
+```
+
+Start dagalog with:
+
+```sh
+dagalog \
+  --oidc-issuer https://accounts.google.com \
+  --oidc-audience https://dagalog.example.com \
+  --oidc-roles-claim "dagalog_roles" \
+  --oidc-write-role writer
+```
+
+Google tokens do not carry application roles by default.  Either:
+- Add a custom claim via a Google Workspace custom attribute or a Cloud IAP
+  policy, or
+- Map the `email` / `sub` claim to a role in dagalog's own config (future).
+
+**Google Cloud Identity Platform / Firebase Auth (user-facing)**
+
+Register dagalog as an OAuth2 resource in the [Google Cloud Console](https://console.cloud.google.com/):
+1. *APIs & Services → Credentials → Create OAuth client ID* (Web application).
+2. Set **Authorized redirect URIs** if the browser UI will perform the PKCE
+   flow; leave empty for a pure resource server.
+3. The issuer is `https://accounts.google.com`; the audience is your
+   **client_id** from step 1.
+
+### Keycloak example
+
+Keycloak is the easiest way to test OIDC locally:
+
+```sh
+docker run -p 8080:8080 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  quay.io/keycloak/keycloak:latest start-dev
+```
+
+1. Create a realm (e.g. `dagalog-dev`).
+2. Create a client with *Access Type: bearer-only*, ID `dagalog`.
+3. Add realm roles: `dagalog.Read`, `dagalog.Write`, `dagalog.Admin`.
+4. Create a test user and assign roles.
+
+Start dagalog:
+
+```sh
+dagalog \
+  --oidc-issuer http://localhost:8080/realms/dagalog-dev \
+  --oidc-audience dagalog \
+  --oidc-roles-claim realm_access.roles
+```
+
+Keycloak puts realm roles inside a nested object; dagalog's JWT extraction
+must handle dot-separated claim paths.
+
+---
+
+## Testing
+
+### Tier 1 — API key tests
+
+**Unit tests (`sparql_endpoint/src/auth.rs` or `tests/api_key.rs`)**
+
+Use `axum::test::TestClient` (or `tower::ServiceExt::oneshot`) to drive
+the router without binding a port.
+
+| Test | Setup | Expected |
+|------|-------|----------|
+| No auth configured — write allowed | `api_key: None` | 200 |
+| Correct key on write endpoint | `Authorization: Bearer correct` | 200 |
+| Wrong key on write endpoint | `Authorization: Bearer wrong` | 401 |
+| Missing header on write endpoint | no `Authorization` header | 401 |
+| Correct key on read endpoint, reads unprotected | `require_for_reads: false` | 200 without key |
+| Correct key on read endpoint, reads protected | `require_for_reads: true` | 401 without key |
+| Timing: key comparison is constant-time | measure many correct/wrong key timings | Δt < noise floor |
+
+```rust
+#[tokio::test]
+async fn api_key_wrong_returns_401() {
+    let app = build_test_app(Config {
+        auth: AuthConfig::ApiKey {
+            key: "secret".into(),
+            require_for_reads: false,
+        },
+        ..Config::default()
+    });
+    let response = app
+        .oneshot(
+            Request::post("/sparql/update")
+                .header("Authorization", "Bearer wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+```
+
+**Integration test (end-to-end with a real HTTP listener)**
+
+Spawn a `tokio::task` with `sparql_endpoint::run(config)`, wait for it to
+bind, then use `reqwest` to issue real HTTP requests:
+
+```rust
+let url = spawn_server_with_key("test-key").await;
+let client = reqwest::Client::new();
+
+// Unauthenticated write → 401
+let r = client.post(format!("{url}/sparql/update")).send().await?;
+assert_eq!(r.status(), 401);
+
+// Authenticated write → 200 (or 400 if body is empty, not 401)
+let r = client
+    .post(format!("{url}/sparql/update"))
+    .bearer_auth("test-key")
+    .body("INSERT DATA { <s> <p> <o> }")
+    .send()
+    .await?;
+assert_ne!(r.status(), 401);
+```
+
+### Tier 2 — OIDC / JWT tests
+
+**Unit tests — JWT validation (`sparql_endpoint/src/auth.rs`)**
+
+Generate real RS256 key pairs in the test harness so the full validation
+path runs without mocking `jsonwebtoken`.
+
+```rust
+fn make_test_keypair() -> (EncodingKey, DecodingKey, String) {
+    // Use `rsa` crate to generate a 2048-bit key at test time.
+    // Return encoding key, decoding key, and a fake kid.
+}
+
+fn make_claims(issuer: &str, audience: &str, roles: &[&str]) -> Claims { … }
+```
+
+| Test | Variation | Expected |
+|------|-----------|----------|
+| Valid token | correct iss/aud/exp/roles | `Ok(claims)` |
+| Expired token | `exp` in the past | `Err(AuthError::Expired)` |
+| Wrong audience | `aud` ≠ configured | `Err(AuthError::InvalidAudience)` |
+| Wrong issuer | `iss` ≠ configured | `Err(AuthError::InvalidIssuer)` |
+| Wrong algorithm | HS256 instead of RS256 | `Err(AuthError::UnsupportedAlgorithm)` |
+| Missing role | valid token, no write role | middleware returns 403 |
+| `dagalog.Admin` has write access | Admin role on write endpoint | 200 |
+
+**Unit tests — JWKS cache**
+
+Mock the HTTP layer with the [`wiremock`](https://crates.io/crates/wiremock)
+crate:
+
+```toml
+[dev-dependencies]
+wiremock = "0.6"
+```
+
+```rust
+#[tokio::test]
+async fn jwks_cache_refreshes_after_ttl() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/keys"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&jwks_response()))
+        .expect(2)   // called twice: initial fetch + post-TTL refresh
+        .mount(&mock_server)
+        .await;
+
+    let cache = JwksCache::new(mock_server.uri() + "/keys", Duration::from_millis(1));
+    cache.fetch_or_refresh().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;  // expire TTL
+    cache.fetch_or_refresh().await.unwrap();
+
+    mock_server.verify().await;
+}
+```
+
+**Integration tests — full HTTP flow with a local OIDC mock**
+
+Option A — embedded mock (no external process, CI-friendly):
+
+Use `wiremock` to serve both `.well-known/openid-configuration` and the
+JWKS endpoint, issue tokens signed by a known test key, and drive the full
+middleware stack.
+
+Option B — Keycloak (closer to production, slower):
+
+Add a `docker-compose.test.yml` that brings up Keycloak and a configured
+dagalog instance.  Mark tests `#[ignore]` so they run only when
+`DAGALOG_INTEGRATION_OIDC=1` is set.
+
+```sh
+DAGALOG_INTEGRATION_OIDC=1 cargo test --test oidc_integration -- --ignored
+```
+
+**Testing with Azure Entra ID (CI/CD)**
+
+For PR pipelines, prefer the wiremock approach above.  For staging/release
+pipelines that test against a real Entra ID tenant:
+
+1. Create a dedicated `dagalog-test` app registration.
+2. Store `DAGALOG_TEST_TENANT_ID`, `DAGALOG_TEST_CLIENT_ID`,
+   `DAGALOG_TEST_CLIENT_SECRET` as repository secrets.
+3. In CI, acquire a token via the client-credentials flow and exercise the
+   live server:
+
+```sh
+TOKEN=$(curl -s -X POST \
+  "https://login.microsoftonline.com/$TENANT/oauth2/v2.0/token" \
+  -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$SECRET&scope=api://dagalog/.default" \
+  | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" \
+     "https://dagalog-staging.example.com/sparql?query=SELECT+*+WHERE+%7B%7D"
+```
+
+**Testing with Google (local dev)**
+
+Use a Google service account key file:
+
+```sh
+# Obtain an identity token scoped to the local dagalog instance
+gcloud auth print-identity-token --audiences="http://localhost:3030"
+```
+
+Start dagalog locally with Google as the OIDC provider:
+
+```sh
+DAGALOG_OIDC_ISSUER=https://accounts.google.com \
+DAGALOG_OIDC_AUDIENCE=http://localhost:3030 \
+cargo run -- serve
+```
+
+Then `curl -H "Authorization: Bearer $(gcloud auth print-identity-token ...)"`.
+
+---
+
 ## Implementation order
 
 | Step | Description |
@@ -339,8 +654,11 @@ read-only query results; only mutating actions prompt for credentials.
 | B | Implement `require_write_auth` middleware; wire into `server.rs` |
 | C | Add `require_auth_for_reads` flag; protect GET endpoints when set |
 | D | Add API key input to browser UI |
-| E | Add `EntraConfig` fields to `Config`; extend CLI with `--entra-*` flags |
+| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery |
 | F | Implement JWKS cache (`JwksCache`) and `validate_jwt` |
-| G | Implement `entra_auth` middleware; inject `Claims` extension |
-| H | Add MSAL.js sign-in flow to browser UI |
-| I | Document Managed Identity setup for Azure Container Apps / AKS |
+| G | Implement `oidc_auth` middleware; inject `Claims` extension |
+| H | Write unit tests for API key middleware (tower `oneshot`) |
+| I | Write unit tests for JWT validation (test RSA key pair + `wiremock`) |
+| J | Write integration test suite with embedded OIDC mock |
+| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) |
+| L | Document Managed Identity setup for Azure Container Apps / AKS |

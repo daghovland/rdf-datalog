@@ -12,6 +12,7 @@ tokio = { version = "1.52", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 serde_json = "1"
 urlencoding = "2"
+subtle = "2"
 
 [dev-dependencies]
 reqwest = { version = "0.13", features = ["json"] }
