@@ -390,7 +390,8 @@ built-ins beyond those the Datalog engine already handles):
 
 ### Phase 2 — Built-in predicates: value testing and counting
 
-Extends the Datalog engine with built-in guards for value-level checks:
+Extends the Datalog engine with built-in guards for value-level checks. These checks should 
+use the same syntax and same functions as sparql uses. That is, any valid SPARQL expression should also be a valid datalog expression
 
 | Step | Change | Tests unignored |
 |---|---|---|
