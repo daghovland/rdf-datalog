@@ -561,9 +561,13 @@ fn prop_constraint_rules(
             vec![viol]
         }
 
-        // Phase 2 constraints — log and skip
+        // Phase 2 constraints — evaluated in evaluate.rs, skip here
         PropConstraint::Datatype(_)
         | PropConstraint::NodeKind(_)
+        | PropConstraint::MinInclusive(_)
+        | PropConstraint::MaxInclusive(_)
+        | PropConstraint::MinExclusive(_)
+        | PropConstraint::MaxExclusive(_)
         | PropConstraint::MinLength(_)
         | PropConstraint::MaxLength(_)
         | PropConstraint::Pattern(_, _)
@@ -573,8 +577,8 @@ fn prop_constraint_rules(
         | PropConstraint::Disjoint(_)
         | PropConstraint::LessThan(_)
         | PropConstraint::LessThanOrEquals(_)
+        | PropConstraint::NodeShape(_)
         | PropConstraint::QualifiedValueShape { .. } => {
-            log::debug!("Constraint {constraint:?} at ({si},{pi},{ci}) deferred to Phase 2");
             vec![]
         }
     }

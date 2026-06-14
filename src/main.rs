@@ -35,6 +35,7 @@ use dagalog::{
 use sparql_endpoint::{AuthConfig, OidcConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -180,6 +181,15 @@ struct Cli {
         env = "DAGALOG_OIDC_BROWSER_CLIENT_ID"
     )]
     oidc_browser_client_id: Option<String>,
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+    /// Directory for durable persistence (redb changelog); omit for in-memory mode
+    #[arg(long = "data-dir", value_name = "PATH", env = "DAGALOG_DATA_DIR")]
+    data_dir: Option<PathBuf>,
+
+    /// Force in-memory mode even if DAGALOG_DATA_DIR is set
+    #[arg(long = "no-persist", env = "DAGALOG_NO_PERSIST")]
+    no_persist: bool,
 }
 
 fn main() {
@@ -289,14 +299,20 @@ fn run(cli: Cli) -> Result<(), String> {
         );
 
         let auth = build_auth_config(&cli)?;
+        let data_dir = if cli.no_persist {
+            None
+        } else {
+            cli.data_dir.clone()
+        };
         let config = sparql_endpoint::Config {
             bind_addr,
             base_iri,
             read_only: cli.read_only,
             max_query_timeout_secs: cli.query_timeout,
             auth,
+            data_dir,
         };
-        let store = Arc::new(tokio::sync::RwLock::new(datastore));
+        let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| format!("failed to create async runtime: {}", e))?;
         runtime

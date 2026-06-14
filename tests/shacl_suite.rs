@@ -264,7 +264,6 @@ fn spec_s4_1_1_class() {
 /// `ex:Bob` has a plain literal; `ex:Carol` has `xsd:int` (not `xsd:integer`) →
 /// 2 violations. `ex:Alice` has `xsd:integer` → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_1_2_datatype() {
     let data = load("shacl_s4_datatype_data.ttl");
     let shapes = load("shacl_s4_datatype_shapes.ttl");
@@ -285,7 +284,6 @@ fn spec_s4_1_2_datatype() {
 /// `ex:Alice` (object of `ex:Bob ex:knows ex:Alice`) is an IRI → conforms.
 /// `"Bob"` (object of `ex:Alice ex:knows "Bob"`) is a literal → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_1_3_nodekind() {
     let data = load("shacl_s4_nodekind_data.ttl");
     let shapes = load("shacl_s4_nodekind_shapes.ttl");

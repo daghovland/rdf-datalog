@@ -56,6 +56,21 @@ pub enum NodeKindValue {
     IRIOrLiteral,
 }
 
+impl NodeKindValue {
+    pub fn from_iri(iri: &str) -> Option<Self> {
+        use crate::vocab::*;
+        match iri {
+            SH_IRI => Some(Self::IRI),
+            SH_LITERAL => Some(Self::Literal),
+            SH_BLANK_NODE => Some(Self::BlankNode),
+            SH_BLANK_NODE_OR_IRI => Some(Self::BlankNodeOrIRI),
+            SH_BLANK_NODE_OR_LITERAL => Some(Self::BlankNodeOrLiteral),
+            SH_IRI_OR_LITERAL => Some(Self::IRIOrLiteral),
+            _ => None,
+        }
+    }
+}
+
 /// A property constraint parsed from a `sh:property` block.
 #[derive(Debug, Clone)]
 pub enum PropConstraint {
@@ -73,8 +88,13 @@ pub enum PropConstraint {
     UniqueLang,
     Equals(String),
     Disjoint(String),
+    MinInclusive(ElemValue),
+    MaxInclusive(ElemValue),
+    MinExclusive(ElemValue),
+    MaxExclusive(ElemValue),
     LessThan(String),
     LessThanOrEquals(String),
+    NodeShape(GraphElementId),
     QualifiedValueShape {
         shapes_id: GraphElementId,
         min: Option<u64>,
@@ -357,6 +377,21 @@ pub fn parse_prop_constraints(
         && let Some(iri) = graph::iri_string(shapes, id)
     {
         cs.push(PropConstraint::LessThanOrEquals(iri));
+    }
+    if let Some(id) = graph::get_object(shapes, prop_node, SH_MIN_INCLUSIVE) {
+        cs.push(PropConstraint::MinInclusive(id_to_elem(shapes, id)));
+    }
+    if let Some(id) = graph::get_object(shapes, prop_node, SH_MAX_INCLUSIVE) {
+        cs.push(PropConstraint::MaxInclusive(id_to_elem(shapes, id)));
+    }
+    if let Some(id) = graph::get_object(shapes, prop_node, SH_MIN_EXCLUSIVE) {
+        cs.push(PropConstraint::MinExclusive(id_to_elem(shapes, id)));
+    }
+    if let Some(id) = graph::get_object(shapes, prop_node, SH_MAX_EXCLUSIVE) {
+        cs.push(PropConstraint::MaxExclusive(id_to_elem(shapes, id)));
+    }
+    if let Some(inner_id) = graph::get_object(shapes, prop_node, SH_NODE) {
+        cs.push(PropConstraint::NodeShape(inner_id));
     }
     if let Some(qvs_id) = graph::get_object(shapes, prop_node, SH_QUALIFIED_VALUE_SHAPE) {
         let min = graph::get_object(shapes, prop_node, SH_QUALIFIED_MIN_COUNT)

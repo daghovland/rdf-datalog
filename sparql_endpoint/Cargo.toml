@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
+ingress = { path = "../ingress" }
 sparql-parser = { path = "../sparql_parser" }
 turtle = { path = "../turtle" }
 axum = "0.8"
@@ -16,6 +17,7 @@ urlencoding = "2"
 subtle = "2"
 jsonwebtoken = "9"
 reqwest = { version = "0.13", features = ["json"] }
+redb = "2"
 
 [dev-dependencies]
 reqwest = { version = "0.13", features = ["json"] }
@@ -27,3 +29,4 @@ wiremock = "0.6"
 rsa = "0.9"
 rand = "0.8"
 base64 = "0.21"
+tempfile = "3"

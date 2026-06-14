@@ -13,6 +13,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/sparql11-update/>
 
+use crate::persistence::{LogEntry, to_repr};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
 use std::collections::HashSet;
@@ -208,6 +209,106 @@ pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), S
         execute_one(store, op)?;
     }
     Ok(())
+}
+
+/// Build the set of `LogEntry` values that would be appended to the changelog
+/// when `ops` are applied to `store` in its current state.
+///
+/// Must be called BEFORE `execute_update` so that the current graph enumeration
+/// (needed for ClearNamed / ClearAll) reflects pre-mutation state.
+pub fn ops_to_log_entries(store: &Datastore, ops: &[UpdateOp]) -> Vec<LogEntry> {
+    let mut entries = Vec::new();
+    for op in ops {
+        match op {
+            UpdateOp::InsertData { content } => {
+                if let Ok(tmp) = {
+                    let mut t = Datastore::new(64);
+                    let body = ensure_trailing_dot(content);
+                    turtle::parse_turtle(&mut t, body.as_bytes())
+                        .map(|_| t)
+                        .map_err(|e| e.to_string())
+                } {
+                    for q in tmp
+                        .named_graphs
+                        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                        .collect::<Vec<_>>()
+                    {
+                        entries.push(LogEntry::InsertQuad {
+                            graph: None,
+                            s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                            p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                            o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                        });
+                    }
+                }
+            }
+            UpdateOp::DeleteData { content } => {
+                if let Ok(tmp) = {
+                    let mut t = Datastore::new(64);
+                    let body = ensure_trailing_dot(content);
+                    turtle::parse_turtle(&mut t, body.as_bytes())
+                        .map(|_| t)
+                        .map_err(|e| e.to_string())
+                } {
+                    for q in tmp
+                        .named_graphs
+                        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                        .collect::<Vec<_>>()
+                    {
+                        entries.push(LogEntry::DeleteQuad {
+                            graph: None,
+                            s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                            p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                            o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                        });
+                    }
+                }
+            }
+            UpdateOp::ClearDefault | UpdateOp::DropDefault => {
+                entries.push(LogEntry::ClearGraph { graph: None });
+            }
+            UpdateOp::ClearGraph(iri) | UpdateOp::DropGraph(iri) => {
+                entries.push(LogEntry::ClearGraph {
+                    graph: Some(iri.clone()),
+                });
+            }
+            UpdateOp::ClearNamed | UpdateOp::DropNamed => {
+                let ids: Vec<_> = store
+                    .named_graphs
+                    .triple_id_index
+                    .keys()
+                    .copied()
+                    .filter(|&id| id != DEFAULT_GRAPH_ELEMENT_ID)
+                    .collect();
+                for id in ids {
+                    if let Some(iri_ref) = store.resources.get_named_resource(id) {
+                        entries.push(LogEntry::ClearGraph {
+                            graph: Some(iri_ref.0.clone()),
+                        });
+                    }
+                }
+            }
+            UpdateOp::ClearAll | UpdateOp::DropAll => {
+                entries.push(LogEntry::ClearGraph { graph: None });
+                let ids: Vec<_> = store
+                    .named_graphs
+                    .triple_id_index
+                    .keys()
+                    .copied()
+                    .filter(|&id| id != DEFAULT_GRAPH_ELEMENT_ID)
+                    .collect();
+                for id in ids {
+                    if let Some(iri_ref) = store.resources.get_named_resource(id) {
+                        entries.push(LogEntry::ClearGraph {
+                            graph: Some(iri_ref.0.clone()),
+                        });
+                    }
+                }
+            }
+            UpdateOp::CreateGraph(_) => {} // No quads added; nothing to log.
+        }
+    }
+    entries
 }
 
 fn execute_one(store: &mut Datastore, op: UpdateOp) -> Result<(), String> {

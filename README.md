@@ -619,9 +619,8 @@ All CLI flags can also be set via environment variables (CLI flags take preceden
 | `DAGALOG_BASE_IRI` | `--base-iri` | Base IRI for the Service Description | `http://localhost:PORT` |
 | `DAGALOG_READ_ONLY` | `--read-only` | Disable all mutating endpoints | `false` |
 | `DAGALOG_QUERY_TIMEOUT` | `--query-timeout` | Maximum query time in seconds | `30` |
-| `DAGALOG_DATA_DIR` | `--data-dir` | Directory for durable storage (`redb`); omit for in-memory mode | *(in-memory)* |
+| `DAGALOG_DATA_DIR` | `--data-dir` | Directory for durable storage (`redb` changelog at `<dir>/dagalog.redb`); omit for in-memory mode | *(in-memory)* |
 | `DAGALOG_NO_PERSIST` | `--no-persist` | Force in-memory mode even if `DAGALOG_DATA_DIR` is set | `false` |
-| `DAGALOG_DB_FILE` | `--db-file` | Database filename inside `--data-dir` | `dagalog.redb` |
 
 ---
 

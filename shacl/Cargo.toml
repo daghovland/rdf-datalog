@@ -8,3 +8,7 @@ dag-rdf = { path = "../dag_rdf" }
 datalog = { path = "../datalog" }
 ingress = { path = "../ingress" }
 log = "0.4"
+regex = "1"
+chrono = "0.4"
+num-traits = "0.2"
+rust_decimal = "1"

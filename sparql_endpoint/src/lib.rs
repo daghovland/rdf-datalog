@@ -14,6 +14,7 @@ pub mod dataset_routes;
 pub mod frontend;
 pub mod graph_store;
 pub mod negotiate;
+pub mod persistence;
 pub mod query;
 pub mod query_builder;
 pub mod registry;
@@ -24,10 +25,12 @@ pub mod sparql_update;
 pub mod upload;
 
 use dag_rdf::datastore::Datastore;
+use persistence::QuadChangelog;
 use registry::DatasetRegistry;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// Authentication/authorization mode for the HTTP server.
 #[derive(Clone, Debug, Default)]
@@ -139,6 +142,12 @@ pub struct Config {
     pub max_query_timeout_secs: u64,
     /// Authentication mode (default: none).
     pub auth: AuthConfig,
+    /// Directory for durable persistence (redb changelog).
+    ///
+    /// `None` (default) → in-memory only; data is lost on restart.
+    /// `Some(path)` → a redb changelog is created at `<path>/dagalog.redb`;
+    ///   committed writes survive crash and restart.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -149,6 +158,7 @@ impl Default for Config {
             read_only: true,
             max_query_timeout_secs: 30,
             auth: AuthConfig::None,
+            data_dir: None,
         }
     }
 }
@@ -164,25 +174,53 @@ pub struct AppState {
     pub config: Config,
     /// Cache for OIDC JWKS (public keys).  Always present; no-op when auth is not OIDC.
     pub jwks_cache: auth::JwksCache,
+    /// Durable changelog.  `None` when the server runs in in-memory mode (no `data_dir`).
+    pub changelog: Option<Arc<Mutex<QuadChangelog>>>,
 }
 
 /// Start the SPARQL endpoint server.
+///
+/// If `config.data_dir` is set, opens a `redb` changelog there, replays it into
+/// the initial `Datastore`, and wires all mutating handlers to commit to the
+/// changelog before updating the in-memory store.
 pub async fn serve(store: Arc<RwLock<Datastore>>, config: Config) -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     serve_on_listener(store, config, listener).await
 }
 
 /// Start the server on an already-bound listener (useful for tests).
+///
+/// `store` is the initial in-memory `Datastore`.  When `config.data_dir` is set,
+/// the changelog is opened and its contents are replayed **into** `store` before
+/// any requests are accepted, replacing whatever was in `store`.
 pub async fn serve_on_listener(
     store: Arc<RwLock<Datastore>>,
     config: Config,
     listener: tokio::net::TcpListener,
 ) -> Result<(), std::io::Error> {
+    // Open the changelog (if configured) and replay it to reconstruct the store.
+    let changelog: Option<Arc<Mutex<QuadChangelog>>> = if let Some(ref dir) = config.data_dir {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("cannot create data-dir {}: {e}", dir.display()),
+            )
+        })?;
+        let db_path = dir.join("dagalog.redb");
+        let cl = QuadChangelog::open(&db_path).map_err(std::io::Error::other)?;
+        let replayed = cl.replay().map_err(std::io::Error::other)?;
+        *store.write().await = replayed;
+        Some(Arc::new(Mutex::new(cl)))
+    } else {
+        None
+    };
+
     let registry = DatasetRegistry::new_with_default(store.clone());
     let state = AppState {
         store,
         registry: Arc::new(RwLock::new(registry)),
         jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
+        changelog,
         config,
     };
     let app = server::build_router(state);

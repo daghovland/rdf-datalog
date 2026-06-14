@@ -36,6 +36,7 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         registry: state.registry.clone(),
         config: state.config.clone(),
         jwks_cache: state.jwks_cache.clone(),
+        changelog: state.changelog.clone(),
     }
 }
 
@@ -186,7 +187,22 @@ pub async fn dataset_update_post(
         }
     };
 
+    // Acquire store write lock first, then commit changelog inside the critical
+    // section so commit-order == apply-order under concurrent writers.
     let mut store = ds.write().await;
+
+    if let Some(ref changelog) = state.changelog {
+        let log_entries = sparql_update::ops_to_log_entries(&store, &ops);
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&log_entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     match sparql_update::execute_update(&mut store, ops) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (

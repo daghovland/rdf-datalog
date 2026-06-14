@@ -19,6 +19,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::{
     AppState,
+    persistence::{LogEntry, to_repr},
     serialize::{
         serialize_graph, serialize_nquads, serialize_nquads_graph, serialize_trig,
         serialize_trig_graph,
@@ -395,12 +396,39 @@ pub async fn gsp_put_inner(
         Err(r) => return r,
     };
 
+    // Acquire the store write lock FIRST, then commit to changelog inside the
+    // critical section.  This ensures commit-order == apply-order and prevents
+    // concurrent writes from diverging the live state from the durable log.
     let mut store = state.store.write().await;
     let (graph_id, is_new) = match resolve_write_target(&params, &mut store) {
         Ok(WriteTarget::Default) => (DEFAULT_GRAPH_ELEMENT_ID, false),
         Ok(WriteTarget::Named { id, is_new }) => (id, is_new),
         Err(r) => return r,
     };
+
+    let graph_iri: Option<String> = params.get("graph").cloned();
+    if let Some(ref changelog) = state.changelog {
+        let mut entries = Vec::new();
+        entries.push(LogEntry::ClearGraph {
+            graph: graph_iri.clone(),
+        });
+        for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
+            entries.push(LogEntry::InsertQuad {
+                graph: graph_iri.clone(),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            });
+        }
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
 
     store.remove_graph(graph_id);
     copy_default_graph_to(&tmp, &mut store, graph_id);
@@ -427,31 +455,47 @@ pub async fn gsp_delete_inner(
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
     }
 
-    let mut store = state.store.write().await;
-
-    if params.contains_key("default") {
-        store.remove_graph(DEFAULT_GRAPH_ELEMENT_ID);
-        return StatusCode::NO_CONTENT.into_response();
-    }
-
-    if let Some(iri) = params.get("graph") {
+    // Validate params early (before taking any locks).
+    let graph_iri: Option<String> = if params.contains_key("default") {
+        None
+    } else if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
         }
-        return match store.lookup_named_graph_id(iri) {
-            Some(id) if store.named_graph_exists(id) => {
-                store.remove_graph(id);
-                StatusCode::NO_CONTENT.into_response()
-            }
-            _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
-        };
+        Some(iri.clone())
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "DELETE /rdf-graph-store requires ?default or ?graph=<iri>",
+        )
+            .into_response();
+    };
+
+    // Acquire the store write lock first, then commit to changelog inside the
+    // critical section so commit-order == apply-order.
+    let mut store = state.store.write().await;
+
+    let graph_id = match &graph_iri {
+        None => DEFAULT_GRAPH_ELEMENT_ID,
+        Some(iri) => match store.lookup_named_graph_id(iri) {
+            Some(id) if store.named_graph_exists(id) => id,
+            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+        },
+    };
+
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_clear_graph(graph_iri.as_deref()) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
     }
 
-    (
-        StatusCode::BAD_REQUEST,
-        "DELETE /rdf-graph-store requires ?default or ?graph=<iri>",
-    )
-        .into_response()
+    store.remove_graph(graph_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 pub async fn gsp_post(
@@ -497,27 +541,70 @@ pub async fn gsp_post_inner(
         Err(r) => return r,
     };
 
-    let mut store = state.store.write().await;
-
+    // ── Case 1: ?default — merge into default graph ───────────────────────────
     if params.contains_key("default") {
+        // Acquire write lock first, then commit changelog under it.
+        let mut store = state.store.write().await;
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                .map(|q| LogEntry::InsertQuad {
+                    graph: None,
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
         copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
         return StatusCode::NO_CONTENT.into_response();
     }
 
+    // ── Case 2: ?graph=<iri> — merge into an existing named graph ────────────
     if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
         }
-        return match store.lookup_named_graph_id(iri) {
-            Some(id) if store.named_graph_exists(id) => {
-                copy_default_graph_to(&tmp, &mut store, id);
-                StatusCode::NO_CONTENT.into_response()
-            }
-            _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+        // Acquire write lock first, then check existence and commit changelog.
+        let mut store = state.store.write().await;
+        let graph_id = match store.lookup_named_graph_id(iri) {
+            Some(id) if store.named_graph_exists(id) => id,
+            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
         };
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                .map(|q| LogEntry::InsertQuad {
+                    graph: Some(iri.clone()),
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+        return StatusCode::NO_CONTENT.into_response();
     }
 
-    // No param → create new graph with server-assigned IRI
+    // ── Case 3: no param — create a new graph with a server-assigned IRI ─────
     let new_iri = {
         let ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -525,10 +612,31 @@ pub async fn gsp_post_inner(
             .as_nanos();
         format!("{}/rdf-graph-store/graph/{}", state.config.base_iri, ns)
     };
+    // Acquire write lock, then commit changelog, then mutate memory.
+    let mut store = state.store.write().await;
+    if let Some(ref changelog) = state.changelog {
+        let entries: Vec<_> = tmp
+            .named_graphs
+            .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+            .map(|q| LogEntry::InsertQuad {
+                graph: Some(new_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            })
+            .collect();
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
     let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(new_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
     copy_default_graph_to(&tmp, &mut store, graph_id);
-
     let location = format!(
         "{}/rdf-graph-store?graph={}",
         state.config.base_iri,

@@ -61,9 +61,8 @@ Two storage modes — selected at startup, cannot be changed at runtime:
 
 | CLI flag | Env var | Description | Default |
 |---|---|---|---|
-| `--data-dir <PATH>` | `DAGALOG_DATA_DIR` | Directory for the `redb` database file(s) | *(in-memory)* |
+| `--data-dir <PATH>` | `DAGALOG_DATA_DIR` | Directory for the `redb` changelog file | *(in-memory)* |
 | `--no-persist` | `DAGALOG_NO_PERSIST=1` | Force in-memory even if `DAGALOG_DATA_DIR` is set | `false` |
-| `--db-file <NAME>` | `DAGALOG_DB_FILE` | Database filename inside `--data-dir` | `dagalog.redb` |
 
 Storage locations (local disk, Docker volumes, Kubernetes PVCs) and caveats
 (NFS, cloud object storage) are documented in

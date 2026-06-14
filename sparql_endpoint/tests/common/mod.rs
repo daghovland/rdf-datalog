@@ -10,6 +10,7 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::datastore::Datastore;
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
@@ -17,6 +18,9 @@ use turtle::{parse_trig, parse_turtle};
 /// A running test server bound to a random loopback port.
 ///
 /// Dropping this value cancels the background server task.
+/// For tests that need to restart the server (persistence tests), call
+/// `shutdown().await` to wait for the task to fully terminate and release
+/// any file locks before starting a second instance.
 pub struct TestServer {
     pub base_url: String,
     #[allow(dead_code)]
@@ -82,7 +86,26 @@ impl TestServer {
         Self::start_inner(turtle, false, false, AuthConfig::Oidc(oidc_config)).await
     }
 
+    /// Start a persistent writable server using the given data directory.
+    ///
+    /// The changelog is stored at `<data_dir>/dagalog.redb`.  On startup the
+    /// changelog is replayed; any pre-loaded `data` Turtle is ignored after the
+    /// first restart (the log takes precedence).
+    pub async fn start_writable_persistent(data: &str, data_dir: &Path) -> Self {
+        Self::start_inner_with_data_dir(data, false, false, AuthConfig::None, Some(data_dir)).await
+    }
+
     async fn start_inner(data: &str, use_trig: bool, read_only: bool, auth: AuthConfig) -> Self {
+        Self::start_inner_with_data_dir(data, use_trig, read_only, auth, None).await
+    }
+
+    async fn start_inner_with_data_dir(
+        data: &str,
+        use_trig: bool,
+        read_only: bool,
+        auth: AuthConfig,
+        data_dir: Option<&Path>,
+    ) -> Self {
         let mut ds = Datastore::new(1024);
         if !data.is_empty() {
             if use_trig {
@@ -105,6 +128,7 @@ impl TestServer {
             read_only,
             max_query_timeout_secs: 10,
             auth,
+            data_dir: data_dir.map(Path::to_path_buf),
         };
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)
@@ -117,6 +141,21 @@ impl TestServer {
             client: reqwest::Client::new(),
             _handle: handle,
         }
+    }
+
+    /// Abort the server task and wait for it to fully terminate.
+    ///
+    /// Necessary before starting a second server that uses the same `data_dir`,
+    /// because `redb` holds a file lock that is only released when the server
+    /// task (and its `QuadChangelog`) is fully dropped.
+    #[allow(dead_code)]
+    pub async fn shutdown(self) {
+        let handle = self._handle;
+        handle.abort();
+        // Wait for the abort to complete (returns JoinError::Cancelled, which is expected).
+        let _ = handle.await;
+        // Brief yield to let the OS fully release file locks.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     pub fn sparql_url(&self) -> String {

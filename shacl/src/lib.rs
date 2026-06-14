@@ -21,6 +21,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! See `SHACL_PLAN.md` for the phased implementation roadmap.
 
+pub mod evaluate;
 pub mod graph;
 pub mod shapes;
 pub mod translate;
@@ -72,7 +73,7 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
 
     // Pre-compute violations for constraints that must see only the original data triples
     // (before any Datalog materialisation adds synthetic helper predicates).
-    let mut all_viol_preds = pre_compute_violations(&parsed, data, &mut work);
+    let mut all_viol_preds = pre_compute_violations(&parsed, data, shapes, &mut work);
 
     // Translate remaining constraints to Datalog rules and materialise.
     let (rules, rule_viols) = translate::shapes_to_rules(&parsed, shapes, &mut work);
@@ -97,10 +98,13 @@ pub fn report_to_turtle(_report: &ValidationReport) -> String {
 
 /// Evaluate constraints that need the original (un-materialised) data graph.
 ///
-/// Currently handles `sh:closed`.  Returns the violation-predicate IDs added.
+/// Handles `sh:closed` and all Phase 2 value-testing constraints (datatype,
+/// nodeKind, range, string, property pair, sh:node, sh:qualifiedValueShape, sh:xone).
+/// Returns the violation-predicate IDs added.
 fn pre_compute_violations(
     parsed: &[shapes::ParsedShape],
     data: &Datastore,
+    shapes_store: &Datastore,
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
     let mut viol_preds = Vec::new();
@@ -110,6 +114,8 @@ fn pre_compute_violations(
             viol_preds.push(pred);
         }
     }
+    let phase2_viols = evaluate::eval_all(parsed, data, shapes_store, work);
+    viol_preds.extend(phase2_viols);
     viol_preds
 }
 

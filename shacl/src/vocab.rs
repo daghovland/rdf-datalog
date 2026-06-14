@@ -170,3 +170,64 @@ pub fn viol_or(shape_idx: usize) -> String {
 pub fn viol_xone(shape_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:xone")
 }
+
+// §4.1 value type (Phase 2)
+pub fn viol_datatype(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:datatype")
+}
+pub fn viol_node_kind(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:nodeKind")
+}
+
+// §4.3 value range (Phase 2)
+pub fn viol_min_inclusive(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:minInclusive")
+}
+pub fn viol_max_inclusive(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:maxInclusive")
+}
+pub fn viol_min_exclusive(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:minExclusive")
+}
+pub fn viol_max_exclusive(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:maxExclusive")
+}
+
+// §4.4 string-based (Phase 2)
+pub fn viol_min_length(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:minLength")
+}
+pub fn viol_max_length(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:maxLength")
+}
+pub fn viol_pattern(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:pattern")
+}
+pub fn viol_language_in(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:languageIn")
+}
+pub fn viol_unique_lang(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:uniqueLang")
+}
+
+// §4.5 property pair (Phase 2)
+pub fn viol_equals(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:equals")
+}
+pub fn viol_disjoint(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:disjoint")
+}
+pub fn viol_less_than(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:lessThan")
+}
+pub fn viol_less_than_or_equals(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:lessThanOrEquals")
+}
+
+// §4.7 shape-based (Phase 2)
+pub fn viol_node_shape(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:node")
+}
+pub fn viol_qualified_value(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedValue")
+}

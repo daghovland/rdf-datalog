@@ -119,7 +119,6 @@ CI pipelines, CLI one-shot queries) are unaffected.
 |---|---|---|---|
 | `--data-dir <PATH>` | `DAGALOG_DATA_DIR` | Directory in which `dagalog.redb` is created | *(absent → in-memory)* |
 | `--no-persist` | `DAGALOG_NO_PERSIST=1` | Force in-memory mode even if `DAGALOG_DATA_DIR` is set | `false` |
-| `--db-file <NAME>` | `DAGALOG_DB_FILE` | Override the database filename within `--data-dir` | `dagalog.redb` |
 
 `--no-persist` exists so that a container image that bakes in `DAGALOG_DATA_DIR`
 can be overridden for local development or testing without editing environment
@@ -130,33 +129,28 @@ overrides `--data-dir` / `DAGALOG_DATA_DIR`.
 
 #### Effective path
 
-The database file is opened at `<data-dir>/<db-file>`:
+The database file is opened at `<data-dir>/dagalog.redb`:
 
 ```
---data-dir /var/lib/dagalog          (default db-file: dagalog.redb)
+--data-dir /var/lib/dagalog
 → /var/lib/dagalog/dagalog.redb
-
---data-dir /mnt/store --db-file ds1.redb
-→ /mnt/store/ds1.redb
 ```
 
 The directory is created on first start if it does not exist.
 
-#### Per-dataset isolation (multi-dataset server)
+#### Multi-dataset limitation (current implementation)
 
-When the admin API is used to create multiple datasets, each dataset gets its
-own `redb` file under `<data-dir>/`:
+The current changelog implementation uses a **single `dagalog.redb` file** and
+keys log entries only by named-graph IRI.  Writes to extra datasets created via
+the admin API (`POST /$/datasets`) are persisted in the same changelog but will
+replay into the **default dataset** on restart — not into the separately-named
+dataset.
 
-```
-<data-dir>/
-  default.redb      ← the built-in "default" dataset
-  ds1.redb
-  ds2.redb
-```
+**Recommendation:** use the admin API to create extra datasets only in in-memory
+mode (no `--data-dir`), or route all durable writes through the default dataset.
 
-The dataset name is sanitised to a safe filename (`[a-zA-Z0-9_-]`) before
-constructing the path. This provides file-level isolation: a corrupted dataset
-file does not affect other datasets.
+Per-dataset isolation (each dataset its own `redb` file) is planned as phase P6
+once the single-dataset path is proven stable.
 
 ---
 
