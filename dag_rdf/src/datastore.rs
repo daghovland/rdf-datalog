@@ -15,6 +15,7 @@ use crate::{GraphElement, GraphElementManager, IriReference, QuadTable, RdfLiter
 /// - `named_graphs`: the main quad store for all named and default-graph triples.
 /// - `reified_triples`: quads for RDF reification (triple IDs as graph component).
 /// - `resources`: the interning store mapping GraphElement ↔ GraphElementId.
+#[derive(Clone)]
 pub struct Datastore {
     pub reified_triples: QuadTable,
     pub named_graphs: QuadTable,

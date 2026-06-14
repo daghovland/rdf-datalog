@@ -18,6 +18,19 @@
     header h1 { margin: 0; font-size: 1.6rem; display: inline; }
     .header-top { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
     .triple-count { color: #888; font-size: 0.9rem; }
+    /* Auth panel */
+    .auth-panel { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.6rem;
+                  flex-wrap: wrap; font-size: 0.85rem; }
+    .auth-label { color: #666; }
+    .auth-input { font-size: 0.82rem; padding: 0.25rem 0.5rem;
+                  border: 1px solid #ccc; border-radius: 3px; width: 14rem; }
+    .auth-btn { padding: 0.25rem 0.75rem; font-size: 0.82rem; background: #2b6cb0;
+                color: #fff; border: none; border-radius: 3px; cursor: pointer; }
+    .auth-btn:hover { background: #2c5282; }
+    .auth-btn.secondary { background: #eee; color: #444; border: 1px solid #ccc; }
+    .auth-btn.secondary:hover { background: #e0e0e0; }
+    .auth-user { font-size: 0.82rem; color: #276749; font-weight: 500; }
+    .auth-warn { font-size: 0.78rem; color: #c05621; }
     nav { margin-top: 0.5rem; display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; }
     .nav-link { padding: 0.35rem 0.9rem 0.35rem 0; font-size: 0.85rem; color: #555;
                 text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
@@ -225,6 +238,34 @@
       <h1>Dagalog</h1>
       <span id="triple-count" class="triple-count"></span>
     </div>
+    <!-- Auth panel — shown only when auth is configured -->
+    <div id="auth-panel" style="display:none" class="auth-panel">
+      <!-- API key mode -->
+      <div id="auth-apikey-panel" style="display:none">
+        <span class="auth-label">API key:</span>
+        <input id="api-key-input" type="password" class="auth-input" placeholder="Paste API key…" />
+        <button class="auth-btn" onclick="setApiKey()">Set key</button>
+        <button class="auth-btn secondary" onclick="clearApiKey()" id="clear-key-btn" style="display:none">Clear</button>
+        <span id="api-key-status" class="auth-user"></span>
+      </div>
+      <!-- OIDC mode with MSAL.js (browser_client_id configured) -->
+      <div id="auth-oidc-panel" style="display:none">
+        <span id="auth-user-name" class="auth-user" style="display:none"></span>
+        <button class="auth-btn" id="signin-btn" onclick="oidcSignIn()">Sign in</button>
+        <button class="auth-btn secondary" id="signout-btn" onclick="oidcSignOut()" style="display:none">Sign out</button>
+      </div>
+      <!-- OIDC mode without browser_client_id — manual token paste -->
+      <div id="auth-token-panel" style="display:none">
+        <span class="auth-label">Bearer token:</span>
+        <input id="manual-token-input" type="password" class="auth-input" placeholder="Paste token…" />
+        <button class="auth-btn" onclick="setManualToken()">Set token</button>
+        <button class="auth-btn secondary" onclick="clearManualToken()" id="clear-token-btn" style="display:none">Clear</button>
+        <span id="manual-token-status" class="auth-user"></span>
+        <span class="auth-warn" id="manual-token-hint" style="display:none">
+          Get a token: <code>gcloud auth print-identity-token --audiences="..."</code>
+        </span>
+      </div>
+    </div>
     <nav id="main-nav">
       <a href="/" class="nav-link" id="nav-query">Query</a>
       <a href="/?view=classes" class="nav-link" id="nav-classes">Class Hierarchy</a>
@@ -377,6 +418,167 @@
   </div>
 
   <script>
+    // ── Authentication ─────────────────────────────────────────────────────────
+    //
+    // Three modes (detected from GET /auth/config on page load):
+    //   "none"    — no auth required, panel hidden
+    //   "api_key" — user pastes a Bearer key; stored in sessionStorage
+    //   "oidc"    — JWT from MSAL.js (if browser_client_id set) or manual paste
+    //
+    // getAuthHeaders() injects the right Authorization header into every fetch.
+
+    let authConfig = null;       // populated by initAuth()
+    let msalInstance = null;     // PublicClientApplication (MSAL.js)
+    let msalToken = null;        // current OIDC access token (from MSAL or manual)
+
+    function getAuthHeaders() {
+      const apiKey = sessionStorage.getItem('dagalog-api-key');
+      if (apiKey) return { 'Authorization': 'Bearer ' + apiKey };
+      if (msalToken) return { 'Authorization': 'Bearer ' + msalToken };
+      const manual = sessionStorage.getItem('dagalog-oidc-token');
+      if (manual) return { 'Authorization': 'Bearer ' + manual };
+      return {};
+    }
+
+    // API key panel
+    function setApiKey() {
+      const val = document.getElementById('api-key-input').value.trim();
+      if (!val) return;
+      sessionStorage.setItem('dagalog-api-key', val);
+      document.getElementById('api-key-input').value = '';
+      document.getElementById('api-key-status').textContent = 'Key set';
+      document.getElementById('clear-key-btn').style.display = '';
+    }
+    function clearApiKey() {
+      sessionStorage.removeItem('dagalog-api-key');
+      document.getElementById('api-key-status').textContent = '';
+      document.getElementById('clear-key-btn').style.display = 'none';
+    }
+
+    // Manual token panel (OIDC without MSAL.js)
+    function setManualToken() {
+      const val = document.getElementById('manual-token-input').value.trim();
+      if (!val) return;
+      sessionStorage.setItem('dagalog-oidc-token', val);
+      msalToken = null;
+      document.getElementById('manual-token-input').value = '';
+      document.getElementById('manual-token-status').textContent = 'Token set';
+      document.getElementById('clear-token-btn').style.display = '';
+    }
+    function clearManualToken() {
+      sessionStorage.removeItem('dagalog-oidc-token');
+      document.getElementById('manual-token-status').textContent = '';
+      document.getElementById('clear-token-btn').style.display = 'none';
+    }
+
+    // MSAL.js sign-in / sign-out (Azure Entra ID + generic OIDC providers)
+    async function oidcSignIn() {
+      if (!msalInstance) return;
+      try {
+        const scope = (authConfig.oidc?.audience || '') + '/.default';
+        const resp = await msalInstance.loginPopup({ scopes: [scope] });
+        msalToken = resp.accessToken;
+        sessionStorage.removeItem('dagalog-oidc-token');
+        const name = resp.account?.name || resp.account?.username || 'Signed in';
+        document.getElementById('auth-user-name').textContent = name;
+        document.getElementById('auth-user-name').style.display = '';
+        document.getElementById('signin-btn').style.display = 'none';
+        document.getElementById('signout-btn').style.display = '';
+      } catch (e) {
+        console.error('MSAL sign-in failed:', e);
+      }
+    }
+    async function oidcSignOut() {
+      msalToken = null;
+      if (msalInstance) await msalInstance.logoutPopup().catch(() => {});
+      document.getElementById('auth-user-name').style.display = 'none';
+      document.getElementById('signin-btn').style.display = '';
+      document.getElementById('signout-btn').style.display = 'none';
+    }
+
+    // Silently refresh an existing MSAL session
+    async function tryAcquireTokenSilent() {
+      if (!msalInstance) return;
+      const accounts = msalInstance.getAllAccounts();
+      if (!accounts.length) return;
+      try {
+        const scope = (authConfig.oidc?.audience || '') + '/.default';
+        const resp = await msalInstance.acquireTokenSilent({
+          scopes: [scope], account: accounts[0],
+        });
+        msalToken = resp.accessToken;
+        const name = accounts[0].name || accounts[0].username || 'Signed in';
+        document.getElementById('auth-user-name').textContent = name;
+        document.getElementById('auth-user-name').style.display = '';
+        document.getElementById('signin-btn').style.display = 'none';
+        document.getElementById('signout-btn').style.display = '';
+      } catch { /* silent refresh failed — user must sign in manually */ }
+    }
+
+    async function initAuth() {
+      try {
+        const resp = await fetch('/auth/config');
+        if (!resp.ok) return;
+        authConfig = await resp.json();
+      } catch { return; }
+
+      if (!authConfig || authConfig.mode === 'none') return;
+
+      document.getElementById('auth-panel').style.display = '';
+
+      if (authConfig.mode === 'api_key') {
+        document.getElementById('auth-apikey-panel').style.display = '';
+        if (sessionStorage.getItem('dagalog-api-key')) {
+          document.getElementById('api-key-status').textContent = 'Key set';
+          document.getElementById('clear-key-btn').style.display = '';
+        }
+        return;
+      }
+
+      if (authConfig.mode === 'oidc') {
+        const clientId = authConfig.oidc?.browser_client_id;
+        if (clientId) {
+          // Load MSAL.js from CDN and initialise.
+          document.getElementById('auth-oidc-panel').style.display = '';
+          await loadMsal();
+          if (window.msal) {
+            // Derive authority from issuer: strip trailing /v2.0 for Azure compatibility.
+            const issuer = authConfig.oidc.issuer || '';
+            const authority = issuer.replace(/\/v2\.0\/?$/, '');
+            msalInstance = new msal.PublicClientApplication({
+              auth: { clientId, authority },
+              cache: { cacheLocation: 'sessionStorage' },
+            });
+            await msalInstance.initialize();
+            await tryAcquireTokenSilent();
+          }
+        } else {
+          // No browser_client_id — show manual token input with a helpful hint.
+          document.getElementById('auth-token-panel').style.display = '';
+          document.getElementById('manual-token-hint').style.display = '';
+          if (sessionStorage.getItem('dagalog-oidc-token')) {
+            document.getElementById('manual-token-status').textContent = 'Token set';
+            document.getElementById('clear-token-btn').style.display = '';
+          }
+        }
+      }
+    }
+
+    let msalLoading = null;
+    function loadMsal() {
+      if (window.msal) return Promise.resolve();
+      if (!msalLoading) {
+        msalLoading = new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://alcdn.msauth.net/browser/3.28.1/js/msal-browser.min.js';
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error('MSAL.js failed to load'));
+          document.head.appendChild(s);
+        });
+      }
+      return msalLoading;
+    }
+
     // ── Constants ──────────────────────────────────────────────────────────────
     const RDF_TYPE   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
     const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label';
@@ -532,6 +734,7 @@
         headers: {
           'Content-Type': 'application/sparql-query',
           'Accept': 'application/sparql-results+json, text/turtle;q=0.9, application/n-triples;q=0.8',
+          ...getAuthHeaders(),
         },
         body: query,
       });
@@ -858,7 +1061,7 @@
       try {
         const resp = await fetch('/upload', {
           method: 'POST',
-          headers: { 'Content-Type': 'text/turtle; charset=utf-8' },
+          headers: { 'Content-Type': 'text/turtle; charset=utf-8', ...getAuthHeaders() },
           body: turtle,
         });
         const text = await resp.text();
@@ -1606,6 +1809,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       renderPrefixList();
       renderHistory();
+      initAuth();   // set up auth panel (async; runs in parallel with other init)
       loadStats();
       initDropZone();
       initKeyboardShortcuts();

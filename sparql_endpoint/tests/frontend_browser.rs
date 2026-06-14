@@ -934,3 +934,52 @@ async fn qb_filter_text_appears_in_generated_sparql() {
     );
     driver.quit().await.unwrap();
 }
+
+// ── CONSTRUCT query rendering ─────────────────────────────────────────────────
+
+/// Regression: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` must render as a
+/// `<pre>` block in the query result area — not trigger a JSON parse error.
+#[tokio::test]
+async fn construct_wildcard_renders_as_pre_block() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_element(&driver, "#query-result pre.msg", 4000).await,
+        "expected a <pre class='msg'> in #query-result"
+    );
+
+    // Must not show an error message
+    let err_present = driver.find(By::Css("#query-result .msg.err")).await.is_ok();
+    assert!(
+        !err_present,
+        "CONSTRUCT result should not show an error message"
+    );
+
+    // The pre block must contain turtle/n-triples content with Alice's IRI
+    let pre_text = driver
+        .find(By::Css("#query-result pre.msg"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        pre_text.contains("http://example.org/alice") || pre_text.contains("(empty result)"),
+        "pre block should contain turtle output, got:\n{pre_text}"
+    );
+
+    driver.quit().await.unwrap();
+}

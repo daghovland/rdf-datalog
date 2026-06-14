@@ -32,6 +32,8 @@ pub fn build_router(state: AppState) -> Router {
         ]);
 
     Router::new()
+        // ── Auth config (always public — no middleware) ───────────────────────
+        .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
         .route("/upload", post(crate::upload::upload_turtle))

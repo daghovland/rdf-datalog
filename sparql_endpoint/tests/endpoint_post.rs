@@ -141,3 +141,41 @@ async fn class_hierarchy_query_with_inline_prefix_returns_subclass_pairs() {
     common::assert_binding_contains(bindings, "child", "uri", "http://example.org/Person");
     common::assert_binding_contains(bindings, "parent", "uri", "http://example.org/Animal");
 }
+
+/// Regression: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` must return 200 with
+/// `Content-Type: text/turtle` (not a JSON parse error).
+#[tokio::test]
+async fn construct_wildcard_returns_turtle() {
+    let turtle = r#"
+        <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+    "#;
+    let server = common::TestServer::start(turtle).await;
+
+    let sparql = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+
+    let resp = server
+        .client
+        .post(server.sparql_url())
+        .header("content-type", "application/sparql-query")
+        .body(sparql)
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap();
+    assert!(
+        ct.contains("text/turtle") || ct.contains("application/n-triples"),
+        "unexpected content-type for CONSTRUCT: {ct}"
+    );
+
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/alice"),
+        "body should contain the subject IRI, got:\n{body}"
+    );
+    assert!(
+        body.contains("Alice"),
+        "body should contain the literal value, got:\n{body}"
+    );
+}

@@ -144,7 +144,6 @@ fn spec_s1_4_intro_person_shape_violations() {
 /// The shape targets only `ex:Alice`. `ex:Alice` has no `ex:name` → 1 violation.
 /// `ex:Bob` also has no `ex:name` but is not targeted → no violation for `ex:Bob`.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s2_1_1_target_node() {
     let data = load("shacl_s2_target_node_data.ttl");
     let shapes = load("shacl_s2_target_node_shapes.ttl");
@@ -164,7 +163,6 @@ fn spec_s2_1_1_target_node() {
 /// `ex:Alice` and `ex:Bob` are `ex:Person`; `ex:NewYork` is `ex:Place` (not targeted).
 /// `ex:Alice` has no `ex:name` → 1 violation. `ex:Bob` has `ex:name` → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s2_1_2_target_class() {
     let data = load("shacl_s2_target_class_data.ttl");
     let shapes = load("shacl_s2_target_class_shapes.ttl");
@@ -185,7 +183,6 @@ fn spec_s2_1_2_target_class() {
 /// `ex:Person` instances are automatically targeted. `ex:Alice` has no `ex:name` →
 /// 1 violation. `ex:NewYork` is `ex:Place` → not targeted.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s2_1_3_target_implicit_class() {
     let data = load("shacl_s2_target_implicit_data.ttl");
     let shapes = load("shacl_s2_target_implicit_shapes.ttl");
@@ -206,7 +203,6 @@ fn spec_s2_1_3_target_implicit_class() {
 /// The shape requires `sh:nodeKind sh:IRI`. `ex:Alice` is an IRI → conforms.
 /// `ex:Bob` uses `ex:livesIn`, not `ex:knows` → not targeted.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s2_1_4_target_subjects_of() {
     let data = load("shacl_s2_target_subjects_data.ttl");
     let shapes = load("shacl_s2_target_subjects_shapes.ttl");
@@ -248,7 +244,6 @@ fn spec_s2_1_5_target_objects_of() {
 /// `ex:address` values to be typed `ex:PostalAddress`.
 /// `ex:Carol`'s address blank node lacks `rdf:type ex:PostalAddress` → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_1_1_class() {
     let data = load("shacl_s4_class_data.ttl");
     let shapes = load("shacl_s4_class_shapes.ttl");
@@ -313,7 +308,6 @@ fn spec_s4_1_3_nodekind() {
 /// `ex:Alice` has `ex:name "Alice"` → conforms.
 /// `ex:Bob` has only `ex:givenName` (no `ex:name`) → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_2_1_mincount() {
     let data = load("shacl_s4_mincount_data.ttl");
     let shapes = load("shacl_s4_mincount_shapes.ttl");
@@ -334,7 +328,6 @@ fn spec_s4_2_1_mincount() {
 /// `ex:Bob` has 1 `ex:birthDate` → conforms.
 /// `ex:Carol` has 2 `ex:birthDate` values → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_2_2_maxcount() {
     let data = load("shacl_s4_maxcount_data.ttl");
     let shapes = load("shacl_s4_maxcount_shapes.ttl");
@@ -576,7 +569,6 @@ fn spec_s4_5_4_lessthanorequals() {
 /// `ex:Alice` is an `ex:LegalPerson` → conforms to the negated shape → 1 violation.
 /// `ex:Bob` is an `ex:NaturalPerson` → does not conform → `sh:not` satisfied.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_6_1_not() {
     let data = load("shacl_s4_not_data.ttl");
     let shapes = load("shacl_s4_not_shapes.ttl");
@@ -597,7 +589,6 @@ fn spec_s4_6_1_not() {
 /// `ex:Alice` has both → conforms.
 /// `ex:Bob` has only `ex:firstName` → fails the second sub-shape → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_6_2_and() {
     let data = load("shacl_s4_and_data.ttl");
     let shapes = load("shacl_s4_and_shapes.ttl");
@@ -618,7 +609,6 @@ fn spec_s4_6_2_and() {
 /// `ex:Alice` (Employee) and `ex:Bob` (Customer) → conforms.
 /// `ex:Carol` (Supplier) → neither matches → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_6_3_or() {
     let data = load("shacl_s4_or_data.ttl");
     let shapes = load("shacl_s4_or_shapes.ttl");
@@ -708,7 +698,6 @@ fn spec_s4_7_3_qualified_value_shape() {
 /// `ex:Fido` has only `ex:name` → conforms.
 /// `ex:Rex` has `ex:name` and `ex:breed` → `ex:breed` is forbidden → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_8_1_closed() {
     let data = load("shacl_s4_closed_data.ttl");
     let shapes = load("shacl_s4_closed_shapes.ttl");
@@ -729,7 +718,6 @@ fn spec_s4_8_1_closed() {
 /// `ex:Alice` has `ex:Admin` and `ex:Editor` → includes `ex:Admin` → conforms.
 /// `ex:Bob` has only `ex:Editor` → missing `ex:Admin` → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_8_2_has_value() {
     let data = load("shacl_s4_hasvalue_data.ttl");
     let shapes = load("shacl_s4_hasvalue_shapes.ttl");
@@ -750,7 +738,6 @@ fn spec_s4_8_2_has_value() {
 /// `ex:Alice` `ex:Active` and `ex:Bob` `ex:Pending` → in list → conforms.
 /// `ex:Carol` `ex:Unknown` → not in list → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_8_3_in() {
     let data = load("shacl_s4_in_data.ttl");
     let shapes = load("shacl_s4_in_shapes.ttl");

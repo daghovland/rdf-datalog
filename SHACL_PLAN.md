@@ -422,6 +422,34 @@ Extends the Datalog engine with built-in guards for value-level checks:
 
 ---
 
+## Implementation notes
+
+### Cross-graph ID safety
+
+Shapes graph and data graph have independent `GraphElementManager`s; an ID from one
+store is meaningless in the other.  The implementation stores all IRI strings from
+the shapes graph as `String` in `ParsedShape`, and re-interns them into the working
+(data-clone) store via `graph::intern_iri` before placing them in rule bodies.
+
+### sh:closed isolation
+
+`sh:closed` violations are pre-computed in Rust against the **original** data store
+before Datalog materialisation (in `lib.rs::closed_violations`).  This prevents
+synthetic helper predicates (target markers, `has_val`, `in_list`) that are added
+to the working store during evaluation from being mistaken for user data.
+
+### NotEqualsAtom fix (datalog crate)
+
+The `RuleAtom::NotEqualsAtom` variant existed in `datalog::types` but was never
+evaluated.  Added `resolve_term` + inequality filter in `datalog::datalog::evaluate`,
+enabling `sh:maxCount 1` (pair-inequality) to work correctly.
+
+### sh:PropertyShape with direct sh:path
+
+A `sh:PropertyShape` may declare `sh:path` + constraints directly on the shape node
+instead of inside a `sh:property` block.  Detected in `shapes::parse_one_shape` and
+handled identically to nested property shapes.
+
 ## Status
 
 | Step | Status |
@@ -430,7 +458,9 @@ Extends the Datalog engine with built-in guards for value-level checks:
 | Integration tests for all §1–§4.8 constraints | ✓ Done |
 | README SHACL section | ✓ Done |
 | SHACL→Datalog plan | ✓ Done (this document) |
-| Phase 1 implementation | Planned |
-| Phase 2 built-ins | Planned |
-| Phase 3 HTTP endpoint | Planned |
-| Phase 4 SHACL-SPARQL | Planned |
+| Phase 1a: targets + `sh:minCount 1` + `sh:maxCount` | ✓ Done |
+| Phase 1b: `sh:class`, `sh:hasValue`, `sh:in`, `sh:closed` | ✓ Done |
+| Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
+| Phase 2: built-in predicates (nodeKind, datatype, range, string, …) | Planned |
+| Phase 3: HTTP endpoint + `report_to_turtle` | Planned |
+| Phase 4: SHACL-SPARQL (§5–6) | Planned |

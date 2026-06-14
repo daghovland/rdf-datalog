@@ -6,35 +6,43 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! Translate parsed SHACL shapes into Datalog rules.
+//! Translate parsed SHACL shapes into stratified Datalog rules.
 //!
-//! Each `ParsedShape` is converted into a set of `datalog::Rule`s that:
-//!   1. Mark target nodes with a per-shape synthetic predicate.
-//!   2. Derive `has-value` helper triples for existence checks.
-//!   3. Derive violation triples for each failing constraint.
+//! # Encoding
 //!
-//! After `evaluate_rules` runs, every triple whose predicate is in `viol_preds`
-//! represents one `ValidationResult`.
+//! Every derived fact goes into the working (data-clone) store as a triple with a
+//! *synthetic* predicate IRI from `vocab::int_*` / `vocab::viol_*`.  No synthetic
+//! IRI ever collides with real data because they all start with `urn:dagalog:shacl:`.
 //!
-//! # Cross-graph note
-//! All IRI strings read from the shapes store are re-interned into the working
-//! (data-clone) store via `graph::intern_iri` before being placed in rule bodies.
-//! IDs from the shapes store are never used directly in working-store rules.
+//! After `evaluate_rules` runs, any triple whose predicate is in `viol_preds` is one
+//! `ValidationResult`.
+//!
+//! # Cross-graph safety
+//!
+//! IRIs read from the **shapes** store are stored as plain `String`s in `ParsedShape`.
+//! Before use in a rule body, they are re-interned into the **working** store via
+//! `graph::intern_iri`.  A shapes-store `GraphElementId` is never used in a rule.
+//!
+//! The sole exception is `InnerShapeRef::shapes_id`, which is passed back to the
+//! shapes store only (never inserted into a data-store triple or rule body directly).
 
 use crate::graph;
-use crate::shapes::{ElemValue, NodeKindValue, ParsedShape, PropConstraint, Target};
+use crate::shapes::{ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target};
 use crate::vocab::*;
-use dag_rdf::{Datastore, GraphElementId, Term};
 use dag_rdf::query::get_default_graph_pattern;
+use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
 use ingress::RDF_TYPE;
 
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 /// Translate all parsed shapes into Datalog rules.
 ///
-/// Returns `(rules, viol_preds)` where `viol_preds` is the set of predicate IDs
-/// whose triples in the working store after evaluation represent violations.
+/// Returns `(rules, viol_preds)`.  Every triple `(n, p, v)` in the working store
+/// after `evaluate_rules` where `p ∈ viol_preds` is one `ValidationResult`.
 pub fn shapes_to_rules(
     parsed: &[ParsedShape],
+    shapes: &Datastore,
     work: &mut Datastore,
 ) -> (Vec<Rule>, Vec<GraphElementId>) {
     let true_id = graph::intern_iri(work, INT_TRUE);
@@ -48,87 +56,181 @@ pub fn shapes_to_rules(
         let si = shape.idx;
         let target_pred = graph::intern_iri(work, &int_target(si));
 
-        // ── Target rules ─────────────────────────────────────────────────────
-        rules.extend(target_rules(
-            shape, target_pred, true_id, rdf_type_id, work,
-        ));
+        // Target rules
+        rules.extend(target_rules(shape, target_pred, true_id, rdf_type_id, work));
 
-        // ── Property shape constraint rules ──────────────────────────────────
+        // Property shape constraints
         for prop in &shape.property_shapes {
-            let pi = prop.idx;
             let path_id = graph::intern_iri(work, &prop.path);
-
-            for constraint in &prop.constraints {
-                let new_preds = property_constraint_rules(
-                    constraint, si, pi, path_id, target_pred,
-                    true_id, nil_id, rdf_type_id,
-                    &mut rules, work,
+            for (ci, constraint) in prop.constraints.iter().enumerate() {
+                let key = (si, prop.idx, ci);
+                let new = prop_constraint_rules(
+                    constraint,
+                    key,
+                    path_id,
+                    target_pred,
+                    true_id,
+                    nil_id,
+                    rdf_type_id,
+                    &mut rules,
+                    work,
                 );
-                viol_preds.extend(new_preds);
+                viol_preds.extend(new);
             }
         }
 
-        // ── Node-level sh:nodeKind at the shape level ─────────────────────────
-        // (e.g. sh:targetObjectsOf ex:knows; sh:nodeKind sh:IRI at node level)
-        // Deferred to Phase 2 (requires built-in predicates).
+        // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
+        // before any Datalog materialisation, avoiding synthetic-predicate contamination).
 
-        // ── sh:closed ─────────────────────────────────────────────────────────
-        if let Some(allowed_iris) = &shape.closed {
-            let allowed_pred = graph::intern_iri(work, &int_allowed_pred(si));
-            // Fact for each allowed predicate
-            for iri in allowed_iris {
-                let pred_id = graph::intern_iri(work, iri);
-                rules.push(fact(pred_id, allowed_pred, true_id));
-            }
-            let viol_pred = graph::intern_iri(work, &viol_closed(si));
-            // violation: (node, ?p, ?v) where ?p is not allowed
+        // sh:not
+        if let Some(inner_ref) = &shape.not_inner {
+            let ok_pred = graph::intern_iri(work, &int_sub_ok(si, 0));
+            inner_ok_rules(
+                inner_ref,
+                shapes,
+                ok_pred,
+                true_id,
+                rdf_type_id,
+                &mut rules,
+                work,
+            );
+
+            let viol = graph::intern_iri(work, &viol_not(si));
+            // not-violation: target(n), inner_ok(n)
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
-                    Term::Resource(viol_pred),
-                    Term::Variable("p".into()),
+                    Term::Resource(viol),
+                    Term::Resource(nil_id),
                 )),
                 body: vec![
-                    RuleAtom::PositivePattern(dgp(
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
-                    )),
-                    RuleAtom::PositivePattern(dgp(
+                    ),
+                    pos(
                         Term::Variable("n".into()),
-                        Term::Variable("p".into()),
-                        Term::Variable("v".into()),
-                    )),
-                    RuleAtom::NotPattern(dgp(
-                        Term::Variable("p".into()),
-                        Term::Resource(allowed_pred),
+                        Term::Resource(ok_pred),
                         Term::Resource(true_id),
-                    )),
+                    ),
                 ],
             });
-            viol_preds.push(viol_pred);
+            viol_preds.push(viol);
         }
 
-        // ── sh:not ────────────────────────────────────────────────────────────
-        if let Some(inner) = &shape.not_shape {
-            let new = not_rules(shape, inner, target_pred, true_id, nil_id, rdf_type_id, &mut rules, work);
-            viol_preds.extend(new);
+        // sh:and — violation if ANY sub-shape constraint fails (inlined for arg-count)
+        for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
+            use crate::vocab::{SH_MIN_COUNT, SH_PATH, SH_PROPERTY};
+            let inner_id = inner_ref.shapes_id;
+            let viol = graph::intern_iri(work, &viol_and(si, sub_idx));
+
+            for prop_node in graph::get_objects(shapes, inner_id, SH_PROPERTY) {
+                if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
+                    && let Some(path_iri) = graph::iri_string(shapes, path_id)
+                {
+                    let min = graph::get_object(shapes, prop_node, SH_MIN_COUNT)
+                        .and_then(|id| graph::elem_to_u64(shapes, id))
+                        .unwrap_or(0);
+                    if min >= 1 {
+                        let path_id_work = graph::intern_iri(work, &path_iri);
+                        let has_val = graph::intern_iri(
+                            work,
+                            &format!("urn:dagalog:shacl:andHasVal:{si}:{sub_idx}"),
+                        );
+                        rules.push(Rule {
+                            head: RuleHead::NormalHead(dgp(
+                                Term::Variable("n".into()),
+                                Term::Resource(has_val),
+                                Term::Resource(true_id),
+                            )),
+                            body: vec![
+                                pos(
+                                    Term::Variable("n".into()),
+                                    Term::Resource(target_pred),
+                                    Term::Resource(true_id),
+                                ),
+                                pos(
+                                    Term::Variable("n".into()),
+                                    Term::Resource(path_id_work),
+                                    Term::Variable("v".into()),
+                                ),
+                            ],
+                        });
+                        rules.push(Rule {
+                            head: RuleHead::NormalHead(dgp(
+                                Term::Variable("n".into()),
+                                Term::Resource(viol),
+                                Term::Resource(nil_id),
+                            )),
+                            body: vec![
+                                pos(
+                                    Term::Variable("n".into()),
+                                    Term::Resource(target_pred),
+                                    Term::Resource(true_id),
+                                ),
+                                neg(
+                                    Term::Variable("n".into()),
+                                    Term::Resource(has_val),
+                                    Term::Resource(true_id),
+                                ),
+                            ],
+                        });
+                    }
+                }
+            }
+            viol_preds.push(viol);
         }
 
-        // ── sh:and ────────────────────────────────────────────────────────────
-        if !shape.and_shapes.is_empty() {
-            let new = and_rules(shape, target_pred, true_id, nil_id, rdf_type_id, &mut rules, work);
-            viol_preds.extend(new);
+        // sh:or — violation if NO sub-shape conforms
+        if !shape.or_inners.is_empty() {
+            let ok_preds: Vec<GraphElementId> = shape
+                .or_inners
+                .iter()
+                .enumerate()
+                .map(|(sub_idx, inner_ref)| {
+                    let ok_pred = graph::intern_iri(work, &int_sub_ok(si, sub_idx + 100));
+                    inner_ok_rules(
+                        inner_ref,
+                        shapes,
+                        ok_pred,
+                        true_id,
+                        rdf_type_id,
+                        &mut rules,
+                        work,
+                    );
+                    ok_pred
+                })
+                .collect();
+
+            let viol = graph::intern_iri(work, &viol_or(si));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            for ok_pred in &ok_preds {
+                body.push(neg(
+                    Term::Variable("n".into()),
+                    Term::Resource(*ok_pred),
+                    Term::Resource(true_id),
+                ));
+            }
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Resource(nil_id),
+                )),
+                body,
+            });
+            viol_preds.push(viol);
         }
 
-        // ── sh:or ─────────────────────────────────────────────────────────────
-        if !shape.or_shapes.is_empty() {
-            let new = or_rules(shape, target_pred, true_id, nil_id, rdf_type_id, &mut rules, work);
-            viol_preds.extend(new);
+        // sh:xone — deferred to Phase 2 (requires counting conforming sub-shapes)
+        if !shape.xone_inners.is_empty() {
+            log::warn!("sh:xone not yet implemented (Phase 2)");
         }
-
-        // ── sh:xone ───────────────────────────────────────────────────────────
-        // Phase 2 (requires counting conforming sub-shapes).
     }
 
     (rules, viol_preds)
@@ -150,23 +252,7 @@ fn target_rules(
                 let node_id = intern_elem(elem, work);
                 rules.push(fact(node_id, target_pred, true_id));
             }
-            Target::Class(class_iri) => {
-                let class_id = graph::intern_iri(work, class_iri);
-                // (node, target_pred, true) :- [node, rdf:type, class]
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    )),
-                    body: vec![RuleAtom::PositivePattern(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(rdf_type_id),
-                        Term::Resource(class_id),
-                    ))],
-                });
-            }
-            Target::ImplicitClass(class_iri) => {
+            Target::Class(class_iri) | Target::ImplicitClass(class_iri) => {
                 let class_id = graph::intern_iri(work, class_iri);
                 rules.push(Rule {
                     head: RuleHead::NormalHead(dgp(
@@ -174,43 +260,41 @@ fn target_rules(
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
                     )),
-                    body: vec![RuleAtom::PositivePattern(dgp(
+                    body: vec![pos(
                         Term::Variable("n".into()),
                         Term::Resource(rdf_type_id),
                         Term::Resource(class_id),
-                    ))],
+                    )],
                 });
             }
             Target::SubjectsOf(pred_iri) => {
                 let pred_id = graph::intern_iri(work, pred_iri);
-                // (node, target_pred, true) :- [node, pred, ?o]
                 rules.push(Rule {
                     head: RuleHead::NormalHead(dgp(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
                     )),
-                    body: vec![RuleAtom::PositivePattern(dgp(
+                    body: vec![pos(
                         Term::Variable("n".into()),
                         Term::Resource(pred_id),
                         Term::Variable("o".into()),
-                    ))],
+                    )],
                 });
             }
             Target::ObjectsOf(pred_iri) => {
                 let pred_id = graph::intern_iri(work, pred_iri);
-                // (node, target_pred, true) :- [?s, pred, node]
                 rules.push(Rule {
                     head: RuleHead::NormalHead(dgp(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
                     )),
-                    body: vec![RuleAtom::PositivePattern(dgp(
+                    body: vec![pos(
                         Term::Variable("s".into()),
                         Term::Resource(pred_id),
                         Term::Variable("n".into()),
-                    ))],
+                    )],
                 });
             }
         }
@@ -220,11 +304,12 @@ fn target_rules(
 
 // ── Property constraint rules ─────────────────────────────────────────────────
 
+/// Returns the violation predicate IDs produced for this constraint.
+/// `key = (shape_idx, prop_idx, constraint_idx)` for unique IRI names.
 #[allow(clippy::too_many_arguments)]
-fn property_constraint_rules(
+fn prop_constraint_rules(
     constraint: &PropConstraint,
-    si: usize,
-    pi: usize,
+    key: (usize, usize, usize),
     path_id: GraphElementId,
     target_pred: GraphElementId,
     true_id: GraphElementId,
@@ -233,180 +318,14 @@ fn property_constraint_rules(
     rules: &mut Vec<Rule>,
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
+    let (si, pi, ci) = key;
+
     match constraint {
         // §4.2.1 sh:minCount
-        PropConstraint::MinCount(n) => {
-            if *n == 0 {
-                return vec![]; // minCount 0 is trivially satisfied
-            }
-            if *n == 1 {
-                // has-val helper: (node, has_val, true) :- target(node), [node, path, ?v]
-                let has_val = graph::intern_iri(work, &int_has_val(si, pi));
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(has_val),
-                        Term::Resource(true_id),
-                    )),
-                    body: vec![
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(target_pred),
-                            Term::Resource(true_id),
-                        )),
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(path_id),
-                            Term::Variable("v".into()),
-                        )),
-                    ],
-                });
-                // violation: target(node), NOT has_val(node)
-                let viol = graph::intern_iri(work, &viol_min_count(si, pi));
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(viol),
-                        Term::Resource(nil_id),
-                    )),
-                    body: vec![
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(target_pred),
-                            Term::Resource(true_id),
-                        )),
-                        RuleAtom::NotPattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(has_val),
-                            Term::Resource(true_id),
-                        )),
-                    ],
-                });
-                vec![viol]
-            } else {
-                log::warn!("sh:minCount {n} > 1 not yet implemented (Phase 2)");
-                vec![]
-            }
-        }
-
-        // §4.2.2 sh:maxCount
-        PropConstraint::MaxCount(n) => {
-            if *n == 0 {
-                // violation if any value exists
-                let viol = graph::intern_iri(work, &viol_max_count(si, pi));
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(viol),
-                        Term::Variable("v".into()),
-                    )),
-                    body: vec![
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(target_pred),
-                            Term::Resource(true_id),
-                        )),
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(path_id),
-                            Term::Variable("v".into()),
-                        )),
-                    ],
-                });
-                vec![viol]
-            } else if *n >= 1 {
-                // violation if two DISTINCT values exist: v1 != v2
-                let viol = graph::intern_iri(work, &viol_max_count(si, pi));
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(viol),
-                        Term::Resource(true_id),
-                    )),
-                    body: vec![
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(target_pred),
-                            Term::Resource(true_id),
-                        )),
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(path_id),
-                            Term::Variable("v1".into()),
-                        )),
-                        RuleAtom::PositivePattern(dgp(
-                            Term::Variable("n".into()),
-                            Term::Resource(path_id),
-                            Term::Variable("v2".into()),
-                        )),
-                        RuleAtom::NotEqualsAtom(
-                            Term::Variable("v1".into()),
-                            Term::Variable("v2".into()),
-                        ),
-                    ],
-                });
-                // This handles maxCount 1 exactly. For maxCount N > 1, we'd need
-                // N+1 distinct values, which requires counting (Phase 2).
-                if *n > 1 {
-                    log::warn!("sh:maxCount {n} > 1: using pair-inequality (detects any 2 distinct values, not N+1)");
-                }
-                vec![viol]
-            } else {
-                vec![]
-            }
-        }
-
-        // §4.1.1 sh:class — value must be an instance of the given class
-        PropConstraint::Class(class_iri) => {
-            let class_id = graph::intern_iri(work, class_iri);
-            // Helper: value_is_class(v) :- [v, rdf:type, class]
-            let has_class = graph::intern_iri(work, &format!("urn:dagalog:shacl:hasClass:{si}:{pi}"));
-            rules.push(Rule {
-                head: RuleHead::NormalHead(dgp(
-                    Term::Variable("v".into()),
-                    Term::Resource(has_class),
-                    Term::Resource(true_id),
-                )),
-                body: vec![RuleAtom::PositivePattern(dgp(
-                    Term::Variable("v".into()),
-                    Term::Resource(rdf_type_id),
-                    Term::Resource(class_id),
-                ))],
-            });
-            let viol = graph::intern_iri(work, &viol_class(si, pi));
-            // violation: target(n), [n, path, v], NOT has_class(v)
-            rules.push(Rule {
-                head: RuleHead::NormalHead(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(viol),
-                    Term::Variable("v".into()),
-                )),
-                body: vec![
-                    RuleAtom::PositivePattern(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    )),
-                    RuleAtom::PositivePattern(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v".into()),
-                    )),
-                    RuleAtom::NotPattern(dgp(
-                        Term::Variable("v".into()),
-                        Term::Resource(has_class),
-                        Term::Resource(true_id),
-                    )),
-                ],
-            });
-            vec![viol]
-        }
-
-        // §4.8.2 sh:hasValue — value set must include the specified value
-        PropConstraint::HasValue(elem) => {
-            let val_id = intern_elem(elem, work);
-            // has-val helper: (n, has_val, true) :- target(n), [n, path, val_id]
+        PropConstraint::MinCount(0) => vec![],
+        PropConstraint::MinCount(1) => {
             let has_val = graph::intern_iri(work, &int_has_val(si, pi));
+            // has_val(n, true) :- target(n, true), [n, path, ?v]
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
@@ -414,16 +333,174 @@ fn property_constraint_rules(
                     Term::Resource(true_id),
                 )),
                 body: vec![
-                    RuleAtom::PositivePattern(dgp(
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
-                    )),
-                    RuleAtom::PositivePattern(dgp(
+                    ),
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id),
+                        Term::Variable("v".into()),
+                    ),
+                ],
+            });
+            let viol = graph::intern_iri(work, &viol_min_count(si, pi));
+            // violation: target(n), NOT has_val(n)
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Resource(nil_id),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    neg(
+                        Term::Variable("n".into()),
+                        Term::Resource(has_val),
+                        Term::Resource(true_id),
+                    ),
+                ],
+            });
+            vec![viol]
+        }
+        PropConstraint::MinCount(n) => {
+            log::warn!("sh:minCount {n} > 1 not yet implemented (Phase 2)");
+            vec![]
+        }
+
+        // §4.2.2 sh:maxCount
+        PropConstraint::MaxCount(0) => {
+            let viol = graph::intern_iri(work, &viol_max_count(si, pi));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable("v".into()),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id),
+                        Term::Variable("v".into()),
+                    ),
+                ],
+            });
+            vec![viol]
+        }
+        PropConstraint::MaxCount(_n) => {
+            // maxCount N ≥ 1: violation if two DISTINCT values exist.
+            // This correctly handles maxCount 1 exactly; for N > 1 it is conservative
+            // (fires even if only 2 values exist, not N+1) — noted in SHACL_PLAN.md.
+            let viol = graph::intern_iri(work, &viol_max_count(si, pi));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Resource(true_id),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id),
+                        Term::Variable("v1".into()),
+                    ),
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id),
+                        Term::Variable("v2".into()),
+                    ),
+                    RuleAtom::NotEqualsAtom(
+                        Term::Variable("v1".into()),
+                        Term::Variable("v2".into()),
+                    ),
+                ],
+            });
+            vec![viol]
+        }
+
+        // §4.1.1 sh:class
+        PropConstraint::Class(class_iri) => {
+            let class_id = graph::intern_iri(work, class_iri);
+            // helper: value IS an instance of class
+            let has_class =
+                graph::intern_iri(work, &format!("urn:dagalog:shacl:hasClass:{si}:{pi}:{ci}"));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("v".into()),
+                    Term::Resource(has_class),
+                    Term::Resource(true_id),
+                )),
+                body: vec![pos(
+                    Term::Variable("v".into()),
+                    Term::Resource(rdf_type_id),
+                    Term::Resource(class_id),
+                )],
+            });
+            let viol = graph::intern_iri(work, &viol_class(si, pi));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable("v".into()),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id),
+                        Term::Variable("v".into()),
+                    ),
+                    neg(
+                        Term::Variable("v".into()),
+                        Term::Resource(has_class),
+                        Term::Resource(true_id),
+                    ),
+                ],
+            });
+            vec![viol]
+        }
+
+        // §4.8.2 sh:hasValue
+        PropConstraint::HasValue(elem) => {
+            let val_id = intern_elem(elem, work);
+            let has_val = graph::intern_iri(work, &int_has_val(si, pi));
+            // has_val(n) :- target(n), [n, path, specific_val]
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(has_val),
+                    Term::Resource(true_id),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(path_id),
                         Term::Resource(val_id),
-                    )),
+                    ),
                 ],
             });
             let viol = graph::intern_iri(work, &viol_has_value(si, pi));
@@ -434,31 +511,29 @@ fn property_constraint_rules(
                     Term::Resource(nil_id),
                 )),
                 body: vec![
-                    RuleAtom::PositivePattern(dgp(
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
-                    )),
-                    RuleAtom::NotPattern(dgp(
+                    ),
+                    neg(
                         Term::Variable("n".into()),
                         Term::Resource(has_val),
                         Term::Resource(true_id),
-                    )),
+                    ),
                 ],
             });
             vec![viol]
         }
 
-        // §4.8.3 sh:in — each value must be one of the listed values
+        // §4.8.3 sh:in
         PropConstraint::In(allowed) => {
-            let in_list_pred = graph::intern_iri(work, &int_in_list(si, pi));
-            // Fact for each allowed value
+            let in_list = graph::intern_iri(work, &int_in_list(si, pi));
             for elem in allowed {
                 let val_id = intern_elem(elem, work);
-                rules.push(fact(val_id, in_list_pred, true_id));
+                rules.push(fact(val_id, in_list, true_id));
             }
             let viol = graph::intern_iri(work, &viol_in(si, pi));
-            // violation: target(n), [n, path, v], NOT in_list(v)
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
@@ -466,29 +541,27 @@ fn property_constraint_rules(
                     Term::Variable("v".into()),
                 )),
                 body: vec![
-                    RuleAtom::PositivePattern(dgp(
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(target_pred),
                         Term::Resource(true_id),
-                    )),
-                    RuleAtom::PositivePattern(dgp(
+                    ),
+                    pos(
                         Term::Variable("n".into()),
                         Term::Resource(path_id),
                         Term::Variable("v".into()),
-                    )),
-                    RuleAtom::NotPattern(dgp(
+                    ),
+                    neg(
                         Term::Variable("v".into()),
-                        Term::Resource(in_list_pred),
+                        Term::Resource(in_list),
                         Term::Resource(true_id),
-                    )),
+                    ),
                 ],
             });
             vec![viol]
         }
 
-        // §4.1.2 sh:datatype, §4.1.3 sh:nodeKind,
-        // §4.3 value range, §4.4 string, §4.5 property pairs,
-        // §4.7.3 qualifiedValueShape — deferred to Phase 2 (built-in predicates).
+        // Phase 2 constraints — log and skip
         PropConstraint::Datatype(_)
         | PropConstraint::NodeKind(_)
         | PropConstraint::MinLength(_)
@@ -501,257 +574,115 @@ fn property_constraint_rules(
         | PropConstraint::LessThan(_)
         | PropConstraint::LessThanOrEquals(_)
         | PropConstraint::QualifiedValueShape { .. } => {
-            log::debug!("Constraint {constraint:?} not yet implemented (Phase 2)");
+            log::debug!("Constraint {constraint:?} at ({si},{pi},{ci}) deferred to Phase 2");
             vec![]
         }
     }
 }
 
-// ── Logical constraint rules ───────────────────────────────────────────────────
+// ── Logical constraint helpers ────────────────────────────────────────────────
 
-fn not_rules(
-    shape: &ParsedShape,
-    inner: &ElemValue,
-    target_pred: GraphElementId,
-    true_id: GraphElementId,
-    nil_id: GraphElementId,
-    rdf_type_id: GraphElementId,
-    rules: &mut Vec<Rule>,
-    work: &mut Datastore,
-) -> Vec<GraphElementId> {
-    let si = shape.idx;
-
-    // We need to check if the focus node "conforms" to the inner shape.
-    // For the inner shape being a blank node `[ sh:class C ]`:
-    // parse and inline the inner constraints.
-    let inner_ok_pred = graph::intern_iri(work, &int_sub_ok(si, 0));
-    let viol = graph::intern_iri(work, &viol_not(si));
-
-    // Inline inner shape constraints:
-    inline_inner_shape_rules(inner, inner_ok_pred, true_id, rdf_type_id, rules, work);
-
-    // not-violation: target(n), inner_ok(n)
-    rules.push(Rule {
-        head: RuleHead::NormalHead(dgp(
-            Term::Variable("n".into()),
-            Term::Resource(viol),
-            Term::Resource(nil_id),
-        )),
-        body: vec![
-            RuleAtom::PositivePattern(dgp(
-                Term::Variable("n".into()),
-                Term::Resource(target_pred),
-                Term::Resource(true_id),
-            )),
-            RuleAtom::PositivePattern(dgp(
-                Term::Variable("n".into()),
-                Term::Resource(inner_ok_pred),
-                Term::Resource(true_id),
-            )),
-        ],
-    });
-    vec![viol]
-}
-
-fn and_rules(
-    shape: &ParsedShape,
-    target_pred: GraphElementId,
-    true_id: GraphElementId,
-    nil_id: GraphElementId,
-    rdf_type_id: GraphElementId,
-    rules: &mut Vec<Rule>,
-    work: &mut Datastore,
-) -> Vec<GraphElementId> {
-    let si = shape.idx;
-    let mut viols = Vec::new();
-
-    // sh:and — violation if ANY sub-shape constraint is violated.
-    // Each sub-shape generates its own violation predicate.
-    for (sub_idx, sub_elem) in shape.and_shapes.iter().enumerate() {
-        let sub_viol = graph::intern_iri(work, &viol_and(si, sub_idx));
-        // Derive violations for sub-shape and forward to sub_viol.
-        // For each sub-shape we check its own constraints against target nodes.
-        let sub_ok_pred = graph::intern_iri(work, &int_sub_ok(si, sub_idx));
-        inline_inner_shape_rules(sub_elem, sub_ok_pred, true_id, rdf_type_id, rules, work);
-
-        // and-sub-violation: target(n), NOT sub_ok(n)
-        let has_val = graph::intern_iri(
-            work,
-            &format!("urn:dagalog:shacl:andHasOk:{si}:{sub_idx}"),
-        );
-        // has_ok helper so we can negate cleanly
-        rules.push(Rule {
-            head: RuleHead::NormalHead(dgp(
-                Term::Variable("n".into()),
-                Term::Resource(has_val),
-                Term::Resource(true_id),
-            )),
-            body: vec![
-                RuleAtom::PositivePattern(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(target_pred),
-                    Term::Resource(true_id),
-                )),
-                RuleAtom::PositivePattern(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(sub_ok_pred),
-                    Term::Resource(true_id),
-                )),
-            ],
-        });
-        rules.push(Rule {
-            head: RuleHead::NormalHead(dgp(
-                Term::Variable("n".into()),
-                Term::Resource(sub_viol),
-                Term::Resource(nil_id),
-            )),
-            body: vec![
-                RuleAtom::PositivePattern(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(target_pred),
-                    Term::Resource(true_id),
-                )),
-                RuleAtom::NotPattern(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(has_val),
-                    Term::Resource(true_id),
-                )),
-            ],
-        });
-        viols.push(sub_viol);
-    }
-    viols
-}
-
-fn or_rules(
-    shape: &ParsedShape,
-    target_pred: GraphElementId,
-    true_id: GraphElementId,
-    nil_id: GraphElementId,
-    rdf_type_id: GraphElementId,
-    rules: &mut Vec<Rule>,
-    work: &mut Datastore,
-) -> Vec<GraphElementId> {
-    let si = shape.idx;
-
-    // Each sub-shape gets an "ok" helper predicate.
-    let sub_ok_preds: Vec<GraphElementId> = shape
-        .or_shapes
-        .iter()
-        .enumerate()
-        .map(|(sub_idx, sub_elem)| {
-            let ok_pred = graph::intern_iri(work, &int_sub_ok(si, sub_idx));
-            inline_inner_shape_rules(sub_elem, ok_pred, true_id, rdf_type_id, rules, work);
-            ok_pred
-        })
-        .collect();
-
-    // or-violation: target(n), NOT ok_0(n), NOT ok_1(n), …
-    let viol = graph::intern_iri(work, &viol_or(si));
-    let mut body = vec![RuleAtom::PositivePattern(dgp(
-        Term::Variable("n".into()),
-        Term::Resource(target_pred),
-        Term::Resource(true_id),
-    ))];
-    for ok_pred in &sub_ok_preds {
-        body.push(RuleAtom::NotPattern(dgp(
-            Term::Variable("n".into()),
-            Term::Resource(*ok_pred),
-            Term::Resource(true_id),
-        )));
-    }
-    rules.push(Rule {
-        head: RuleHead::NormalHead(dgp(
-            Term::Variable("n".into()),
-            Term::Resource(viol),
-            Term::Resource(nil_id),
-        )),
-        body,
-    });
-    vec![viol]
-}
-
-// ── Inner shape inlining ──────────────────────────────────────────────────────
-
-/// Derive `(node, ok_pred, INT_TRUE)` for every node that satisfies the
-/// constraints of the inner blank-node shape referenced by `inner`.
+/// Generate "ok" rules: `(n, ok_pred, INT_TRUE)` when `n` satisfies the inner shape.
 ///
-/// For Phase 1 the only inner constraint we inline is `sh:class C`:
-/// `(node, ok_pred, true) :- [node, rdf:type, C]`.
-///
-/// More inner constraint types will be added in Phase 2.
-fn inline_inner_shape_rules(
-    inner: &ElemValue,
+/// Supported inner shapes (Phase 1):
+/// - `[ sh:class C ]` → `ok(n) :- [n, rdf:type, C]`
+/// - `[ sh:property [ sh:path P ; sh:minCount 1 ] ]` → `ok(n) :- [n, P, ?v]`
+fn inner_ok_rules(
+    inner_ref: &InnerShapeRef,
+    shapes: &Datastore,
     ok_pred: GraphElementId,
     true_id: GraphElementId,
     rdf_type_id: GraphElementId,
     rules: &mut Vec<Rule>,
     work: &mut Datastore,
 ) {
-    // For now we support only `[ sh:class C ]` as the inner shape.
-    // The inner ElemValue is the blank node that IS the shape.
-    // We need to resolve the sh:class value from the shapes graph at parse time.
-    // Since we only have the ElemValue here (not the shapes Datastore),
-    // the shapes parser must have embedded the needed info.
-    //
-    // For Phase 1, the only inner constraints reachable through sh:not / sh:and / sh:or
-    // in our tests are sh:class. We embed the class IRI as a special ElemValue.
-    //
-    // Convention: when the inner shape has `sh:class C`, the ElemValue passed here is
-    // `ElemValue::Iri(class_iri)` (set by the caller who resolved it).
-    // Blank node inner shapes are not yet handled here.
-    match inner {
-        ElemValue::Iri(iri) => {
-            let class_id = graph::intern_iri(work, iri);
-            // ok: node is an instance of the class
-            rules.push(Rule {
-                head: RuleHead::NormalHead(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(ok_pred),
-                    Term::Resource(true_id),
-                )),
-                body: vec![RuleAtom::PositivePattern(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(rdf_type_id),
-                    Term::Resource(class_id),
-                ))],
-            });
-        }
-        ElemValue::BlankNode(_) | ElemValue::Literal { .. } => {
-            log::warn!("inline_inner_shape_rules: complex inner shape not yet supported (Phase 2)");
+    use crate::vocab::{SH_CLASS, SH_PROPERTY};
+    let inner_id = inner_ref.shapes_id;
+
+    // sh:class C at node level
+    if let Some(class_id) = graph::get_object(shapes, inner_id, SH_CLASS)
+        && let Some(class_iri) = graph::iri_string(shapes, class_id)
+    {
+        let class_id_work = graph::intern_iri(work, &class_iri);
+        rules.push(Rule {
+            head: RuleHead::NormalHead(dgp(
+                Term::Variable("n".into()),
+                Term::Resource(ok_pred),
+                Term::Resource(true_id),
+            )),
+            body: vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(rdf_type_id),
+                Term::Resource(class_id_work),
+            )],
+        });
+        return;
+    }
+
+    // sh:property [ sh:path P ; sh:minCount 1 ] → ok if node has at least one P value
+    for prop_node in graph::get_objects(shapes, inner_id, SH_PROPERTY) {
+        use crate::vocab::{SH_MIN_COUNT, SH_PATH};
+        if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
+            && let Some(path_iri) = graph::iri_string(shapes, path_id)
+        {
+            // only handle minCount 1 here
+            let min = graph::get_object(shapes, prop_node, SH_MIN_COUNT)
+                .and_then(|id| graph::elem_to_u64(shapes, id))
+                .unwrap_or(0);
+            if min >= 1 {
+                let path_id_work = graph::intern_iri(work, &path_iri);
+                rules.push(Rule {
+                    head: RuleHead::NormalHead(dgp(
+                        Term::Variable("n".into()),
+                        Term::Resource(ok_pred),
+                        Term::Resource(true_id),
+                    )),
+                    body: vec![pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(path_id_work),
+                        Term::Variable("v".into()),
+                    )],
+                });
+            }
         }
     }
 }
 
-// ── Fact / pattern helpers ────────────────────────────────────────────────────
+// ── Pattern / rule constructors ───────────────────────────────────────────────
 
-/// A Datalog fact (empty body) asserting `(s, p, o)`.
+fn dgp(s: Term, p: Term, o: Term) -> QuadPattern {
+    get_default_graph_pattern(s, p, o)
+}
+
+fn pos(s: Term, p: Term, o: Term) -> RuleAtom {
+    RuleAtom::PositivePattern(dgp(s, p, o))
+}
+
+fn neg(s: Term, p: Term, o: Term) -> RuleAtom {
+    RuleAtom::NotPattern(dgp(s, p, o))
+}
+
 fn fact(s: GraphElementId, p: GraphElementId, o: GraphElementId) -> Rule {
     Rule {
-        head: RuleHead::NormalHead(dgp(
-            Term::Resource(s),
-            Term::Resource(p),
-            Term::Resource(o),
-        )),
+        head: RuleHead::NormalHead(dgp(Term::Resource(s), Term::Resource(p), Term::Resource(o))),
         body: vec![],
     }
 }
 
-/// Shorthand: build a QuadPattern in the default graph.
-fn dgp(s: Term, p: Term, o: Term) -> dag_rdf::QuadPattern {
-    get_default_graph_pattern(s, p, o)
-}
-
-/// Intern an `ElemValue` into the working store and return its ID.
-fn intern_elem(elem: &ElemValue, work: &mut Datastore) -> GraphElementId {
-    use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
+/// Intern an `ElemValue` into the working store and return its `GraphElementId`.
+pub fn intern_elem(elem: &ElemValue, work: &mut Datastore) -> GraphElementId {
+    use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
     use ingress::IriReference as IngIri;
     match elem {
         ElemValue::Iri(iri) => graph::intern_iri(work, iri),
         ElemValue::BlankNode(n) => work
             .resources
             .add_node_resource(RdfResource::AnonymousBlankNode(*n)),
-        ElemValue::Literal { value, datatype, lang } => {
+        ElemValue::Literal {
+            value,
+            datatype,
+            lang,
+        } => {
             let lit = if let Some(lang) = lang {
                 RdfLiteral::LangLiteral {
                     lang: lang.clone(),
@@ -765,8 +696,7 @@ fn intern_elem(elem: &ElemValue, work: &mut Datastore) -> GraphElementId {
             } else {
                 RdfLiteral::LiteralString(value.clone())
             };
-            work.resources
-                .add_resource(GraphElement::GraphLiteral(lit))
+            work.resources.add_resource(GraphElement::GraphLiteral(lit))
         }
     }
 }

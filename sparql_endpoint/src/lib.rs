@@ -42,6 +42,88 @@ pub enum AuthConfig {
         /// When `true`, read-only operations (GET /sparql, etc.) also require the key.
         require_for_reads: bool,
     },
+    /// Generic OIDC JWT validation (Azure Entra ID, Google, Keycloak, Auth0, …).
+    Oidc(OidcConfig),
+}
+
+/// OIDC resource-server configuration.
+///
+/// The server validates incoming Bearer JWTs by:
+/// 1. Discovering the JWKS URI from `{issuer}/.well-known/openid-configuration`
+///    (unless `jwks_uri` is set explicitly).
+/// 2. Fetching and caching the public keys.
+/// 3. Verifying the token's signature, expiry, issuer, and audience.
+/// 4. Extracting roles from the claim at `roles_claim` and comparing against
+///    `read_role`, `write_role`, and `admin_role`.
+///
+/// See AUTH.md §Tier 2 / §Tier 2b for detailed setup instructions and examples
+/// for Azure Entra ID, Google, and Keycloak.
+#[derive(Clone, Debug)]
+pub struct OidcConfig {
+    /// Base URL of the identity provider (issuer).
+    ///
+    /// Examples:
+    /// - `"https://login.microsoftonline.com/{tenant}/v2.0"` (Azure Entra ID)
+    /// - `"https://accounts.google.com"` (Google)
+    /// - `"https://keycloak.example.com/realms/myrealm"` (Keycloak)
+    pub issuer: String,
+
+    /// Optional explicit JWKS URI.  When `None`, the server fetches
+    /// `{issuer}/.well-known/openid-configuration` and reads `jwks_uri`.
+    pub jwks_uri: Option<String>,
+
+    /// Expected value of the `aud` JWT claim (client ID or resource URI).
+    pub audience: String,
+
+    /// Dot-separated path to the roles array inside the JWT payload.
+    ///
+    /// - Azure / Google: `"roles"` (flat array)
+    /// - Keycloak realm roles: `"realm_access.roles"` (nested object)
+    pub roles_claim: String,
+
+    /// Role value that grants read access (default: `"dagalog.Read"`).
+    pub read_role: String,
+    /// Role value that grants write access (default: `"dagalog.Write"`).
+    pub write_role: String,
+    /// Role value that grants admin access (default: `"dagalog.Admin"`).
+    pub admin_role: String,
+
+    /// Browser application client ID for MSAL.js / Google Identity Services.
+    ///
+    /// When set, the browser UI shows a provider sign-in button and acquires
+    /// tokens automatically.  Leave `None` to fall back to a manual token
+    /// input (paste the token obtained from e.g. `gcloud auth print-identity-token`).
+    pub browser_client_id: Option<String>,
+}
+
+impl OidcConfig {
+    /// Convenience constructor for Azure Entra ID.
+    pub fn azure(tenant_id: &str, audience: &str) -> Self {
+        Self {
+            issuer: format!("https://login.microsoftonline.com/{}/v2.0", tenant_id),
+            jwks_uri: None,
+            audience: audience.to_owned(),
+            roles_claim: "roles".to_owned(),
+            read_role: "dagalog.Read".to_owned(),
+            write_role: "dagalog.Write".to_owned(),
+            admin_role: "dagalog.Admin".to_owned(),
+            browser_client_id: None,
+        }
+    }
+
+    /// Convenience constructor for Google.
+    pub fn google(audience: &str) -> Self {
+        Self {
+            issuer: "https://accounts.google.com".to_owned(),
+            jwks_uri: None,
+            audience: audience.to_owned(),
+            roles_claim: "roles".to_owned(),
+            read_role: "dagalog.Read".to_owned(),
+            write_role: "dagalog.Write".to_owned(),
+            admin_role: "dagalog.Admin".to_owned(),
+            browser_client_id: None,
+        }
+    }
 }
 
 /// Runtime configuration for the SPARQL endpoint.
@@ -80,6 +162,8 @@ pub struct AppState {
     /// All named datasets, including `"ds"` which aliases `store`.
     pub registry: Arc<RwLock<DatasetRegistry>>,
     pub config: Config,
+    /// Cache for OIDC JWKS (public keys).  Always present; no-op when auth is not OIDC.
+    pub jwks_cache: auth::JwksCache,
 }
 
 /// Start the SPARQL endpoint server.
@@ -98,6 +182,7 @@ pub async fn serve_on_listener(
     let state = AppState {
         store,
         registry: Arc::new(RwLock::new(registry)),
+        jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
         config,
     };
     let app = server::build_router(state);

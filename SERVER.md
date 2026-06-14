@@ -10,15 +10,73 @@ Authorization is covered in detail in [`AUTH.md`](AUTH.md).
 
 ## 1. Persistence
 
-The current in-memory `Datastore` is lost on restart. Long-term options:
+The current in-memory `Datastore` is lost on restart. The persistence goal is:
 
-- **Snapshot serialisation** — Turtle dump on shutdown, reload on startup. Low
-  complexity, fine for modest sizes.
-- **Memory-mapped storage** (`sled`, `redb`, or custom). Required for large
-  datasets. Defer until benchmarks indicate a need.
+> **When a write transaction returns `200 OK` (or `204 No Content`), the server
+> guarantees that the written data will survive a process crash or restart.**
 
-`Datastore::drop_all` (clear all graphs and the reified-triples table) is a
-prerequisite for dataset deletion to release memory.
+This is the standard durability guarantee (the D in ACID). It means every
+mutating endpoint — SPARQL Update (`POST /{ds}/update`), GSP PUT/POST/DELETE,
+graph-store admin — must complete a durable commit before responding.
+
+See [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) for the phased implementation
+roadmap.
+
+### Design options
+
+| Approach | Durability | Complexity | Notes |
+|---|---|---|---|
+| **Snapshot on shutdown** | None (crash loses data) | Low | Not acceptable for the durability goal |
+| **WAL (Write-Ahead Log)** | Full — fsync before 200 OK | Medium | Recommended first step; pure Rust, no external deps |
+| **Embedded ACID store** (`redb` / `sled`) | Full | Medium | Delegates durability to a proven library; easier to get right |
+| **Memory-mapped + WAL** (custom) | Full | High | Needed eventually for datasets that exceed RAM; defer |
+
+**Recommended approach:** WAL on top of a `redb` embedded database. `redb`
+provides ACID transactions with a pure-Rust implementation and zero external
+dependencies. The `Datastore` quad tables are stored as `redb` tables;
+committing a `redb` write transaction is the durability boundary.
+
+### Transaction model
+
+Each HTTP mutating request maps to exactly one `redb` write transaction:
+
+1. Open a write transaction on request arrival.
+2. Apply all quad insertions / deletions to the `redb` tables.
+3. Commit (fsync). If this returns `Ok`, respond `200`/`204`.
+4. If the commit errors, respond `500` and the transaction is automatically
+   rolled back.
+
+Read requests (SPARQL SELECT, GSP GET) use `redb` read transactions, which
+are snapshot-isolated — they see a consistent view of the store even while a
+concurrent write transaction is in progress.
+
+### Configuration
+
+Two storage modes — selected at startup, cannot be changed at runtime:
+
+| Mode | How to select | Data survives restart? |
+|---|---|---|
+| **In-memory** (default) | omit `--data-dir` | No — current behaviour |
+| **Persistent** | `--data-dir <PATH>` or `DAGALOG_DATA_DIR` | Yes — durable commit before 200 OK |
+
+| CLI flag | Env var | Description | Default |
+|---|---|---|---|
+| `--data-dir <PATH>` | `DAGALOG_DATA_DIR` | Directory for the `redb` database file(s) | *(in-memory)* |
+| `--no-persist` | `DAGALOG_NO_PERSIST=1` | Force in-memory even if `DAGALOG_DATA_DIR` is set | `false` |
+| `--db-file <NAME>` | `DAGALOG_DB_FILE` | Database filename inside `--data-dir` | `dagalog.redb` |
+
+Storage locations (local disk, Docker volumes, Kubernetes PVCs) and caveats
+(NFS, cloud object storage) are documented in
+[`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md).
+
+### Prerequisites
+
+- `Datastore::drop_all` (clear all graphs and the reified-triples table) — needed
+  for dataset deletion.
+- A thin `PersistentDatastore` wrapper (or refactor of `Datastore`) that holds a
+  `redb::Database` handle alongside the in-memory interning table
+  (`GraphElementManager`). The interning table itself must also be persisted so
+  `GraphElementId`s remain stable across restarts.
 
 ---
 
@@ -102,4 +160,4 @@ produce images that run natively on both x86-64 servers and Apple Silicon.
 | 7 | API-key auth (see [`AUTH.md`](AUTH.md) steps A–D) | ❌ Remaining |
 | 8 | Dataset registry (multi-dataset, dynamic routing) | ✓ Done |
 | 9 | Entra ID / RBAC auth (see [`AUTH.md`](AUTH.md) steps E–H) | ❌ Remaining |
-| 10 | Persistence / snapshots | ❌ Remaining |
+| 10 | Durable transactional persistence (`redb`-backed, see [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md)) | ❌ Remaining |

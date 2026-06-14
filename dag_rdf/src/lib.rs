@@ -18,6 +18,7 @@ pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource};
 
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct GraphElementManager {
     pub resource_map: HashMap<GraphElement, GraphElementId>,
     pub resource_list: Vec<GraphElement>,

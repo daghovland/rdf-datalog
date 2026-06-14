@@ -35,7 +35,11 @@ pub fn get_objects(ds: &Datastore, subject: GraphElementId, pred_iri: &str) -> V
 }
 
 /// Return the first object for `(subject, pred_iri, ?)`, or `None`.
-pub fn get_object(ds: &Datastore, subject: GraphElementId, pred_iri: &str) -> Option<GraphElementId> {
+pub fn get_object(
+    ds: &Datastore,
+    subject: GraphElementId,
+    pred_iri: &str,
+) -> Option<GraphElementId> {
     get_objects(ds, subject, pred_iri).into_iter().next()
 }
 
@@ -58,7 +62,10 @@ pub fn rdf_list(ds: &Datastore, head: GraphElementId) -> Vec<GraphElementId> {
         for t in ds.get_triples_with_subject_predicate(current, rdf_first) {
             items.push(t.obj);
         }
-        match ds.get_triples_with_subject_predicate(current, rdf_rest).next() {
+        match ds
+            .get_triples_with_subject_predicate(current, rdf_rest)
+            .next()
+        {
             None => break,
             Some(t) => current = t.obj,
         }

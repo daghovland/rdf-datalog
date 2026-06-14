@@ -302,7 +302,7 @@ pub fn evaluate_positive(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<
     subs
 }
 
-/// Full evaluation: positive atoms first, then filter by negated atoms.
+/// Full evaluation: positive atoms first, then filter by negated atoms and inequality guards.
 pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
     let not_patterns: Vec<QuadPattern> = rule_match
         .partial_rule
@@ -315,19 +315,50 @@ pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitut
         })
         .collect();
 
+    let not_equals: Vec<(Term, Term)> = rule_match
+        .partial_rule
+        .rule
+        .body
+        .iter()
+        .filter_map(|a| match a {
+            RuleAtom::NotEqualsAtom(t1, t2) => Some((t1.clone(), t2.clone())),
+            _ => None,
+        })
+        .collect();
+
     let pos = evaluate_positive(rdf, rule_match);
 
-    if not_patterns.is_empty() {
+    if not_patterns.is_empty() && not_equals.is_empty() {
         return pos;
     }
 
     pos.into_iter()
         .filter(|sub| {
+            // Apply inequality guards: v1 != v2
+            let ne_ok = not_equals.iter().all(|(t1, t2)| {
+                let id1 = resolve_term(t1, sub);
+                let id2 = resolve_term(t2, sub);
+                match (id1, id2) {
+                    (Some(a), Some(b)) => a != b,
+                    _ => true, // unbound terms are considered distinct
+                }
+            });
+            if !ne_ok {
+                return false;
+            }
+            // Apply negated patterns
             not_patterns
                 .iter()
                 .all(|np| evaluate_pattern(rdf, np, sub.clone()).next().is_none())
         })
         .collect()
+}
+
+fn resolve_term(term: &Term, sub: &Substitution) -> Option<GraphElementId> {
+    match term {
+        Term::Resource(id) => Some(*id),
+        Term::Variable(v) => sub.get(v).copied(),
+    }
 }
 
 /// Build a partial rule index: quad-wildcard → list of partial rules.

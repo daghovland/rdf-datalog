@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 use crate::ingress::{GraphElementId, Quad, QuadListIndex, TripleListIndex};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone)]
 pub struct QuadTable {
     pub quad_list: Vec<Quad>,
     pub quad_count: TripleListIndex,

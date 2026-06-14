@@ -9,7 +9,7 @@ Contact: hovlanddag@gmail.com
 //! Shared helpers for sparql_endpoint integration tests.
 
 use dag_rdf::datastore::Datastore;
-use sparql_endpoint::{AuthConfig, Config, serve_on_listener};
+use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
@@ -75,6 +75,11 @@ impl TestServer {
             },
         )
         .await
+    }
+
+    /// Start a writable server with OIDC authentication.
+    pub async fn start_with_oidc(turtle: &str, oidc_config: OidcConfig) -> Self {
+        Self::start_inner(turtle, false, false, AuthConfig::Oidc(oidc_config)).await
     }
 
     async fn start_inner(data: &str, use_trig: bool, read_only: bool, auth: AuthConfig) -> Self {

@@ -10,9 +10,29 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/>
 //!
-//! `validate` is a stub; see `SHACL_PLAN.md` for the implementation roadmap.
+//! # Architecture
+//!
+//! SHACL Core constraints are translated to stratified Datalog rules (same engine as
+//! OWL-RL), then materialised over a **clone** of the data graph.  Violation triples
+//! derived by the engine are collected into a `ValidationReport`.
+//!
+//! `sh:closed` is evaluated separately against the original data graph before Datalog
+//! materialisation to avoid synthetic helper predicates being mistaken for real data.
+//!
+//! See `SHACL_PLAN.md` for the phased implementation roadmap.
 
-use dag_rdf::Datastore;
+pub mod graph;
+pub mod shapes;
+pub mod translate;
+pub mod vocab;
+
+use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, Triple};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
+use datalog::evaluate_rules;
+use ingress::RDF_TYPE;
+use std::collections::HashSet;
+
+// ── Public types ──────────────────────────────────────────────────────────────
 
 /// Severity of a SHACL validation result (`sh:resultSeverity`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +42,7 @@ pub enum Severity {
     Info,
 }
 
-/// A single entry in a SHACL validation report (`sh:ValidationResult`).
+/// A single validation result entry (`sh:ValidationResult`).
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
     pub focus_node: Option<String>,
@@ -41,16 +61,182 @@ pub struct ValidationReport {
     pub results: Vec<ValidationResult>,
 }
 
+// ── Public API ────────────────────────────────────────────────────────────────
+
 /// Validate `data` against the SHACL shapes in `shapes`.
 ///
-/// Not yet implemented — see `SHACL_PLAN.md`.
-pub fn validate(_data: &Datastore, _shapes: &Datastore) -> Result<ValidationReport, String> {
-    todo!("SHACL Core validation is not yet implemented")
+/// The data graph is cloned; the caller's `data` is not mutated.
+pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport, String> {
+    let parsed = shapes::parse_shapes(shapes);
+    let mut work = data.clone();
+
+    // Pre-compute violations for constraints that must see only the original data triples
+    // (before any Datalog materialisation adds synthetic helper predicates).
+    let mut all_viol_preds = pre_compute_violations(&parsed, data, &mut work);
+
+    // Translate remaining constraints to Datalog rules and materialise.
+    let (rules, rule_viols) = translate::shapes_to_rules(&parsed, shapes, &mut work);
+    evaluate_rules(rules, &mut work);
+    all_viol_preds.extend(rule_viols);
+
+    let results = collect_violations(&work, &all_viol_preds);
+    Ok(ValidationReport {
+        conforms: results.is_empty(),
+        results,
+    })
 }
 
 /// Serialize a `ValidationReport` as a Turtle SHACL report graph.
 ///
-/// Not yet implemented — see `SHACL_PLAN.md`.
+/// Not yet implemented — see Phase 3 in `SHACL_PLAN.md`.
 pub fn report_to_turtle(_report: &ValidationReport) -> String {
-    todo!("SHACL report serialization is not yet implemented")
+    todo!("SHACL report serialization is not yet implemented (Phase 3)")
+}
+
+// ── Pre-compute violations ────────────────────────────────────────────────────
+
+/// Evaluate constraints that need the original (un-materialised) data graph.
+///
+/// Currently handles `sh:closed`.  Returns the violation-predicate IDs added.
+fn pre_compute_violations(
+    parsed: &[shapes::ParsedShape],
+    data: &Datastore,
+    work: &mut Datastore,
+) -> Vec<GraphElementId> {
+    let mut viol_preds = Vec::new();
+    for shape in parsed {
+        if let Some(allowed_iris) = &shape.closed {
+            let pred = closed_violations(shape, allowed_iris, data, work);
+            viol_preds.push(pred);
+        }
+    }
+    viol_preds
+}
+
+/// Compute `sh:closed` violations directly from the data graph.
+///
+/// Each `(focusNode, forbiddenPredicate)` pair that occurs in the data becomes
+/// one violation triple.  Because we query `data` (before any Datalog derivation),
+/// synthetic helper predicates added to `work` are never seen.
+fn closed_violations(
+    shape: &shapes::ParsedShape,
+    allowed_iris: &[String],
+    data: &Datastore,
+    work: &mut Datastore,
+) -> GraphElementId {
+    // IDs of allowed predicates in the DATA store.
+    let allowed: HashSet<GraphElementId> = allowed_iris
+        .iter()
+        .filter_map(|iri| graph::lookup_iri(data, iri))
+        .collect();
+
+    let viol_pred = graph::intern_iri(work, &vocab::viol_closed(shape.idx));
+
+    for node_id in data_targets(shape, data) {
+        for triple in data.get_triples_with_subject(node_id) {
+            if !allowed.contains(&triple.predicate) {
+                // node_id and triple.predicate are valid IDs in `work` because
+                // `work` is a clone of `data` (same resource list, same IDs).
+                work.add_triple(Triple {
+                    subject: node_id,
+                    predicate: viol_pred,
+                    obj: triple.predicate,
+                });
+            }
+        }
+    }
+    viol_pred
+}
+
+// ── Target computation from original data ─────────────────────────────────────
+
+/// Compute the focus nodes for `shape` directly from the `data` store.
+fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphElementId> {
+    let rdf_type_id = graph::lookup_iri(data, RDF_TYPE);
+    let mut nodes: Vec<GraphElementId> = Vec::new();
+
+    for target in &shape.targets {
+        match target {
+            shapes::Target::Node(elem) => {
+                if let Some(id) = lookup_elem(elem, data) {
+                    push_unique(&mut nodes, id);
+                }
+            }
+            shapes::Target::Class(class_iri) | shapes::Target::ImplicitClass(class_iri) => {
+                if let (Some(rdf_type_id), Some(class_id)) =
+                    (rdf_type_id, graph::lookup_iri(data, class_iri))
+                {
+                    for t in data.get_triples_with_object_predicate(class_id, rdf_type_id) {
+                        push_unique(&mut nodes, t.subject);
+                    }
+                }
+            }
+            shapes::Target::SubjectsOf(pred_iri) => {
+                if let Some(pred_id) = graph::lookup_iri(data, pred_iri) {
+                    for t in data.get_triples_with_predicate(pred_id) {
+                        push_unique(&mut nodes, t.subject);
+                    }
+                }
+            }
+            shapes::Target::ObjectsOf(pred_iri) => {
+                if let Some(pred_id) = graph::lookup_iri(data, pred_iri) {
+                    for t in data.get_triples_with_predicate(pred_id) {
+                        push_unique(&mut nodes, t.obj);
+                    }
+                }
+            }
+        }
+    }
+    nodes
+}
+
+fn lookup_elem(elem: &shapes::ElemValue, data: &Datastore) -> Option<GraphElementId> {
+    match elem {
+        shapes::ElemValue::Iri(iri) => graph::lookup_iri(data, iri),
+        shapes::ElemValue::BlankNode(n) => data
+            .resources
+            .resource_map
+            .get(&GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(
+                *n,
+            )))
+            .copied(),
+        shapes::ElemValue::Literal { .. } => None,
+    }
+}
+
+fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {
+    if !vec.contains(&id) {
+        vec.push(id);
+    }
+}
+
+// ── Violation collection ──────────────────────────────────────────────────────
+
+fn collect_violations(work: &Datastore, viol_preds: &[GraphElementId]) -> Vec<ValidationResult> {
+    let pred_set: HashSet<GraphElementId> = viol_preds.iter().copied().collect();
+    // Only examine default-graph triples (triple_id = 0).
+    work.named_graphs
+        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+        .filter(|q| pred_set.contains(&q.predicate))
+        .map(|q| {
+            let focus = graph::element_display(work, q.subject);
+            let val = {
+                let s = graph::element_display(work, q.obj);
+                if s == vocab::INT_NIL || s == vocab::INT_TRUE {
+                    None
+                } else {
+                    Some(s)
+                }
+            };
+            ValidationResult {
+                focus_node: Some(focus),
+                severity: Severity::Violation,
+                message: None,
+                result_path: None,
+                source_shape: None,
+                source_constraint: None,
+                value: val,
+            }
+        })
+        .collect()
 }

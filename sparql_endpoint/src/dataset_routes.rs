@@ -35,6 +35,7 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         store: ds_store,
         registry: state.registry.clone(),
         config: state.config.clone(),
+        jwks_cache: state.jwks_cache.clone(),
     }
 }
 
