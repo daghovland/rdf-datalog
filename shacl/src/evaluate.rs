@@ -464,8 +464,8 @@ fn eval_qualified_value(
             .filter(|&&val| node_conforms_to_inner(val, inner_shapes_id, data, shapes_store))
             .count() as u64;
 
-        let fails = min.is_some_and(|n| qualifying_count < n)
-            || max.is_some_and(|n| qualifying_count > n);
+        let fails =
+            min.is_some_and(|n| qualifying_count < n) || max.is_some_and(|n| qualifying_count > n);
         if fails {
             add_viol(work, *node, viol, nil);
         }
