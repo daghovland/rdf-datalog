@@ -14,9 +14,10 @@ Contact: hovlanddag@gmail.com
 //! Test data files mirror the DagSemTools DatalogParser.Unit.Tests/TestData/
 //! directory and are stored in tests/testdata/.
 
-use dag_rdf::Datastore;
+use dag_rdf::{Datastore, GraphElement, RdfLiteral};
 use dagalog::{apply_rules, graph_element_display, load_file, run_sparql_query};
 use datalog::types::{RuleAtom, RuleHead};
+use sparql_parser::ast::{BinaryOp, Expression};
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -417,13 +418,80 @@ ex:c a ex:person .
 
 /// Rule with a numeric comparison guard: derive violation(x) only when age < 18.
 /// Data: ex:alice ex:age 25; ex:bob ex:age 15.
-/// Expected: only ex:bob in violation set.
+/// Expected: only ex:bob in the violation set.
 #[test]
-#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
 fn filter_numeric_comparison() {
-    todo!(
-        "Build RuleAtom::FilterAtom(Expression::Binary(Variable(age), Lt, Constant(18))) and check only bob fires"
-    )
+    use dag_rdf::Term as DagTerm;
+    use datalog::types::Rule;
+    use ingress::{IriReference, RdfResource, XSD_INTEGER};
+
+    let ttl = r#"
+@prefix ex: <http://example.org/> .
+ex:alice ex:age 25 .
+ex:bob   ex:age 15 .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let ex_age = ds.resources.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/age".to_string(),
+    )));
+    let ex_violation = ds.resources.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/violation".to_string(),
+    )));
+    let default_graph = dag_rdf::DEFAULT_GRAPH_ELEMENT_ID;
+
+    // Use TypedLiteral for the constant 18 — compare_graph_elements converts
+    // xsd:integer TypedLiterals to f64 for numeric comparison.
+    let const_18 = Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(XSD_INTEGER.to_string()),
+        literal: "18".to_string(),
+    }));
+
+    // Rule: ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 18)
+    let rule = Rule {
+        head: RuleHead::NormalHead(dag_rdf::QuadPattern {
+            graph: DagTerm::Resource(default_graph),
+            subject: DagTerm::Variable("x".to_string()),
+            predicate: DagTerm::Resource(ex_violation),
+            object: DagTerm::Resource(ex_violation),
+        }),
+        body: vec![
+            RuleAtom::PositivePattern(dag_rdf::QuadPattern {
+                graph: DagTerm::Resource(default_graph),
+                subject: DagTerm::Variable("x".to_string()),
+                predicate: DagTerm::Resource(ex_age),
+                object: DagTerm::Variable("a".to_string()),
+            }),
+            RuleAtom::FilterAtom(Expression::Binary(
+                Box::new(Expression::Variable("a".to_string())),
+                BinaryOp::Lt,
+                Box::new(const_18),
+            )),
+        ],
+    };
+
+    datalog::evaluate_rules(vec![rule], &mut ds);
+
+    let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let violators: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        violators.contains(&"<http://example.org/bob>".to_string()),
+        "bob (age 15) should violate; got: {:?}",
+        violators
+    );
+    assert!(
+        !violators.contains(&"<http://example.org/alice>".to_string()),
+        "alice (age 25) should NOT violate; got: {:?}",
+        violators
+    );
 }
 
 /// Rule with a string-length guard: derive violation(x) when strlen(label) < 3.

@@ -770,7 +770,7 @@ fn gene_ontology_materialise_progress() {
             .quad_count
             .saturating_sub(delta_start);
 
-        match program.materialise_one_iteration(&mut datastore.named_graphs, delta_start) {
+        match program.materialise_one_iteration(&mut datastore, delta_start) {
             None => {
                 println!("  Fixpoint reached after {iter} iterations.");
                 break;
