@@ -235,17 +235,18 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_language_in(si, pi));
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    match data.resources.get_graph_element(val) {
-                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
-                            if !lang_matches(&tag_set, lang) =>
-                        {
-                            add_viol(work, *node, viol, val);
+                    // Language-tagged literal whose tag is not in the allowed set → violation.
+                    // Non-language-tagged literals also violate (per SHACL spec §4.4.4).
+                    // Non-literals are ignored.
+                    let violates = match data.resources.get_graph_element(val) {
+                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) => {
+                            !lang_matches(&tag_set, lang)
                         }
-                        // Non-language-tagged literals violate sh:languageIn
-                        GraphElement::GraphLiteral(_) => {
-                            add_viol(work, *node, viol, val);
-                        }
-                        _ => {}
+                        GraphElement::GraphLiteral(_) => true,
+                        _ => false,
+                    };
+                    if violates {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -640,6 +641,7 @@ fn lit_comparable(data: &Datastore, id: GraphElementId) -> Option<Comparable> {
 }
 
 fn lit_to_comparable(lit: &RdfLiteral) -> Option<Comparable> {
+    use ingress::{XSD_DATE, XSD_DATE_TIME};
     use num_traits::ToPrimitive;
     match lit {
         RdfLiteral::IntegerLiteral(n) => n.to_f64().map(Comparable::Numeric),
@@ -660,6 +662,16 @@ fn lit_to_comparable(lit: &RdfLiteral) -> Option<Comparable> {
                 || iri.contains("double")
             {
                 literal.parse::<f64>().ok().map(Comparable::Numeric)
+            } else if iri == XSD_DATE {
+                literal
+                    .parse::<chrono::NaiveDate>()
+                    .ok()
+                    .map(Comparable::Date)
+            } else if iri == XSD_DATE_TIME {
+                literal
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .ok()
+                    .map(Comparable::DateTime)
             } else {
                 None
             }

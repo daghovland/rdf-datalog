@@ -390,8 +390,12 @@ built-ins beyond those the Datalog engine already handles):
 
 ### Phase 2 — Built-in predicates: value testing and counting
 
-Extends the Datalog engine with built-in guards for value-level checks. These checks should 
-use the same syntax and same functions as sparql uses. That is, any valid SPARQL expression should also be a valid datalog expression
+Extends the Datalog engine with built-in guards for value-level checks. These checks should
+use the same syntax and same functions as sparql uses. That is, any valid SPARQL expression should also be a valid datalog expression.
+
+> **Note:** All Phase 2 constraints are currently implemented as hand-coded Rust in
+> `shacl/src/evaluate.rs`.  The planned migration path to proper Datalog `FILTER` guards
+> is described in **`EXPRESSION_PLAN.md`** (Phase E4).  The SHACL tests all pass either way.
 
 | Step | Change | Tests unignored |
 |---|---|---|
@@ -462,6 +466,6 @@ handled identically to nested property shapes.
 | Phase 1a: targets + `sh:minCount 1` + `sh:maxCount` | ✓ Done |
 | Phase 1b: `sh:class`, `sh:hasValue`, `sh:in`, `sh:closed` | ✓ Done |
 | Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
-| Phase 2: built-in predicates (nodeKind, datatype, range, string, …) | Planned |
+| Phase 2: `sh:nodeKind`, `sh:datatype`, `sh:xone`, value range, string constraints, property pairs, `sh:node`, `sh:qualifiedValueShape` | ✓ Done |
 | Phase 3: HTTP endpoint + `report_to_turtle` | Planned |
 | Phase 4: SHACL-SPARQL (§5–6) | Planned |

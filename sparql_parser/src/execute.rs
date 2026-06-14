@@ -525,6 +525,30 @@ fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) ->
 
 // ── FILTER expression evaluation ──────────────────────────────────────────────
 
+/// Evaluate a SPARQL expression as a boolean filter guard.
+///
+/// `sub` maps variable names to interned [`GraphElementId`]s — the same type as a
+/// Datalog `Substitution`.  Returns `false` if the expression is unbound or errors.
+///
+/// Uses the default graph as the active graph (appropriate for Datalog rules,
+/// which do not operate over named-graph scopes).
+///
+/// This is the bridge used by `datalog::RuleAtom::FilterAtom` to evaluate
+/// SPARQL-style expression guards inside Datalog rule bodies.
+pub fn eval_expr_as_filter(
+    expr: &Expression,
+    sub: &HashMap<String, GraphElementId>,
+    datastore: &Datastore,
+) -> bool {
+    eval_expression_bool(
+        expr,
+        sub,
+        datastore,
+        &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+    )
+    .unwrap_or(false)
+}
+
 fn eval_filter(
     expr: &Expression,
     sub: &PartialSub,

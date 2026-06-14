@@ -21,7 +21,9 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 pub mod execute;
-pub use execute::{execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow};
+pub use execute::{
+    eval_expr_as_filter, execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
+};
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};

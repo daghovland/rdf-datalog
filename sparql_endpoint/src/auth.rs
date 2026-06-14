@@ -321,7 +321,7 @@ impl JwksCache {
                 let discovered = discover_jwks_uri(issuer, &self.http_client).await?;
                 inner.jwks_uri = Some(discovered);
             }
-            inner.jwks_uri.as_ref().unwrap().clone()
+            inner.jwks_uri.as_ref().expect("just set above").clone()
         };
 
         // Refresh the key set if missing or expired.
@@ -335,7 +335,7 @@ impl JwksCache {
             inner.keys = Some((jwk_set, Instant::now()));
         }
 
-        let (jwk_set, _) = inner.keys.as_ref().unwrap();
+        let (jwk_set, _) = inner.keys.as_ref().expect("just refreshed above");
         find_decoding_key(jwk_set, kid)
     }
 }

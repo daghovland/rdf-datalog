@@ -409,6 +409,74 @@ ex:c a ex:person .
     );
 }
 
+// ── FilterAtom: SPARQL expressions as Datalog guards ─────────────────────────
+//
+// These tests verify Phase E2 of EXPRESSION_PLAN.md: RuleAtom::FilterAtom holds
+// a sparql_parser::ast::Expression and filters substitutions during rule evaluation.
+// Un-ignore in order: E2 first (engine), E5 last (parser).
+
+/// Rule with a numeric comparison guard: derive violation(x) only when age < 18.
+/// Data: ex:alice ex:age 25; ex:bob ex:age 15.
+/// Expected: only ex:bob in violation set.
+#[test]
+#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
+fn filter_numeric_comparison() {
+    todo!(
+        "Build RuleAtom::FilterAtom(Expression::Binary(Variable(age), Lt, Constant(18))) and check only bob fires"
+    )
+}
+
+/// Rule with a string-length guard: derive violation(x) when strlen(label) < 3.
+/// Data: ex:a ex:label \"hi\"; ex:b ex:label \"hello\".
+/// Expected: only ex:a violates.
+#[test]
+#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
+fn filter_strlen_guard() {
+    todo!(
+        "Build RuleAtom::FilterAtom(Expression::Binary(FunctionCall(STRLEN,[Variable(v)]), Lt, Constant(3))) and check"
+    )
+}
+
+/// Rule with isIRI() type test guard: derive violation(x) when value is not an IRI.
+/// Data: ex:a ex:p ex:iri_val; ex:b ex:p \"literal_val\".
+/// Expected: only ex:b violates.
+#[test]
+#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
+fn filter_is_iri_guard() {
+    todo!("Build RuleAtom::FilterAtom(UnaryNot(FunctionCall(isIRI,[Variable(v)]))) and check")
+}
+
+/// Rule with DATATYPE equality guard: derive violation(x) when value has wrong datatype.
+/// Data: ex:a ex:p \"42\"^^xsd:integer; ex:b ex:p \"abc\"^^xsd:string.
+/// Shape requires xsd:integer → ex:b violates.
+#[test]
+#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
+fn filter_datatype_guard() {
+    todo!(
+        "Build RuleAtom::FilterAtom(Ne(FunctionCall(DATATYPE,[Var(v)]), Constant(xsd:integer))) and check"
+    )
+}
+
+/// Rule with REGEX guard: derive violation(x) when label does not match pattern.
+/// Data: ex:a ex:label \"foo123\"; ex:b ex:label \"bar\".
+/// Pattern: ^foo → ex:b violates.
+#[test]
+#[ignore = "FilterAtom not yet implemented — see EXPRESSION_PLAN.md Phase E2"]
+fn filter_regex_guard() {
+    todo!(
+        "Build RuleAtom::FilterAtom(Unary(Not, FunctionCall(REGEX,[Var(v), Constant(^foo)]))) and check"
+    )
+}
+
+/// Datalog parser accepts FILTER(expr) in rule body (Phase E5).
+/// Input: `ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 18) .`
+/// Expected: parses to 1 rule with body [PositivePattern, FilterAtom].
+#[test]
+#[ignore = "FILTER in Datalog parser not yet implemented — see EXPRESSION_PLAN.md Phase E5"]
+fn parse_filter_in_datalog_rule() {
+    todo!("Parse inline Datalog with FILTER guard; assert body[1] is FilterAtom")
+}
+
 /// A program where a depends negatively on b and b depends negatively on a
 /// forms a negative cycle and cannot be stratified. The engine must panic.
 #[test]

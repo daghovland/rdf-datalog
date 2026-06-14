@@ -126,7 +126,6 @@ fn shacl_testdata_parses() {
 /// `ex:Alice` (ssn pattern), `ex:Bob` (ssn maxCount),
 /// `ex:Calvin` (worksFor class), `ex:Calvin` (birthDate closed).
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s1_4_intro_person_shape_violations() {
     let data = load("shacl_s1_intro_data.ttl");
     let shapes = load("shacl_s1_intro_shapes.ttl");
@@ -221,7 +220,6 @@ fn spec_s2_1_4_target_subjects_of() {
 /// Objects of `ex:knows` are targeted. `ex:Alice` (IRI object) → conforms.
 /// `"Bob"` (literal object) → fails `sh:nodeKind sh:IRI` → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s2_1_5_target_objects_of() {
     let data = load("shacl_s2_target_objects_data.ttl");
     let shapes = load("shacl_s2_target_objects_shapes.ttl");
@@ -349,7 +347,6 @@ fn spec_s4_2_2_maxcount() {
 /// `ex:Alice` age 220 → exceeds `sh:maxInclusive 150` → 1 violation.
 /// `ex:Ted` age `"twenty one"` → non-numeric; range comparison inapplicable → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_3_value_range() {
     let data = load("shacl_s4_range_data.ttl");
     let shapes = load("shacl_s4_range_shapes.ttl");
@@ -372,7 +369,6 @@ fn spec_s4_3_value_range() {
 /// `ex:Alice` `"Al"` (len 2) and `ex:Carol` `"Car"` (len 3) → 2 violations.
 /// `ex:Bob` `"Robert"` (len 6) → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_4_1_minlength() {
     let data = load("shacl_s4_minlength_data.ttl");
     let shapes = load("shacl_s4_minlength_shapes.ttl");
@@ -393,7 +389,6 @@ fn spec_s4_4_1_minlength() {
 /// `ex:Bob` `"Robert"` (len 6) → 1 violation.
 /// `ex:Alice` `"Alice"` (len 5) and `ex:Carol` `"Carol"` (len 5) → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_4_2_maxlength() {
     let data = load("shacl_s4_maxlength_data.ttl");
     let shapes = load("shacl_s4_maxlength_shapes.ttl");
@@ -414,7 +409,6 @@ fn spec_s4_4_2_maxlength() {
 /// `ex:Alice` `"B1234"` → matches → conforms.
 /// `ex:Bob` `"B123X"` → last char is not a digit → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_4_3_pattern() {
     let data = load("shacl_s4_pattern_data.ttl");
     let shapes = load("shacl_s4_pattern_shapes.ttl");
@@ -435,7 +429,6 @@ fn spec_s4_4_3_pattern() {
 /// `ex:Alice` `@en` and `ex:Carol` `@de` → conforms.
 /// `ex:Bob` `@fr` → `"fr"` not in `("en" "de")` → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_4_4_languagein() {
     let data = load("shacl_s4_languagein_data.ttl");
     let shapes = load("shacl_s4_languagein_shapes.ttl");
@@ -456,7 +449,6 @@ fn spec_s4_4_4_languagein() {
 /// `ex:Alice` has two `@en` labels → 1 violation.
 /// `ex:Bob` has `@en` and `@de` → distinct → conforms.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_4_5_uniquelang() {
     let data = load("shacl_s4_uniquelang_data.ttl");
     let shapes = load("shacl_s4_uniquelang_shapes.ttl");
@@ -479,7 +471,6 @@ fn spec_s4_4_5_uniquelang() {
 /// `ex:Alice` both `"Alice"` → equal → conforms.
 /// `ex:Bob` `firstName "Bob"` vs `givenName "Bobby"` → not equal → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_5_1_equals() {
     let data = load("shacl_s4_equals_data.ttl");
     let shapes = load("shacl_s4_equals_shapes.ttl");
@@ -500,7 +491,6 @@ fn spec_s4_5_1_equals() {
 /// `ex:Alice` `"Alice"` vs `"Alicia"` → disjoint → conforms.
 /// `ex:Bob` both have `"Bob"` → shared value → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_5_2_disjoint() {
     let data = load("shacl_s4_disjoint_data.ttl");
     let shapes = load("shacl_s4_disjoint_shapes.ttl");
@@ -522,7 +512,6 @@ fn spec_s4_5_2_disjoint() {
 /// `ex:Alice` 2020-01-01 < 2020-12-31 → conforms.
 /// `ex:Bob` 2020-06-01 > 2020-01-01 → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_5_3_lessthan() {
     let data = load("shacl_s4_lessthan_data.ttl");
     let shapes = load("shacl_s4_lessthan_shapes.ttl");
@@ -544,7 +533,6 @@ fn spec_s4_5_3_lessthan() {
 /// `ex:Alice` equal dates → ≤ satisfied → conforms.
 /// `ex:Bob` start > end → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_5_4_lessthanorequals() {
     let data = load("shacl_s4_lessthanorequals_data.ttl");
     let shapes = load("shacl_s4_lessthanorequals_shapes.ttl");
@@ -628,7 +616,6 @@ fn spec_s4_6_3_or() {
 /// `ex:Bob` (Employee AND Customer) → two match → 1 violation.
 /// `ex:Carol` (Supplier) → zero match → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_6_4_xone() {
     let data = load("shacl_s4_xone_data.ttl");
     let shapes = load("shacl_s4_xone_shapes.ttl");
@@ -652,7 +639,6 @@ fn spec_s4_6_4_xone() {
 /// `ex:Alice`'s address has `ex:city` → conforms to `ex:AddressShape` → conforms.
 /// `ex:Bob`'s address has only `ex:zip` → fails `ex:AddressShape` → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_7_1_node() {
     let data = load("shacl_s4_node_data.ttl");
     let shapes = load("shacl_s4_node_shapes.ttl");
@@ -673,7 +659,6 @@ fn spec_s4_7_1_node() {
 /// `ex:Alice` has IRI parents `ex:Mom` and `ex:Dad` → 2 qualifying values → conforms.
 /// `ex:Bob` has only `ex:Mom` → 1 qualifying value < 2 → 1 violation.
 #[test]
-#[ignore = "SHACL validation not yet implemented — see shacl crate and SHACL_PLAN.md"]
 fn spec_s4_7_3_qualified_value_shape() {
     let data = load("shacl_s4_qualified_data.ttl");
     let shapes = load("shacl_s4_qualified_shapes.ttl");

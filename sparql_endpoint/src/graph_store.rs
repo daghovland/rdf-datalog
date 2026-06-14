@@ -708,8 +708,31 @@ pub async fn direct_gsp_put(
     let mut store = state.store.write().await;
     // Check new-ness before interning (interning would make the lookup return Some).
     let is_new = store.lookup_named_graph_id(&graph_iri).is_none();
-    let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri)));
+    let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
+
+    if let Some(ref changelog) = state.changelog {
+        let mut entries = vec![LogEntry::ClearGraph {
+            graph: Some(graph_iri.clone()),
+        }];
+        for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
+            entries.push(LogEntry::InsertQuad {
+                graph: Some(graph_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            });
+        }
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     store.remove_graph(graph_id);
     copy_default_graph_to(&tmp, &mut store, graph_id);
     if is_new {
@@ -731,13 +754,24 @@ pub async fn direct_gsp_delete(
     }
     let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
     let mut store = state.store.write().await;
-    match store.lookup_named_graph_id(&graph_iri) {
-        Some(id) if store.named_graph_exists(id) => {
-            store.remove_graph(id);
-            StatusCode::NO_CONTENT.into_response()
+    let graph_id = match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => id,
+        _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    };
+
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_clear_graph(Some(&graph_iri)) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
         }
-        _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
     }
+
+    store.remove_graph(graph_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// `HEAD /rdf-graphs/*path` — return headers only for the graph at the request URI.
@@ -795,6 +829,28 @@ pub async fn direct_gsp_post(
         Some(id) if store.named_graph_exists(id) => id,
         _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
     };
+
+    if let Some(ref changelog) = state.changelog {
+        let entries: Vec<_> = tmp
+            .named_graphs
+            .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+            .map(|q| LogEntry::InsertQuad {
+                graph: Some(graph_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            })
+            .collect();
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     copy_default_graph_to(&tmp, &mut store, graph_id);
     StatusCode::NO_CONTENT.into_response()
 }

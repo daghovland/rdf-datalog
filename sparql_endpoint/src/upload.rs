@@ -11,12 +11,16 @@ Contact: hovlanddag@gmail.com
 //! This is a convenience endpoint for interactive use via the browser UI.
 //! It will be superseded by the SPARQL Graph Store HTTP Protocol (see SERVER.md).
 
-use crate::AppState;
+use crate::{
+    AppState,
+    persistence::{LogEntry, to_repr},
+};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use dag_rdf::{Datastore, ingress::DEFAULT_GRAPH_ELEMENT_ID};
 use std::io::Cursor;
 
 pub async fn upload_turtle(
@@ -41,10 +45,52 @@ pub async fn upload_turtle(
             .into_response();
     }
 
-    let cursor = Cursor::new(body.to_vec());
-    let mut store = state.store.write().await;
-    match turtle::parse_turtle(&mut store, cursor) {
-        Ok(()) => (StatusCode::OK, "Data uploaded successfully").into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response(),
+    // Parse into a temporary store so we can enumerate the inserted quads for
+    // the persistence changelog before applying them to the real store.
+    let mut tmp = Datastore::new(256);
+    if let Err(e) = turtle::parse_turtle(&mut tmp, Cursor::new(body.to_vec())) {
+        return (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response();
     }
+
+    let mut store = state.store.write().await;
+
+    if let Some(ref changelog) = state.changelog {
+        let entries: Vec<_> = tmp
+            .named_graphs
+            .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+            .map(|q| LogEntry::InsertQuad {
+                graph: None,
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            })
+            .collect();
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
+    // Copy parsed triples from tmp into the real store's default graph.
+    let quads: Vec<_> = tmp
+        .named_graphs
+        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+        .collect();
+    for q in quads {
+        let s = store.add_resource(tmp.resources.get_graph_element(q.subject).clone());
+        let p = store.add_resource(tmp.resources.get_graph_element(q.predicate).clone());
+        let o = store.add_resource(tmp.resources.get_graph_element(q.obj).clone());
+        store.named_graphs.add_quad(dag_rdf::ingress::Quad {
+            triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+
+    (StatusCode::OK, "Data uploaded successfully").into_response()
 }

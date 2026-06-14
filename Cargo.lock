@@ -500,6 +500,7 @@ version = "0.1.0"
 dependencies = [
  "dag-rdf",
  "log",
+ "sparql-parser",
 ]
 
 [[package]]

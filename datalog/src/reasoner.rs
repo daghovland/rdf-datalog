@@ -12,7 +12,7 @@ use crate::datalog::{
 };
 use crate::stratifier::RulePartitioner;
 use crate::types::{PartialRule, QuadWildcard, Rule, RuleAtom, RuleHead};
-use dag_rdf::{Datastore, QuadTable};
+use dag_rdf::Datastore;
 use std::collections::HashMap;
 
 // ── DatalogProgram ────────────────────────────────────────────────────────────
@@ -97,15 +97,16 @@ impl DatalogProgram {
     /// (no new quads were produced in the previous iteration).
     pub fn materialise_one_iteration(
         &self,
-        named_graphs: &mut QuadTable,
+        datastore: &mut Datastore,
         delta_start: usize,
     ) -> Option<(usize, usize)> {
-        let delta_end = named_graphs.quad_count;
+        let delta_end = datastore.named_graphs.quad_count;
         if delta_start >= delta_end {
             return None; // fixpoint reached
         }
 
-        let delta: Vec<dag_rdf::Quad> = named_graphs.quad_list[delta_start..delta_end].to_vec();
+        let delta: Vec<dag_rdf::Quad> =
+            datastore.named_graphs.quad_list[delta_start..delta_end].to_vec();
 
         for quad in &delta {
             for rule_match in self.get_rules_for_fact(quad) {
@@ -116,13 +117,18 @@ impl DatalogProgram {
                     ),
                     RuleHead::NormalHead(h) => h.clone(),
                 };
-                for sub in evaluate(named_graphs, &rule_match) {
-                    named_graphs.add_quad(apply_substitution_quad(&sub, &head_pattern));
+                // evaluate() borrows datastore immutably and returns an owned Vec,
+                // so the borrow is released before add_quad() is called.
+                let subs = evaluate(datastore, &rule_match);
+                for sub in subs {
+                    datastore
+                        .named_graphs
+                        .add_quad(apply_substitution_quad(&sub, &head_pattern));
                 }
             }
         }
 
-        let new_count = named_graphs.quad_count - delta_end;
+        let new_count = datastore.named_graphs.quad_count - delta_end;
         Some((delta_end, new_count))
     }
 
@@ -132,14 +138,14 @@ impl DatalogProgram {
     /// added in the previous iteration — rather than scanning the whole store.
     /// Joins for non-triggering body atoms still use the full indexed store.
     /// This gives O(delta × rules) work per iteration instead of O(store × rules).
-    pub fn materialise_seminaive(&self, named_graphs: &mut QuadTable) {
+    pub fn materialise_seminaive(&self, datastore: &mut Datastore) {
         for quad in self.get_facts() {
-            named_graphs.add_quad(quad);
+            datastore.named_graphs.add_quad(quad);
         }
 
         let mut delta_start: usize = 0;
         loop {
-            match self.materialise_one_iteration(named_graphs, delta_start) {
+            match self.materialise_one_iteration(datastore, delta_start) {
                 None => break,
                 Some((new_start, _)) => delta_start = new_start,
             }
@@ -148,14 +154,14 @@ impl DatalogProgram {
 
     /// Naive materialisation kept for regression comparison.
     #[allow(dead_code)]
-    fn materialise_naive(&self, named_graphs: &mut QuadTable) {
+    fn materialise_naive(&self, datastore: &mut Datastore) {
         for quad in self.get_facts() {
-            named_graphs.add_quad(quad);
+            datastore.named_graphs.add_quad(quad);
         }
         let mut changed = true;
         while changed {
             changed = false;
-            let quads: Vec<dag_rdf::Quad> = named_graphs.get_all_quads().collect();
+            let quads: Vec<dag_rdf::Quad> = datastore.named_graphs.get_all_quads().collect();
             let mut new_quads: Vec<dag_rdf::Quad> = Vec::new();
             for quad in &quads {
                 for rule_match in self.get_rules_for_fact(quad) {
@@ -166,18 +172,18 @@ impl DatalogProgram {
                         ),
                         RuleHead::NormalHead(h) => h.clone(),
                     };
-                    let subs = evaluate(named_graphs, &rule_match);
+                    let subs = evaluate(datastore, &rule_match);
                     for sub in subs {
                         let new_quad = apply_substitution_quad(&sub, &head_pattern);
-                        if !named_graphs.contains(&new_quad) {
+                        if !datastore.named_graphs.contains(&new_quad) {
                             new_quads.push(new_quad);
                         }
                     }
                 }
             }
             for q in new_quads {
-                if !named_graphs.contains(&q) {
-                    named_graphs.add_quad(q);
+                if !datastore.named_graphs.contains(&q) {
+                    datastore.named_graphs.add_quad(q);
                     changed = true;
                 }
             }
@@ -193,6 +199,6 @@ pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) {
     let stratification = stratifier.order_rules();
     for partition in stratification {
         let program = DatalogProgram::new(partition);
-        program.materialise_seminaive(&mut datastore.named_graphs);
+        program.materialise_seminaive(datastore);
     }
 }

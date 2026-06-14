@@ -9,7 +9,7 @@ Contact: hovlanddag@gmail.com
 use crate::types::{
     PartialRule, PartialRuleMatch, QuadWildcard, ResourceOrWildcard, Rule, RuleAtom, Substitution,
 };
-use dag_rdf::{GraphElementId, Quad, QuadPattern, QuadTable, Term};
+use dag_rdf::{Datastore, GraphElementId, Quad, QuadPattern, QuadTable, Term};
 use std::collections::HashMap;
 
 pub fn empty_substitution() -> Substitution {
@@ -302,8 +302,14 @@ pub fn evaluate_positive(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<
     subs
 }
 
-/// Full evaluation: positive atoms first, then filter by negated atoms and inequality guards.
-pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
+/// Full evaluation: positive atoms first, then filter by negated atoms, inequality guards,
+/// and SPARQL expression guards (`FilterAtom`).
+///
+/// `datastore` is the full store; both `named_graphs` (for pattern matching and EXISTS
+/// subqueries) and `resources` (for resolving IDs in `FilterAtom` expressions) are used.
+pub fn evaluate(datastore: &Datastore, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
+    let rdf = &datastore.named_graphs;
+
     let not_patterns: Vec<QuadPattern> = rule_match
         .partial_rule
         .rule
@@ -326,9 +332,20 @@ pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitut
         })
         .collect();
 
+    let filter_exprs: Vec<sparql_parser::ast::Expression> = rule_match
+        .partial_rule
+        .rule
+        .body
+        .iter()
+        .filter_map(|a| match a {
+            RuleAtom::FilterAtom(expr) => Some(expr.clone()),
+            _ => None,
+        })
+        .collect();
+
     let pos = evaluate_positive(rdf, rule_match);
 
-    if not_patterns.is_empty() && not_equals.is_empty() {
+    if not_patterns.is_empty() && not_equals.is_empty() && filter_exprs.is_empty() {
         return pos;
     }
 
@@ -344,6 +361,13 @@ pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitut
                 }
             });
             if !ne_ok {
+                return false;
+            }
+            // Apply SPARQL expression guards (FilterAtom)
+            let filter_ok = filter_exprs
+                .iter()
+                .all(|expr| sparql_parser::eval_expr_as_filter(expr, sub, datastore));
+            if !filter_ok {
                 return false;
             }
             // Apply negated patterns
