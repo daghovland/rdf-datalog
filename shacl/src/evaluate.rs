@@ -54,7 +54,7 @@ pub fn eval_all(
         }
         // sh:nodeKind at node shape level — check each target node itself.
         if let Some(nk) = &shape.node_kind {
-            let viol = graph::intern_iri(work, &vocab::viol_node_kind(si, usize::MAX));
+            let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
             let nil = graph::intern_iri(work, vocab::INT_NIL);
             for node in &targets {
                 if !matches_node_kind(data, *node, nk) {
@@ -124,10 +124,10 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val)) {
-                        if v < *b {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
+                        && v < *b
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -138,10 +138,10 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val)) {
-                        if v > *b {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
+                        && v > *b
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -152,10 +152,10 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val)) {
-                        if v <= *b {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
+                        && v <= *b
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -166,10 +166,10 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val)) {
-                        if v >= *b {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
+                        && v >= *b
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -181,10 +181,10 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_min_length(si, pi));
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let Some(s) = lexical_form(data, val) {
-                        if codepoint_len(&s) < *n as usize {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let Some(s) = lexical_form(data, val)
+                        && codepoint_len(&s) < *n as usize
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -196,10 +196,10 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_max_length(si, pi));
             for node in targets {
                 for val in path_values(data, *node, path) {
-                    if let Some(s) = lexical_form(data, val) {
-                        if codepoint_len(&s) > *n as usize {
-                            add_viol(work, *node, viol, val);
-                        }
+                    if let Some(s) = lexical_form(data, val)
+                        && codepoint_len(&s) > *n as usize
+                    {
+                        add_viol(work, *node, viol, val);
                     }
                 }
             }
@@ -217,10 +217,10 @@ fn eval_prop_constraint(
                 Ok(re) => {
                     for node in targets {
                         for val in path_values(data, *node, path) {
-                            if let Some(s) = lexical_form(data, val) {
-                                if !re.is_match(&s) {
-                                    add_viol(work, *node, viol, val);
-                                }
+                            if let Some(s) = lexical_form(data, val)
+                                && !re.is_match(&s)
+                            {
+                                add_viol(work, *node, viol, val);
                             }
                         }
                     }
@@ -236,10 +236,10 @@ fn eval_prop_constraint(
             for node in targets {
                 for val in path_values(data, *node, path) {
                     match data.resources.get_graph_element(val) {
-                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) => {
-                            if !lang_matches(&tag_set, lang) {
-                                add_viol(work, *node, viol, val);
-                            }
+                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
+                            if !lang_matches(&tag_set, lang) =>
+                        {
+                            add_viol(work, *node, viol, val);
                         }
                         // Non-language-tagged literals violate sh:languageIn
                         GraphElement::GraphLiteral(_) => {
@@ -259,9 +259,8 @@ fn eval_prop_constraint(
                 let vals = path_values(data, *node, path);
                 let mut seen_langs: HashSet<String> = HashSet::new();
                 for val in &vals {
-                    if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
-                        lang, ..
-                    }) = data.resources.get_graph_element(*val)
+                    if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) =
+                        data.resources.get_graph_element(*val)
                     {
                         let lower = lang.to_lowercase();
                         if !seen_langs.insert(lower) {
@@ -313,11 +312,11 @@ fn eval_prop_constraint(
                 'outer: for pv in path_values(data, *node, path) {
                     if let Some(pvc) = lit_comparable(data, pv) {
                         for ov in path_values(data, *node, other_path) {
-                            if let Some(ovc) = lit_comparable(data, ov) {
-                                if pvc >= ovc {
-                                    add_viol(work, *node, viol, pv);
-                                    continue 'outer;
-                                }
+                            if let Some(ovc) = lit_comparable(data, ov)
+                                && pvc >= ovc
+                            {
+                                add_viol(work, *node, viol, pv);
+                                continue 'outer;
                             }
                         }
                     }
@@ -333,11 +332,11 @@ fn eval_prop_constraint(
                 'outer: for pv in path_values(data, *node, path) {
                     if let Some(pvc) = lit_comparable(data, pv) {
                         for ov in path_values(data, *node, other_path) {
-                            if let Some(ovc) = lit_comparable(data, ov) {
-                                if pvc > ovc {
-                                    add_viol(work, *node, viol, pv);
-                                    continue 'outer;
-                                }
+                            if let Some(ovc) = lit_comparable(data, ov)
+                                && pvc > ovc
+                            {
+                                add_viol(work, *node, viol, pv);
+                                continue 'outer;
                             }
                         }
                     }
@@ -347,14 +346,35 @@ fn eval_prop_constraint(
         }
 
         // §4.7.1 sh:node — values must conform to a referenced node shape
-        shapes::PropConstraint::NodeShape(inner_shapes_id) => {
-            eval_node_shape(si, pi, *inner_shapes_id, path, targets, data, shapes_store, work)
-        }
+        shapes::PropConstraint::NodeShape(inner_shapes_id) => eval_node_shape(
+            si,
+            pi,
+            *inner_shapes_id,
+            path,
+            targets,
+            data,
+            shapes_store,
+            work,
+        ),
 
         // §4.7.3 sh:qualifiedValueShape
-        shapes::PropConstraint::QualifiedValueShape { shapes_id, min, max } => {
-            eval_qualified_value(si, pi, ci, *shapes_id, *min, *max, path, targets, data, shapes_store, work)
-        }
+        shapes::PropConstraint::QualifiedValueShape {
+            shapes_id,
+            min,
+            max,
+        } => eval_qualified_value(
+            si,
+            pi,
+            ci,
+            *shapes_id,
+            *min,
+            *max,
+            path,
+            targets,
+            data,
+            shapes_store,
+            work,
+        ),
 
         // Unimplemented — skip silently
         #[allow(unreachable_patterns)]
@@ -397,6 +417,7 @@ fn eval_xone(
 
 // ── sh:node ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn eval_node_shape(
     si: usize,
     pi: usize,
@@ -443,8 +464,8 @@ fn eval_qualified_value(
             .filter(|&&val| node_conforms_to_inner(val, inner_shapes_id, data, shapes_store))
             .count() as u64;
 
-        let fails = min.map_or(false, |n| qualifying_count < n)
-            || max.map_or(false, |n| qualifying_count > n);
+        let fails = min.is_some_and(|n| qualifying_count < n)
+            || max.is_some_and(|n| qualifying_count > n);
         if fails {
             add_viol(work, *node, viol, nil);
         }
@@ -466,44 +487,42 @@ fn node_conforms_to_inner(
     use crate::vocab::{SH_CLASS, SH_MIN_COUNT, SH_NODE_KIND, SH_PATH, SH_PROPERTY};
 
     // sh:class C — node must be instance of C
-    if let Some(class_id) = graph::get_object(shapes_store, inner_id, SH_CLASS) {
-        if let Some(class_iri) = graph::iri_string(shapes_store, class_id) {
-            let rdf_type_id = graph::lookup_iri(data, RDF_TYPE);
-            let class_data_id = graph::lookup_iri(data, &class_iri);
-            if let (Some(rt), Some(cd)) = (rdf_type_id, class_data_id) {
-                if !data
-                    .get_triples_with_subject_predicate(node, rt)
-                    .any(|t| t.obj == cd)
-                {
-                    return false;
-                }
-            } else {
+    if let Some(class_id) = graph::get_object(shapes_store, inner_id, SH_CLASS)
+        && let Some(class_iri) = graph::iri_string(shapes_store, class_id)
+    {
+        let rdf_type_id = graph::lookup_iri(data, RDF_TYPE);
+        let class_data_id = graph::lookup_iri(data, &class_iri);
+        if let (Some(rt), Some(cd)) = (rdf_type_id, class_data_id) {
+            if !data
+                .get_triples_with_subject_predicate(node, rt)
+                .any(|t| t.obj == cd)
+            {
                 return false;
             }
+        } else {
+            return false;
         }
     }
 
     // sh:nodeKind NK
-    if let Some(nk_id) = graph::get_object(shapes_store, inner_id, SH_NODE_KIND) {
-        if let Some(nk_iri) = graph::iri_string(shapes_store, nk_id) {
-            if let Some(nk) = shapes::NodeKindValue::from_iri(&nk_iri) {
-                if !matches_node_kind(data, node, &nk) {
-                    return false;
-                }
-            }
-        }
+    if let Some(nk_id) = graph::get_object(shapes_store, inner_id, SH_NODE_KIND)
+        && let Some(nk_iri) = graph::iri_string(shapes_store, nk_id)
+        && let Some(nk) = shapes::NodeKindValue::from_iri(&nk_iri)
+        && !matches_node_kind(data, node, &nk)
+    {
+        return false;
     }
 
     // sh:property [ sh:path P; sh:minCount 1 ] — node must have ≥1 value for P
     for prop_node in graph::get_objects(shapes_store, inner_id, SH_PROPERTY) {
-        if let Some(path_id) = graph::get_object(shapes_store, prop_node, SH_PATH) {
-            if let Some(path_iri) = graph::iri_string(shapes_store, path_id) {
-                let min = graph::get_object(shapes_store, prop_node, SH_MIN_COUNT)
-                    .and_then(|id| graph::elem_to_u64(shapes_store, id))
-                    .unwrap_or(0);
-                if min >= 1 && path_values(data, node, &path_iri).is_empty() {
-                    return false;
-                }
+        if let Some(path_id) = graph::get_object(shapes_store, prop_node, SH_PATH)
+            && let Some(path_iri) = graph::iri_string(shapes_store, path_id)
+        {
+            let min = graph::get_object(shapes_store, prop_node, SH_MIN_COUNT)
+                .and_then(|id| graph::elem_to_u64(shapes_store, id))
+                .unwrap_or(0);
+            if min >= 1 && path_values(data, node, &path_iri).is_empty() {
+                return false;
             }
         }
     }
@@ -524,7 +543,12 @@ fn path_values(data: &Datastore, node: GraphElementId, path_iri: &str) -> Vec<Gr
 }
 
 /// Add a violation triple `(focus, viol_pred, value)` to the **default** graph of `work`.
-fn add_viol(work: &mut Datastore, focus: GraphElementId, viol_pred: GraphElementId, value: GraphElementId) {
+fn add_viol(
+    work: &mut Datastore,
+    focus: GraphElementId,
+    viol_pred: GraphElementId,
+    value: GraphElementId,
+) {
     work.named_graphs.add_quad(dag_rdf::ingress::Quad {
         triple_id: DEFAULT_GRAPH_ELEMENT_ID,
         subject: focus,
@@ -582,7 +606,7 @@ fn matches_node_kind(data: &Datastore, id: GraphElementId, nk: &shapes::NodeKind
 // ── Comparable value (for range + lessThan) ───────────────────────────────────
 
 /// An ordered value suitable for numeric/date comparisons.
-#[derive(PartialEq, PartialOrd)]
+#[derive(PartialEq)]
 enum Comparable {
     Numeric(f64),
     Date(chrono::NaiveDate),
@@ -590,9 +614,21 @@ enum Comparable {
 }
 
 impl Eq for Comparable {}
+impl PartialOrd for Comparable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl Ord for Comparable {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        match (self, other) {
+            (Comparable::Numeric(a), Comparable::Numeric(b)) => {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            (Comparable::Date(a), Comparable::Date(b)) => a.cmp(b),
+            (Comparable::DateTime(a), Comparable::DateTime(b)) => a.cmp(b),
+            _ => std::cmp::Ordering::Equal,
+        }
     }
 }
 
@@ -644,17 +680,28 @@ fn bound_to_comparable(
     // The bound was stored in the shapes graph as a literal.
     // We look it up there rather than in the data graph.
     match bound_elem {
-        shapes::ElemValue::Literal { value, datatype, .. } => {
+        shapes::ElemValue::Literal {
+            value, datatype, ..
+        } => {
             // Parse the literal value using the datatype hint.
             let dt = datatype.as_deref().unwrap_or("");
-            if dt.contains("integer") || dt.contains("int") || dt.contains("decimal")
-                || dt.contains("float") || dt.contains("double")
+            if dt.contains("integer")
+                || dt.contains("int")
+                || dt.contains("decimal")
+                || dt.contains("float")
+                || dt.contains("double")
             {
                 value.parse::<f64>().ok().map(Comparable::Numeric)
             } else if dt.contains("date") && !dt.contains("Time") {
-                value.parse::<chrono::NaiveDate>().ok().map(Comparable::Date)
+                value
+                    .parse::<chrono::NaiveDate>()
+                    .ok()
+                    .map(Comparable::Date)
             } else if dt.contains("dateTime") {
-                value.parse::<chrono::DateTime<chrono::Utc>>().ok().map(Comparable::DateTime)
+                value
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .ok()
+                    .map(Comparable::DateTime)
             } else {
                 // Plain number without explicit datatype
                 value.parse::<f64>().ok().map(Comparable::Numeric)
@@ -662,10 +709,11 @@ fn bound_to_comparable(
         }
         shapes::ElemValue::Iri(iri) => {
             // A bound given as an IRI is unusual; try looking up the literal in the shapes store
-            if let Some(id) = graph::lookup_iri(shapes_store, iri) {
-                if let GraphElement::GraphLiteral(lit) = shapes_store.resources.get_graph_element(id) {
-                    return lit_to_comparable(lit);
-                }
+            if let Some(id) = graph::lookup_iri(shapes_store, iri)
+                && let GraphElement::GraphLiteral(lit) =
+                    shapes_store.resources.get_graph_element(id)
+            {
+                return lit_to_comparable(lit);
             }
             None
         }
@@ -721,8 +769,7 @@ fn regex_with_flags(pattern: &str, flags: Option<&str>) -> String {
 fn lang_matches(allowed: &HashSet<String>, lang_tag: &str) -> bool {
     let lower = lang_tag.to_lowercase();
     allowed.contains(&lower)
-        || allowed.iter().any(|a| {
-            lower.starts_with(a.as_str())
-                && lower.as_bytes().get(a.len()) == Some(&b'-')
-        })
+        || allowed
+            .iter()
+            .any(|a| lower.starts_with(a.as_str()) && lower.as_bytes().get(a.len()) == Some(&b'-'))
 }
