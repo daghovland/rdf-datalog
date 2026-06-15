@@ -47,7 +47,9 @@ pub async fn upload_turtle(
 
     // Parse into a temporary store so we can enumerate the inserted quads for
     // the persistence changelog before applying them to the real store.
-    let mut tmp = Datastore::new(256);
+    // Use body length / 50 as a rough triple-count estimate (~50 bytes/triple in Turtle).
+    let size_hint = ((body.len() / 50) as u32).max(256);
+    let mut tmp = Datastore::new(size_hint);
     if let Err(e) = turtle::parse_turtle(&mut tmp, Cursor::new(body.to_vec())) {
         return (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response();
     }

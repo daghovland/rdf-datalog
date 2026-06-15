@@ -170,6 +170,21 @@
           background: #f8f8f8; cursor: grab; margin-top: 0.5rem; }
     #cy:active { cursor: grabbing; }
     .graph-hint { font-size: 0.78rem; color: #888; margin: 0.3rem 0 0; }
+    .cy-toolbar { display:flex; justify-content:flex-end; gap:0.5rem; margin-bottom:0.35rem; }
+    .btn-graph-action { padding:0.25rem 0.7rem; font-size:0.8rem; background:#f0f0f0;
+                        color:#444; border:1px solid #ccc; border-radius:4px; cursor:pointer; }
+    .btn-graph-action:hover { background:#e0e0e0; }
+    /* Viewport-level fullscreen (CSS fallback) */
+    .cy-wrap.graph-fs { position:fixed; inset:0; z-index:9000; background:#fff;
+                         padding:1rem; display:flex; flex-direction:column; }
+    .cy-wrap.graph-fs #cy { flex:1; height:auto !important; margin-top:0; border-radius:0; }
+    .cy-wrap.graph-fs .graph-hint { margin-top:0.5rem; flex-shrink:0; }
+    .cy-wrap.graph-fs .cy-toolbar { flex-shrink:0; }
+    /* Native fullscreen (Fullscreen API) */
+    #cy-fullscreen-wrap:fullscreen { padding:1rem; background:#fff; display:flex; flex-direction:column; }
+    #cy-fullscreen-wrap:fullscreen #cy { flex:1; height:auto !important; margin-top:0; border-radius:0; }
+    #cy-fullscreen-wrap:fullscreen .cy-toolbar { flex-shrink:0; }
+    #cy-fullscreen-wrap:fullscreen .graph-hint { margin-top:0.5rem; flex-shrink:0; }
     /* Drag-and-drop upload */
     .drop-zone { position: relative; }
     .drop-zone.drag-over textarea { border-color: #2b6cb0; background: #eef3ff; }
@@ -994,6 +1009,35 @@
       });
     }
 
+    // ── Graph fullscreen ───────────────────────────────────────────────────────
+    let graphFullscreen = false;
+
+    async function toggleGraphFullscreen() {
+      const wrap = document.getElementById('cy-fullscreen-wrap');
+      const btn  = document.getElementById('cy-fs-btn');
+      if (!wrap || !btn) return;
+      if (!graphFullscreen) {
+        graphFullscreen = true;
+        btn.textContent = 'Exit Fullscreen';
+        if (wrap.requestFullscreen) {
+          try { await wrap.requestFullscreen(); return; } catch { /* fall through to CSS mode */ }
+        }
+        wrap.classList.add('graph-fs');
+        document.body.style.overflow = 'hidden';
+        if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+      } else {
+        graphFullscreen = false;
+        btn.textContent = 'Fullscreen';
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          wrap.classList.remove('graph-fs');
+          document.body.style.overflow = '';
+          if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+        }
+      }
+    }
+
     // ── Query editor ───────────────────────────────────────────────────────────
     async function runQuery() {
       const rawQuery = document.getElementById('query').value.trim();
@@ -1032,8 +1076,13 @@
             '<div id="result-table-pane"></div>' +
             '<div id="result-graph-pane" style="display:none">' +
               '<p id="graph-warning" class="msg err" style="display:none;margin-bottom:0.5rem"></p>' +
-              '<div class="cy-wrap"><div id="cy"></div></div>' +
-              '<p class="graph-hint">Scroll to zoom · drag to pan · click a node to browse</p>' +
+              '<div id="cy-fullscreen-wrap" class="cy-wrap">' +
+                '<div class="cy-toolbar">' +
+                  '<button id="cy-fs-btn" class="btn-graph-action" onclick="toggleGraphFullscreen()">Fullscreen</button>' +
+                '</div>' +
+                '<div id="cy"></div>' +
+                '<p class="graph-hint">Scroll to zoom · drag canvas to pan · drag nodes to rearrange · click node to browse</p>' +
+              '</div>' +
             '</div>';
           const tablePane = document.getElementById('result-table-pane');
           renderTable(tablePane, data, null);
@@ -1813,6 +1862,17 @@
       loadStats();
       initDropZone();
       initKeyboardShortcuts();
+      document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && graphFullscreen) {
+          graphFullscreen = false;
+          const btn = document.getElementById('cy-fs-btn');
+          if (btn) btn.textContent = 'Fullscreen';
+          const wrap = document.getElementById('cy-fullscreen-wrap');
+          if (wrap) { wrap.classList.remove('graph-fs'); }
+          document.body.style.overflow = '';
+        }
+        if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+      });
       document.addEventListener('click', e => {
         if (!e.target.closest('.qb-picker-wrap')) {
           document.getElementById('class-dropdown').style.display = 'none';

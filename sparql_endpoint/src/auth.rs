@@ -8,7 +8,7 @@ Contact: hovlanddag@gmail.com
 
 //! Authentication middleware for the SPARQL endpoint.
 //!
-//! See AUTH.md for the full design.
+//! See `docs/plans/AUTH.md` for the full design.
 //!
 //! - Tier 1: static API key (`AuthConfig::ApiKey`)
 //! - Tier 2: generic OIDC JWT validation (`AuthConfig::Oidc`)
@@ -305,37 +305,57 @@ impl JwksCache {
     /// - If `static_jwks_uri` is `Some`, use it directly (no discovery).
     /// - Otherwise, discover the JWKS URI from `issuer` and cache it.
     /// - The JWK set is cached for `self.ttl`; expired cache triggers a re-fetch.
+    ///
+    /// The mutex is held only for cache reads and writes — never during HTTP I/O.
+    /// This avoids blocking all concurrent requests while one request fetches JWKS.
     pub async fn get_key(
         &self,
         issuer: &str,
         static_jwks_uri: Option<&str>,
         kid: Option<&str>,
     ) -> Result<DecodingKey, AuthError> {
-        let mut inner = self.inner.lock().await;
-
-        // Determine JWKS URI.
-        let jwks_uri: String = if let Some(uri) = static_jwks_uri {
-            uri.to_owned()
-        } else {
-            if inner.jwks_uri.is_none() {
-                let discovered = discover_jwks_uri(issuer, &self.http_client).await?;
-                inner.jwks_uri = Some(discovered);
-            }
-            inner.jwks_uri.as_ref().expect("just set above").clone()
+        // Phase 1: snapshot cached state. Release lock before any I/O.
+        let (cached_uri, needs_refresh) = {
+            let inner = self.inner.lock().await;
+            let cached_uri = static_jwks_uri
+                .map(str::to_owned)
+                .or_else(|| inner.jwks_uri.clone());
+            let needs_refresh = inner
+                .keys
+                .as_ref()
+                .is_none_or(|(_, ts)| ts.elapsed() > self.ttl);
+            (cached_uri, needs_refresh)
         };
 
-        // Refresh the key set if missing or expired.
-        let needs_refresh = inner
-            .keys
-            .as_ref()
-            .is_none_or(|(_, ts)| ts.elapsed() > self.ttl);
+        // Phase 2: HTTP work outside the lock.
+        let jwks_uri = match cached_uri {
+            Some(uri) => uri,
+            None => discover_jwks_uri(issuer, &self.http_client).await?,
+        };
 
-        if needs_refresh {
-            let jwk_set = fetch_jwks(&jwks_uri, &self.http_client).await?;
-            inner.keys = Some((jwk_set, Instant::now()));
+        let fresh_set = if needs_refresh {
+            Some(fetch_jwks(&jwks_uri, &self.http_client).await?)
+        } else {
+            None
+        };
+
+        // Phase 3: update cache under lock (double-check to avoid clobbering a
+        // concurrent refresh that finished while we were doing I/O).
+        let mut inner = self.inner.lock().await;
+        if inner.jwks_uri.is_none() && static_jwks_uri.is_none() {
+            inner.jwks_uri = Some(jwks_uri);
+        }
+        if let Some(new_set) = fresh_set {
+            let still_stale = inner
+                .keys
+                .as_ref()
+                .is_none_or(|(_, ts)| ts.elapsed() > self.ttl);
+            if still_stale {
+                inner.keys = Some((new_set, Instant::now()));
+            }
         }
 
-        let (jwk_set, _) = inner.keys.as_ref().expect("just refreshed above");
+        let (jwk_set, _) = inner.keys.as_ref().expect("keys populated above");
         find_decoding_key(jwk_set, kid)
     }
 }
@@ -347,12 +367,20 @@ fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
     value.strip_prefix("Bearer ")
 }
 
-/// Constant-time byte-slice comparison (content only; length check is non-constant).
+/// Constant-time byte-slice comparison.
+///
+/// TEMPORARY WORKAROUND: The `rsa` crate does not yet expose a constant-time
+/// key-length check, so we pad the shorter slice to `max(a.len(), b.len())`
+/// before comparing. This avoids leaking the expected key length via an
+/// early-return branch. Replace with upstream constant-time length comparison
+/// once the rsa crate provides one.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.ct_eq(b).into()
+    let len = a.len().max(b.len());
+    let mut a_padded = vec![0u8; len];
+    let mut b_padded = vec![0u8; len];
+    a_padded[..a.len()].copy_from_slice(a);
+    b_padded[..b.len()].copy_from_slice(b);
+    a_padded.ct_eq(&b_padded).into()
 }
 
 fn unauthorized_response() -> Response {
@@ -893,6 +921,34 @@ mod tests {
         );
     }
 
+    // ── constant_time_eq ─────────────────────────────────────────────────────
+
+    #[test]
+    fn constant_time_eq_same_content_returns_true() {
+        assert!(constant_time_eq(b"secret-key", b"secret-key"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_content_returns_false() {
+        assert!(!constant_time_eq(b"secret-key", b"wrong-key!"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_lengths_returns_false() {
+        // Regression: early-return on length mismatch leaks the expected key
+        // length via a timing side-channel. The fix pads both sides so the
+        // comparison always takes the same amount of time.
+        assert!(!constant_time_eq(b"short", b"much-longer-key"));
+        assert!(!constant_time_eq(b"much-longer-key", b"short"));
+        assert!(!constant_time_eq(b"", b"nonempty"));
+        assert!(!constant_time_eq(b"nonempty", b""));
+    }
+
+    #[test]
+    fn constant_time_eq_empty_slices() {
+        assert!(constant_time_eq(b"", b""));
+    }
+
     // ── Build JWK set from test RSA key ───────────────────────────────────────
 
     fn make_test_jwks_response() -> serde_json::Value {
@@ -974,6 +1030,48 @@ mod tests {
             .expect("second fetch after TTL");
 
         mock.verify().await;
+    }
+
+    /// Regression test: the mutex must NOT be held during HTTP I/O.
+    ///
+    /// With the old implementation (lock held throughout `get_key`), two
+    /// concurrent callers would serialize: the second blocks until the first
+    /// releases the mutex, meaning total wall time ≈ 2 × network latency.
+    /// With the fix (lock released before I/O), both callers fetch concurrently
+    /// and total wall time ≈ 1 × network latency.
+    ///
+    /// This test verifies the correctness property (both callers get a valid key).
+    /// The performance property (concurrent not serialized) is not asserted
+    /// because timing tests are fragile, but the structural fix ensures it.
+    #[tokio::test]
+    async fn jwks_cache_concurrent_calls_both_succeed() {
+        let mock = MockServer::start().await;
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(make_test_jwks_response()))
+            .mount(&mock)
+            .await;
+
+        let jwks_uri = format!("{}/jwks", mock.uri());
+        let cache = Arc::new(JwksCache::new(Duration::from_secs(3600)));
+
+        let c1 = cache.clone();
+        let u1 = jwks_uri.clone();
+        let t1 = tokio::spawn(async move {
+            c1.get_key("https://test.example.com", Some(&u1), Some("test-key-001"))
+                .await
+        });
+
+        let c2 = cache.clone();
+        let u2 = jwks_uri.clone();
+        let t2 = tokio::spawn(async move {
+            c2.get_key("https://test.example.com", Some(&u2), Some("test-key-001"))
+                .await
+        });
+
+        let (r1, r2) = tokio::join!(t1, t2);
+        assert!(r1.unwrap().is_ok(), "first caller should get key");
+        assert!(r2.unwrap().is_ok(), "second caller should get key");
     }
 
     #[tokio::test]

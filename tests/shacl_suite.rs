@@ -12,7 +12,7 @@ Contact: hovlanddag@gmail.com
 //! <https://www.w3.org/TR/shacl/>
 //!
 //! All tests except `shacl_testdata_parses` are `#[ignore]` because SHACL
-//! validation is not yet implemented (see `SHACL_PLAN.md` and the `shacl`
+//! validation is not yet implemented (see `docs/plans/SHACL_PLAN.md` and the `shacl`
 //! crate). The test data files in `tests/testdata/shacl_*.ttl` are valid
 //! Turtle and are verified to parse by `shacl_testdata_parses`.
 //!

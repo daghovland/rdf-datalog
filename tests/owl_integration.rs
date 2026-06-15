@@ -355,7 +355,7 @@ fn load_ido_ontology_works() {
 // ── Tests that cannot be translated (not implemented) ────────────────────────
 //
 // TableauWorks / Imf2AlcWorks: the Tableau (ALC) reasoner is not implemented
-// in the Rust project (alc_tableau crate deferred in PLAN.md).
+// in the Rust project (alc_tableau crate deferred in docs/architecture/PLAN.md).
 //
 // ParseImfOntologyWorks / LoadImfOntologyWorks: require downloading the full
 // IMF ontology — covered by the ignored tests in tests/performance.rs.

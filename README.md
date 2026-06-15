@@ -369,7 +369,7 @@ graph. SHACL-AF §5–6 SPARQL-based constraints are executed directly by the bu
 SPARQL engine. No external processes or dependencies are required.
 
 The `shacl` crate types are defined; validation is in progress — see
-[`SHACL_PLAN.md`](SHACL_PLAN.md) for the phased implementation roadmap.
+[`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) for the phased implementation roadmap.
 
 ### API (planned)
 
@@ -812,7 +812,7 @@ Typing text makes the property required (not OPTIONAL) and adds
 
 ## Protocol compliance
 
-See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
+See [`docs/architecture/PROTOCOLS.md`](docs/architecture/PROTOCOLS.md) for full details.
 
 | Priority | Protocol | Status |
 |---|---|---|
@@ -827,12 +827,14 @@ See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
 
 ## Implementation plan
 
-See [`PLAN.md`](PLAN.md) for the full phased roadmap.
+See [`docs/architecture/PLAN.md`](docs/architecture/PLAN.md) for the full phased roadmap.
+See [`docs/plans/`](docs/plans/) for feature area plans and known-issues tracking.
+See [`docs/architecture/`](docs/architecture/) for protocol compliance and architecture references.
 
 Upcoming areas:
-- [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) — durable transactional storage (`redb`) and incremental Datalog maintenance (Backward/Forward algorithm)
-- [`SHACL_PLAN.md`](SHACL_PLAN.md) — SHACL Core validation via Datalog translation
-- [`AUTH.md`](AUTH.md) — API-key and Entra ID authentication
+- [`docs/plans/PERSISTENCE_PLAN.md`](docs/plans/PERSISTENCE_PLAN.md) — durable transactional storage (`redb`) and incremental Datalog maintenance
+- [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) — SHACL Core validation via Datalog translation
+- [`docs/plans/AUTH.md`](docs/plans/AUTH.md) — API-key and Entra ID authentication
 
 ---
 

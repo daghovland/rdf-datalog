@@ -49,8 +49,9 @@ cargo audit
 
 ## Planning and protocol documents
 
-- **`PLAN.md`** — full implementation roadmap (phases 1–8, crate mapping from DagSemTools, suggested order)
-- **`PROTOCOLS.md`** — W3C protocol compliance reference (SPARQL 1.1 Protocol, Graph Store HTTP Protocol, Service Description, VoID, content negotiation, CORS)
+- **`docs/architecture/PLAN.md`** — full implementation roadmap (phases 1–8, crate mapping from DagSemTools, suggested order)
+- **`docs/architecture/PROTOCOLS.md`** — W3C protocol compliance reference (SPARQL 1.1 Protocol, Graph Store HTTP Protocol, Service Description, VoID, content negotiation, CORS)
+- **`docs/plans/`** — feature area plans and known-issues tracking
 
 ## Architecture
 

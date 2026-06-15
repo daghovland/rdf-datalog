@@ -566,35 +566,22 @@ fn parse_rule_atom<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, 
     Ok((input, ParsedRuleAtom::PositivePattern(pattern)))
 }
 
+fn is_ci_keyword(input: &str, keyword: &str) -> bool {
+    input.len() >= keyword.len()
+        && input[..keyword.len()].eq_ignore_ascii_case(keyword)
+        && input[keyword.len()..]
+            .chars()
+            .next()
+            .map(|c| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(true)
+}
+
 fn keyword_filter(input: &str) -> bool {
-    input.len() >= 6 && {
-        let b = input.as_bytes();
-        matches!(b[0], b'F' | b'f')
-            && matches!(b[1], b'I' | b'i')
-            && matches!(b[2], b'L' | b'l')
-            && matches!(b[3], b'T' | b't')
-            && matches!(b[4], b'E' | b'e')
-            && matches!(b[5], b'R' | b'r')
-            && input[6..]
-                .chars()
-                .next()
-                .map(|c| !c.is_alphanumeric() && c != '_')
-                .unwrap_or(true)
-    }
+    is_ci_keyword(input, "FILTER")
 }
 
 fn keyword_not(input: &str) -> bool {
-    input.len() >= 3 && {
-        let b = input.as_bytes();
-        matches!(b[0], b'N' | b'n')
-            && matches!(b[1], b'O' | b'o')
-            && matches!(b[2], b'T' | b't')
-            && input[3..]
-                .chars()
-                .next()
-                .map(|c| !c.is_alphanumeric() && c != '_')
-                .unwrap_or(true)
-    }
+    is_ci_keyword(input, "NOT")
 }
 
 // ── IRI interning: ParsedRule → Rule ─────────────────────────────────────────
