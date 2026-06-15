@@ -38,11 +38,14 @@ pub fn eval_all(
         let targets = crate::data_targets(shape, data);
         for prop in &shape.property_shapes {
             for (ci, constraint) in prop.constraints.iter().enumerate() {
+                let coord = ConstraintCoord {
+                    si: shape.idx,
+                    pi: prop.idx,
+                    ci,
+                };
                 let new = eval_prop_constraint(
                     constraint,
-                    shape.idx,
-                    prop.idx,
-                    ci,
+                    coord,
                     &prop.path,
                     &targets,
                     data,
@@ -73,20 +76,32 @@ pub fn eval_all(
     viol_preds
 }
 
+// ── Constraint coordinate ─────────────────────────────────────────────────────
+
+/// Position of a constraint within the shapes graph, used to mint unique
+/// violation IRI names via `vocab::viol_*`.
+#[derive(Clone, Copy, Debug)]
+struct ConstraintCoord {
+    /// Index of the node shape in `parsed`.
+    si: usize,
+    /// Index of the property shape within that node shape.
+    pi: usize,
+    /// Index of the constraint within that property shape.
+    ci: usize,
+}
+
 // ── Property constraint dispatch ──────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
-    si: usize,
-    pi: usize,
-    ci: usize,
+    coord: ConstraintCoord,
     path: &str,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
+    let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
     match constraint {
         // Phase 1 constraints are handled via Datalog — skip them here.
@@ -348,8 +363,7 @@ fn eval_prop_constraint(
 
         // §4.7.1 sh:node — values must conform to a referenced node shape
         shapes::PropConstraint::NodeShape(inner_shapes_id) => eval_node_shape(
-            si,
-            pi,
+            coord,
             *inner_shapes_id,
             path,
             targets,
@@ -364,12 +378,12 @@ fn eval_prop_constraint(
             min,
             max,
         } => eval_qualified_value(
-            si,
-            pi,
-            ci,
-            *shapes_id,
-            *min,
-            *max,
+            coord,
+            QualifiedSpec {
+                inner_shapes_id: *shapes_id,
+                min: *min,
+                max: *max,
+            },
             path,
             targets,
             data,
@@ -418,10 +432,8 @@ fn eval_xone(
 
 // ── sh:node ───────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 fn eval_node_shape(
-    si: usize,
-    pi: usize,
+    coord: ConstraintCoord,
     inner_shapes_id: GraphElementId,
     path: &str,
     targets: &[GraphElementId],
@@ -429,7 +441,7 @@ fn eval_node_shape(
     shapes_store: &Datastore,
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
-    let viol = graph::intern_iri(work, &vocab::viol_node_shape(si, pi));
+    let viol = graph::intern_iri(work, &vocab::viol_node_shape(coord.si, coord.pi));
     for node in targets {
         for val in path_values(data, *node, path) {
             if !node_conforms_to_inner(val, inner_shapes_id, data, shapes_store) {
@@ -442,31 +454,32 @@ fn eval_node_shape(
 
 // ── sh:qualifiedValueShape ────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-fn eval_qualified_value(
-    si: usize,
-    pi: usize,
-    _ci: usize,
+struct QualifiedSpec {
     inner_shapes_id: GraphElementId,
     min: Option<u64>,
     max: Option<u64>,
+}
+
+fn eval_qualified_value(
+    coord: ConstraintCoord,
+    spec: QualifiedSpec,
     path: &str,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
-    let viol = graph::intern_iri(work, &vocab::viol_qualified_value(si, pi));
+    let viol = graph::intern_iri(work, &vocab::viol_qualified_value(coord.si, coord.pi));
     let nil = graph::intern_iri(work, vocab::INT_NIL);
 
     for node in targets {
         let qualifying_count = path_values(data, *node, path)
             .iter()
-            .filter(|&&val| node_conforms_to_inner(val, inner_shapes_id, data, shapes_store))
+            .filter(|&&val| node_conforms_to_inner(val, spec.inner_shapes_id, data, shapes_store))
             .count() as u64;
 
-        let fails =
-            min.is_some_and(|n| qualifying_count < n) || max.is_some_and(|n| qualifying_count > n);
+        let fails = spec.min.is_some_and(|n| qualifying_count < n)
+            || spec.max.is_some_and(|n| qualifying_count > n);
         if fails {
             add_viol(work, *node, viol, nil);
         }

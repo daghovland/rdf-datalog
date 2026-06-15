@@ -408,14 +408,17 @@ use the same syntax and same functions as sparql uses. That is, any valid SPARQL
 | 2g | `sh:xone` (counting conforming shapes) | §4.6.4 |
 | 2h | `sh:qualifiedValueShape` + `sh:qualifiedMinCount` | §4.7.3 |
 
-### Phase 3 — HTTP endpoint + report serialisation
+### Phase 3 — HTTP endpoint + report serialisation ✓ Done
 
-| Step | Change |
-|---|---|
-| 3a | `shacl/src/report.rs` — `report_to_turtle()` |
-| 3b | `sparql_endpoint/src/shacl.rs` — `shacl_post` handler |
-| 3c | Register route `POST /{name}/shacl` in `server.rs` |
-| 3d | README HTTP endpoint table update |
+| Step | Change | Status |
+|---|---|---|
+| 3a | `report_to_turtle()` in `shacl/src/lib.rs` | ✓ Done |
+| 3b | `sparql_endpoint/src/shacl_endpoint.rs` — `dataset_shacl_post` handler | ✓ Done |
+| 3c | Register route `POST /{name}/shacl` in `server.rs` | ✓ Done |
+| 3d | 4 HTTP tests in `sparql_endpoint/tests/shacl.rs` (conforms, violation, 404, 400) | ✓ Done |
+
+Also added in this session:
+- `STRLEN` and `DATATYPE` functions to `sparql_parser::eval_function_value` (used by Datalog filter tests)
 
 ### Phase 4 — SHACL-SPARQL (§5–6 of SHACL-AF)
 
@@ -467,5 +470,5 @@ handled identically to nested property shapes.
 | Phase 1b: `sh:class`, `sh:hasValue`, `sh:in`, `sh:closed` | ✓ Done |
 | Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
 | Phase 2: `sh:nodeKind`, `sh:datatype`, `sh:xone`, value range, string constraints, property pairs, `sh:node`, `sh:qualifiedValueShape` | ✓ Done |
-| Phase 3: HTTP endpoint + `report_to_turtle` | Planned |
+| Phase 3: HTTP endpoint + `report_to_turtle` | ✓ Done |
 | Phase 4: SHACL-SPARQL (§5–6) | Planned |

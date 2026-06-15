@@ -88,6 +88,11 @@ pub fn build_router(state: AppState) -> Router {
             "/{name}/update",
             post(crate::dataset_routes::dataset_update_post),
         )
+        // ── Per-dataset SHACL validation (`/{name}/shacl`) ───────────────────
+        .route(
+            "/{name}/shacl",
+            post(crate::shacl_endpoint::dataset_shacl_post),
+        )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",

@@ -187,6 +187,10 @@ impl QuadChangelog {
     }
 
     /// Durably record a single quad insertion.
+    ///
+    /// Production code uses `append_batch` for efficiency (one fsync per request).
+    /// These single-entry helpers exist for unit tests where per-quad control matters.
+    #[cfg(test)]
     pub fn log_insert_quad(
         &mut self,
         graph_iri: Option<&str>,
@@ -203,6 +207,9 @@ impl QuadChangelog {
     }
 
     /// Durably record a single quad deletion.
+    ///
+    /// Production code uses `append_batch`. This helper exists for unit tests.
+    #[cfg(test)]
     pub fn log_delete_quad(
         &mut self,
         graph_iri: Option<&str>,

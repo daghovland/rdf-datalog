@@ -21,6 +21,7 @@ pub mod registry;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
+pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod upload;
 
@@ -82,6 +83,12 @@ pub struct OidcConfig {
     ///
     /// - Azure / Google: `"roles"` (flat array)
     /// - Keycloak realm roles: `"realm_access.roles"` (nested object)
+    ///
+    /// **Limitation:** only one level of nesting is supported (`"a.b"`).
+    /// Deeper paths such as `"resource_access.myapp.roles"` will silently
+    /// find nothing, causing all requests to fail with `insufficient role`.
+    /// Use a custom claim mapper on the identity provider side to flatten
+    /// the roles array to a top-level claim if deeper nesting is needed.
     pub roles_claim: String,
 
     /// Role value that grants read access (default: `"dagalog.Read"`).

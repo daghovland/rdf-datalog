@@ -87,11 +87,59 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
     })
 }
 
-/// Serialize a `ValidationReport` as a Turtle SHACL report graph.
+/// Serialize a `ValidationReport` as a Turtle string (SHACL report graph).
 ///
-/// Not yet implemented — see Phase 3 in `SHACL_PLAN.md`.
-pub fn report_to_turtle(_report: &ValidationReport) -> String {
-    todo!("SHACL report serialization is not yet implemented (Phase 3)")
+/// Spec: <https://www.w3.org/TR/shacl/#validation-report>
+pub fn report_to_turtle(report: &ValidationReport) -> String {
+    let mut out = String::new();
+    out.push_str("@prefix sh: <http://www.w3.org/ns/shacl#> .\n");
+    out.push_str("@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n");
+    out.push_str("[] a sh:ValidationReport ;\n");
+    if report.conforms {
+        out.push_str("   sh:conforms true .\n");
+    } else {
+        out.push_str("   sh:conforms false");
+        for result in &report.results {
+            out.push_str(" ;\n   sh:result [\n");
+            out.push_str("       a sh:ValidationResult ;\n");
+            out.push_str("       sh:resultSeverity sh:Violation");
+            if let Some(focus) = &result.focus_node {
+                out.push_str(" ;\n       sh:focusNode ");
+                out.push_str(&turtle_term(focus));
+            }
+            if let Some(path) = &result.result_path {
+                out.push_str(" ;\n       sh:resultPath ");
+                out.push_str(&turtle_term(path));
+            }
+            if let Some(val) = &result.value {
+                out.push_str(" ;\n       sh:value ");
+                out.push_str(&turtle_term(val));
+            }
+            if let Some(msg) = &result.message {
+                out.push_str(" ;\n       sh:resultMessage ");
+                out.push('"');
+                out.push_str(&msg.replace('"', "\\\""));
+                out.push('"');
+            }
+            out.push_str("\n   ]");
+        }
+        out.push_str(" .\n");
+    }
+    out
+}
+
+/// Format a value as a Turtle term: IRI `<…>` or string literal `"…"`.
+fn turtle_term(s: &str) -> String {
+    if s.starts_with('<')
+        || s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with("urn:")
+    {
+        let iri = s.trim_start_matches('<').trim_end_matches('>');
+        format!("<{iri}>")
+    } else {
+        format!("\"{}\"", s.replace('"', "\\\""))
+    }
 }
 
 // ── Pre-compute violations ────────────────────────────────────────────────────

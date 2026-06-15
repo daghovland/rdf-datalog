@@ -17,7 +17,9 @@ use crate::ast::{
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
 };
-use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER};
+use ingress::{
+    IriReference, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER, XSD_STRING,
+};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -600,6 +602,51 @@ fn eval_function_value(
                     String::new(),
                 )))
             }
+        }
+        "STRLEN" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = match &el {
+                GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.clone(),
+                GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+                    literal.clone()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+                    literal.clone()
+                }
+                _ => return None,
+            };
+            let len = s.chars().count();
+            Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                type_iri: IriReference(XSD_INTEGER.to_string()),
+                literal: len.to_string(),
+            }))
+        }
+        "DATATYPE" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt_iri = match &el {
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, .. }) => {
+                    type_iri.0.clone()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::LiteralString(_)) => XSD_STRING.to_string(),
+                GraphElement::GraphLiteral(RdfLiteral::LangLiteral { .. }) => {
+                    "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString".to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(_)) => {
+                    XSD_BOOLEAN.to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(_)) => {
+                    XSD_INTEGER.to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(_)) => {
+                    XSD_DECIMAL.to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(_)) => XSD_FLOAT.to_string(),
+                GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(_)) => XSD_DOUBLE.to_string(),
+                _ => return None,
+            };
+            Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
+                IriReference(dt_iri),
+            )))
         }
         _ => None,
     }
