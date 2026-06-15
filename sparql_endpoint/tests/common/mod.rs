@@ -278,6 +278,65 @@ impl TestServer {
     }
 }
 
+// ── Shared OIDC test key infrastructure ─────────────────────────────────────
+//
+// Generated once per test-process via OnceLock and shared across all test
+// files that use `mod common`.  This eliminates duplicate RSA key-gen in
+// oidc_auth.rs and any future test file that needs OIDC tokens.
+
+/// RSA key pair used by all OIDC integration tests.
+#[allow(dead_code)]
+pub struct OidcTestKeys {
+    pub encoding_key: jsonwebtoken::EncodingKey,
+    pub public_key: rsa::RsaPublicKey,
+    pub kid: String,
+}
+
+static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock::new();
+
+/// Returns the process-wide shared OIDC test key pair.
+///
+/// The RSA-2048 key is generated lazily on first call and reused for the
+/// lifetime of the test process.
+#[allow(dead_code)]
+pub fn oidc_test_keys() -> &'static OidcTestKeys {
+    SHARED_OIDC_KEYS.get_or_init(|| {
+        use rsa::{
+            RsaPrivateKey,
+            pkcs8::{EncodePrivateKey, LineEnding},
+        };
+        let mut rng = rand::rngs::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key gen");
+        let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).expect("PKCS8 PEM");
+        OidcTestKeys {
+            encoding_key: jsonwebtoken::EncodingKey::from_rsa_pem(private_pem.as_bytes())
+                .expect("encoding key"),
+            public_key: private_key.to_public_key(),
+            kid: "shared-oidc-test-key".to_string(),
+        }
+    })
+}
+
+/// Build a JWK Set JSON response for the shared OIDC test keys.
+#[allow(dead_code)]
+pub fn shared_jwks_response() -> serde_json::Value {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use rsa::traits::PublicKeyParts;
+    let keys = oidc_test_keys();
+    let n = URL_SAFE_NO_PAD.encode(keys.public_key.n().to_bytes_be());
+    let e = URL_SAFE_NO_PAD.encode(keys.public_key.e().to_bytes_be());
+    serde_json::json!({
+        "keys": [{
+            "kty": "RSA",
+            "kid": keys.kid,
+            "use": "sig",
+            "alg": "RS256",
+            "n": n,
+            "e": e
+        }]
+    })
+}
+
 // ── Assertion helpers ────────────────────────────────────────────────────────
 
 /// Assert that `bindings` contains at least one row where `var` has `expected_type`

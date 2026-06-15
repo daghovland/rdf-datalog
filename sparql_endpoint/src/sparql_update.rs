@@ -505,8 +505,7 @@ mod tests {
     /// both the WAL entries and the in-memory apply from the single result.
     #[test]
     fn insert_log_entries_match_applied_quads() {
-        let content =
-            r#"<http://example.org/s> <http://example.org/p> <http://example.org/o> ."#;
+        let content = r#"<http://example.org/s> <http://example.org/p> <http://example.org/o> ."#;
         let ops = parse_update(&format!("INSERT DATA {{ {content} }}")).unwrap();
 
         let mut store = Datastore::new(64);
@@ -538,8 +537,7 @@ mod tests {
 
     #[test]
     fn delete_log_entries_match_removed_quads() {
-        let content =
-            r#"<http://example.org/s> <http://example.org/p> <http://example.org/o> ."#;
+        let content = r#"<http://example.org/s> <http://example.org/p> <http://example.org/o> ."#;
 
         // Seed the store with the triple.
         let mut store = Datastore::new(64);

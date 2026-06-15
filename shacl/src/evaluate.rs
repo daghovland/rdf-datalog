@@ -72,6 +72,42 @@ pub fn eval_all(
             let new = eval_xone(shape, &targets, data, shapes_store, work);
             viol_preds.extend(new);
         }
+
+        // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
+        // Phase 1 constraints (minCount etc.) are handled via Datalog in translate.rs.
+        // The "prop index" offset mirrors the one used in translate.rs (sub_idx * 10_000)
+        // so violation IRI names are consistent.
+        for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
+            let inner_id = inner_ref.shapes_id;
+            for (inner_pi, prop_node) in
+                graph::get_objects(shapes_store, inner_id, crate::vocab::SH_PROPERTY)
+                    .into_iter()
+                    .enumerate()
+            {
+                let path = graph::get_object(shapes_store, prop_node, crate::vocab::SH_PATH)
+                    .and_then(|id| graph::iri_string(shapes_store, id));
+                if let Some(path_str) = path {
+                    let constraints = shapes::parse_prop_constraints(shapes_store, prop_node);
+                    for (ci, constraint) in constraints.iter().enumerate() {
+                        let coord = ConstraintCoord {
+                            si: shape.idx,
+                            pi: sub_idx * 10_000 + inner_pi,
+                            ci,
+                        };
+                        let new = eval_prop_constraint(
+                            constraint,
+                            coord,
+                            &path_str,
+                            &targets,
+                            data,
+                            shapes_store,
+                            work,
+                        );
+                        viol_preds.extend(new);
+                    }
+                }
+            }
+        }
     }
     viol_preds
 }

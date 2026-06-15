@@ -27,7 +27,9 @@ Contact: hovlanddag@gmail.com
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
 use crate::graph;
-use crate::shapes::{ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target, parse_prop_constraints};
+use crate::shapes::{
+    ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target, parse_prop_constraints,
+};
 use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};

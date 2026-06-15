@@ -1,0 +1,13 @@
+# Regression test shapes for sh:and with sh:datatype constraint.
+# The sh:and requires the ex:age property to be xsd:integer.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:AndDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:and (
+        [ sh:property [ sh:path ex:age ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path ex:age ; sh:datatype xsd:integer ] ]
+    ) .

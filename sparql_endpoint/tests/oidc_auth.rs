@@ -14,55 +14,23 @@ Contact: hovlanddag@gmail.com
 
 mod common;
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rsa::{
     RsaPrivateKey,
     pkcs8::{EncodePrivateKey, LineEnding},
-    traits::PublicKeyParts,
 };
 use sparql_endpoint::OidcConfig;
-use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
-// ── Shared test RSA key pair ──────────────────────────────────────────────────
+// ── Shared test RSA key pair (from common) ────────────────────────────────────
 
-struct OidcTestKeys {
-    encoding_key: EncodingKey,
-    public_key: rsa::RsaPublicKey,
-    kid: String,
-}
-
-static OIDC_TEST_KEYS: OnceLock<OidcTestKeys> = OnceLock::new();
-
-fn oidc_keys() -> &'static OidcTestKeys {
-    OIDC_TEST_KEYS.get_or_init(|| {
-        let mut rng = rand::rngs::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key gen");
-        let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).expect("PKCS8 PEM");
-        OidcTestKeys {
-            encoding_key: EncodingKey::from_rsa_pem(private_pem.as_bytes()).expect("encoding key"),
-            public_key: private_key.to_public_key(),
-            kid: "oidc-test-key".to_string(),
-        }
-    })
+fn oidc_keys() -> &'static common::OidcTestKeys {
+    common::oidc_test_keys()
 }
 
 fn make_jwks_response() -> serde_json::Value {
-    let keys = oidc_keys();
-    let n = URL_SAFE_NO_PAD.encode(keys.public_key.n().to_bytes_be());
-    let e = URL_SAFE_NO_PAD.encode(keys.public_key.e().to_bytes_be());
-    serde_json::json!({
-        "keys": [{
-            "kty": "RSA",
-            "kid": keys.kid,
-            "use": "sig",
-            "alg": "RS256",
-            "n": n,
-            "e": e
-        }]
-    })
+    common::shared_jwks_response()
 }
 
 fn future_exp() -> u64 {
