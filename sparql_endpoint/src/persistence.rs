@@ -48,7 +48,7 @@ use ingress::{
     XSD_BOOLEAN, XSD_DATE, XSD_DATE_TIME, XSD_DECIMAL, XSD_DOUBLE, XSD_DURATION, XSD_FLOAT,
     XSD_INTEGER, XSD_TIME,
 };
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
