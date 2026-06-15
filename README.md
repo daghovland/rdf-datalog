@@ -21,7 +21,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | Multi-dataset server (Fuseki-compatible routing and admin API) | ✓ |
 | Static API key authentication (library API; `--api-key` CLI flag pending) | ✓ |
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
-| Custom Datalog rules with stratified negation | ✓ |
+| Custom Datalog rules with stratified negation and SPARQL FILTER guards | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
 | SHACL Core validation via Datalog translation | in progress |
 | SHACL-AF SPARQL-based constraints (§5–6) | planned |
@@ -506,10 +506,22 @@ ex:Eligible[?x] :- ex:Applicant[?x], NOT ex:Rejected[?x] .
 
 # Inconsistency constraint
 false :- [?X, a, ex:Disjoint1], [?X, a, ex:Disjoint2] .
+
+# FILTER guard — any SPARQL 1.1 expression
+ex:Minor[?x]   :- [?x, ex:age, ?a], FILTER(?a < 18) .
+ex:ShortName[?x] :- [?x, ex:name, ?n], FILTER(STRLEN(?n) < 4) .
+ex:WrongType[?x] :- [?x, ex:val, ?v], FILTER(DATATYPE(?v) != xsd:integer) .
+ex:BadKind[?x]   :- [?x, ex:val, ?v], FILTER(!isIRI(?v)) .
 ```
 
 Built-in prefixes (no declaration needed): `rdf:`, `rdfs:`, `xsd:`, `owl:`.  
 `a` expands to `rdf:type` everywhere.
+
+`FILTER(expr)` in a rule body acts as a guard: the rule fires only when the
+SPARQL 1.1 expression evaluates to `true`.  All SPARQL 1.1 operators and
+functions are supported (`<`, `>=`, `!=`, `=`, `+`, `-`, `*`, `/`, `&&`, `||`,
+`!`, `regex()`, `strlen()`, `datatype()`, `isIRI()`, `isLiteral()`,
+`isBlankNode()`, `lang()`, `langMatches()`, `str()`, …).
 
 ### Applying rules from Rust
 

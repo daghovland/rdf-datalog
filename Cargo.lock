@@ -511,6 +511,7 @@ dependencies = [
  "datalog",
  "log",
  "nom",
+ "sparql-parser",
 ]
 
 [[package]]

@@ -159,25 +159,23 @@ SHACL tests continue passing throughout.
 
 ---
 
-### Phase E5 — Datalog parser: FILTER in rule bodies
+### Phase E5 — Datalog parser: FILTER in rule bodies ✓ Done
 
-Extend `datalog_parser/src/lib.rs` to parse `FILTER(expr)` in rule bodies, emitting
-`RuleAtom::FilterAtom`.  The expression parser can be shared from or extracted from
-`sparql_parser`.
+`datalog_parser/src/lib.rs` now parses `FILTER(expr)` in rule bodies, emitting
+`RuleAtom::FilterAtom`.  The expression parser is shared via `sparql_parser::parse_filter_expression`.
 
-**Ignored test (create now):**
+Implementation:
+- `datalog_parser/Cargo.toml` adds `sparql-parser` dependency
+- `ParsedRuleAtom::FilterAtom(Expression)` intermediate AST variant
+- `keyword_filter()` recognises the `FILTER` keyword (case-insensitive)
+- `ParserContext::to_sparql_context()` converts prefix maps for the SPARQL parser
+- `parse_filter_expression(input, &sparql_ctx)` returns `(bytes_consumed, expr)` to avoid lifetime coupling
+- `intern_rule_atom` passes `FilterAtom(expr)` through unchanged (no IRI interning needed)
 
-```rust
-// datalog_parser/tests/
-#[test]
-#[ignore = "FILTER in Datalog not yet implemented"]
-fn parse_datalog_rule_with_filter() {
-    let src = r#"violation(?x) :- [?x, ex:age, ?a], FILTER(?a < 18) ."#;
-    let rules = parse_datalog(src).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert!(rules[0].body.iter().any(|a| matches!(a, RuleAtom::FilterAtom(_))));
-}
-```
+Tests in `tests/datalog_integration.rs`:
+- `parse_filter_in_datalog_rule` — structure test (PositivePattern + FilterAtom)
+- `parse_filter_strlen_in_datalog_rule` — function call in FILTER
+- `parsed_filter_rule_end_to_end` — parse + evaluate + SPARQL query
 
 ---
 
@@ -201,15 +199,17 @@ implemented and tested in `shacl/src/evaluate.rs` using hand-coded Rust.
 
 | File | Change |
 |---|---|
-| `sparql_parser/src/execute.rs` | Make `eval_expression_bool` + `eval_expression_value` `pub` |
-| `datalog/Cargo.toml` | Add `sparql-parser = { path = "../sparql_parser" }` |
-| `datalog/src/types.rs` | Add `RuleAtom::FilterAtom(sparql_parser::ast::Expression)` |
-| `datalog/src/datalog.rs` | Handle `FilterAtom` in `evaluate()`; extend to take `&Datastore` |
+| `sparql_parser/src/execute.rs` | `eval_expr_as_filter` made `pub` (wrapper for SPARQL filter evaluation) |
+| `sparql_parser/src/lib.rs` | Added `pub fn parse_filter_expression(input, ctx)` for Datalog parser use |
+| `datalog/Cargo.toml` | Added `sparql-parser = { path = "../sparql_parser" }` |
+| `datalog/src/types.rs` | Added `RuleAtom::FilterAtom(sparql_parser::ast::Expression)` |
+| `datalog/src/datalog.rs` | Handle `FilterAtom` in `evaluate()` via `sparql_parser::eval_expr_as_filter` |
 | `datalog/src/reasoner.rs` | Pass `&Datastore` through to `evaluate()` |
-| `tests/datalog_integration.rs` | Add ignored `datalog_filter_*` tests |
-| `datalog_parser/src/lib.rs` | (Phase E5) Parse `FILTER(expr)` in rule bodies |
-| `shacl/src/translate.rs` | (Phase E4) Emit `FilterAtom` rules instead of calling evaluate.rs |
-| `shacl/src/evaluate.rs` | (Phase E4) Remove hand-coded constraint evaluation |
+| `datalog_parser/Cargo.toml` | Added `sparql-parser = { path = "../sparql_parser" }` |
+| `datalog_parser/src/lib.rs` | Parses `FILTER(expr)` in rule bodies; emits `RuleAtom::FilterAtom` |
+| `tests/datalog_integration.rs` | 8 FilterAtom tests: 5 engine tests + 3 parser+end-to-end tests |
+| `shacl/src/translate.rs` | (Phase E4 deferred) |
+| `shacl/src/evaluate.rs` | (Phase E4 deferred) |
 
 ---
 
@@ -217,8 +217,8 @@ implemented and tested in `shacl/src/evaluate.rs` using hand-coded Rust.
 
 | Phase | Status |
 |---|---|
-| E1: Expose SPARQL eval functions as pub | Planned |
-| E2: FilterAtom in Datalog RuleAtom + evaluation | Planned |
+| E1: Expose SPARQL eval functions as pub | ✓ Done |
+| E2: FilterAtom in Datalog RuleAtom + evaluation | ✓ Done |
 | E3: RDFox-style extensions | Not needed yet |
-| E4: SHACL evaluate.rs → FilterAtom rules (refactor) | Planned (after E2) |
-| E5: FILTER in Datalog parser | Planned (after E2) |
+| E4: SHACL evaluate.rs → FilterAtom rules (refactor) | Deferred — SHACL tests pass via hand-coded Rust; partial migration possible but counting/set constraints (uniqueLang, xone, qualifiedValueShape) require aggregation not yet in engine |
+| E5: FILTER in Datalog parser | ✓ Done |

@@ -749,6 +749,21 @@ fn parse_filter<'a>(
     }
 }
 
+/// Parse `FILTER(expr)` from `input`, returning `(bytes_consumed, expression)`.
+///
+/// Used by `datalog_parser` to parse `FILTER(...)` atoms in Datalog rule bodies.
+/// The `ctx` carries prefix mappings for prefixed IRIs inside expressions.
+/// Returns `Err(message)` on parse failure.
+pub fn parse_filter_expression(
+    input: &str,
+    ctx: &ParserContext,
+) -> Result<(usize, ast::Expression), String> {
+    match parse_filter(ctx)(input) {
+        Ok((rest, expr)) => Ok((input.len() - rest.len(), expr)),
+        Err(e) => Err(format!("{e:?}")),
+    }
+}
+
 fn parse_expression<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {

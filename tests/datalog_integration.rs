@@ -831,9 +831,93 @@ ex:b ex:label "bar" .
 /// Input: `ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 18) .`
 /// Expected: parses to 1 rule with body [PositivePattern, FilterAtom].
 #[test]
-#[ignore = "FILTER in Datalog parser not yet implemented — see EXPRESSION_PLAN.md Phase E5"]
 fn parse_filter_in_datalog_rule() {
-    todo!("Parse inline Datalog with FILTER guard; assert body[1] is FilterAtom")
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 18) .
+"#;
+    let mut ds = ds();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should produce exactly 1 rule");
+    assert_eq!(
+        rules[0].body.len(),
+        2,
+        "body should have 2 atoms (pattern + filter)"
+    );
+    assert!(
+        matches!(rules[0].body[0], RuleAtom::PositivePattern(_)),
+        "first body atom should be PositivePattern"
+    );
+    assert!(
+        matches!(rules[0].body[1], RuleAtom::FilterAtom(_)),
+        "second body atom should be FilterAtom, got: {:?}",
+        rules[0].body[1]
+    );
+}
+
+/// Datalog parser FILTER with STRLEN function call.
+/// Input: `ex:v[?x] :- [?x, ex:label, ?v], FILTER(STRLEN(?v) < 3) .`
+#[test]
+fn parse_filter_strlen_in_datalog_rule() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:v[?x] :- [?x, ex:label, ?v], FILTER(STRLEN(?v) < 3) .
+"#;
+    let mut ds = ds();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(
+        matches!(rules[0].body[1], RuleAtom::FilterAtom(_)),
+        "FILTER with STRLEN should produce FilterAtom"
+    );
+}
+
+/// End-to-end: parse a rule with FILTER(?a < 18) and evaluate it against data.
+/// Data: ex:alice ex:age 25; ex:bob ex:age 15.
+/// Parsed rule derives ex:violation for nodes with age < 18.
+/// Expected: only ex:bob appears in violation set.
+#[test]
+fn parsed_filter_rule_end_to_end() {
+    let ttl = r#"
+@prefix ex: <http://example.org/> .
+ex:alice ex:age 15 .
+ex:bob   ex:age 25 .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 20) .
+"#;
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+    assert!(
+        matches!(rules[0].body[1], RuleAtom::FilterAtom(_)),
+        "body[1] should be FilterAtom"
+    );
+
+    datalog::evaluate_rules(rules, &mut ds);
+
+    let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x a ex:violation . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let violators: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        violators.contains(&"<http://example.org/alice>".to_string()),
+        "alice (age 15) should violate FILTER(?a < 20); got: {:?}",
+        violators
+    );
+    assert!(
+        !violators.contains(&"<http://example.org/bob>".to_string()),
+        "bob (age 25) should NOT violate; got: {:?}",
+        violators
+    );
 }
 
 /// A program where a depends negatively on b and b depends negatively on a
