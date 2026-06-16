@@ -9,6 +9,7 @@ ingress = { path = "../ingress" }
 shacl = { path = "../shacl" }
 sparql-parser = { path = "../sparql_parser" }
 turtle = { path = "../turtle" }
+jsonld-parser = { path = "../jsonld_parser" }
 axum = "0.8"
 tokio = { version = "1.52", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }

@@ -75,47 +75,60 @@ pub async fn admin_create_dataset(
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if !ct.contains("application/x-www-form-urlencoded") {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Content-Type must be application/x-www-form-urlencoded",
-        )
-            .into_response();
-    }
-
     let body_str = match String::from_utf8(body.to_vec()) {
         Ok(s) => s,
         Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8").into_response(),
     };
 
-    let mut db_name: Option<String> = None;
-    let mut db_type: Option<String> = None;
-    for part in body_str.split('&') {
-        if let Some((k, v)) = part.split_once('=') {
-            let v = urlencoding::decode(v).unwrap_or(std::borrow::Cow::Borrowed(v));
-            match k {
-                "dbName" => db_name = Some(v.into_owned()),
-                "dbType" => db_type = Some(v.into_owned()),
-                _ => {}
+    let name = if ct.contains("application/x-www-form-urlencoded") {
+        let mut db_name: Option<String> = None;
+        let mut db_type: Option<String> = None;
+        for part in body_str.split('&') {
+            if let Some((k, v)) = part.split_once('=') {
+                let v = urlencoding::decode(v).unwrap_or(std::borrow::Cow::Borrowed(v));
+                match k {
+                    "dbName" => db_name = Some(v.into_owned()),
+                    "dbType" => db_type = Some(v.into_owned()),
+                    _ => {}
+                }
             }
         }
-    }
 
-    let name = match db_name {
-        Some(n) => n,
-        None => return (StatusCode::BAD_REQUEST, "Missing dbName").into_response(),
-    };
-    match db_type.as_deref() {
-        Some("mem") => {}
-        Some(t) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Unsupported dbType '{t}'; only 'mem' is supported"),
-            )
-                .into_response();
+        let name = match db_name {
+            Some(n) => n,
+            None => return (StatusCode::BAD_REQUEST, "Missing dbName").into_response(),
+        };
+        match db_type.as_deref() {
+            Some("mem") => {}
+            Some(t) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Unsupported dbType '{t}'; only 'mem' is supported"),
+                )
+                    .into_response();
+            }
+            None => return (StatusCode::BAD_REQUEST, "Missing dbType").into_response(),
         }
-        None => return (StatusCode::BAD_REQUEST, "Missing dbType").into_response(),
-    }
+        name
+    } else if ct.contains("text/turtle") {
+        // Fuseki-compatible dataset creation accepts a Turtle assembler payload.
+        match extract_fuseki_name_from_assembler(&body_str) {
+            Some(n) => n,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "Could not extract fuseki:name from assembler Turtle",
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Content-Type must be application/x-www-form-urlencoded or text/turtle",
+        )
+            .into_response();
+    };
 
     let name = name.trim_start_matches('/').to_string();
     if name.is_empty() {
@@ -130,6 +143,14 @@ pub async fn admin_create_dataset(
     let new_store = Arc::new(RwLock::new(Datastore::new(1024)));
     registry.insert(&name, new_store);
     StatusCode::OK.into_response()
+}
+
+fn extract_fuseki_name_from_assembler(body: &str) -> Option<String> {
+    let (_, after_key) = body.split_once("fuseki:name")?;
+    let start = after_key.find('"')?;
+    let tail = &after_key[start + 1..];
+    let end = tail.find('"')?;
+    Some(tail[..end].to_string())
 }
 
 /// `DELETE /$/datasets/{name}` — remove a dataset.

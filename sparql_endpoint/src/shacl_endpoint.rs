@@ -21,17 +21,29 @@ Contact: hovlanddag@gmail.com
 
 use crate::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use dag_rdf::Datastore;
+use std::collections::HashMap;
 
 pub async fn dataset_shacl_post(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
+    if let Some(graph) = params.get("graph")
+        && graph != "union"
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Unsupported graph selector for SHACL; expected graph=union",
+        )
+            .into_response();
+    }
+
     let Some(ds_lock) = state.registry.read().await.get(&name) else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };

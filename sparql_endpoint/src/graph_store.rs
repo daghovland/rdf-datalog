@@ -164,15 +164,18 @@ pub(crate) fn rdf_upload_format(ct: &str) -> Option<UploadFormat> {
         "application/n-triples" => Some(UploadFormat::NTriples),
         "application/n-quads" => Some(UploadFormat::NQuads),
         "application/trig" => Some(UploadFormat::TriG),
+        "application/ld+json" => Some(UploadFormat::JsonLd),
         _ => None,
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UploadFormat {
     Turtle,
     NTriples,
     NQuads,
     TriG,
+    JsonLd,
 }
 
 // ── Shared graph serialisation ────────────────────────────────────────────────
@@ -243,6 +246,32 @@ fn copy_default_graph_to(
     }
 }
 
+/// Copy all quads from `src` into `dst`, preserving named graph IRIs.
+fn copy_dataset_to(src: &dag_rdf::Datastore, dst: &mut dag_rdf::Datastore) {
+    for q in src.named_graphs.quad_list.iter().copied() {
+        let graph = dst.add_resource(src.resources.get_graph_element(q.triple_id).clone());
+        let s = dst.add_resource(src.resources.get_graph_element(q.subject).clone());
+        let p = dst.add_resource(src.resources.get_graph_element(q.predicate).clone());
+        let o = dst.add_resource(src.resources.get_graph_element(q.obj).clone());
+        dst.named_graphs.add_quad(dag_rdf::ingress::Quad {
+            triple_id: graph,
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+}
+
+fn graph_iri_for(tmp: &dag_rdf::Datastore, graph_id: GraphElementId) -> Option<String> {
+    if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+        return None;
+    }
+    match tmp.resources.get_graph_element(graph_id) {
+        GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri))) => Some(iri.clone()),
+        _ => None,
+    }
+}
+
 /// Parse `body` using the format indicated by `fmt` into a temporary `Datastore`.
 #[allow(clippy::result_large_err)]
 pub(crate) fn parse_rdf_body(
@@ -250,12 +279,19 @@ pub(crate) fn parse_rdf_body(
     fmt: UploadFormat,
 ) -> Result<dag_rdf::Datastore, axum::response::Response> {
     let mut tmp = dag_rdf::Datastore::new(256);
-    let result = match fmt {
+    let result: Result<(), String> = match fmt {
         UploadFormat::Turtle | UploadFormat::NTriples => {
-            turtle::parse_turtle(&mut tmp, Cursor::new(body))
+            turtle::parse_turtle(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
         }
-        UploadFormat::NQuads => turtle::parse_nquads(&mut tmp, Cursor::new(body)),
-        UploadFormat::TriG => turtle::parse_trig(&mut tmp, Cursor::new(body)),
+        UploadFormat::NQuads => {
+            turtle::parse_nquads(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
+        UploadFormat::TriG => {
+            turtle::parse_trig(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
+        UploadFormat::JsonLd => {
+            jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
     };
     result
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
@@ -576,9 +612,12 @@ pub async fn gsp_post_inner(
         }
         // Acquire write lock first, then check existence and commit changelog.
         let mut store = state.store.write().await;
-        let graph_id = match store.lookup_named_graph_id(iri) {
-            Some(id) if store.named_graph_exists(id) => id,
-            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+        let (graph_id, created) = match store.lookup_named_graph_id(iri) {
+            Some(id) if store.named_graph_exists(id) => (id, false),
+            _ => {
+                let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
+                (store.resources.add_resource(elem), true)
+            }
         };
         if let Some(ref changelog) = state.changelog {
             let entries: Vec<_> = tmp
@@ -601,10 +640,42 @@ pub async fn gsp_post_inner(
             }
         }
         copy_default_graph_to(&tmp, &mut store, graph_id);
-        return StatusCode::NO_CONTENT.into_response();
+        return if created {
+            StatusCode::CREATED.into_response()
+        } else {
+            StatusCode::NO_CONTENT.into_response()
+        };
     }
 
     // ── Case 3: no param — create a new graph with a server-assigned IRI ─────
+    if fmt == UploadFormat::TriG || fmt == UploadFormat::NQuads {
+        let mut store = state.store.write().await;
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .quad_list
+                .iter()
+                .copied()
+                .map(|q| LogEntry::InsertQuad {
+                    graph: graph_iri_for(&tmp, q.triple_id),
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
+        copy_dataset_to(&tmp, &mut store);
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
     let new_iri = {
         let ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

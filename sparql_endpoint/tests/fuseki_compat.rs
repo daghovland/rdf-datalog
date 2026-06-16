@@ -108,6 +108,54 @@ const CLEAR_DEFAULT: &str = "CLEAR DEFAULT";
 /// SPARQL Update that drops a named graph entirely.
 const DROP_GRAPH: &str = "DROP GRAPH <http://example.org/graph1>";
 
+/// Fuseki assembler payload used by clients that create datasets via text/turtle.
+const FUSEKI_ASSEMBLER_NEWDS_TTL: &str = r#"
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#service> rdf:type fuseki:Service ;
+    fuseki:name "newds_ttl" ;
+    fuseki:endpoint [ fuseki:operation fuseki:query ; fuseki:name "sparql" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:update ; fuseki:name "update" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:upload ; fuseki:name "upload" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:gsp-rw ; fuseki:name "data" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:shacl ; fuseki:name "shacl" ] ;
+    fuseki:dataset <#dataset> .
+
+<#dataset> rdf:type ja:MemoryDataset .
+"#;
+
+/// TriG fixture containing two distinct named graphs.
+const TWO_NAMED_GRAPHS_TRIG: &str = r#"
+    @prefix ex: <http://example.org/> .
+    @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+    <http://example.org/graph-a> {
+        ex:alice foaf:name "Alice" .
+    }
+
+    <http://example.org/graph-b> {
+        ex:bob foaf:name "Bob" .
+    }
+"#;
+
+/// N-Quads fixture containing one quad in a named graph.
+const ONE_NAMED_GRAPH_NQUADS: &str =
+    "<http://example.org/nq-subject> <http://xmlns.com/foaf/0.1/name> \"NQ\" <http://example.org/graph-nq> .\n";
+
+/// Minimal JSON-LD payload accepted by records fallback upload path.
+const SIMPLE_JSONLD: &str = r#"
+{
+  "@context": {
+    "ex": "http://example.org/",
+    "name": "http://xmlns.com/foaf/0.1/name"
+  },
+  "@id": "ex:jsonld-subject",
+  "name": "JsonLdName"
+}
+"#;
+
 // ── A: Per-dataset query endpoint — Phase F1 ─────────────────────────────────
 //
 // Fuseki exposes `/{name}/sparql` and `/{name}/query` as aliases for the
@@ -372,6 +420,42 @@ async fn fuseki_gsp_put_named_graph_creates_graph() {
         .await
         .expect("GET failed");
     assert_eq!(get.status(), 200);
+}
+
+/// B-9: POST `/{name}/data?graph=<iri>` creates missing named graphs.
+///
+/// Fuseki clients (including records build flow) post directly to `?graph=`
+/// without pre-creating the graph via PUT.
+#[tokio::test]
+async fn fuseki_gsp_post_named_graph_creates_if_missing() {
+    let server = common::TestServer::start_writable("").await;
+    let resp = server
+        .client
+        .post(server.dataset_data_graph_url(DS, "http://example.org/post-created"))
+        .header("Content-Type", "text/turtle")
+        .body(UPLOAD_TTL)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        resp.status() == 201 || resp.status() == 204 || resp.status() == 200,
+        "expected 201/204/200, got {}",
+        resp.status()
+    );
+
+    let get = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/post-created"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET failed");
+    assert_eq!(get.status(), 200);
+    let body = get.text().await.expect("response body");
+    assert!(
+        body.contains("http://example.org/diana"),
+        "expected uploaded triple in new named graph, got:\n{body}"
+    );
 }
 
 /// B-8: `/{name}/get` read-only endpoint allows GET but rejects PUT.
@@ -886,6 +970,44 @@ async fn fuseki_admin_delete_nonexistent_dataset_returns_404() {
     );
 }
 
+/// E-9: POST `/$/datasets` accepts Fuseki assembler Turtle payload.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_from_assembler_turtle() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_NEWDS_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        200,
+        "create dataset from assembler turtle must return 200, got {}",
+        create.status()
+    );
+
+    let list: serde_json::Value = server
+        .client
+        .get(server.admin_datasets_url())
+        .send()
+        .await
+        .expect("list request failed")
+        .json()
+        .await
+        .expect("list must be JSON");
+    let datasets = list["datasets"].as_array().expect("datasets array");
+    let found = datasets
+        .iter()
+        .any(|d| d["ds.name"] == "/newds_ttl" || d["ds.name"] == "newds_ttl");
+    assert!(
+        found,
+        "dataset created from assembler turtle not found in list: {datasets:?}"
+    );
+}
+
 // ── F: SPARQL Update — Phase F5 ──────────────────────────────────────────────
 //
 // The `/{name}/update` endpoint accepts SPARQL 1.1 Update operations.
@@ -1282,6 +1404,111 @@ async fn fuseki_gsp_put_unsupported_content_type_returns_415() {
         415,
         "unsupported Content-Type must return 415, got {}",
         resp.status()
+    );
+}
+
+/// G-8: POST `/{name}/data` (no params) with TriG preserves named graph IRIs.
+#[tokio::test]
+async fn fuseki_gsp_post_data_no_params_trig_preserves_named_graphs() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_url(DS))
+        .header("Content-Type", "application/trig")
+        .body(TWO_NAMED_GRAPHS_TRIG)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "TriG POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let graph_a = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-a"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-a failed");
+    assert_eq!(graph_a.status(), 200, "graph-a must exist after TriG POST");
+
+    let graph_b = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-b"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-b failed");
+    assert_eq!(graph_b.status(), 200, "graph-b must exist after TriG POST");
+}
+
+/// G-9: POST `/{name}/data` (no params) with N-Quads preserves named graph IRI.
+#[tokio::test]
+async fn fuseki_gsp_post_data_no_params_nquads_preserves_named_graph() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_url(DS))
+        .header("Content-Type", "application/n-quads")
+        .body(ONE_NAMED_GRAPH_NQUADS)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "N-Quads POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let graph = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-nq"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-nq failed");
+    assert_eq!(graph.status(), 200, "graph-nq must exist after N-Quads POST");
+}
+
+/// G-10: POST `/{name}/data?graph=<iri>` accepts JSON-LD uploads.
+#[tokio::test]
+async fn fuseki_gsp_post_graph_jsonld_is_accepted() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_graph_url(DS, "http://example.org/jsonld-graph"))
+        .header("Content-Type", "application/ld+json")
+        .body(SIMPLE_JSONLD)
+        .send()
+        .await
+        .expect("JSON-LD POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "JSON-LD POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let get = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/jsonld-graph"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET failed");
+    assert_eq!(
+        get.status(),
+        200,
+        "graph uploaded from JSON-LD must be retrievable"
+    );
+    let body = get.text().await.expect("response body");
+    assert!(
+        body.contains("http://example.org/jsonld-subject"),
+        "expected JSON-LD subject in graph, got:\n{body}"
     );
 }
 

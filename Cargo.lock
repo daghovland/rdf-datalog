@@ -2336,6 +2336,7 @@ dependencies = [
  "base64 0.21.7",
  "dag-rdf",
  "ingress",
+ "jsonld-parser",
  "jsonwebtoken",
  "rand 0.8.6",
  "redb",
