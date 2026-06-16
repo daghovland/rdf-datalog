@@ -115,7 +115,9 @@ pub async fn dataset_data_post(
     let Some(ds) = get_dataset_store(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_post_inner(dataset_state(&state, ds), params, headers, body).await
+    // Fuseki /{name}/data creates named graphs on POST even when they don't
+    // exist yet — real Fuseki clients rely on this without a prior PUT.
+    graph_store::gsp_post_inner(dataset_state(&state, ds), params, headers, body, true).await
 }
 
 pub async fn dataset_data_delete(

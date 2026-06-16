@@ -540,7 +540,9 @@ pub async fn gsp_post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    gsp_post_inner(state, params, headers, body).await
+    // The standard GSP endpoint follows spec §5.5: POST to ?graph=<iri> that
+    // does not exist returns 404 (SHOULD, not creates).
+    gsp_post_inner(state, params, headers, body, false).await
 }
 
 pub async fn gsp_post_inner(
@@ -548,6 +550,10 @@ pub async fn gsp_post_inner(
     params: HashMap<String, String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
+    // Fuseki compat: create the named graph if it doesn't already exist.
+    // The W3C GSP spec §5.5 says SHOULD 404 for nonexistent graphs; Fuseki's
+    // per-dataset /data endpoint creates them instead so existing clients work.
+    create_if_missing: bool,
 ) -> axum::response::Response {
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -605,7 +611,10 @@ pub async fn gsp_post_inner(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // ── Case 2: ?graph=<iri> — merge into an existing named graph ────────────
+    // ── Case 2: ?graph=<iri> — merge into a named graph ─────────────────────
+    //
+    // Spec §5.5 SHOULD: return 404 when the named graph does not exist.
+    // Fuseki extension: create-if-missing (create_if_missing=true).
     if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
@@ -614,10 +623,11 @@ pub async fn gsp_post_inner(
         let mut store = state.store.write().await;
         let (graph_id, created) = match store.lookup_named_graph_id(iri) {
             Some(id) if store.named_graph_exists(id) => (id, false),
-            _ => {
+            _ if create_if_missing => {
                 let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
                 (store.resources.add_resource(elem), true)
             }
+            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
         };
         if let Some(ref changelog) = state.changelog {
             let entries: Vec<_> = tmp
