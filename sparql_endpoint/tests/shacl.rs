@@ -146,3 +146,41 @@ async fn shacl_post_bad_shapes() {
 
     assert_eq!(resp.status(), 400, "malformed shapes must return 400");
 }
+
+/// `POST /{ds}/shacl?graph=union` is accepted (Fuseki-compatible query form).
+#[tokio::test]
+async fn shacl_post_graph_union_query_param_supported() {
+    let server = common::TestServer::start(DATA_CONFORMS).await;
+    let shapes = shapes_datatype("ex:Alice");
+    let resp = server
+        .client
+        .post(format!("{}/{DS}/shacl?graph=union", server.base_url))
+        .header("content-type", "text/turtle")
+        .body(shapes)
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200, "graph=union must be accepted");
+}
+
+/// `POST /{ds}/shacl?graph=<value>` rejects unsupported graph selectors.
+#[tokio::test]
+async fn shacl_post_graph_query_param_rejects_unsupported_values() {
+    let server = common::TestServer::start(DATA_CONFORMS).await;
+    let shapes = shapes_datatype("ex:Alice");
+    let resp = server
+        .client
+        .post(format!("{}/{DS}/shacl?graph=not-union", server.base_url))
+        .header("content-type", "text/turtle")
+        .body(shapes)
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "unsupported graph selector must return 400"
+    );
+}
