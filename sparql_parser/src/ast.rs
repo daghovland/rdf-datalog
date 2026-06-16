@@ -1,6 +1,6 @@
 use dag_rdf::GraphElement;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Query {
     Select {
         projection: Vec<ProjectionElement>,
@@ -15,16 +15,21 @@ pub enum Query {
     Ask {
         where_clause: Vec<QueryComponent>,
     },
+    Construct {
+        /// Template triple patterns; empty means short form (use WHERE BGPs as template).
+        template: Vec<TriplePattern>,
+        where_clause: Vec<QueryComponent>,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ProjectionElement {
     Variable(String),
     Expression(Expression, String), // Expression and alias
     Star,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum QueryComponent {
     BGP(Vec<TriplePattern>),
     Optional(Vec<QueryComponent>),
@@ -37,20 +42,20 @@ pub enum QueryComponent {
     Service(Term, Vec<QueryComponent>, bool), // bool is silent
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TriplePattern {
     pub subject: Term,
     pub predicate: Term,
     pub object: Term,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Term {
     Variable(String),
     Constant(GraphElement),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Expression {
     Variable(String),
     Constant(GraphElement),
@@ -64,7 +69,7 @@ pub enum Expression {
     NotIn(Box<Expression>, Vec<Expression>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -80,14 +85,14 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UnaryOp {
     Not,
     Plus,
     Minus,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Aggregate {
     Count(Box<Expression>, bool), // bool is distinct
     Sum(Box<Expression>, bool),
@@ -98,7 +103,7 @@ pub enum Aggregate {
     GroupConcat(Box<Expression>, String, bool), // String is separator
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OrderCondition {
     pub expression: Expression,
     pub ascending: bool,

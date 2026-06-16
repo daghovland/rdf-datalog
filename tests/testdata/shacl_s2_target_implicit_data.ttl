@@ -1,0 +1,11 @@
+# SHACL spec §2.1.3.3 — implicit class target data graph.
+# Source: https://www.w3.org/TR/shacl/#implicit-targetClass
+# ex:Person is both an rdfs:Class and an sh:NodeShape, so its instances
+# are implicitly targeted. ex:Alice has no ex:name → 1 violation.
+# ex:NewYork is not an ex:Person → not targeted.
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person .
+ex:Bob a ex:Person ; ex:name "Bob" .
+ex:NewYork a ex:Place .

@@ -1,0 +1,13 @@
+# SHACL spec §4.6.2 — sh:and shapes graph (AndExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# Both ex:firstName (minCount 1) and ex:lastName (minCount 1) are required.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:AndExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:and (
+        [ sh:property [ sh:path ex:firstName ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path ex:lastName  ; sh:minCount 1 ] ]
+    ) .

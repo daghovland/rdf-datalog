@@ -32,8 +32,10 @@ use dag_rdf::Datastore;
 use dagalog::{
     OutputFormat, apply_ontologies, apply_rules, format_results, load_file, run_sparql_query,
 };
+use sparql_endpoint::{AuthConfig, OidcConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -105,6 +107,89 @@ struct Cli {
         env = "DAGALOG_QUERY_TIMEOUT"
     )]
     query_timeout: u64,
+
+    // ── Tier 1: Static API key ───────────────────────────────────────────────
+    /// Shared API key for Bearer token auth; omit to disable (Tier 1)
+    #[arg(long = "api-key", value_name = "KEY", env = "DAGALOG_API_KEY")]
+    api_key: Option<String>,
+
+    /// Protect read endpoints (GET /sparql, etc.) with the API key too
+    #[arg(long = "require-auth-for-reads", env = "DAGALOG_AUTH_READS")]
+    require_auth_for_reads: bool,
+
+    // ── Tier 2: Generic OIDC ─────────────────────────────────────────────────
+    /// OIDC provider base URL, e.g. "https://login.microsoftonline.com/{tenant}/v2.0" (Tier 2)
+    #[arg(long = "oidc-issuer", value_name = "URL", env = "DAGALOG_OIDC_ISSUER")]
+    oidc_issuer: Option<String>,
+
+    /// Expected `aud` claim (resource URI or client ID), e.g. "api://dagalog"
+    #[arg(
+        long = "oidc-audience",
+        value_name = "STR",
+        env = "DAGALOG_OIDC_AUDIENCE"
+    )]
+    oidc_audience: Option<String>,
+
+    /// Explicit JWKS URI (skips OIDC discovery)
+    #[arg(
+        long = "oidc-jwks-uri",
+        value_name = "URL",
+        env = "DAGALOG_OIDC_JWKS_URI"
+    )]
+    oidc_jwks_uri: Option<String>,
+
+    /// JWT claim path holding the roles array (default: "roles"; Keycloak: "realm_access.roles")
+    #[arg(
+        long = "oidc-roles-claim",
+        value_name = "STR",
+        default_value = "roles",
+        env = "DAGALOG_OIDC_ROLES_CLAIM"
+    )]
+    oidc_roles_claim: String,
+
+    /// Role that grants Read access (default: "dagalog.Read")
+    #[arg(
+        long = "oidc-read-role",
+        value_name = "NAME",
+        default_value = "dagalog.Read",
+        env = "DAGALOG_OIDC_READ_ROLE"
+    )]
+    oidc_read_role: String,
+
+    /// Role that grants Write access (default: "dagalog.Write")
+    #[arg(
+        long = "oidc-write-role",
+        value_name = "NAME",
+        default_value = "dagalog.Write",
+        env = "DAGALOG_OIDC_WRITE_ROLE"
+    )]
+    oidc_write_role: String,
+
+    /// Role that grants Admin access (default: "dagalog.Admin")
+    #[arg(
+        long = "oidc-admin-role",
+        value_name = "NAME",
+        default_value = "dagalog.Admin",
+        env = "DAGALOG_OIDC_ADMIN_ROLE"
+    )]
+    oidc_admin_role: String,
+
+    /// Browser application client ID for MSAL.js (Azure) or Google Identity Services
+    #[arg(
+        long = "oidc-browser-client-id",
+        value_name = "ID",
+        env = "DAGALOG_OIDC_BROWSER_CLIENT_ID"
+    )]
+    oidc_browser_client_id: Option<String>,
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+    /// Directory for durable persistence (redb changelog); omit for in-memory mode
+    #[arg(long = "data-dir", value_name = "PATH", env = "DAGALOG_DATA_DIR")]
+    data_dir: Option<PathBuf>,
+
+    /// Force in-memory mode even if DAGALOG_DATA_DIR is set
+    #[arg(long = "no-persist", env = "DAGALOG_NO_PERSIST")]
+    no_persist: bool,
 }
 
 fn main() {
@@ -213,13 +298,21 @@ fn run(cli: Cli) -> Result<(), String> {
             cli.port
         );
 
+        let auth = build_auth_config(&cli)?;
+        let data_dir = if cli.no_persist {
+            None
+        } else {
+            cli.data_dir.clone()
+        };
         let config = sparql_endpoint::Config {
             bind_addr,
             base_iri,
             read_only: cli.read_only,
             max_query_timeout_secs: cli.query_timeout,
+            auth,
+            data_dir,
         };
-        let store = Arc::new(tokio::sync::RwLock::new(datastore));
+        let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| format!("failed to create async runtime: {}", e))?;
         runtime
@@ -238,4 +331,36 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn build_auth_config(cli: &Cli) -> Result<AuthConfig, String> {
+    if cli.api_key.is_some() && cli.oidc_issuer.is_some() {
+        return Err("--api-key and --oidc-issuer cannot both be set".to_string());
+    }
+
+    if let Some(key) = &cli.api_key {
+        return Ok(AuthConfig::ApiKey {
+            key: key.clone(),
+            require_for_reads: cli.require_auth_for_reads,
+        });
+    }
+
+    if let Some(issuer) = &cli.oidc_issuer {
+        let audience = cli
+            .oidc_audience
+            .as_ref()
+            .ok_or_else(|| "--oidc-audience is required when --oidc-issuer is set".to_string())?;
+        return Ok(AuthConfig::Oidc(OidcConfig {
+            issuer: issuer.clone(),
+            jwks_uri: cli.oidc_jwks_uri.clone(),
+            audience: audience.clone(),
+            roles_claim: cli.oidc_roles_claim.clone(),
+            read_role: cli.oidc_read_role.clone(),
+            write_role: cli.oidc_write_role.clone(),
+            admin_role: cli.oidc_admin_role.clone(),
+            browser_client_id: cli.oidc_browser_client_id.clone(),
+        }));
+    }
+
+    Ok(AuthConfig::None)
 }

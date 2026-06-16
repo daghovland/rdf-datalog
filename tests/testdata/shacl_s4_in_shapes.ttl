@@ -1,0 +1,13 @@
+# SHACL spec §4.8.3 — sh:in shapes graph (InExampleShape).
+# Source: https://www.w3.org/TR/shacl/#InConstraintComponent
+# sh:in takes an RDF list of allowed values.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:InExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:status ;
+        sh:in ( ex:Pending ex:Active ex:Closed ) ;
+    ] .

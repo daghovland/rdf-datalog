@@ -1,0 +1,9 @@
+# SHACL spec §4.1.3 — sh:nodeKind data graph (NodeKindExampleShape).
+# Source: https://www.w3.org/TR/shacl/#NodeKindConstraintComponent
+# Objects of ex:knows are the target nodes (sh:targetObjectsOf).
+# ex:Bob ex:knows ex:Alice — ex:Alice is an IRI → conforms.
+# ex:Alice ex:knows "Bob"  — "Bob" is a literal, not an IRI → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Bob ex:knows ex:Alice .
+ex:Alice ex:knows "Bob" .

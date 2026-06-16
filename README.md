@@ -19,10 +19,15 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD) | ✓ |
 | SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/…) | ✓ |
 | Multi-dataset server (Fuseki-compatible routing and admin API) | ✓ |
+| Static API key authentication (library API; `--api-key` CLI flag pending) | ✓ |
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
-| Custom Datalog rules with stratified negation | ✓ |
+| Custom Datalog rules with stratified negation and SPARQL FILTER guards | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
+| SHACL Core validation via Datalog translation | in progress |
+| SHACL-AF SPARQL-based constraints (§5–6) | planned |
 | OWL Manchester Syntax parser | planned |
+| Durable transactional persistence (`redb`-backed WAL) | planned |
+| Incremental Datalog materialisation (Backward/Forward algorithm) | planned |
 
 > Every code example in this file is also an integration test in
 > [`tests/readme_examples.rs`](tests/readme_examples.rs).
@@ -40,6 +45,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | `owl_ontology` | OWL 2 axiom and ontology data types (pure data model) |
 | `eli` | EL profile normalisation and ELI→Datalog translation |
 | `owl2rl2datalog` | OWL 2 RL → Datalog rule translation (W3C §4.3) |
+| `shacl` | SHACL Core → Datalog translation + `ValidationReport` types |
 | `rdf_owl_translator` | RDF triples → OWL 2 axiom extraction |
 | `turtle_parser` | Turtle/TriG parser (`rio_turtle`); populates a `Datastore` |
 | `jsonld_parser` | JSON-LD 1.1 parser and serialiser (expanded, compacted, flattened) |
@@ -352,6 +358,128 @@ Use `--ontology` on the CLI to apply reasoning before running a query.
 
 ---
 
+## SHACL validation
+
+SHACL (Shapes Constraint Language — [W3C TR](https://www.w3.org/TR/shacl/)) lets
+you declare constraints over RDF graphs and validate data against them.
+
+**Implementation approach:** SHACL Core constraints are translated to stratified Datalog
+rules (the same engine that powers OWL-RL reasoning), then materialised over the data
+graph. SHACL-AF §5–6 SPARQL-based constraints are executed directly by the built-in
+SPARQL engine. No external processes or dependencies are required.
+
+The `shacl` crate types are defined; validation is in progress — see
+[`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) for the phased implementation roadmap.
+
+### API (planned)
+
+```rust
+use dag_rdf::Datastore;
+use dagalog::load_file;
+
+let mut data = Datastore::new(100_000);
+load_file(&mut data, Path::new("data.ttl")).unwrap();
+
+let mut shapes = Datastore::new(10_000);
+load_file(&mut shapes, Path::new("shapes.ttl")).unwrap();
+
+let report = shacl::validate(&data, &shapes).unwrap();
+if report.conforms {
+    println!("data graph conforms to all shapes");
+} else {
+    for r in &report.results {
+        println!("violation at {:?}: {:?}", r.focus_node, r.message);
+    }
+}
+```
+
+### §1.4 Introductory example
+
+The W3C SHACL specification §1.4 introduces a `PersonShape` that constrains every
+`ex:Person` instance:
+
+```turtle
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX sh:  <http://www.w3.org/ns/shacl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex:  <http://example.com/ns#>
+
+ex:PersonShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Person ;
+    sh:property [
+        sh:path ex:ssn ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:pattern "^\\d{3}-\\d{2}-\\d{4}$" ;
+    ] ;
+    sh:property [
+        sh:path ex:worksFor ;
+        sh:class ex:Company ;
+        sh:nodeKind sh:IRI ;
+    ] ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) .
+```
+
+The spec data graph (`shacl_s1_intro_data.ttl`) produces 4 violations:
+
+| Focus node | Constraint | Reason |
+|---|---|---|
+| `ex:Alice` | `sh:pattern` | `"987-65-432A"` does not match `^\d{3}-\d{2}-\d{4}$` |
+| `ex:Bob` | `sh:maxCount 1` | Two `ex:ssn` values present |
+| `ex:Calvin` | `sh:class ex:Company` | `ex:UntypedCompany` is not an `ex:Company` |
+| `ex:Calvin` | `sh:closed` | `ex:birthDate` is not listed in any `sh:property` |
+
+```
+# test: spec_s1_4_intro_person_shape_violations
+```
+
+### SHACL Core constraint components covered
+
+All tests are in [`tests/shacl_suite.rs`](tests/shacl_suite.rs) and are `#[ignore]`
+until the `shacl` crate implementation is complete. Test data lives in
+`tests/testdata/shacl_*.ttl`; all files are verified to parse by `shacl_testdata_parses`.
+
+| Spec section | Constraint component | Test name |
+|---|---|---|
+| §1.4 | Intro: `sh:closed`, `sh:pattern`, `sh:class`, `sh:maxCount` | `spec_s1_4_intro_person_shape_violations` |
+| §2.1.3.1 | `sh:targetNode` | `spec_s2_1_1_target_node` |
+| §2.1.3.2 | `sh:targetClass` | `spec_s2_1_2_target_class` |
+| §2.1.3.3 | Implicit class target (`rdfs:Class` + `sh:NodeShape`) | `spec_s2_1_3_target_implicit_class` |
+| §2.1.3.4 | `sh:targetSubjectsOf` | `spec_s2_1_4_target_subjects_of` |
+| §2.1.3.5 | `sh:targetObjectsOf` | `spec_s2_1_5_target_objects_of` |
+| §4.1.1 | `sh:class` | `spec_s4_1_1_class` |
+| §4.1.2 | `sh:datatype` | `spec_s4_1_2_datatype` |
+| §4.1.3 | `sh:nodeKind` | `spec_s4_1_3_nodekind` |
+| §4.2.1 | `sh:minCount` | `spec_s4_2_1_mincount` |
+| §4.2.2 | `sh:maxCount` | `spec_s4_2_2_maxcount` |
+| §4.3 | `sh:minInclusive`, `sh:maxInclusive` | `spec_s4_3_value_range` |
+| §4.4.1 | `sh:minLength` | `spec_s4_4_1_minlength` |
+| §4.4.2 | `sh:maxLength` | `spec_s4_4_2_maxlength` |
+| §4.4.3 | `sh:pattern` | `spec_s4_4_3_pattern` |
+| §4.4.4 | `sh:languageIn` | `spec_s4_4_4_languagein` |
+| §4.4.5 | `sh:uniqueLang` | `spec_s4_4_5_uniquelang` |
+| §4.5.1 | `sh:equals` | `spec_s4_5_1_equals` |
+| §4.5.2 | `sh:disjoint` | `spec_s4_5_2_disjoint` |
+| §4.5.3 | `sh:lessThan` | `spec_s4_5_3_lessthan` |
+| §4.5.4 | `sh:lessThanOrEquals` | `spec_s4_5_4_lessthanorequals` |
+| §4.6.1 | `sh:not` | `spec_s4_6_1_not` |
+| §4.6.2 | `sh:and` | `spec_s4_6_2_and` |
+| §4.6.3 | `sh:or` | `spec_s4_6_3_or` |
+| §4.6.4 | `sh:xone` | `spec_s4_6_4_xone` |
+| §4.7.1 | `sh:node` | `spec_s4_7_1_node` |
+| §4.7.3 | `sh:qualifiedValueShape` + `sh:qualifiedMinCount` | `spec_s4_7_3_qualified_value_shape` |
+| §4.8.1 | `sh:closed` + `sh:ignoredProperties` | `spec_s4_8_1_closed` |
+| §4.8.2 | `sh:hasValue` | `spec_s4_8_2_has_value` |
+| §4.8.3 | `sh:in` | `spec_s4_8_3_in` |
+
+> Not yet covered: §4.3.1 `sh:minExclusive`, §4.3.3 `sh:maxExclusive`,
+> §4.7.2 `sh:property` (inline shape), §4.7.3 `sh:qualifiedMaxCount`,
+> §6 SPARQL-based constraints (SHACL-AF).
+
+---
+
 ## Custom Datalog rules
 
 ### Syntax
@@ -378,10 +506,22 @@ ex:Eligible[?x] :- ex:Applicant[?x], NOT ex:Rejected[?x] .
 
 # Inconsistency constraint
 false :- [?X, a, ex:Disjoint1], [?X, a, ex:Disjoint2] .
+
+# FILTER guard — any SPARQL 1.1 expression
+ex:Minor[?x]   :- [?x, ex:age, ?a], FILTER(?a < 18) .
+ex:ShortName[?x] :- [?x, ex:name, ?n], FILTER(STRLEN(?n) < 4) .
+ex:WrongType[?x] :- [?x, ex:val, ?v], FILTER(DATATYPE(?v) != xsd:integer) .
+ex:BadKind[?x]   :- [?x, ex:val, ?v], FILTER(!isIRI(?v)) .
 ```
 
 Built-in prefixes (no declaration needed): `rdf:`, `rdfs:`, `xsd:`, `owl:`.  
 `a` expands to `rdf:type` everywhere.
+
+`FILTER(expr)` in a rule body acts as a guard: the rule fires only when the
+SPARQL 1.1 expression evaluates to `true`.  All SPARQL 1.1 operators and
+functions are supported (`<`, `>=`, `!=`, `=`, `+`, `-`, `*`, `/`, `&&`, `||`,
+`!`, `regex()`, `strlen()`, `datatype()`, `isIRI()`, `isLiteral()`,
+`isBlankNode()`, `lang()`, `langMatches()`, `str()`, …).
 
 ### Applying rules from Rust
 
@@ -491,6 +631,8 @@ All CLI flags can also be set via environment variables (CLI flags take preceden
 | `DAGALOG_BASE_IRI` | `--base-iri` | Base IRI for the Service Description | `http://localhost:PORT` |
 | `DAGALOG_READ_ONLY` | `--read-only` | Disable all mutating endpoints | `false` |
 | `DAGALOG_QUERY_TIMEOUT` | `--query-timeout` | Maximum query time in seconds | `30` |
+| `DAGALOG_DATA_DIR` | `--data-dir` | Directory for durable storage (`redb` changelog at `<dir>/dagalog.redb`); omit for in-memory mode | *(in-memory)* |
+| `DAGALOG_NO_PERSIST` | `--no-persist` | Force in-memory mode even if `DAGALOG_DATA_DIR` is set | `false` |
 
 ---
 
@@ -550,13 +692,25 @@ Response format negotiated via `Accept`; default `application/sparql-results+jso
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use dag_rdf::Datastore;
-use sparql_endpoint::{Config, serve};
+use sparql_endpoint::{AuthConfig, Config, serve};
 
 #[tokio::main]
 async fn main() {
     let mut store = Datastore::new(1_000_000);
     // load data, apply reasoning, apply rules …
-    let config = Config::default(); // 0.0.0.0:3030
+
+    // No authentication (default):
+    let config = Config::default(); // 0.0.0.0:3030, no auth
+
+    // Or protect writes with a static API key:
+    let config = Config {
+        auth: AuthConfig::ApiKey {
+            key: "my-secret".to_string(),
+            require_for_reads: false, // reads stay open
+        },
+        ..Config::default()
+    };
+
     serve(Arc::new(RwLock::new(store)), config).await.unwrap();
 }
 ```
@@ -574,6 +728,7 @@ Navigate to `http://localhost:3030` in your browser for the interactive interfac
 | Resource browser | Click any IRI to explore its properties and back-links |
 | Class hierarchy | `/?view=classes` — collapsible tree of `rdfs:subClassOf` relationships |
 | Graph visualisation | Three-variable queries render as an interactive node-edge graph |
+| Visual query builder | `/?view=build` — point-and-click SPARQL composition; no query syntax required |
 | Turtle upload | Paste Turtle or drag-and-drop `.ttl`/`.owl`/`.jsonld` files |
 | Store statistics | Live triple count shown in the page header |
 
@@ -617,11 +772,47 @@ tab appears next to the Table tab. The graph is rendered via
 
 Graphs are capped at 200 nodes; add `LIMIT` to reduce the dataset.
 
+### Visual query builder
+
+Accessible at `/?view=build`, or via the **"Build query"** link that appears next to each
+`rdf:type` badge on a resource page.
+
+The builder lets you compose SELECT queries by clicking rather than writing SPARQL.
+The generated query is always shown and can be pushed into the full SPARQL editor for
+further hand-editing.
+
+**Class picker** — type any substring of a class name or IRI to filter the dropdown; all
+classes known to the store (declared as `owl:Class` or used as a `rdf:type` target) are
+listed. Selecting a class immediately populates the property panes.
+
+**Property panes** — properties are discovered by sampling the store:
+- *Data properties* (literal-valued) appear as checkboxes. Checking one adds an
+  `OPTIONAL { ?s <prop> ?var }` block to the query.
+- *Object properties* (IRI-valued) appear as **Follow →** buttons. Clicking one adds a
+  linked node card to the canvas and shifts focus to it.
+
+**Canvas** — node cards are laid out left-to-right connected by labelled arrows. Clicking
+any card makes it active; its property pane updates accordingly. A `×` button on each
+non-root card removes that node and its subtree.
+
+**Data-property filters** — when a data property is checked, a filter input appears.
+Typing text makes the property required (not OPTIONAL) and adds
+`FILTER(regex(?var, "text", "i"))` to the query.
+
+**Generated SPARQL rules:**
+- `?node a <Class>` triples are always required.
+- Object-property links are required (inner-join semantics — only instances with the link appear).
+- Unchecked data properties are excluded entirely.
+- Checked data properties without a filter are `OPTIONAL`.
+- Checked data properties with a filter become required triples with a top-level `FILTER`.
+- Variables follow the pattern `?s`, `?n1`, `?n2`, … for nodes and `?s_label`, `?n1_age`, …
+  for data properties.
+
 ---
 
 ## Protocol compliance
 
-See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
+See [`docs/architecture/PROTOCOLS.md`](docs/architecture/PROTOCOLS.md) for full details.
 
 | Priority | Protocol | Status |
 |---|---|---|
@@ -636,7 +827,14 @@ See [`PROTOCOLS.md`](PROTOCOLS.md) for full details.
 
 ## Implementation plan
 
-See [`PLAN.md`](PLAN.md) for the full phased roadmap.
+See [`docs/architecture/PLAN.md`](docs/architecture/PLAN.md) for the full phased roadmap.
+See [`docs/plans/`](docs/plans/) for feature area plans and known-issues tracking.
+See [`docs/architecture/`](docs/architecture/) for protocol compliance and architecture references.
+
+Upcoming areas:
+- [`docs/plans/PERSISTENCE_PLAN.md`](docs/plans/PERSISTENCE_PLAN.md) — durable transactional storage (`redb`) and incremental Datalog maintenance
+- [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) — SHACL Core validation via Datalog translation
+- [`docs/plans/AUTH.md`](docs/plans/AUTH.md) — API-key and Entra ID authentication
 
 ---
 

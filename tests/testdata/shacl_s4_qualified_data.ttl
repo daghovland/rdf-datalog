@@ -1,0 +1,9 @@
+# SHACL spec §4.7.3 — sh:qualifiedValueShape data graph (QualifiedExampleShape).
+# Source: https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent
+# sh:qualifiedMinCount 2: at least 2 ex:parent values must satisfy sh:nodeKind sh:IRI.
+# ex:Alice has IRI parents ex:Mom and ex:Dad → 2 qualifying values → conforms.
+# ex:Bob   has only IRI parent ex:Mom → 1 qualifying value < 2 → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:parent ex:Mom , ex:Dad .
+ex:Bob   ex:parent ex:Mom .

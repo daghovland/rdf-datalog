@@ -16,7 +16,10 @@ Contact: hovlanddag@gmail.com
 use crate::{
     AppState,
     negotiate::negotiate_select_format,
-    serialize::sparql_json::{ask_to_sparql_json, to_sparql_json},
+    serialize::{
+        serialize_construct_ntriples,
+        sparql_json::{ask_to_sparql_json, to_sparql_json},
+    },
     service_desc::service_description_turtle,
 };
 use axum::{
@@ -159,6 +162,15 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
                     "content-type",
                     "application/sparql-results+json; charset=utf-8",
                 )],
+                body,
+            )
+                .into_response()
+        }
+        QueryResult::Construct(triples) => {
+            let body = serialize_construct_ntriples(&triples);
+            (
+                StatusCode::OK,
+                [("content-type", "text/turtle; charset=utf-8")],
                 body,
             )
                 .into_response()

@@ -9,7 +9,8 @@ Contact: hovlanddag@gmail.com
 //! Shared helpers for sparql_endpoint integration tests.
 
 use dag_rdf::datastore::Datastore;
-use sparql_endpoint::{Config, serve_on_listener};
+use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
@@ -17,6 +18,9 @@ use turtle::{parse_trig, parse_turtle};
 /// A running test server bound to a random loopback port.
 ///
 /// Dropping this value cancels the background server task.
+/// For tests that need to restart the server (persistence tests), call
+/// `shutdown().await` to wait for the task to fully terminate and release
+/// any file locks before starting a second instance.
 pub struct TestServer {
     pub base_url: String,
     #[allow(dead_code)]
@@ -31,14 +35,14 @@ impl TestServer {
     ///
     /// Pass an empty string for an empty store.
     pub async fn start(turtle: &str) -> Self {
-        Self::start_inner(turtle, false, true).await
+        Self::start_inner(turtle, false, true, AuthConfig::None).await
     }
 
     /// Start a writable server (read_only: false) pre-loaded with Turtle data.
     ///
     /// Required for any test that exercises PUT, POST, or DELETE on the graph store.
     pub async fn start_writable(turtle: &str) -> Self {
-        Self::start_inner(turtle, false, false).await
+        Self::start_inner(turtle, false, false, AuthConfig::None).await
     }
 
     /// Start a writable server pre-loaded with TriG data.
@@ -46,10 +50,62 @@ impl TestServer {
     /// Use this when test fixtures need named graphs. TriG extends Turtle with
     /// `<graph-iri> { ... }` blocks.
     pub async fn start_writable_trig(trig: &str) -> Self {
-        Self::start_inner(trig, true, false).await
+        Self::start_inner(trig, true, false, AuthConfig::None).await
     }
 
-    async fn start_inner(data: &str, use_trig: bool, read_only: bool) -> Self {
+    /// Start a writable server protected by a static API key (reads are open).
+    pub async fn start_writable_with_key(turtle: &str, api_key: &str) -> Self {
+        Self::start_inner(
+            turtle,
+            false,
+            false,
+            AuthConfig::ApiKey {
+                key: api_key.to_string(),
+                require_for_reads: false,
+            },
+        )
+        .await
+    }
+
+    /// Start a writable server where both reads and writes require the API key.
+    pub async fn start_writable_with_key_protect_reads(turtle: &str, api_key: &str) -> Self {
+        Self::start_inner(
+            turtle,
+            false,
+            false,
+            AuthConfig::ApiKey {
+                key: api_key.to_string(),
+                require_for_reads: true,
+            },
+        )
+        .await
+    }
+
+    /// Start a writable server with OIDC authentication.
+    pub async fn start_with_oidc(turtle: &str, oidc_config: OidcConfig) -> Self {
+        Self::start_inner(turtle, false, false, AuthConfig::Oidc(oidc_config)).await
+    }
+
+    /// Start a persistent writable server using the given data directory.
+    ///
+    /// The changelog is stored at `<data_dir>/dagalog.redb`.  On startup the
+    /// changelog is replayed; any pre-loaded `data` Turtle is ignored after the
+    /// first restart (the log takes precedence).
+    pub async fn start_writable_persistent(data: &str, data_dir: &Path) -> Self {
+        Self::start_inner_with_data_dir(data, false, false, AuthConfig::None, Some(data_dir)).await
+    }
+
+    async fn start_inner(data: &str, use_trig: bool, read_only: bool, auth: AuthConfig) -> Self {
+        Self::start_inner_with_data_dir(data, use_trig, read_only, auth, None).await
+    }
+
+    async fn start_inner_with_data_dir(
+        data: &str,
+        use_trig: bool,
+        read_only: bool,
+        auth: AuthConfig,
+        data_dir: Option<&Path>,
+    ) -> Self {
         let mut ds = Datastore::new(1024);
         if !data.is_empty() {
             if use_trig {
@@ -71,6 +127,8 @@ impl TestServer {
             base_iri: base_url.clone(),
             read_only,
             max_query_timeout_secs: 10,
+            auth,
+            data_dir: data_dir.map(Path::to_path_buf),
         };
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)
@@ -83,6 +141,21 @@ impl TestServer {
             client: reqwest::Client::new(),
             _handle: handle,
         }
+    }
+
+    /// Abort the server task and wait for it to fully terminate.
+    ///
+    /// Necessary before starting a second server that uses the same `data_dir`,
+    /// because `redb` holds a file lock that is only released when the server
+    /// task (and its `QuadChangelog`) is fully dropped.
+    #[allow(dead_code)]
+    pub async fn shutdown(self) {
+        let handle = self._handle;
+        handle.abort();
+        // Wait for the abort to complete (returns JoinError::Cancelled, which is expected).
+        let _ = handle.await;
+        // Brief yield to let the OS fully release file locks.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     pub fn sparql_url(&self) -> String {
@@ -203,6 +276,65 @@ impl TestServer {
         let n = name.trim_start_matches('/');
         format!("{}/$/datasets/{n}", self.base_url)
     }
+}
+
+// ── Shared OIDC test key infrastructure ─────────────────────────────────────
+//
+// Generated once per test-process via OnceLock and shared across all test
+// files that use `mod common`.  This eliminates duplicate RSA key-gen in
+// oidc_auth.rs and any future test file that needs OIDC tokens.
+
+/// RSA key pair used by all OIDC integration tests.
+#[allow(dead_code)]
+pub struct OidcTestKeys {
+    pub encoding_key: jsonwebtoken::EncodingKey,
+    pub public_key: rsa::RsaPublicKey,
+    pub kid: String,
+}
+
+static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock::new();
+
+/// Returns the process-wide shared OIDC test key pair.
+///
+/// The RSA-2048 key is generated lazily on first call and reused for the
+/// lifetime of the test process.
+#[allow(dead_code)]
+pub fn oidc_test_keys() -> &'static OidcTestKeys {
+    SHARED_OIDC_KEYS.get_or_init(|| {
+        use rsa::{
+            RsaPrivateKey,
+            pkcs8::{EncodePrivateKey, LineEnding},
+        };
+        let mut rng = rand::rngs::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key gen");
+        let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).expect("PKCS8 PEM");
+        OidcTestKeys {
+            encoding_key: jsonwebtoken::EncodingKey::from_rsa_pem(private_pem.as_bytes())
+                .expect("encoding key"),
+            public_key: private_key.to_public_key(),
+            kid: "shared-oidc-test-key".to_string(),
+        }
+    })
+}
+
+/// Build a JWK Set JSON response for the shared OIDC test keys.
+#[allow(dead_code)]
+pub fn shared_jwks_response() -> serde_json::Value {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use rsa::traits::PublicKeyParts;
+    let keys = oidc_test_keys();
+    let n = URL_SAFE_NO_PAD.encode(keys.public_key.n().to_bytes_be());
+    let e = URL_SAFE_NO_PAD.encode(keys.public_key.e().to_bytes_be());
+    serde_json::json!({
+        "keys": [{
+            "kty": "RSA",
+            "kid": keys.kid,
+            "use": "sig",
+            "alg": "RS256",
+            "n": n,
+            "e": e
+        }]
+    })
 }
 
 // ── Assertion helpers ────────────────────────────────────────────────────────

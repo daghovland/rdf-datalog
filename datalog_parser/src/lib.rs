@@ -34,6 +34,11 @@ Contact: hovlanddag@gmail.com
 //! # Negation
 //! ex:prop[?s, ex:obj] :- ex:prop2[?s, ex:obj], NOT ex:prop3[?s, ex:obj] .
 //!
+//! # FILTER guard — any SPARQL 1.1 expression
+//! ex:Minor[?x] :- [?x, ex:age, ?a], FILTER(?a < 18) .
+//! ex:ShortName[?x] :- [?x, ex:name, ?n], FILTER(STRLEN(?n) < 4) .
+//! ex:BadKind[?x] :- [?x, ex:val, ?v], FILTER(!isIRI(?v)) .
+//!
 //! # Contradiction (derive ⊥)
 //! false :- [?X, a, <https://example.com/BadClass>] .
 //!
@@ -85,6 +90,7 @@ enum ParsedRuleHead {
 enum ParsedRuleAtom {
     PositivePattern(ParsedQuadPattern),
     NotPattern(ParsedQuadPattern),
+    FilterAtom(sparql_parser::ast::Expression),
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +104,14 @@ struct ParsedRule {
 struct ParserContext {
     prefixes: HashMap<String, String>,
     base_iri: Option<String>,
+}
+
+impl ParserContext {
+    fn to_sparql_context(&self) -> sparql_parser::ParserContext {
+        sparql_parser::ParserContext {
+            prefixes: self.prefixes.clone(),
+        }
+    }
 }
 
 impl Default for ParserContext {
@@ -534,22 +548,40 @@ fn parse_rule_atom<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, 
         let (rest, pattern) = parse_positive_atom(rest, ctx)?;
         return Ok((rest, ParsedRuleAtom::NotPattern(pattern)));
     }
+    if keyword_filter(input) {
+        let sparql_ctx = ctx.to_sparql_context();
+        match sparql_parser::parse_filter_expression(input, &sparql_ctx) {
+            Ok((consumed, expr)) => {
+                return Ok((&input[consumed..], ParsedRuleAtom::FilterAtom(expr)));
+            }
+            Err(_) => {
+                return Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
+        }
+    }
     let (input, pattern) = parse_positive_atom(input, ctx)?;
     Ok((input, ParsedRuleAtom::PositivePattern(pattern)))
 }
 
+fn is_ci_keyword(input: &str, keyword: &str) -> bool {
+    input.len() >= keyword.len()
+        && input[..keyword.len()].eq_ignore_ascii_case(keyword)
+        && input[keyword.len()..]
+            .chars()
+            .next()
+            .map(|c| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(true)
+}
+
+fn keyword_filter(input: &str) -> bool {
+    is_ci_keyword(input, "FILTER")
+}
+
 fn keyword_not(input: &str) -> bool {
-    input.len() >= 3 && {
-        let b = input.as_bytes();
-        matches!(b[0], b'N' | b'n')
-            && matches!(b[1], b'O' | b'o')
-            && matches!(b[2], b'T' | b't')
-            && input[3..]
-                .chars()
-                .next()
-                .map(|c| !c.is_alphanumeric() && c != '_')
-                .unwrap_or(true)
-    }
+    is_ci_keyword(input, "NOT")
 }
 
 // ── IRI interning: ParsedRule → Rule ─────────────────────────────────────────
@@ -573,6 +605,7 @@ fn intern_rule_atom(atom: ParsedRuleAtom, ds: &mut Datastore) -> Result<RuleAtom
             RuleAtom::PositivePattern(intern_quad_pattern(p, ds)?)
         }
         ParsedRuleAtom::NotPattern(p) => RuleAtom::NotPattern(intern_quad_pattern(p, ds)?),
+        ParsedRuleAtom::FilterAtom(expr) => RuleAtom::FilterAtom(expr),
     })
 }
 

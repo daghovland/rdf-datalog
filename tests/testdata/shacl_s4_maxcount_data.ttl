@@ -1,0 +1,9 @@
+# SHACL spec §4.2.2 — sh:maxCount data graph (MaxCountExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MaxCountConstraintComponent
+# ex:Bob has exactly one ex:birthDate → satisfies maxCount 1 → conforms (0 violations).
+# ex:Carol has two ex:birthDate values → violates maxCount 1 → 1 violation.
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Bob   ex:birthDate "May 5th 1990" .
+ex:Carol ex:birthDate "1990-05-05"^^xsd:date , "May 5th 1990" .

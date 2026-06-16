@@ -1,0 +1,10 @@
+# SHACL spec §4.1.3 — sh:nodeKind shapes graph (NodeKindExampleShape).
+# Source: https://www.w3.org/TR/shacl/#NodeKindConstraintComponent
+# Targets objects of ex:knows; requires each to be an IRI.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NodeKindExampleShape
+    a sh:NodeShape ;
+    sh:targetObjectsOf ex:knows ;
+    sh:nodeKind sh:IRI .

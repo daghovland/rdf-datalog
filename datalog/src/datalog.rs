@@ -9,7 +9,7 @@ Contact: hovlanddag@gmail.com
 use crate::types::{
     PartialRule, PartialRuleMatch, QuadWildcard, ResourceOrWildcard, Rule, RuleAtom, Substitution,
 };
-use dag_rdf::{GraphElementId, Quad, QuadPattern, QuadTable, Term};
+use dag_rdf::{Datastore, GraphElementId, Quad, QuadPattern, QuadTable, Term};
 use std::collections::HashMap;
 
 pub fn empty_substitution() -> Substitution {
@@ -302,8 +302,14 @@ pub fn evaluate_positive(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<
     subs
 }
 
-/// Full evaluation: positive atoms first, then filter by negated atoms.
-pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
+/// Full evaluation: positive atoms first, then filter by negated atoms, inequality guards,
+/// and SPARQL expression guards (`FilterAtom`).
+///
+/// `datastore` is the full store; both `named_graphs` (for pattern matching and EXISTS
+/// subqueries) and `resources` (for resolving IDs in `FilterAtom` expressions) are used.
+pub fn evaluate(datastore: &Datastore, rule_match: &PartialRuleMatch) -> Vec<Substitution> {
+    let rdf = &datastore.named_graphs;
+
     let not_patterns: Vec<QuadPattern> = rule_match
         .partial_rule
         .rule
@@ -315,19 +321,68 @@ pub fn evaluate(rdf: &QuadTable, rule_match: &PartialRuleMatch) -> Vec<Substitut
         })
         .collect();
 
+    let not_equals: Vec<(Term, Term)> = rule_match
+        .partial_rule
+        .rule
+        .body
+        .iter()
+        .filter_map(|a| match a {
+            RuleAtom::NotEqualsAtom(t1, t2) => Some((t1.clone(), t2.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let filter_exprs: Vec<sparql_parser::ast::Expression> = rule_match
+        .partial_rule
+        .rule
+        .body
+        .iter()
+        .filter_map(|a| match a {
+            RuleAtom::FilterAtom(expr) => Some(expr.clone()),
+            _ => None,
+        })
+        .collect();
+
     let pos = evaluate_positive(rdf, rule_match);
 
-    if not_patterns.is_empty() {
+    if not_patterns.is_empty() && not_equals.is_empty() && filter_exprs.is_empty() {
         return pos;
     }
 
     pos.into_iter()
         .filter(|sub| {
+            // Apply inequality guards: v1 != v2
+            let ne_ok = not_equals.iter().all(|(t1, t2)| {
+                let id1 = resolve_term(t1, sub);
+                let id2 = resolve_term(t2, sub);
+                match (id1, id2) {
+                    (Some(a), Some(b)) => a != b,
+                    _ => true, // unbound terms are considered distinct
+                }
+            });
+            if !ne_ok {
+                return false;
+            }
+            // Apply SPARQL expression guards (FilterAtom)
+            let filter_ok = filter_exprs
+                .iter()
+                .all(|expr| sparql_parser::eval_expr_as_filter(expr, sub, datastore));
+            if !filter_ok {
+                return false;
+            }
+            // Apply negated patterns
             not_patterns
                 .iter()
                 .all(|np| evaluate_pattern(rdf, np, sub.clone()).next().is_none())
         })
         .collect()
+}
+
+fn resolve_term(term: &Term, sub: &Substitution) -> Option<GraphElementId> {
+    match term {
+        Term::Resource(id) => Some(*id),
+        Term::Variable(v) => sub.get(v).copied(),
+    }
 }
 
 /// Build a partial rule index: quad-wildcard → list of partial rules.

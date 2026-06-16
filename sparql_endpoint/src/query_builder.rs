@@ -41,11 +41,14 @@ pub struct QueryNode {
 ///
 /// `var_name` is pre-sanitised (e.g. `"s_label"` for `?s_label`).
 /// Only `checked == true` properties appear in the generated query.
+/// When `filter` is `Some(text)` the triple becomes required (not OPTIONAL)
+/// and a `FILTER(regex(?var, text, "i"))` is appended.
 #[derive(Debug, Clone)]
 pub struct DataProp {
     pub prop_iri: String,
     pub var_name: String,
     pub checked: bool,
+    pub filter: Option<String>,
 }
 
 /// A directed object-property link to another node.
@@ -79,6 +82,7 @@ impl QueryNode {
             prop_iri: prop_iri.into(),
             var_name: var_name.into(),
             checked,
+            filter: None,
         });
         self
     }
@@ -111,9 +115,55 @@ impl QueryNode {
 /// - SELECT projects all node variables + all checked data-property variables,
 ///   in depth-first traversal order.
 ///
-/// Implement in QB Phase 1.
-pub fn generate_sparql(_root: &QueryNode) -> String {
-    unimplemented!("QB Phase 1: implement generate_sparql")
+pub fn generate_sparql(root: &QueryNode) -> String {
+    let mut select_vars = Vec::new();
+    let mut body_lines = Vec::new();
+    collect_node(root, &mut select_vars, &mut body_lines);
+    format!(
+        "SELECT {} WHERE {{\n{}\n}}",
+        select_vars
+            .iter()
+            .map(|v| format!("?{v}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        body_lines.join("\n"),
+    )
+}
+
+fn collect_node(node: &QueryNode, select: &mut Vec<String>, body: &mut Vec<String>) {
+    select.push(node.var_name.clone());
+    body.push(format!("  ?{} a <{}> .", node.var_name, node.class_iri));
+    for dp in &node.data_props {
+        if dp.checked {
+            select.push(dp.var_name.clone());
+            match dp.filter.as_deref().filter(|f| !f.trim().is_empty()) {
+                None => {
+                    body.push(format!(
+                        "  OPTIONAL {{ ?{} <{}> ?{} }}",
+                        node.var_name, dp.prop_iri, dp.var_name,
+                    ));
+                }
+                Some(f) => {
+                    let escaped = f.replace('\\', "\\\\").replace('"', "\\\"");
+                    body.push(format!(
+                        "  ?{} <{}> ?{} .",
+                        node.var_name, dp.prop_iri, dp.var_name,
+                    ));
+                    body.push(format!(
+                        "  FILTER(regex(?{}, \"{}\", \"i\"))",
+                        dp.var_name, escaped,
+                    ));
+                }
+            }
+        }
+    }
+    for link in &node.links {
+        body.push(format!(
+            "  ?{} <{}> ?{} .",
+            node.var_name, link.prop_iri, link.target.var_name,
+        ));
+        collect_node(&link.target, select, body);
+    }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -131,7 +181,7 @@ mod tests {
     // Unignore when implementing Phase 1 of the visual query builder.
 
     #[test]
-    #[ignore = "QB Phase 1: generate_sparql not yet implemented"]
+
     fn single_node_no_props() {
         let root = QueryNode::new("s", "http://example.org/Person");
         let expected = "\
@@ -142,7 +192,6 @@ SELECT ?s WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 1: generate_sparql not yet implemented"]
     fn single_node_one_checked_data_prop() {
         let root = QueryNode::new("s", "http://example.org/Person").with_data_prop(
             "http://www.w3.org/2000/01/rdf-schema#label",
@@ -158,7 +207,6 @@ SELECT ?s ?s_label WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 1: generate_sparql not yet implemented"]
     fn unchecked_data_prop_excluded_from_select_and_where() {
         let root = QueryNode::new("s", "http://example.org/Person").with_data_prop(
             "http://www.w3.org/2000/01/rdf-schema#label",
@@ -177,7 +225,6 @@ SELECT ?s ?s_label WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 1: generate_sparql not yet implemented"]
     fn multiple_checked_data_props_each_get_own_optional() {
         let root = QueryNode::new("s", "http://example.org/Person")
             .with_data_prop(
@@ -196,7 +243,6 @@ SELECT ?s ?s_label ?s_age WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 1: generate_sparql not yet implemented"]
     fn mixed_checked_and_unchecked_props() {
         let root = QueryNode::new("s", "http://example.org/Person")
             .with_data_prop(
@@ -222,7 +268,6 @@ SELECT ?s ?s_label ?s_age WHERE {
     // Unignore when implementing Phase 2 of the visual query builder.
 
     #[test]
-    #[ignore = "QB Phase 2: multi-hop links not yet implemented"]
     fn two_node_chain_via_object_prop() {
         let bob_node = QueryNode::new("n1", "http://example.org/Person");
         let root = QueryNode::new("s", "http://example.org/Person")
@@ -237,7 +282,6 @@ SELECT ?s ?n1 WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 2: multi-hop links not yet implemented"]
     fn two_node_chain_with_data_props_on_both_nodes() {
         let linked = QueryNode::new("n1", "http://example.org/Person").with_data_prop(
             "http://www.w3.org/2000/01/rdf-schema#label",
@@ -263,7 +307,6 @@ SELECT ?s ?s_label ?n1 ?n1_label WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 2: multi-hop links not yet implemented"]
     fn three_node_chain_emits_triples_in_dfs_order() {
         let leaf = QueryNode::new("n2", "http://example.org/Topic");
         let mid = QueryNode::new("n1", "http://example.org/Article")
@@ -284,7 +327,6 @@ SELECT ?s ?s_label ?n1 ?n1_label WHERE {
     }
 
     #[test]
-    #[ignore = "QB Phase 2: multi-hop links not yet implemented"]
     fn fan_out_two_object_links_from_root_both_in_select() {
         let company = QueryNode::new("n1", "http://example.org/Company");
         let colleague = QueryNode::new("n2", "http://example.org/Person");

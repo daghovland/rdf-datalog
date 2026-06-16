@@ -1,0 +1,21 @@
+# SHACL spec §4.7.1 — sh:node shapes graph (NodeExampleShape).
+# Source: https://www.w3.org/TR/shacl/#NodeConstraintComponent
+# ex:AddressShape requires at least one ex:city value.
+# ex:NodeExampleShape: each ex:address value must conform to ex:AddressShape.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:AddressShape
+    a sh:NodeShape ;
+    sh:property [
+        sh:path ex:city ;
+        sh:minCount 1 ;
+    ] .
+
+ex:NodeExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node ex:AddressShape ;
+    ] .

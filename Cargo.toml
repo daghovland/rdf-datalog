@@ -1,5 +1,5 @@
 [workspace]
-members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "jsonld_parser", "."]
+members = ["ingress", "dag_rdf", "datalog", "owl_ontology", "eli", "owl2rl2datalog", "turtle", "sparql_parser", "manchester_parser", "datalog_parser", "sparql_endpoint", "rdf_owl_translator", "jsonld_parser", "shacl", "."]
 
 
 [package]
@@ -26,3 +26,4 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 env_logger = "0.10"
 jsonld-parser = { path = "jsonld_parser" }
 serde_json = "1"
+shacl = { path = "shacl" }

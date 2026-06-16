@@ -1,0 +1,9 @@
+# SHACL spec §4.7.1 — sh:node data graph (NodeExampleShape).
+# Source: https://www.w3.org/TR/shacl/#NodeConstraintComponent
+# sh:node: each value of ex:address must conform to ex:AddressShape.
+# ex:Alice's address has ex:city → satisfies ex:AddressShape (minCount 1) → conforms.
+# ex:Bob's address has only ex:zip (no ex:city) → fails ex:AddressShape → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:address [ ex:city "Berlin" ] .
+ex:Bob   ex:address [ ex:zip "12345" ] .

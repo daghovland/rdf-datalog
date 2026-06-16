@@ -1,0 +1,12 @@
+# SHACL spec §4.5.3 — sh:lessThan shapes graph (LessThanExampleShape).
+# Source: https://www.w3.org/TR/shacl/#LessThanConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:LessThanExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:startDate ;
+        sh:lessThan ex:endDate ;
+    ] .

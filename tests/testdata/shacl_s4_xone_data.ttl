@@ -1,0 +1,11 @@
+# SHACL spec §4.6.4 — sh:xone data graph (XoneExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# sh:xone: the node must conform to EXACTLY ONE shape in the list.
+# ex:Alice a ex:Employee only → exactly one → conforms.
+# ex:Bob   a ex:Employee and ex:Customer → two match → 1 violation (not exactly one).
+# ex:Carol a ex:Supplier → neither matches → 1 violation (zero match).
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Employee .
+ex:Bob   a ex:Employee , ex:Customer .
+ex:Carol a ex:Supplier .

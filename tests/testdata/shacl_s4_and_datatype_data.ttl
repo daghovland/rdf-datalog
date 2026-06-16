@@ -1,0 +1,11 @@
+# Regression test data for sh:and with sh:datatype constraint.
+# ex:Alice has a valid xsd:integer age → conforms.
+# ex:Bob has a string age (wrong datatype) → violates sh:datatype in sh:and.
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:Alice
+    ex:age 30 .
+
+ex:Bob
+    ex:age "thirty" .

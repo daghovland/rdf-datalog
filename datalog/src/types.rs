@@ -7,6 +7,7 @@ Contact: hovlanddag@gmail.com
 */
 
 use dag_rdf::{GraphElementId, QuadPattern, Term};
+use sparql_parser::ast::Expression;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -55,11 +56,15 @@ impl fmt::Display for RuleHead {
 }
 
 /// An atom in a rule body.
+///
+/// `FilterAtom(expr)` holds a SPARQL expression guard — the substitution passes
+/// iff the expression evaluates to `true`.  Uses `sparql_parser::eval_expr_as_filter`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RuleAtom {
     PositivePattern(QuadPattern),
     NotPattern(QuadPattern),
     NotEqualsAtom(Term, Term),
+    FilterAtom(Expression),
 }
 
 impl RuleAtom {
@@ -76,6 +81,7 @@ impl RuleAtom {
                 }
                 vars
             }
+            RuleAtom::FilterAtom(_) => vec![],
         }
     }
 }
@@ -86,6 +92,7 @@ impl fmt::Display for RuleAtom {
             RuleAtom::PositivePattern(p) => write!(f, "{}", p),
             RuleAtom::NotPattern(p) => write!(f, "not {}", p),
             RuleAtom::NotEqualsAtom(t1, t2) => write!(f, "{} != {}", t1, t2),
+            RuleAtom::FilterAtom(expr) => write!(f, "FILTER({:?})", expr),
         }
     }
 }

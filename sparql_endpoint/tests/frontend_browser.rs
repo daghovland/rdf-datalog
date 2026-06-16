@@ -521,7 +521,6 @@ ex:Company a owl:Class .
 // Un-ignore after QB Phase 1 implements generateSparql() so QB_SELF_TESTS pass.
 
 #[tokio::test]
-#[ignore = "QB Phase 1: generateSparql stub causes QB_SELF_TESTS failures"]
 async fn qb_js_self_test_suite_passes() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -559,7 +558,6 @@ async fn qb_js_self_test_suite_passes() {
 // #data-prop-list, #obj-prop-list, #qb-generated, #btn-qb-run, #qb-results).
 
 #[tokio::test]
-#[ignore = "QB Phase 1: build view not yet implemented"]
 async fn qb_build_view_is_reachable() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -577,7 +575,6 @@ async fn qb_build_view_is_reachable() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: build view not yet implemented"]
 async fn qb_class_picker_populates_from_store() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -596,7 +593,6 @@ async fn qb_class_picker_populates_from_store() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: build view not yet implemented"]
 async fn qb_selecting_class_populates_property_panes() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -623,7 +619,6 @@ async fn qb_selecting_class_populates_property_panes() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: build view not yet implemented"]
 async fn qb_checking_data_prop_updates_sparql_preview() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -666,7 +661,6 @@ async fn qb_checking_data_prop_updates_sparql_preview() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: build view not yet implemented"]
 async fn qb_run_button_executes_generated_query_and_shows_results() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -707,7 +701,6 @@ async fn qb_run_button_executes_generated_query_and_shows_results() {
 // .btn-remove-node, active-node switching).
 
 #[tokio::test]
-#[ignore = "QB Phase 2: multi-hop not yet implemented"]
 async fn qb_following_obj_prop_adds_second_node_card() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -748,7 +741,6 @@ async fn qb_following_obj_prop_adds_second_node_card() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 2: multi-hop not yet implemented"]
 async fn qb_clicking_second_card_shifts_active_node() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -792,7 +784,6 @@ async fn qb_clicking_second_card_shifts_active_node() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 2: multi-hop not yet implemented"]
 async fn qb_removing_linked_node_shrinks_generated_sparql() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -857,7 +848,6 @@ async fn qb_removing_linked_node_shrinks_generated_sparql() {
 // Un-ignore when Phase 3 is implemented (.prop-filter-input, FILTER in output).
 
 #[tokio::test]
-#[ignore = "QB Phase 3: filter inputs not yet implemented"]
 async fn qb_filter_input_appears_when_prop_checked() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -896,7 +886,6 @@ async fn qb_filter_input_appears_when_prop_checked() {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 3: filter inputs not yet implemented"]
 async fn qb_filter_text_appears_in_generated_sparql() {
     let driver = match connect_driver().await {
         Some(d) => d,
@@ -943,5 +932,54 @@ async fn qb_filter_text_appears_in_generated_sparql() {
         sparql.contains("FILTER"),
         "#qb-generated should contain FILTER after typing filter value:\n{sparql}"
     );
+    driver.quit().await.unwrap();
+}
+
+// ── CONSTRUCT query rendering ─────────────────────────────────────────────────
+
+/// Regression: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` must render as a
+/// `<pre>` block in the query result area — not trigger a JSON parse error.
+#[tokio::test]
+async fn construct_wildcard_renders_as_pre_block() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_element(&driver, "#query-result pre.msg", 4000).await,
+        "expected a <pre class='msg'> in #query-result"
+    );
+
+    // Must not show an error message
+    let err_present = driver.find(By::Css("#query-result .msg.err")).await.is_ok();
+    assert!(
+        !err_present,
+        "CONSTRUCT result should not show an error message"
+    );
+
+    // The pre block must contain turtle/n-triples content with Alice's IRI
+    let pre_text = driver
+        .find(By::Css("#query-result pre.msg"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        pre_text.contains("http://example.org/alice") || pre_text.contains("(empty result)"),
+        "pre block should contain turtle output, got:\n{pre_text}"
+    );
+
     driver.quit().await.unwrap();
 }

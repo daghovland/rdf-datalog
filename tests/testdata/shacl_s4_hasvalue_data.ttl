@@ -1,0 +1,9 @@
+# SHACL spec §4.8.2 — sh:hasValue data graph (HasValueExampleShape).
+# Source: https://www.w3.org/TR/shacl/#HasValueConstraintComponent
+# sh:hasValue: the set of values for ex:role must include ex:Admin.
+# ex:Alice has roles {ex:Admin, ex:Editor} → includes ex:Admin → conforms.
+# ex:Bob   has roles {ex:Editor} → does not include ex:Admin → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:role ex:Admin , ex:Editor .
+ex:Bob   ex:role ex:Editor .

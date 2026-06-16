@@ -35,6 +35,8 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         store: ds_store,
         registry: state.registry.clone(),
         config: state.config.clone(),
+        jwks_cache: state.jwks_cache.clone(),
+        changelog: state.changelog.clone(),
     }
 }
 
@@ -113,7 +115,9 @@ pub async fn dataset_data_post(
     let Some(ds) = get_dataset_store(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_post_inner(dataset_state(&state, ds), params, headers, body).await
+    // Fuseki /{name}/data creates named graphs on POST even when they don't
+    // exist yet — real Fuseki clients rely on this without a prior PUT.
+    graph_store::gsp_post_inner(dataset_state(&state, ds), params, headers, body, true).await
 }
 
 pub async fn dataset_data_delete(
@@ -185,8 +189,34 @@ pub async fn dataset_update_post(
         }
     };
 
+    // Acquire store write lock first, then commit changelog inside the critical
+    // section so commit-order == apply-order under concurrent writers.
     let mut store = ds.write().await;
-    match sparql_update::execute_update(&mut store, ops) {
+
+    // Parse Turtle content once; build WAL entries and prepared apply in one pass.
+    let (prepared, log_entries) = match sparql_update::prepare_update(&store, ops) {
+        Ok(pair) => pair,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Update prepare error: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&log_entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
+    match sparql_update::apply_prepared_update(&mut store, prepared) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

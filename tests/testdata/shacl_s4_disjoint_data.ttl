@@ -1,0 +1,9 @@
+# SHACL spec §4.5.2 — sh:disjoint data graph (DisjointExampleShape).
+# Source: https://www.w3.org/TR/shacl/#DisjointConstraintComponent
+# sh:disjoint: the set of values for ex:prefLabel must be disjoint from ex:altLabel.
+# ex:Alice prefLabel {"Alice"}, altLabel {"Alicia"} → disjoint → conforms.
+# ex:Bob   prefLabel {"Bob"},   altLabel {"Bob"}    → same value "Bob" → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:prefLabel "Alice" ; ex:altLabel "Alicia" .
+ex:Bob   ex:prefLabel "Bob"   ; ex:altLabel "Bob" .

@@ -1,0 +1,13 @@
+# SHACL spec §4.6.4 — sh:xone shapes graph (XoneExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# Each target node must conform to exactly one of the given shapes.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:XoneExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:xone (
+        [ sh:class ex:Employee ]
+        [ sh:class ex:Customer ]
+    ) .

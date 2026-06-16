@@ -1,0 +1,9 @@
+# SHACL spec §2.1.3.4 — sh:targetSubjectsOf data graph.
+# Source: https://www.w3.org/TR/shacl/#targetSubjectsOf
+# The shape targets subjects of ex:knows. The shape requires sh:nodeKind sh:IRI.
+# ex:Alice is an IRI subject → conforms.
+# ex:Bob uses ex:livesIn (not ex:knows) → not targeted.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:knows ex:Bob .
+ex:Bob ex:livesIn ex:NewYork .

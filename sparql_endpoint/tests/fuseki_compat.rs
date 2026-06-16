@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 //! **Fuseki documentation:**
 //! <https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html>
 //!
-//! All phases are implemented and all tests pass.  See `SERVER.md §6.6` for the
+//! All phases are implemented and all tests pass.  See `docs/architecture/SERVER.md §6.6` for the
 //! phase table.
 //!
 //! ## Test organisation
@@ -108,6 +108,53 @@ const CLEAR_DEFAULT: &str = "CLEAR DEFAULT";
 /// SPARQL Update that drops a named graph entirely.
 const DROP_GRAPH: &str = "DROP GRAPH <http://example.org/graph1>";
 
+/// Fuseki assembler payload used by clients that create datasets via text/turtle.
+const FUSEKI_ASSEMBLER_NEWDS_TTL: &str = r#"
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#service> rdf:type fuseki:Service ;
+    fuseki:name "newds_ttl" ;
+    fuseki:endpoint [ fuseki:operation fuseki:query ; fuseki:name "sparql" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:update ; fuseki:name "update" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:upload ; fuseki:name "upload" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:gsp-rw ; fuseki:name "data" ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:shacl ; fuseki:name "shacl" ] ;
+    fuseki:dataset <#dataset> .
+
+<#dataset> rdf:type ja:MemoryDataset .
+"#;
+
+/// TriG fixture containing two distinct named graphs.
+const TWO_NAMED_GRAPHS_TRIG: &str = r#"
+    @prefix ex: <http://example.org/> .
+    @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+    <http://example.org/graph-a> {
+        ex:alice foaf:name "Alice" .
+    }
+
+    <http://example.org/graph-b> {
+        ex:bob foaf:name "Bob" .
+    }
+"#;
+
+/// N-Quads fixture containing one quad in a named graph.
+const ONE_NAMED_GRAPH_NQUADS: &str = "<http://example.org/nq-subject> <http://xmlns.com/foaf/0.1/name> \"NQ\" <http://example.org/graph-nq> .\n";
+
+/// Minimal JSON-LD payload accepted by records fallback upload path.
+const SIMPLE_JSONLD: &str = r#"
+{
+  "@context": {
+    "ex": "http://example.org/",
+    "name": "http://xmlns.com/foaf/0.1/name"
+  },
+  "@id": "ex:jsonld-subject",
+  "name": "JsonLdName"
+}
+"#;
+
 // ── A: Per-dataset query endpoint — Phase F1 ─────────────────────────────────
 //
 // Fuseki exposes `/{name}/sparql` and `/{name}/query` as aliases for the
@@ -120,7 +167,7 @@ const DROP_GRAPH: &str = "DROP GRAPH <http://example.org/graph1>";
 /// Fuseki routes GET requests with a `query` parameter to the SPARQL query
 /// engine and returns `application/sparql-results+json` by default.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_get_sparql_query_returns_results() {
     let server = common::TestServer::start(PEOPLE_TTL).await;
@@ -145,7 +192,7 @@ async fn fuseki_get_sparql_query_returns_results() {
 
 /// A-2: `/{name}/query` alias returns the same results as `/{name}/sparql`.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_query_alias_works() {
     let server = common::TestServer::start(PEOPLE_TTL).await;
@@ -164,7 +211,7 @@ async fn fuseki_query_alias_works() {
 ///
 /// Fuseki also accepts raw query text as the POST body with this content-type.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_post_sparql_query_direct_body() {
     let server = common::TestServer::start(PEOPLE_TTL).await;
@@ -181,7 +228,7 @@ async fn fuseki_post_sparql_query_direct_body() {
 
 /// A-4: POST `/{name}/sparql` with form-encoded `query=` parameter.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_post_sparql_query_form_encoded() {
     let server = common::TestServer::start(PEOPLE_TTL).await;
@@ -198,7 +245,7 @@ async fn fuseki_post_sparql_query_form_encoded() {
 
 /// A-5: Query to non-existent dataset returns 404.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_query_nonexistent_dataset_returns_404() {
     let server = common::TestServer::start("").await;
@@ -213,7 +260,7 @@ async fn fuseki_query_nonexistent_dataset_returns_404() {
 
 /// A-6: Malformed SPARQL on `/{name}/sparql` returns 400.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_sparql_malformed_query_returns_400() {
     let server = common::TestServer::start(PEOPLE_TTL).await;
@@ -237,7 +284,7 @@ async fn fuseki_sparql_malformed_query_returns_400() {
 
 /// B-1: GET `/{name}/data?default` — 200 with Turtle body.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_get_default_graph_returns_200() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -255,7 +302,7 @@ async fn fuseki_gsp_get_default_graph_returns_200() {
 
 /// B-2: PUT `/{name}/data?default` replaces the default graph.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_put_default_graph_returns_204() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -276,7 +323,7 @@ async fn fuseki_gsp_put_default_graph_returns_204() {
 
 /// B-3: POST `/{name}/data?default` merges triples into the default graph.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_post_merge_returns_204() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -297,7 +344,7 @@ async fn fuseki_gsp_post_merge_returns_204() {
 
 /// B-4: DELETE `/{name}/data?default` clears the default graph.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_delete_default_graph_returns_200_or_204() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -316,7 +363,7 @@ async fn fuseki_gsp_delete_default_graph_returns_200_or_204() {
 
 /// B-5: GET `/{name}/data?graph=<iri>` — returns a named graph as Turtle.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_get_named_graph_returns_200() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -332,7 +379,7 @@ async fn fuseki_gsp_get_named_graph_returns_200() {
 
 /// B-6: GET `/{name}/data?graph=<iri>` for non-existent graph returns 404.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_get_nonexistent_named_graph_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -347,7 +394,7 @@ async fn fuseki_gsp_get_nonexistent_named_graph_returns_404() {
 
 /// B-7: PUT `/{name}/data?graph=<iri>` creates a new named graph.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_gsp_put_named_graph_creates_graph() {
     let server = common::TestServer::start_writable("").await;
@@ -374,9 +421,45 @@ async fn fuseki_gsp_put_named_graph_creates_graph() {
     assert_eq!(get.status(), 200);
 }
 
+/// B-9: POST `/{name}/data?graph=<iri>` creates missing named graphs.
+///
+/// Fuseki clients (including records build flow) post directly to `?graph=`
+/// without pre-creating the graph via PUT.
+#[tokio::test]
+async fn fuseki_gsp_post_named_graph_creates_if_missing() {
+    let server = common::TestServer::start_writable("").await;
+    let resp = server
+        .client
+        .post(server.dataset_data_graph_url(DS, "http://example.org/post-created"))
+        .header("Content-Type", "text/turtle")
+        .body(UPLOAD_TTL)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        resp.status() == 201 || resp.status() == 204 || resp.status() == 200,
+        "expected 201/204/200, got {}",
+        resp.status()
+    );
+
+    let get = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/post-created"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET failed");
+    assert_eq!(get.status(), 200);
+    let body = get.text().await.expect("response body");
+    assert!(
+        body.contains("http://example.org/diana"),
+        "expected uploaded triple in new named graph, got:\n{body}"
+    );
+}
+
 /// B-8: `/{name}/get` read-only endpoint allows GET but rejects PUT.
 ///
-/// Phase F1 — SERVER.md §6.1
+/// Phase F1 — docs/architecture/SERVER.md §6.1
 #[tokio::test]
 async fn fuseki_get_readonly_endpoint_rejects_put() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -414,7 +497,7 @@ async fn fuseki_get_readonly_endpoint_rejects_put() {
 ///
 /// Fuseki returns `"OK"` as the body.  We only assert the status code.
 ///
-/// Phase F2 — SERVER.md §6.2
+/// Phase F2 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_ping_returns_200() {
     let server = common::TestServer::start("").await;
@@ -429,7 +512,7 @@ async fn fuseki_admin_ping_returns_200() {
 
 /// C-2: POST `/$/ping` also returns 200.
 ///
-/// Phase F2 — SERVER.md §6.2
+/// Phase F2 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_ping_post_returns_200() {
     let server = common::TestServer::start("").await;
@@ -444,7 +527,7 @@ async fn fuseki_admin_ping_post_returns_200() {
 
 /// C-3: GET `/$/server` returns JSON with at least a `version` key.
 ///
-/// Phase F2 — SERVER.md §6.2
+/// Phase F2 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_server_returns_json() {
     let server = common::TestServer::start("").await;
@@ -470,7 +553,7 @@ async fn fuseki_admin_server_returns_json() {
 
 /// C-4: `/$/server` JSON includes a `datasets` key listing active datasets.
 ///
-/// Phase F2 — SERVER.md §6.2
+/// Phase F2 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_server_includes_datasets() {
     let server = common::TestServer::start("").await;
@@ -498,7 +581,7 @@ async fn fuseki_admin_server_includes_datasets() {
 
 /// D-1: GET `/$/datasets` returns 200 with JSON.
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_list_datasets_returns_200_json() {
     let server = common::TestServer::start("").await;
@@ -521,7 +604,7 @@ async fn fuseki_admin_list_datasets_returns_200_json() {
 ///
 /// Fuseki response shape: `{"datasets":[{"ds.name":…,"ds.state":…,"ds.services":[…]}]}`
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_list_datasets_has_datasets_array() {
     let server = common::TestServer::start("").await;
@@ -542,7 +625,7 @@ async fn fuseki_admin_list_datasets_has_datasets_array() {
 
 /// D-3: The default dataset `/ds` appears in the list with `ds.name` = `"/ds"`.
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_list_datasets_contains_default() {
     let server = common::TestServer::start("").await;
@@ -567,7 +650,7 @@ async fn fuseki_admin_list_datasets_contains_default() {
 
 /// D-4: GET `/$/datasets/{name}` returns info for a single dataset.
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_get_dataset_info_returns_200() {
     let server = common::TestServer::start("").await;
@@ -587,7 +670,7 @@ async fn fuseki_admin_get_dataset_info_returns_200() {
 
 /// D-5: GET `/$/datasets/{name}` for non-existent dataset returns 404.
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_get_nonexistent_dataset_returns_404() {
     let server = common::TestServer::start("").await;
@@ -605,7 +688,7 @@ async fn fuseki_admin_get_nonexistent_dataset_returns_404() {
 /// Fuseki lists: query, update, gsp-rw, gsp-r service types.
 /// We assert that at least one service entry exists.
 ///
-/// Phase F3 — SERVER.md §6.2
+/// Phase F3 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_dataset_info_has_services() {
     let server = common::TestServer::start("").await;
@@ -638,7 +721,7 @@ async fn fuseki_admin_dataset_info_has_services() {
 
 /// E-1: POST `/$/datasets` with `dbType=mem` creates a new in-memory dataset.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_create_dataset_returns_200() {
     let server = common::TestServer::start_writable("").await;
@@ -660,7 +743,7 @@ async fn fuseki_admin_create_dataset_returns_200() {
 
 /// E-2: After creation, the new dataset appears in `GET /$/datasets`.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_create_dataset_appears_in_list() {
     let server = common::TestServer::start_writable("").await;
@@ -694,7 +777,7 @@ async fn fuseki_admin_create_dataset_appears_in_list() {
 
 /// E-3: After creation, the new dataset's query endpoint accepts queries.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_created_dataset_query_endpoint_works() {
     let server = common::TestServer::start_writable("").await;
@@ -728,7 +811,7 @@ async fn fuseki_admin_created_dataset_query_endpoint_works() {
 
 /// E-4: POST `/$/datasets` with an already-used name returns 409 Conflict.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_create_duplicate_dataset_returns_409() {
     let server = common::TestServer::start_writable("").await;
@@ -759,7 +842,7 @@ async fn fuseki_admin_create_duplicate_dataset_returns_409() {
 
 /// E-5: DELETE `/$/datasets/{name}` removes a dataset.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_delete_dataset_returns_200() {
     let server = common::TestServer::start_writable("").await;
@@ -788,7 +871,7 @@ async fn fuseki_admin_delete_dataset_returns_200() {
 
 /// E-6: After deletion, the dataset no longer appears in the list.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_deleted_dataset_not_in_list() {
     let server = common::TestServer::start_writable("").await;
@@ -828,7 +911,7 @@ async fn fuseki_admin_deleted_dataset_not_in_list() {
 
 /// E-7: After deletion, queries to the deleted dataset return 404.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_deleted_dataset_query_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -868,7 +951,7 @@ async fn fuseki_admin_deleted_dataset_query_returns_404() {
 
 /// E-8: DELETE on a non-existent dataset returns 404.
 ///
-/// Phase F4 — SERVER.md §6.2
+/// Phase F4 — docs/architecture/SERVER.md §6.2
 #[tokio::test]
 async fn fuseki_admin_delete_nonexistent_dataset_returns_404() {
     let server = common::TestServer::start_writable("").await;
@@ -886,6 +969,44 @@ async fn fuseki_admin_delete_nonexistent_dataset_returns_404() {
     );
 }
 
+/// E-9: POST `/$/datasets` accepts Fuseki assembler Turtle payload.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_from_assembler_turtle() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_NEWDS_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        200,
+        "create dataset from assembler turtle must return 200, got {}",
+        create.status()
+    );
+
+    let list: serde_json::Value = server
+        .client
+        .get(server.admin_datasets_url())
+        .send()
+        .await
+        .expect("list request failed")
+        .json()
+        .await
+        .expect("list must be JSON");
+    let datasets = list["datasets"].as_array().expect("datasets array");
+    let found = datasets
+        .iter()
+        .any(|d| d["ds.name"] == "/newds_ttl" || d["ds.name"] == "newds_ttl");
+    assert!(
+        found,
+        "dataset created from assembler turtle not found in list: {datasets:?}"
+    );
+}
+
 // ── F: SPARQL Update — Phase F5 ──────────────────────────────────────────────
 //
 // The `/{name}/update` endpoint accepts SPARQL 1.1 Update operations.
@@ -900,7 +1021,7 @@ async fn fuseki_admin_delete_nonexistent_dataset_returns_404() {
 
 /// F-1: POST `/{name}/update` with `application/sparql-update` returns 200.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_insert_data_returns_200() {
     let server = common::TestServer::start_writable("").await;
@@ -922,7 +1043,7 @@ async fn fuseki_update_insert_data_returns_200() {
 
 /// F-2: After INSERT DATA, a SELECT query returns the inserted triple.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_insert_data_is_queryable() {
     let server = common::TestServer::start_writable("").await;
@@ -958,7 +1079,7 @@ async fn fuseki_update_insert_data_is_queryable() {
 
 /// F-3: DELETE DATA removes a triple that was previously inserted.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_delete_data_removes_triple() {
     let server = common::TestServer::start_writable("").await;
@@ -1004,7 +1125,7 @@ async fn fuseki_update_delete_data_removes_triple() {
 
 /// F-4: CLEAR DEFAULT removes all triples from the default graph.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_clear_default_empties_graph() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -1041,7 +1162,7 @@ async fn fuseki_update_clear_default_empties_graph() {
 
 /// F-5: Update via form-encoded `update=` parameter also works.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_form_encoded_body_accepted() {
     let server = common::TestServer::start_writable("").await;
@@ -1063,7 +1184,7 @@ async fn fuseki_update_form_encoded_body_accepted() {
 
 /// F-6: Malformed SPARQL Update returns 400.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_malformed_returns_400() {
     let server = common::TestServer::start_writable("").await;
@@ -1085,7 +1206,7 @@ async fn fuseki_update_malformed_returns_400() {
 
 /// F-7: DROP GRAPH removes a named graph.
 ///
-/// Phase F5 — SERVER.md §6.3
+/// Phase F5 — docs/architecture/SERVER.md §6.3
 #[tokio::test]
 async fn fuseki_update_drop_graph_removes_named_graph() {
     let server = common::TestServer::start_writable_trig(NAMED_GRAPH_TRIG).await;
@@ -1124,7 +1245,7 @@ async fn fuseki_update_drop_graph_removes_named_graph() {
 
 /// G-1: PUT `/{name}/data?default` with `application/n-triples` is accepted.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_put_ntriples_accepted() {
     let server = common::TestServer::start_writable("").await;
@@ -1145,7 +1266,7 @@ async fn fuseki_gsp_put_ntriples_accepted() {
 
 /// G-2: Triples uploaded as N-Triples are queryable.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_put_ntriples_content_queryable() {
     let server = common::TestServer::start_writable("").await;
@@ -1181,7 +1302,7 @@ async fn fuseki_gsp_put_ntriples_content_queryable() {
 ///
 /// TriG allows uploading into named graphs with a single request.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_post_trig_accepted() {
     let server = common::TestServer::start_writable("").await;
@@ -1202,7 +1323,7 @@ async fn fuseki_gsp_post_trig_accepted() {
 
 /// G-4: GET `/{name}/data?default` with `Accept: application/n-triples` returns N-Triples.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_get_accept_ntriples_returns_ntriples() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -1223,7 +1344,7 @@ async fn fuseki_gsp_get_accept_ntriples_returns_ntriples() {
 
 /// G-5: GET `/{name}/data?default` with `Accept: application/n-quads` returns N-Quads.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_get_accept_nquads_returns_nquads() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -1244,7 +1365,7 @@ async fn fuseki_gsp_get_accept_nquads_returns_nquads() {
 
 /// G-6: GET `/{name}/data?default` with `Accept: application/trig` returns TriG.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_get_accept_trig_returns_trig() {
     let server = common::TestServer::start_writable(PEOPLE_TTL).await;
@@ -1265,7 +1386,7 @@ async fn fuseki_gsp_get_accept_trig_returns_trig() {
 
 /// G-7: PUT with unsupported Content-Type returns 415 Unsupported Media Type.
 ///
-/// Phase F6 — SERVER.md §6.4
+/// Phase F6 — docs/architecture/SERVER.md §6.4
 #[tokio::test]
 async fn fuseki_gsp_put_unsupported_content_type_returns_415() {
     let server = common::TestServer::start_writable("").await;
@@ -1285,17 +1406,126 @@ async fn fuseki_gsp_put_unsupported_content_type_returns_415() {
     );
 }
 
+/// G-8: POST `/{name}/data` (no params) with TriG preserves named graph IRIs.
+#[tokio::test]
+async fn fuseki_gsp_post_data_no_params_trig_preserves_named_graphs() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_url(DS))
+        .header("Content-Type", "application/trig")
+        .body(TWO_NAMED_GRAPHS_TRIG)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "TriG POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let graph_a = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-a"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-a failed");
+    assert_eq!(graph_a.status(), 200, "graph-a must exist after TriG POST");
+
+    let graph_b = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-b"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-b failed");
+    assert_eq!(graph_b.status(), 200, "graph-b must exist after TriG POST");
+}
+
+/// G-9: POST `/{name}/data` (no params) with N-Quads preserves named graph IRI.
+#[tokio::test]
+async fn fuseki_gsp_post_data_no_params_nquads_preserves_named_graph() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_url(DS))
+        .header("Content-Type", "application/n-quads")
+        .body(ONE_NAMED_GRAPH_NQUADS)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "N-Quads POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let graph = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/graph-nq"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET graph-nq failed");
+    assert_eq!(
+        graph.status(),
+        200,
+        "graph-nq must exist after N-Quads POST"
+    );
+}
+
+/// G-10: POST `/{name}/data?graph=<iri>` accepts JSON-LD uploads.
+#[tokio::test]
+async fn fuseki_gsp_post_graph_jsonld_is_accepted() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_graph_url(DS, "http://example.org/jsonld-graph"))
+        .header("Content-Type", "application/ld+json")
+        .body(SIMPLE_JSONLD)
+        .send()
+        .await
+        .expect("JSON-LD POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "JSON-LD POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let get = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/jsonld-graph"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET failed");
+    assert_eq!(
+        get.status(),
+        200,
+        "graph uploaded from JSON-LD must be retrievable"
+    );
+    let body = get.text().await.expect("response body");
+    assert!(
+        body.contains("http://example.org/jsonld-subject"),
+        "expected JSON-LD subject in graph, got:\n{body}"
+    );
+}
+
 // ── H: Dynamic multi-dataset routing — Phase F7 ──────────────────────────────
 //
 // Once a DatasetRegistry is in place, dynamically created datasets must be
 // fully routable.  Routes are resolved at request time from the registry, not
 // hard-coded at startup.
 //
-// SERVER.md §6.5
+// docs/architecture/SERVER.md §6.5
 
 /// H-1: Creating two datasets and querying each returns independent results.
 ///
-/// Phase F7 — SERVER.md §6.5
+/// Phase F7 — docs/architecture/SERVER.md §6.5
 #[tokio::test]
 async fn fuseki_two_datasets_are_independent() {
     let server = common::TestServer::start_writable("").await;
@@ -1357,7 +1587,7 @@ async fn fuseki_two_datasets_are_independent() {
 
 /// H-2: Deleting a dataset from the registry makes its routes return 404.
 ///
-/// Phase F7 — SERVER.md §6.5
+/// Phase F7 — docs/architecture/SERVER.md §6.5
 #[tokio::test]
 async fn fuseki_deleted_dataset_routes_return_404() {
     let server = common::TestServer::start_writable("").await;
@@ -1403,7 +1633,7 @@ async fn fuseki_deleted_dataset_routes_return_404() {
 //   4. Modify the data with SPARQL Update.
 //   5. Delete the dataset.
 //
-// SERVER.md §6.6 Phase F8
+// docs/architecture/SERVER.md §6.6 Phase F8
 
 /// I-1: Full lifecycle — create, upload Turtle, SELECT, DELETE.
 ///
@@ -1417,7 +1647,7 @@ async fn fuseki_deleted_dataset_routes_return_404() {
 /// curl -X DELETE http://localhost:3030/$/datasets/myds
 /// ```
 ///
-/// Phase F8 — SERVER.md §6.6
+/// Phase F8 — docs/architecture/SERVER.md §6.6
 #[tokio::test]
 async fn fuseki_full_lifecycle_create_upload_query_delete() {
     let server = common::TestServer::start_writable("").await;
@@ -1501,7 +1731,7 @@ async fn fuseki_full_lifecycle_create_upload_query_delete() {
 ///
 /// Exercises the SPARQL Update path instead of GSP for data ingestion.
 ///
-/// Phase F8 — SERVER.md §6.6
+/// Phase F8 — docs/architecture/SERVER.md §6.6
 #[tokio::test]
 async fn fuseki_full_lifecycle_update_path() {
     let server = common::TestServer::start_writable("").await;

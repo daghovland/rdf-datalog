@@ -1,0 +1,10 @@
+# SHACL spec §4.2.1 — sh:minCount shapes graph (MinCountExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MinCountConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MinCountExampleShape
+    a sh:PropertyShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:path ex:name ;
+    sh:minCount 1 .

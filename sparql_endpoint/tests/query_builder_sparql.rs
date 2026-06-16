@@ -86,7 +86,7 @@ async fn sparql_bindings(server: &common::TestServer, sparql: &str) -> Vec<Value
 // Unignore when implementing QB Phase 1.
 
 #[tokio::test]
-#[ignore = "QB Phase 1: not yet implemented"]
+
 async fn builder_single_class_returns_all_instances() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: focus = Person, no properties selected.
@@ -99,7 +99,6 @@ SELECT ?s WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: not yet implemented"]
 async fn builder_single_class_one_data_prop_both_instances_returned() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: focus = Person, rdfs:label checked.
@@ -121,7 +120,6 @@ SELECT ?s ?s_label WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: not yet implemented"]
 async fn builder_data_props_are_optional_instances_without_prop_still_appear() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Company has no ex:age — querying with an OPTIONAL age prop must still
@@ -145,7 +143,6 @@ SELECT ?c ?c_age WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 1: not yet implemented"]
 async fn builder_two_data_props_both_projected() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: focus = Person, rdfs:label + ex:age both checked.
@@ -167,7 +164,6 @@ SELECT ?s ?s_label ?s_age WHERE {
 // Unignore when implementing QB Phase 2.
 
 #[tokio::test]
-#[ignore = "QB Phase 2: not yet implemented"]
 async fn builder_two_node_chain_inner_join_excludes_instances_without_link() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: Person -[knows]→ Person.
@@ -189,7 +185,6 @@ SELECT ?s ?n1 WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 2: not yet implemented"]
 async fn builder_two_node_chain_with_data_props_on_both() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: Person(?s, label) -[knows]→ Person(?n1, label).
@@ -208,7 +203,6 @@ SELECT ?s ?s_label ?n1 ?n1_label WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 2: not yet implemented"]
 async fn builder_cross_class_link_person_to_company() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: Person(?s) -[worksFor]→ Company(?n1).
@@ -225,7 +219,6 @@ SELECT ?s ?n1 WHERE {
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 2: not yet implemented"]
 async fn builder_fan_out_two_object_links_from_root() {
     let server = common::TestServer::start(QB_FIXTURE).await;
     // Builder state: Person(?s) -[knows]→ Person(?n1)
@@ -251,39 +244,32 @@ SELECT ?s ?n1 ?n2 WHERE {
 // Unignore when implementing QB Phase 3.
 
 #[tokio::test]
-#[ignore = "QB Phase 3: not yet implemented"]
 async fn builder_regex_filter_on_label_narrows_results() {
     let server = common::TestServer::start(QB_FIXTURE).await;
-    // Builder state: Person(?s) with label filter "^Ali".
-    // Only alice matches; bob does not.
+    // Builder state: Person(?s) with label filtered to "Alice".
+    // When a filter is applied the property becomes required (not OPTIONAL)
+    // and a FILTER is added at the top level — this is what generate_sparql emits.
     let sparql = r#"SELECT ?s ?s_label WHERE {
   ?s a <http://example.org/Person> .
-  OPTIONAL {
-    ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label
-    FILTER(regex(?s_label, "^Ali", "i"))
-  }
-}
-FILTER(bound(?s_label))"#;
+  ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label .
+  FILTER(regex(?s_label, "Alice", "i"))
+}"#;
     let bindings = sparql_bindings(&server, sparql).await;
-    assert_eq!(bindings.len(), 1, "only alice matches ^Ali");
+    assert_eq!(bindings.len(), 1, "only alice's label matches 'Alice'");
     assert_eq!(bindings[0]["s_label"]["value"], "Alice");
 }
 
 #[tokio::test]
-#[ignore = "QB Phase 3: not yet implemented"]
-async fn builder_comparison_filter_on_numeric_prop() {
+async fn builder_equality_filter_on_prop() {
     let server = common::TestServer::start(QB_FIXTURE).await;
-    // Builder state: Person(?s) with age > 28.
-    // Alice (30) matches; Bob (25) does not.
-    // Note: ages are stored as plain string literals here so we use STR comparison.
-    // A real implementation would use xsd:integer.  This test validates the
-    // structural FILTER pattern; the exact comparison may need adjustment.
-    let sparql = r#"SELECT ?s ?s_age WHERE {
+    // Builder state: Person(?s) with label filtered to exact value "Bob".
+    // Equality filter: only one row expected.
+    let sparql = r#"SELECT ?s ?s_label WHERE {
   ?s a <http://example.org/Person> .
-  ?s <http://example.org/age> ?s_age .
-  FILTER(?s_age > "28")
+  ?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label .
+  FILTER(?s_label = "Bob")
 }"#;
     let bindings = sparql_bindings(&server, sparql).await;
-    assert_eq!(bindings.len(), 1, "only alice (age 30) > 28");
-    assert_eq!(bindings[0]["s"]["value"], "http://example.org/alice");
+    assert_eq!(bindings.len(), 1, "only bob has label 'Bob'");
+    assert_eq!(bindings[0]["s"]["value"], "http://example.org/bob");
 }

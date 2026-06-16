@@ -1,0 +1,12 @@
+# SHACL spec §4.1.1 — sh:class shapes graph (ClassExampleShape).
+# Source: https://www.w3.org/TR/shacl/#ClassConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:ClassExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Bob, ex:Alice, ex:Carol ;
+    sh:property [
+        sh:path ex:address ;
+        sh:class ex:PostalAddress ;
+    ] .

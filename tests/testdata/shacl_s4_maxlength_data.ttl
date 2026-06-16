@@ -1,0 +1,10 @@
+# SHACL spec §4.4.2 — sh:maxLength data graph (MaxLengthExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MaxLengthConstraintComponent
+# ex:Alice ex:name "Alice"  → length 5 ≤ 5 → conforms.
+# ex:Bob   ex:name "Robert" → length 6 > 5 → 1 violation.
+# ex:Carol ex:name "Carol"  → length 5 ≤ 5 → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:name "Alice" .
+ex:Bob   ex:name "Robert" .
+ex:Carol ex:name "Carol" .

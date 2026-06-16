@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Test-driven development
+
+Implementation of new features follow test-driven development and go in these phases
+
+2. First a plan is created in a markdown document
+2. THen tests are created, necessary code for the tests to compile is stubbed, the tests are ignored and no implementation is done
+3. Implementation is done by going through all tests in some order that makes sence, probably from easiest first or after some phase or feature grouping.  For each test, unignore it, make enough code to implement and make it green, finally check for code smells. Only then go on to the next test.
+
+Each agent session only works on 
+Always create tests that cover new functionality before creating the functionality. The tests are initially ignored and tests are usually checked by the user before implementaiton.
+
+
 ## Commands
 
 ```bash
@@ -22,17 +34,24 @@ cargo test test_add_and_get_resource
 cargo run
 
 # End-of-task quality checks (run before handing work back)
-# Match CI strictness to avoid push/PR surprises.
+# These mirror the CI jobs in .github/workflows/ci.yml exactly.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo test --workspace --release
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo audit
+# Note: the CI minimal-versions job requires nightly and mutates Cargo.lock;
+# run it manually only when adding/removing dependencies:
+#   cargo +nightly update -Z minimal-versions && cargo check --workspace --all-targets
 
 ```
 
 ## Planning and protocol documents
 
-- **`PLAN.md`** — full implementation roadmap (phases 1–8, crate mapping from DagSemTools, suggested order)
-- **`PROTOCOLS.md`** — W3C protocol compliance reference (SPARQL 1.1 Protocol, Graph Store HTTP Protocol, Service Description, VoID, content negotiation, CORS)
+- **`docs/architecture/PLAN.md`** — full implementation roadmap (phases 1–8, crate mapping from DagSemTools, suggested order)
+- **`docs/architecture/PROTOCOLS.md`** — W3C protocol compliance reference (SPARQL 1.1 Protocol, Graph Store HTTP Protocol, Service Description, VoID, content negotiation, CORS)
+- **`docs/plans/`** — feature area plans and known-issues tracking
 
 ## Architecture
 

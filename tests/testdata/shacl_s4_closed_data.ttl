@@ -1,0 +1,10 @@
+# SHACL spec §4.8.1 — sh:closed data graph (ClosedExampleShape).
+# Source: https://www.w3.org/TR/shacl/#ClosedConstraintComponent
+# The closed shape permits only ex:name (plus rdf:type, which is ignored).
+# ex:Fido has only ex:name → conforms.
+# ex:Rex  has ex:name and ex:breed → ex:breed is not in any sh:property → 1 violation.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Fido a ex:Animal ; ex:name "Fido" .
+ex:Rex  a ex:Animal ; ex:name "Rex" ; ex:breed "Labrador" .

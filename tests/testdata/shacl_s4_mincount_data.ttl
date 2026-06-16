@@ -1,0 +1,8 @@
+# SHACL spec §4.2.1 — sh:minCount data graph (MinCountExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MinCountConstraintComponent
+# ex:Alice has ex:name "Alice" → satisfies minCount 1 → conforms.
+# ex:Bob has ex:givenName "Bob" but no ex:name → minCount 1 violated → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:name "Alice" .
+ex:Bob   ex:givenName "Bob"@en .

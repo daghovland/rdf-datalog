@@ -18,6 +18,19 @@
     header h1 { margin: 0; font-size: 1.6rem; display: inline; }
     .header-top { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
     .triple-count { color: #888; font-size: 0.9rem; }
+    /* Auth panel */
+    .auth-panel { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.6rem;
+                  flex-wrap: wrap; font-size: 0.85rem; }
+    .auth-label { color: #666; }
+    .auth-input { font-size: 0.82rem; padding: 0.25rem 0.5rem;
+                  border: 1px solid #ccc; border-radius: 3px; width: 14rem; }
+    .auth-btn { padding: 0.25rem 0.75rem; font-size: 0.82rem; background: #2b6cb0;
+                color: #fff; border: none; border-radius: 3px; cursor: pointer; }
+    .auth-btn:hover { background: #2c5282; }
+    .auth-btn.secondary { background: #eee; color: #444; border: 1px solid #ccc; }
+    .auth-btn.secondary:hover { background: #e0e0e0; }
+    .auth-user { font-size: 0.82rem; color: #276749; font-weight: 500; }
+    .auth-warn { font-size: 0.78rem; color: #c05621; }
     nav { margin-top: 0.5rem; display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; }
     .nav-link { padding: 0.35rem 0.9rem 0.35rem 0; font-size: 0.85rem; color: #555;
                 text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
@@ -157,6 +170,21 @@
           background: #f8f8f8; cursor: grab; margin-top: 0.5rem; }
     #cy:active { cursor: grabbing; }
     .graph-hint { font-size: 0.78rem; color: #888; margin: 0.3rem 0 0; }
+    .cy-toolbar { display:flex; justify-content:flex-end; gap:0.5rem; margin-bottom:0.35rem; }
+    .btn-graph-action { padding:0.25rem 0.7rem; font-size:0.8rem; background:#f0f0f0;
+                        color:#444; border:1px solid #ccc; border-radius:4px; cursor:pointer; }
+    .btn-graph-action:hover { background:#e0e0e0; }
+    /* Viewport-level fullscreen (CSS fallback) */
+    .cy-wrap.graph-fs { position:fixed; inset:0; z-index:9000; background:#fff;
+                         padding:1rem; display:flex; flex-direction:column; }
+    .cy-wrap.graph-fs #cy { flex:1; height:auto !important; margin-top:0; border-radius:0; }
+    .cy-wrap.graph-fs .graph-hint { margin-top:0.5rem; flex-shrink:0; }
+    .cy-wrap.graph-fs .cy-toolbar { flex-shrink:0; }
+    /* Native fullscreen (Fullscreen API) */
+    #cy-fullscreen-wrap:fullscreen { padding:1rem; background:#fff; display:flex; flex-direction:column; }
+    #cy-fullscreen-wrap:fullscreen #cy { flex:1; height:auto !important; margin-top:0; border-radius:0; }
+    #cy-fullscreen-wrap:fullscreen .cy-toolbar { flex-shrink:0; }
+    #cy-fullscreen-wrap:fullscreen .graph-hint { margin-top:0.5rem; flex-shrink:0; }
     /* Drag-and-drop upload */
     .drop-zone { position: relative; }
     .drop-zone.drag-over textarea { border-color: #2b6cb0; background: #eef3ff; }
@@ -165,6 +193,58 @@
                     border: 2px dashed #2b6cb0; border-radius: 4px; font-size: 0.9rem;
                     color: #2b6cb0; pointer-events: none; }
     .drop-zone.drag-over .drop-overlay { display: flex; }
+    /* ── Query builder ──────────────────────────────────────────────────────── */
+    .qb-class-input { width: 100%; margin-top: 0.25rem; font-size: 0.85rem;
+                      font-family: "Fira Mono","Consolas",monospace;
+                      padding: 0.5rem 0.6rem; border: 1px solid #ccc;
+                      border-radius: 4px; background: #f8f8f8; }
+    .qb-class-input:focus { outline: 2px solid #445; background: #fff; }
+    .qb-canvas { display: flex; align-items: flex-start; gap: 0;
+                 overflow-x: auto; padding: 0.5rem 0 0.75rem; min-height: 80px; }
+    .node-card { background: #fff; border: 2px solid #ddd; border-radius: 6px;
+                 padding: 0.75rem 1rem; min-width: 160px; cursor: pointer; flex-shrink: 0; }
+    .node-card.active { border-color: #2b6cb0;
+                        box-shadow: 0 0 0 3px rgba(43,108,176,.12); }
+    .node-card h3 { margin: 0 0 0.2rem; font-size: 0.9rem; color: #222; }
+    .node-card .node-var { font-size: 0.75rem; color: #888;
+                            font-family: "Fira Mono","Consolas",monospace; }
+    .qb-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    .qb-prop-h { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.4rem; color: #333; }
+    .qb-prop-row { display: flex; align-items: center; gap: 0.4rem;
+                   padding: 0.15rem 0; font-size: 0.82rem; }
+    .qb-prop-label { flex: 1; }
+    .qb-prop-var { font-family: "Fira Mono","Consolas",monospace;
+                   font-size: 0.75rem; color: #888; }
+    .btn-follow { padding: 0.2rem 0.6rem; font-size: 0.78rem; background: #eef3ff;
+                  color: #2b6cb0; border: 1px solid #b0c4e8; border-radius: 3px; cursor: pointer; }
+    .btn-follow:hover:not(:disabled) { background: #dce8f5; }
+    .btn-follow:disabled { opacity: 0.45; cursor: default; }
+    #qb-generated { font-family: "Fira Mono","Consolas",monospace; font-size: 0.78rem;
+                    background: #f8f8f8; border: 1px solid #ddd; border-radius: 4px;
+                    padding: 0.6rem; white-space: pre; overflow-x: auto;
+                    min-height: 4rem; margin-bottom: 0.75rem; color: #222; }
+    #qb-results { margin-top: 0.75rem; }
+    .node-arrow { display: flex; align-items: center; padding: 0 0.4rem;
+                  font-size: 0.75rem; color: #777; white-space: nowrap; flex-shrink: 0; }
+    .btn-follow.linked { background: #e6f4ea; color: #276749; border-color: #9dd5b0; cursor: default; }
+    .btn-remove-node { padding: 0.1rem 0.4rem; font-size: 0.72rem; background: #eee;
+                       color: #666; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
+    .btn-remove-node:hover { background: #fdd; color: #900; border-color: #f99; }
+    /* Class picker autocomplete dropdown */
+    .qb-picker-wrap { position: relative; margin-top: 0.25rem; }
+    .qb-picker-wrap .qb-class-input { margin-top: 0; }
+    .qb-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+                   background: #fff; border: 1px solid #ccc; border-top: none;
+                   border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto;
+                   box-shadow: 0 4px 10px rgba(0,0,0,.1); }
+    .qb-dropdown-item { padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.83rem; }
+    .qb-dropdown-item:hover, .qb-dropdown-item.focused { background: #eef3ff; }
+    .qb-item-short { font-weight: 500; color: #222; }
+    .qb-item-iri { font-size: 0.71rem; color: #888; font-family: "Fira Mono","Consolas",monospace; }
+    /* Type-badge query builder link on resource page */
+    .qb-type-link { font-size: 0.72rem; color: #2b6cb0; text-decoration: none;
+                    margin-right: 0.2rem; vertical-align: middle; opacity: 0.7; }
+    .qb-type-link:hover { opacity: 1; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -173,9 +253,38 @@
       <h1>Dagalog</h1>
       <span id="triple-count" class="triple-count"></span>
     </div>
+    <!-- Auth panel — shown only when auth is configured -->
+    <div id="auth-panel" style="display:none" class="auth-panel">
+      <!-- API key mode -->
+      <div id="auth-apikey-panel" style="display:none">
+        <span class="auth-label">API key:</span>
+        <input id="api-key-input" type="password" class="auth-input" placeholder="Paste API key…" />
+        <button class="auth-btn" onclick="setApiKey()">Set key</button>
+        <button class="auth-btn secondary" onclick="clearApiKey()" id="clear-key-btn" style="display:none">Clear</button>
+        <span id="api-key-status" class="auth-user"></span>
+      </div>
+      <!-- OIDC mode with MSAL.js (browser_client_id configured) -->
+      <div id="auth-oidc-panel" style="display:none">
+        <span id="auth-user-name" class="auth-user" style="display:none"></span>
+        <button class="auth-btn" id="signin-btn" onclick="oidcSignIn()">Sign in</button>
+        <button class="auth-btn secondary" id="signout-btn" onclick="oidcSignOut()" style="display:none">Sign out</button>
+      </div>
+      <!-- OIDC mode without browser_client_id — manual token paste -->
+      <div id="auth-token-panel" style="display:none">
+        <span class="auth-label">Bearer token:</span>
+        <input id="manual-token-input" type="password" class="auth-input" placeholder="Paste token…" />
+        <button class="auth-btn" onclick="setManualToken()">Set token</button>
+        <button class="auth-btn secondary" onclick="clearManualToken()" id="clear-token-btn" style="display:none">Clear</button>
+        <span id="manual-token-status" class="auth-user"></span>
+        <span class="auth-warn" id="manual-token-hint" style="display:none">
+          Get a token: <code>gcloud auth print-identity-token --audiences="..."</code>
+        </span>
+      </div>
+    </div>
     <nav id="main-nav">
       <a href="/" class="nav-link" id="nav-query">Query</a>
       <a href="/?view=classes" class="nav-link" id="nav-classes">Class Hierarchy</a>
+      <a href="/?view=build" class="nav-link" id="nav-build">Query Builder</a>
     </nav>
   </header>
 
@@ -253,6 +362,48 @@
     </div>
   </div>
 
+  <!-- ── Query builder view (QB Phase 1+) ─────────────────────────────────────
+       Accessed via /?view=build.  Phase 1: class picker + property panes.    -->
+  <div id="build-view" style="display:none">
+    <div class="card">
+      <h2>Query Builder</h2>
+      <label class="hint">Start with a class:</label>
+      <div class="qb-picker-wrap">
+        <input id="class-picker" class="qb-class-input"
+               placeholder="Filter classes…" autocomplete="off"
+               oninput="filterQbClasses(this.value)"
+               onkeydown="qbPickerKeydown(event)" />
+        <div id="class-dropdown" class="qb-dropdown" style="display:none"></div>
+      </div>
+      <div id="node-canvas" class="qb-canvas" style="margin-top:0.75rem"></div>
+    </div>
+
+    <div id="qb-props-card" class="card" style="display:none">
+      <div class="qb-bottom">
+        <div>
+          <p class="qb-prop-h">Data properties</p>
+          <div id="data-prop-list"></div>
+        </div>
+        <div>
+          <p class="qb-prop-h">Object properties
+            <span class="hint" style="font-weight:normal"> (Phase 2)</span>
+          </p>
+          <div id="obj-prop-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="qb-sparql-card" class="card" style="display:none">
+      <h2>Generated SPARQL</h2>
+      <pre id="qb-generated"></pre>
+      <div class="actions">
+        <button id="btn-qb-run" onclick="runBuilderQuery()">Run</button>
+        <button class="btn-export" onclick="editInSparql()">Edit in SPARQL editor</button>
+      </div>
+      <div id="qb-results"></div>
+    </div>
+  </div>
+
   <!-- ── QB self-test harness view (Layer 3a) ─────────────────────────────────
        Developer-only page: /?view=build-selftest
        Runs QB_SELF_TESTS in-browser and writes a JSON summary to
@@ -282,6 +433,167 @@
   </div>
 
   <script>
+    // ── Authentication ─────────────────────────────────────────────────────────
+    //
+    // Three modes (detected from GET /auth/config on page load):
+    //   "none"    — no auth required, panel hidden
+    //   "api_key" — user pastes a Bearer key; stored in sessionStorage
+    //   "oidc"    — JWT from MSAL.js (if browser_client_id set) or manual paste
+    //
+    // getAuthHeaders() injects the right Authorization header into every fetch.
+
+    let authConfig = null;       // populated by initAuth()
+    let msalInstance = null;     // PublicClientApplication (MSAL.js)
+    let msalToken = null;        // current OIDC access token (from MSAL or manual)
+
+    function getAuthHeaders() {
+      const apiKey = sessionStorage.getItem('dagalog-api-key');
+      if (apiKey) return { 'Authorization': 'Bearer ' + apiKey };
+      if (msalToken) return { 'Authorization': 'Bearer ' + msalToken };
+      const manual = sessionStorage.getItem('dagalog-oidc-token');
+      if (manual) return { 'Authorization': 'Bearer ' + manual };
+      return {};
+    }
+
+    // API key panel
+    function setApiKey() {
+      const val = document.getElementById('api-key-input').value.trim();
+      if (!val) return;
+      sessionStorage.setItem('dagalog-api-key', val);
+      document.getElementById('api-key-input').value = '';
+      document.getElementById('api-key-status').textContent = 'Key set';
+      document.getElementById('clear-key-btn').style.display = '';
+    }
+    function clearApiKey() {
+      sessionStorage.removeItem('dagalog-api-key');
+      document.getElementById('api-key-status').textContent = '';
+      document.getElementById('clear-key-btn').style.display = 'none';
+    }
+
+    // Manual token panel (OIDC without MSAL.js)
+    function setManualToken() {
+      const val = document.getElementById('manual-token-input').value.trim();
+      if (!val) return;
+      sessionStorage.setItem('dagalog-oidc-token', val);
+      msalToken = null;
+      document.getElementById('manual-token-input').value = '';
+      document.getElementById('manual-token-status').textContent = 'Token set';
+      document.getElementById('clear-token-btn').style.display = '';
+    }
+    function clearManualToken() {
+      sessionStorage.removeItem('dagalog-oidc-token');
+      document.getElementById('manual-token-status').textContent = '';
+      document.getElementById('clear-token-btn').style.display = 'none';
+    }
+
+    // MSAL.js sign-in / sign-out (Azure Entra ID + generic OIDC providers)
+    async function oidcSignIn() {
+      if (!msalInstance) return;
+      try {
+        const scope = (authConfig.oidc?.audience || '') + '/.default';
+        const resp = await msalInstance.loginPopup({ scopes: [scope] });
+        msalToken = resp.accessToken;
+        sessionStorage.removeItem('dagalog-oidc-token');
+        const name = resp.account?.name || resp.account?.username || 'Signed in';
+        document.getElementById('auth-user-name').textContent = name;
+        document.getElementById('auth-user-name').style.display = '';
+        document.getElementById('signin-btn').style.display = 'none';
+        document.getElementById('signout-btn').style.display = '';
+      } catch (e) {
+        console.error('MSAL sign-in failed:', e);
+      }
+    }
+    async function oidcSignOut() {
+      msalToken = null;
+      if (msalInstance) await msalInstance.logoutPopup().catch(() => {});
+      document.getElementById('auth-user-name').style.display = 'none';
+      document.getElementById('signin-btn').style.display = '';
+      document.getElementById('signout-btn').style.display = 'none';
+    }
+
+    // Silently refresh an existing MSAL session
+    async function tryAcquireTokenSilent() {
+      if (!msalInstance) return;
+      const accounts = msalInstance.getAllAccounts();
+      if (!accounts.length) return;
+      try {
+        const scope = (authConfig.oidc?.audience || '') + '/.default';
+        const resp = await msalInstance.acquireTokenSilent({
+          scopes: [scope], account: accounts[0],
+        });
+        msalToken = resp.accessToken;
+        const name = accounts[0].name || accounts[0].username || 'Signed in';
+        document.getElementById('auth-user-name').textContent = name;
+        document.getElementById('auth-user-name').style.display = '';
+        document.getElementById('signin-btn').style.display = 'none';
+        document.getElementById('signout-btn').style.display = '';
+      } catch { /* silent refresh failed — user must sign in manually */ }
+    }
+
+    async function initAuth() {
+      try {
+        const resp = await fetch('/auth/config');
+        if (!resp.ok) return;
+        authConfig = await resp.json();
+      } catch { return; }
+
+      if (!authConfig || authConfig.mode === 'none') return;
+
+      document.getElementById('auth-panel').style.display = '';
+
+      if (authConfig.mode === 'api_key') {
+        document.getElementById('auth-apikey-panel').style.display = '';
+        if (sessionStorage.getItem('dagalog-api-key')) {
+          document.getElementById('api-key-status').textContent = 'Key set';
+          document.getElementById('clear-key-btn').style.display = '';
+        }
+        return;
+      }
+
+      if (authConfig.mode === 'oidc') {
+        const clientId = authConfig.oidc?.browser_client_id;
+        if (clientId) {
+          // Load MSAL.js from CDN and initialise.
+          document.getElementById('auth-oidc-panel').style.display = '';
+          await loadMsal();
+          if (window.msal) {
+            // Derive authority from issuer: strip trailing /v2.0 for Azure compatibility.
+            const issuer = authConfig.oidc.issuer || '';
+            const authority = issuer.replace(/\/v2\.0\/?$/, '');
+            msalInstance = new msal.PublicClientApplication({
+              auth: { clientId, authority },
+              cache: { cacheLocation: 'sessionStorage' },
+            });
+            await msalInstance.initialize();
+            await tryAcquireTokenSilent();
+          }
+        } else {
+          // No browser_client_id — show manual token input with a helpful hint.
+          document.getElementById('auth-token-panel').style.display = '';
+          document.getElementById('manual-token-hint').style.display = '';
+          if (sessionStorage.getItem('dagalog-oidc-token')) {
+            document.getElementById('manual-token-status').textContent = 'Token set';
+            document.getElementById('clear-token-btn').style.display = '';
+          }
+        }
+      }
+    }
+
+    let msalLoading = null;
+    function loadMsal() {
+      if (window.msal) return Promise.resolve();
+      if (!msalLoading) {
+        msalLoading = new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://alcdn.msauth.net/browser/3.28.1/js/msal-browser.min.js';
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error('MSAL.js failed to load'));
+          document.head.appendChild(s);
+        });
+      }
+      return msalLoading;
+    }
+
     // ── Constants ──────────────────────────────────────────────────────────────
     const RDF_TYPE   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
     const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label';
@@ -436,12 +748,17 @@
         method: 'POST',
         headers: {
           'Content-Type': 'application/sparql-query',
-          'Accept': 'application/sparql-results+json',
+          'Accept': 'application/sparql-results+json, text/turtle;q=0.9, application/n-triples;q=0.8',
+          ...getAuthHeaders(),
         },
         body: query,
       });
       const text = await resp.text();
       if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + text);
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('text/turtle') || ct.includes('application/n-triples') || ct.includes('application/rdf')) {
+        return { type: 'rdf', text };
+      }
       return JSON.parse(text);
     }
 
@@ -692,6 +1009,35 @@
       });
     }
 
+    // ── Graph fullscreen ───────────────────────────────────────────────────────
+    let graphFullscreen = false;
+
+    async function toggleGraphFullscreen() {
+      const wrap = document.getElementById('cy-fullscreen-wrap');
+      const btn  = document.getElementById('cy-fs-btn');
+      if (!wrap || !btn) return;
+      if (!graphFullscreen) {
+        graphFullscreen = true;
+        btn.textContent = 'Exit Fullscreen';
+        if (wrap.requestFullscreen) {
+          try { await wrap.requestFullscreen(); return; } catch { /* fall through to CSS mode */ }
+        }
+        wrap.classList.add('graph-fs');
+        document.body.style.overflow = 'hidden';
+        if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+      } else {
+        graphFullscreen = false;
+        btn.textContent = 'Fullscreen';
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          wrap.classList.remove('graph-fs');
+          document.body.style.overflow = '';
+          if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+        }
+      }
+    }
+
     // ── Query editor ───────────────────────────────────────────────────────────
     async function runQuery() {
       const rawQuery = document.getElementById('query').value.trim();
@@ -706,6 +1052,17 @@
       lastResults = null;
       try {
         const data  = await sparqlFetch(query);
+
+        if (data.type === 'rdf') {
+          const pre = document.createElement('pre');
+          pre.className = 'msg ok';
+          pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:0.8rem';
+          pre.textContent = data.text || '(empty result)';
+          container.appendChild(pre);
+          saveHistory(rawQuery, null);
+          return;
+        }
+
         const vars  = data.head?.vars ?? [];
         const count = data.results?.bindings?.length ?? null;
 
@@ -719,8 +1076,13 @@
             '<div id="result-table-pane"></div>' +
             '<div id="result-graph-pane" style="display:none">' +
               '<p id="graph-warning" class="msg err" style="display:none;margin-bottom:0.5rem"></p>' +
-              '<div class="cy-wrap"><div id="cy"></div></div>' +
-              '<p class="graph-hint">Scroll to zoom · drag to pan · click a node to browse</p>' +
+              '<div id="cy-fullscreen-wrap" class="cy-wrap">' +
+                '<div class="cy-toolbar">' +
+                  '<button id="cy-fs-btn" class="btn-graph-action" onclick="toggleGraphFullscreen()">Fullscreen</button>' +
+                '</div>' +
+                '<div id="cy"></div>' +
+                '<p class="graph-hint">Scroll to zoom · drag canvas to pan · drag nodes to rearrange · click node to browse</p>' +
+              '</div>' +
             '</div>';
           const tablePane = document.getElementById('result-table-pane');
           renderTable(tablePane, data, null);
@@ -748,7 +1110,7 @@
       try {
         const resp = await fetch('/upload', {
           method: 'POST',
-          headers: { 'Content-Type': 'text/turtle; charset=utf-8' },
+          headers: { 'Content-Type': 'text/turtle; charset=utf-8', ...getAuthHeaders() },
           body: turtle,
         });
         const text = await resp.text();
@@ -767,6 +1129,7 @@
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = '';
       document.getElementById('classes-view').style.display  = 'none';
+      document.getElementById('build-view').style.display    = 'none';
 
       document.getElementById('resource-heading').textContent =
         shortenIri(iri) !== iri ? shortenIri(iri) : 'Resource';
@@ -801,6 +1164,12 @@
           span.textContent = shortenIri(t);
           span.title = t;
           typesEl.appendChild(span);
+          const link = document.createElement('a');
+          link.className = 'qb-type-link';
+          link.href = '/?view=build&class=' + encodeURIComponent(t);
+          link.title = 'Build query from ' + shortenIri(t);
+          link.textContent = 'Build query';
+          typesEl.appendChild(link);
         }
       }
 
@@ -816,7 +1185,9 @@
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = 'none';
       document.getElementById('classes-view').style.display  = '';
+      document.getElementById('build-view').style.display    = 'none';
       document.getElementById('nav-query').classList.remove('active');
+      document.getElementById('nav-build').classList.remove('active');
       document.getElementById('nav-classes').classList.add('active');
 
       const treeEl = document.getElementById('class-tree');
@@ -902,7 +1273,7 @@
       });
     }
 
-    // ── Query builder — generation stub (QB Phase 1 implements this) ──────────
+    // ── Query builder — SPARQL generation ─────────────────────────────────────
     //
     // `root` shape mirrors `QueryNode` in sparql_endpoint/src/query_builder.rs:
     //   { varName: string, classIri: string,
@@ -914,9 +1285,419 @@
     //     ?s a <http://example.org/Person> .
     //     OPTIONAL { ?s <http://…/label> ?s_label }
     //   }
-    function generateSparql(_root) {
-      // Stub — replace with real implementation in QB Phase 1.
-      return '';
+    //
+    // MIRROR: keep in sync with generate_sparql() in query_builder.rs.
+    function generateSparql(root) {
+      const selectVars = [];
+      const bodyLines  = [];
+      function collectNode(node) {
+        selectVars.push('?' + node.varName);
+        bodyLines.push('  ?' + node.varName + ' a <' + node.classIri + '> .');
+        for (const dp of node.dataProps) {
+          if (dp.checked) {
+            selectVars.push('?' + dp.varName);
+            const f = dp.filter?.trim();
+            if (f) {
+              const escaped = f.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              bodyLines.push('  ?' + node.varName + ' <' + dp.propIri + '> ?' + dp.varName + ' .');
+              bodyLines.push('  FILTER(regex(?' + dp.varName + ', "' + escaped + '", "i"))');
+            } else {
+              bodyLines.push(
+                '  OPTIONAL { ?' + node.varName +
+                ' <' + dp.propIri + '> ?' + dp.varName + ' }'
+              );
+            }
+          }
+        }
+        for (const link of node.links) {
+          bodyLines.push(
+            '  ?' + node.varName + ' <' + link.propIri +
+            '> ?' + link.target.varName + ' .'
+          );
+          collectNode(link.target);
+        }
+      }
+      collectNode(root);
+      return 'SELECT ' + selectVars.join(' ') + ' WHERE {\n' +
+             bodyLines.join('\n') + '\n}';
+    }
+
+    // ── Query builder — state ──────────────────────────────────────────────────
+    // Each QueryNode: { varName, classIri, dataProps, links, _objProps }
+    // _objProps stores discovered object-property IRIs (UI only, not in generate_sparql).
+
+    let qbRootNode   = null;   // root of the query graph
+    let qbActiveNode = null;   // currently focused node (property panes reflect this)
+    let qbNodeSeq    = 0;      // counter for auto-naming linked nodes (n1, n2, …)
+
+    function iriLocalName(iri) {
+      const sep = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+      return iri.slice(sep + 1).toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'val';
+    }
+
+    // ── Build view lifecycle ───────────────────────────────────────────────────
+
+    async function showBuildView(preselectedClass) {
+      document.getElementById('query-view').style.display         = 'none';
+      document.getElementById('resource-view').style.display      = 'none';
+      document.getElementById('classes-view').style.display       = 'none';
+      document.getElementById('build-selftest-view').style.display = 'none';
+      document.getElementById('build-view').style.display         = '';
+      ['nav-query', 'nav-classes'].forEach(id =>
+        document.getElementById(id)?.classList.remove('active'));
+      document.getElementById('nav-build').classList.add('active');
+      await loadQbClasses();
+      if (preselectedClass) {
+        const found = qbClassList.find(c => c.iri === preselectedClass);
+        document.getElementById('class-picker').value =
+          found ? found.short : preselectedClass;
+        document.getElementById('class-dropdown').style.display = 'none';
+        await onClassSelect(preselectedClass);
+      }
+    }
+
+    let qbClassList = [];  // [{iri, short}] populated by loadQbClasses
+    let qbFocusedItem = -1;  // keyboard navigation index in dropdown
+
+    async function loadQbClasses() {
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?c WHERE { ' +
+          '{ ?c a <http://www.w3.org/2002/07/owl#Class> } UNION { [] a ?c } ' +
+          '} LIMIT 500'
+        );
+        qbClassList = [];
+        for (const b of data.results?.bindings ?? []) {
+          if (b.c?.type !== 'uri') continue;
+          qbClassList.push({ iri: b.c.value, short: shortenIri(b.c.value) });
+        }
+        qbClassList.sort((a, b) => a.short.localeCompare(b.short));
+        filterQbClasses(document.getElementById('class-picker').value);
+      } catch { /* silently ignore */ }
+    }
+
+    function filterQbClasses(text) {
+      const q = text.trim().toLowerCase();
+      const dd = document.getElementById('class-dropdown');
+      const matches = q
+        ? qbClassList.filter(c =>
+            c.short.toLowerCase().includes(q) || c.iri.toLowerCase().includes(q))
+        : qbClassList;
+      if (matches.length === 0) { dd.style.display = 'none'; return; }
+      dd.innerHTML = '';
+      qbFocusedItem = -1;
+      for (const c of matches.slice(0, 80)) {
+        const item = document.createElement('div');
+        item.className = 'qb-dropdown-item';
+        item.innerHTML =
+          '<span class="qb-item-short">' + escHtml(c.short) + '</span>' +
+          '<span class="qb-item-iri">'   + escHtml(c.iri)   + '</span>';
+        item.addEventListener('mousedown', e => {
+          e.preventDefault();  // keep focus on input
+          selectQbClass(c.iri, c.short);
+        });
+        dd.appendChild(item);
+      }
+      dd.style.display = '';
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function selectQbClass(iri, short) {
+      document.getElementById('class-picker').value = short;
+      document.getElementById('class-dropdown').style.display = 'none';
+      onClassSelect(iri);
+    }
+
+    function qbPickerKeydown(e) {
+      const dd = document.getElementById('class-dropdown');
+      if (dd.style.display === 'none') return;
+      const items = dd.querySelectorAll('.qb-dropdown-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        qbFocusedItem = Math.min(qbFocusedItem + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
+        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        qbFocusedItem = Math.max(qbFocusedItem - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
+        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (qbFocusedItem >= 0 && items[qbFocusedItem]) {
+          items[qbFocusedItem].dispatchEvent(new MouseEvent('mousedown'));
+        }
+      } else if (e.key === 'Escape') {
+        dd.style.display = 'none';
+      }
+    }
+
+    async function onClassSelect(classIri) {
+      let iri = classIri.trim();
+      if (!iri.startsWith('http')) {
+        const found = qbClassList.find(c => c.short === iri || c.iri === iri);
+        if (!found) return;
+        iri = found.iri;
+      }
+      qbNodeSeq    = 0;
+      const root   = { varName: 's', classIri: iri, dataProps: [], links: [], _objProps: [] };
+      qbRootNode   = root;
+      qbActiveNode = root;
+      await discoverQbProperties(root);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+      document.getElementById('qb-props-card').style.display  = '';
+      document.getElementById('qb-sparql-card').style.display = '';
+    }
+
+    // ── Property discovery ─────────────────────────────────────────────────────
+
+    async function discoverQbProperties(node) {
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?p ?o WHERE { ?s a <' + node.classIri + '> . ?s ?p ?o } LIMIT 200'
+        );
+        const dataSet = new Map();
+        const objSet  = new Set();
+        for (const b of data.results?.bindings ?? []) {
+          if (!b.p || !b.o) continue;
+          if (b.o.type === 'literal') dataSet.set(b.p.value, true);
+          if (b.o.type === 'uri')     objSet.add(b.p.value);
+        }
+        node.dataProps = [...dataSet.keys()].map(propIri => ({
+          propIri,
+          varName: node.varName + '_' + iriLocalName(propIri),
+          checked: false,
+          filter:  '',
+        }));
+        node._objProps = [...objSet];
+      } catch { /* ignore */ }
+    }
+
+    // ── Canvas rendering ───────────────────────────────────────────────────────
+
+    function renderQbNodeCanvas() {
+      const canvas = document.getElementById('node-canvas');
+      canvas.innerHTML = '';
+      if (!qbRootNode) return;
+
+      function buildCard(node, parentLink) {
+        if (parentLink) {
+          const arrow = document.createElement('div');
+          arrow.className = 'node-arrow';
+          arrow.textContent = '── ' + shortenIri(parentLink.propIri) + ' ──►';
+          canvas.appendChild(arrow);
+        }
+        const card = document.createElement('div');
+        card.className = 'node-card' + (node === qbActiveNode ? ' active' : '');
+        card.addEventListener('click', () => setActiveNode(node));
+
+        const h3 = document.createElement('h3');
+        h3.textContent = shortenIri(node.classIri);
+        h3.title = node.classIri;
+
+        const varEl = document.createElement('div');
+        varEl.className = 'node-var';
+        varEl.textContent = '?' + node.varName;
+
+        card.append(h3, varEl);
+
+        if (node !== qbRootNode) {
+          const acts = document.createElement('div');
+          acts.style.cssText = 'margin-top:0.35rem';
+          const rmBtn = document.createElement('button');
+          rmBtn.className = 'btn-remove-node';
+          rmBtn.textContent = '× Remove';
+          rmBtn.addEventListener('click', e => { e.stopPropagation(); removeQbNode(node); });
+          acts.appendChild(rmBtn);
+          card.appendChild(acts);
+        }
+        canvas.appendChild(card);
+        for (const link of node.links) buildCard(link.target, link);
+      }
+
+      buildCard(qbRootNode, null);
+    }
+
+    function setActiveNode(node) {
+      if (qbActiveNode === node) return;
+      qbActiveNode = node;
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+    }
+
+    // ── Property panes ─────────────────────────────────────────────────────────
+
+    function renderQbPropertyPanes() {
+      renderQbDataProps();
+      renderQbObjProps();
+    }
+
+    function renderQbDataProps() {
+      const list  = document.getElementById('data-prop-list');
+      list.innerHTML = '';
+      const props = qbActiveNode?.dataProps ?? [];
+      if (props.length === 0) {
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:0.8rem;color:#888;margin:0';
+        p.textContent = 'No data properties found.';
+        list.appendChild(p);
+        return;
+      }
+      for (const dp of props) {
+        const row = document.createElement('div');
+        row.className = 'qb-prop-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = dp.checked;
+        const filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.className = 'prop-filter-input';
+        filterInput.placeholder = 'filter…';
+        filterInput.value = dp.filter || '';
+        filterInput.style.cssText =
+          'display:none;font-size:0.75rem;padding:0.15rem 0.3rem;' +
+          'border:1px solid #ccc;border-radius:3px;width:7rem;margin-left:0.3rem;';
+        filterInput.addEventListener('input', () => {
+          dp.filter = filterInput.value;
+          regenerateSparql();
+        });
+        cb.addEventListener('change', () => {
+          dp.checked = cb.checked;
+          filterInput.style.display = cb.checked ? '' : 'none';
+          regenerateSparql();
+        });
+        if (dp.checked) filterInput.style.display = '';
+        const lbl = document.createElement('span');
+        lbl.className = 'qb-prop-label';
+        lbl.textContent = shortenIri(dp.propIri);
+        lbl.title = dp.propIri;
+        const varEl = document.createElement('span');
+        varEl.className = 'qb-prop-var';
+        varEl.textContent = '→ ?' + dp.varName;
+        row.append(cb, lbl, varEl, filterInput);
+        list.appendChild(row);
+      }
+    }
+
+    function renderQbObjProps() {
+      const list = document.getElementById('obj-prop-list');
+      list.innerHTML = '';
+      const objProps = qbActiveNode?._objProps ?? [];
+      if (objProps.length === 0) {
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:0.8rem;color:#888;margin:0';
+        p.textContent = 'No object properties found.';
+        list.appendChild(p);
+        return;
+      }
+      for (const propIri of objProps) {
+        const row = document.createElement('div');
+        row.className = 'qb-prop-row';
+        const btn = document.createElement('button');
+        const alreadyLinked = qbActiveNode.links.some(l => l.propIri === propIri);
+        btn.className = 'btn-follow' + (alreadyLinked ? ' linked' : '');
+        btn.title = propIri;
+        if (alreadyLinked) {
+          btn.textContent = shortenIri(propIri) + ' (linked)';
+        } else {
+          btn.textContent = '+ ' + shortenIri(propIri) + ' →';
+          btn.addEventListener('click', () => followObjectProp(propIri));
+        }
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
+    }
+
+    // ── Multi-hop expansion ────────────────────────────────────────────────────
+
+    async function followObjectProp(propIri) {
+      const sourceNode = qbActiveNode;
+      // Discover the most common target class
+      let targetClass = null;
+      try {
+        const data = await sparqlFetch(
+          'SELECT DISTINCT ?type WHERE { ?s a <' + sourceNode.classIri + '> . ' +
+          '?s <' + propIri + '> ?o . ?o a ?type } LIMIT 20'
+        );
+        const b = data.results?.bindings?.[0];
+        if (b?.type?.type === 'uri') targetClass = b.type.value;
+      } catch { /* ignore */ }
+
+      qbNodeSeq++;
+      const varName = 'n' + qbNodeSeq;
+      const newNode = {
+        varName,
+        classIri: targetClass ?? 'http://www.w3.org/2002/07/owl#Thing',
+        dataProps: [], links: [], _objProps: [],
+      };
+      sourceNode.links.push({ propIri, target: newNode });
+      qbActiveNode = newNode;
+      await discoverQbProperties(newNode);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+    }
+
+    function isDescendantOrSelf(subtree, target) {
+      if (subtree === target) return true;
+      return subtree.links.some(l => isDescendantOrSelf(l.target, target));
+    }
+
+    function removeQbNode(node) {
+      function removeFromParent(parent) {
+        const idx = parent.links.findIndex(l => l.target === node);
+        if (idx !== -1) { parent.links.splice(idx, 1); return true; }
+        return parent.links.some(l => removeFromParent(l.target));
+      }
+      if (isDescendantOrSelf(node, qbActiveNode)) qbActiveNode = qbRootNode;
+      removeFromParent(qbRootNode);
+      renderQbNodeCanvas();
+      renderQbPropertyPanes();
+      regenerateSparql();
+    }
+
+    // ── SPARQL regeneration + run + export ─────────────────────────────────────
+
+    function regenerateSparql() {
+      const pre = document.getElementById('qb-generated');
+      if (!qbRootNode) { pre.textContent = ''; return; }
+      pre.textContent = generateSparql(qbRootNode);
+    }
+
+    async function runBuilderQuery() {
+      const sparql = document.getElementById('qb-generated').textContent.trim();
+      if (!sparql) return;
+      const btn       = document.getElementById('btn-qb-run');
+      const container = document.getElementById('qb-results');
+      btn.disabled    = true;
+      btn.textContent = 'Running…';
+      container.innerHTML = '';
+      try {
+        const data = await sparqlFetch(sparql);
+        renderTable(container, data, null);
+        addExportButtons(container, data);
+      } catch (e) {
+        showMsg(container, e.message, false);
+      } finally {
+        btn.disabled    = false;
+        btn.textContent = 'Run';
+      }
+    }
+
+    function editInSparql() {
+      const sparql = document.getElementById('qb-generated').textContent.trim();
+      if (!sparql) return;
+      document.getElementById('query').value = sparql;
+      document.getElementById('build-view').style.display  = 'none';
+      document.getElementById('query-view').style.display  = '';
+      document.getElementById('nav-build').classList.remove('active');
+      document.getElementById('nav-query').classList.add('active');
+      history.pushState({}, '', '/');
     }
 
     // ── QB self-test harness (Layer 3a) ────────────────────────────────────────
@@ -1077,9 +1858,26 @@
     window.addEventListener('DOMContentLoaded', () => {
       renderPrefixList();
       renderHistory();
+      initAuth();   // set up auth panel (async; runs in parallel with other init)
       loadStats();
       initDropZone();
       initKeyboardShortcuts();
+      document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && graphFullscreen) {
+          graphFullscreen = false;
+          const btn = document.getElementById('cy-fs-btn');
+          if (btn) btn.textContent = 'Fullscreen';
+          const wrap = document.getElementById('cy-fullscreen-wrap');
+          if (wrap) { wrap.classList.remove('graph-fs'); }
+          document.body.style.overflow = '';
+        }
+        if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
+      });
+      document.addEventListener('click', e => {
+        if (!e.target.closest('.qb-picker-wrap')) {
+          document.getElementById('class-dropdown').style.display = 'none';
+        }
+      });
 
       const params   = new URLSearchParams(location.search);
       const resource = params.get('resource');
@@ -1088,6 +1886,8 @@
 
       if (resource) {
         showResourceView(resource);
+      } else if (view === 'build') {
+        showBuildView(params.get('class') || undefined);
       } else if (view === 'classes') {
         showClassesView();
       } else if (view === 'build-selftest') {

@@ -1,0 +1,10 @@
+# SHACL spec §4.1.1 — sh:class data graph (ClassExampleShape).
+# Source: https://www.w3.org/TR/shacl/#ClassConstraintComponent
+# ex:Alice has no ex:address → no minCount, so conforms.
+# ex:Bob's address is typed ex:PostalAddress → conforms.
+# ex:Carol's address blank node is NOT typed ex:PostalAddress → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person .
+ex:Bob ex:address [ a ex:PostalAddress ; ex:city ex:Berlin ] .
+ex:Carol ex:address [ ex:city ex:Cairo ] .

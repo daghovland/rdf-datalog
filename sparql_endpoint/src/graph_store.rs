@@ -17,7 +17,14 @@ Contact: hovlanddag@gmail.com
 //!
 //! Specification: <https://www.w3.org/TR/sparql11-http-rdf-update/>
 
-use crate::{AppState, serialize::serialize_graph};
+use crate::{
+    AppState,
+    persistence::{LogEntry, to_repr},
+    serialize::{
+        serialize_graph, serialize_nquads, serialize_nquads_graph, serialize_trig,
+        serialize_trig_graph,
+    },
+};
 use axum::{
     body::Body,
     extract::{Query, State},
@@ -157,15 +164,18 @@ pub(crate) fn rdf_upload_format(ct: &str) -> Option<UploadFormat> {
         "application/n-triples" => Some(UploadFormat::NTriples),
         "application/n-quads" => Some(UploadFormat::NQuads),
         "application/trig" => Some(UploadFormat::TriG),
+        "application/ld+json" => Some(UploadFormat::JsonLd),
         _ => None,
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UploadFormat {
     Turtle,
     NTriples,
     NQuads,
     TriG,
+    JsonLd,
 }
 
 // ── Shared graph serialisation ────────────────────────────────────────────────
@@ -175,31 +185,31 @@ fn graph_response_parts(
     graph_id: GraphElementId,
     accept: Option<&str>,
 ) -> axum::response::Response {
-    // serialize_graph produces valid N-Triples (fully-expanded, one triple per line).
-    // That output is also valid N-Quads (default graph) and valid TriG.
-    let body = serialize_graph(store, graph_id);
     match negotiate_rdf_format(accept) {
         Some(RdfFormat::Turtle) => (
             StatusCode::OK,
             [("content-type", "text/turtle; charset=utf-8")],
-            body,
+            serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NTriples) => (
             StatusCode::OK,
             [("content-type", "application/n-triples")],
-            body,
+            serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NQuads) => (
             StatusCode::OK,
             [("content-type", "application/n-quads")],
-            body,
+            serialize_nquads_graph(store, graph_id),
         )
             .into_response(),
-        Some(RdfFormat::TriG) => {
-            (StatusCode::OK, [("content-type", "application/trig")], body).into_response()
-        }
+        Some(RdfFormat::TriG) => (
+            StatusCode::OK,
+            [("content-type", "application/trig")],
+            serialize_trig_graph(store, graph_id),
+        )
+            .into_response(),
         None => (
             StatusCode::NOT_ACCEPTABLE,
             "No supported RDF format in Accept",
@@ -236,6 +246,32 @@ fn copy_default_graph_to(
     }
 }
 
+/// Copy all quads from `src` into `dst`, preserving named graph IRIs.
+fn copy_dataset_to(src: &dag_rdf::Datastore, dst: &mut dag_rdf::Datastore) {
+    for q in src.named_graphs.quad_list.iter().copied() {
+        let graph = dst.add_resource(src.resources.get_graph_element(q.triple_id).clone());
+        let s = dst.add_resource(src.resources.get_graph_element(q.subject).clone());
+        let p = dst.add_resource(src.resources.get_graph_element(q.predicate).clone());
+        let o = dst.add_resource(src.resources.get_graph_element(q.obj).clone());
+        dst.named_graphs.add_quad(dag_rdf::ingress::Quad {
+            triple_id: graph,
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+}
+
+fn graph_iri_for(tmp: &dag_rdf::Datastore, graph_id: GraphElementId) -> Option<String> {
+    if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+        return None;
+    }
+    match tmp.resources.get_graph_element(graph_id) {
+        GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri))) => Some(iri.clone()),
+        _ => None,
+    }
+}
+
 /// Parse `body` using the format indicated by `fmt` into a temporary `Datastore`.
 #[allow(clippy::result_large_err)]
 pub(crate) fn parse_rdf_body(
@@ -243,12 +279,19 @@ pub(crate) fn parse_rdf_body(
     fmt: UploadFormat,
 ) -> Result<dag_rdf::Datastore, axum::response::Response> {
     let mut tmp = dag_rdf::Datastore::new(256);
-    let result = match fmt {
+    let result: Result<(), String> = match fmt {
         UploadFormat::Turtle | UploadFormat::NTriples => {
-            turtle::parse_turtle(&mut tmp, Cursor::new(body))
+            turtle::parse_turtle(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
         }
-        UploadFormat::NQuads => turtle::parse_nquads(&mut tmp, Cursor::new(body)),
-        UploadFormat::TriG => turtle::parse_trig(&mut tmp, Cursor::new(body)),
+        UploadFormat::NQuads => {
+            turtle::parse_nquads(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
+        UploadFormat::TriG => {
+            turtle::parse_trig(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
+        UploadFormat::JsonLd => {
+            jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
+        }
     };
     result
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
@@ -276,12 +319,36 @@ pub async fn gsp_get_inner(
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+
+    // No graph param → whole-dataset response for multi-graph formats (Fuseki extension).
+    if !params.contains_key("default") && !params.contains_key("graph") {
+        return match negotiate_rdf_format(accept) {
+            Some(RdfFormat::NQuads) => (
+                StatusCode::OK,
+                [("content-type", "application/n-quads")],
+                serialize_nquads(&store),
+            )
+                .into_response(),
+            Some(RdfFormat::TriG) => (
+                StatusCode::OK,
+                [("content-type", "application/trig")],
+                serialize_trig(&store),
+            )
+                .into_response(),
+            _ => (
+                StatusCode::BAD_REQUEST,
+                "GET /rdf-graph-store requires ?default or ?graph=<iri>",
+            )
+                .into_response(),
+        };
+    }
+
     let graph_id = match resolve_read_target(&params, &store) {
         Ok(ReadTarget::Default) => DEFAULT_GRAPH_ELEMENT_ID,
         Ok(ReadTarget::Named(id)) => id,
         Err(r) => return r,
     };
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
     graph_response_parts(&store, graph_id, accept)
 }
 
@@ -299,12 +366,29 @@ pub async fn gsp_head_inner(
     headers: HeaderMap,
 ) -> axum::response::Response {
     let store = state.store.read().await;
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+
+    // Mirror gsp_get_inner: no-param whole-dataset for HEAD too.
+    if !params.contains_key("default") && !params.contains_key("graph") {
+        let ct = match negotiate_rdf_format(accept) {
+            Some(RdfFormat::NQuads) => "application/n-quads",
+            Some(RdfFormat::TriG) => "application/trig",
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "GET /rdf-graph-store requires ?default or ?graph=<iri>",
+                )
+                    .into_response();
+            }
+        };
+        return (StatusCode::OK, [("content-type", ct)], "").into_response();
+    }
+
     let graph_id = match resolve_read_target(&params, &store) {
         Ok(ReadTarget::Default) => DEFAULT_GRAPH_ELEMENT_ID,
         Ok(ReadTarget::Named(id)) => id,
         Err(r) => return r,
     };
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok());
     let get_resp = graph_response_parts(&store, graph_id, accept);
     let (parts, _body) = get_resp.into_parts();
     Response::from_parts(parts, Body::empty())
@@ -348,12 +432,39 @@ pub async fn gsp_put_inner(
         Err(r) => return r,
     };
 
+    // Acquire the store write lock FIRST, then commit to changelog inside the
+    // critical section.  This ensures commit-order == apply-order and prevents
+    // concurrent writes from diverging the live state from the durable log.
     let mut store = state.store.write().await;
     let (graph_id, is_new) = match resolve_write_target(&params, &mut store) {
         Ok(WriteTarget::Default) => (DEFAULT_GRAPH_ELEMENT_ID, false),
         Ok(WriteTarget::Named { id, is_new }) => (id, is_new),
         Err(r) => return r,
     };
+
+    let graph_iri: Option<String> = params.get("graph").cloned();
+    if let Some(ref changelog) = state.changelog {
+        let mut entries = Vec::new();
+        entries.push(LogEntry::ClearGraph {
+            graph: graph_iri.clone(),
+        });
+        for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
+            entries.push(LogEntry::InsertQuad {
+                graph: graph_iri.clone(),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            });
+        }
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
 
     store.remove_graph(graph_id);
     copy_default_graph_to(&tmp, &mut store, graph_id);
@@ -380,31 +491,47 @@ pub async fn gsp_delete_inner(
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
     }
 
-    let mut store = state.store.write().await;
-
-    if params.contains_key("default") {
-        store.remove_graph(DEFAULT_GRAPH_ELEMENT_ID);
-        return StatusCode::NO_CONTENT.into_response();
-    }
-
-    if let Some(iri) = params.get("graph") {
+    // Validate params early (before taking any locks).
+    let graph_iri: Option<String> = if params.contains_key("default") {
+        None
+    } else if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
         }
-        return match store.lookup_named_graph_id(iri) {
-            Some(id) if store.named_graph_exists(id) => {
-                store.remove_graph(id);
-                StatusCode::NO_CONTENT.into_response()
-            }
-            _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
-        };
+        Some(iri.clone())
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "DELETE /rdf-graph-store requires ?default or ?graph=<iri>",
+        )
+            .into_response();
+    };
+
+    // Acquire the store write lock first, then commit to changelog inside the
+    // critical section so commit-order == apply-order.
+    let mut store = state.store.write().await;
+
+    let graph_id = match &graph_iri {
+        None => DEFAULT_GRAPH_ELEMENT_ID,
+        Some(iri) => match store.lookup_named_graph_id(iri) {
+            Some(id) if store.named_graph_exists(id) => id,
+            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+        },
+    };
+
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_clear_graph(graph_iri.as_deref()) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
     }
 
-    (
-        StatusCode::BAD_REQUEST,
-        "DELETE /rdf-graph-store requires ?default or ?graph=<iri>",
-    )
-        .into_response()
+    store.remove_graph(graph_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 pub async fn gsp_post(
@@ -413,7 +540,9 @@ pub async fn gsp_post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    gsp_post_inner(state, params, headers, body).await
+    // The standard GSP endpoint follows spec §5.5: POST to ?graph=<iri> that
+    // does not exist returns 404 (SHOULD, not creates).
+    gsp_post_inner(state, params, headers, body, false).await
 }
 
 pub async fn gsp_post_inner(
@@ -421,6 +550,10 @@ pub async fn gsp_post_inner(
     params: HashMap<String, String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
+    // Fuseki compat: create the named graph if it doesn't already exist.
+    // The W3C GSP spec §5.5 says SHOULD 404 for nonexistent graphs; Fuseki's
+    // per-dataset /data endpoint creates them instead so existing clients work.
+    create_if_missing: bool,
 ) -> axum::response::Response {
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -450,27 +583,109 @@ pub async fn gsp_post_inner(
         Err(r) => return r,
     };
 
-    let mut store = state.store.write().await;
-
+    // ── Case 1: ?default — merge into default graph ───────────────────────────
     if params.contains_key("default") {
+        // Acquire write lock first, then commit changelog under it.
+        let mut store = state.store.write().await;
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                .map(|q| LogEntry::InsertQuad {
+                    graph: None,
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
         copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
         return StatusCode::NO_CONTENT.into_response();
     }
 
+    // ── Case 2: ?graph=<iri> — merge into a named graph ─────────────────────
+    //
+    // Spec §5.5 SHOULD: return 404 when the named graph does not exist.
+    // Fuseki extension: create-if-missing (create_if_missing=true).
     if let Some(iri) = params.get("graph") {
         if !is_absolute_iri(iri) {
             return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
         }
-        return match store.lookup_named_graph_id(iri) {
-            Some(id) if store.named_graph_exists(id) => {
-                copy_default_graph_to(&tmp, &mut store, id);
-                StatusCode::NO_CONTENT.into_response()
+        // Acquire write lock first, then check existence and commit changelog.
+        let mut store = state.store.write().await;
+        let (graph_id, created) = match store.lookup_named_graph_id(iri) {
+            Some(id) if store.named_graph_exists(id) => (id, false),
+            _ if create_if_missing => {
+                let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
+                (store.resources.add_resource(elem), true)
             }
-            _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+            _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+        };
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+                .map(|q| LogEntry::InsertQuad {
+                    graph: Some(iri.clone()),
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+        return if created {
+            StatusCode::CREATED.into_response()
+        } else {
+            StatusCode::NO_CONTENT.into_response()
         };
     }
 
-    // No param → create new graph with server-assigned IRI
+    // ── Case 3: no param — create a new graph with a server-assigned IRI ─────
+    if fmt == UploadFormat::TriG || fmt == UploadFormat::NQuads {
+        let mut store = state.store.write().await;
+        if let Some(ref changelog) = state.changelog {
+            let entries: Vec<_> = tmp
+                .named_graphs
+                .quad_list
+                .iter()
+                .copied()
+                .map(|q| LogEntry::InsertQuad {
+                    graph: graph_iri_for(&tmp, q.triple_id),
+                    s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                    p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                    o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                })
+                .collect();
+            let mut cl = changelog.lock().await;
+            if let Err(e) = cl.append_batch(&entries) {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("persistence error: {e}"),
+                )
+                    .into_response();
+            }
+        }
+        copy_dataset_to(&tmp, &mut store);
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
     let new_iri = {
         let ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -478,10 +693,31 @@ pub async fn gsp_post_inner(
             .as_nanos();
         format!("{}/rdf-graph-store/graph/{}", state.config.base_iri, ns)
     };
+    // Acquire write lock, then commit changelog, then mutate memory.
+    let mut store = state.store.write().await;
+    if let Some(ref changelog) = state.changelog {
+        let entries: Vec<_> = tmp
+            .named_graphs
+            .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+            .map(|q| LogEntry::InsertQuad {
+                graph: Some(new_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            })
+            .collect();
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
     let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(new_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
     copy_default_graph_to(&tmp, &mut store, graph_id);
-
     let location = format!(
         "{}/rdf-graph-store?graph={}",
         state.config.base_iri,
@@ -553,8 +789,31 @@ pub async fn direct_gsp_put(
     let mut store = state.store.write().await;
     // Check new-ness before interning (interning would make the lookup return Some).
     let is_new = store.lookup_named_graph_id(&graph_iri).is_none();
-    let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri)));
+    let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
+
+    if let Some(ref changelog) = state.changelog {
+        let mut entries = vec![LogEntry::ClearGraph {
+            graph: Some(graph_iri.clone()),
+        }];
+        for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
+            entries.push(LogEntry::InsertQuad {
+                graph: Some(graph_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            });
+        }
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     store.remove_graph(graph_id);
     copy_default_graph_to(&tmp, &mut store, graph_id);
     if is_new {
@@ -576,13 +835,24 @@ pub async fn direct_gsp_delete(
     }
     let graph_iri = direct_graph_iri(&state.config.base_iri, &path);
     let mut store = state.store.write().await;
-    match store.lookup_named_graph_id(&graph_iri) {
-        Some(id) if store.named_graph_exists(id) => {
-            store.remove_graph(id);
-            StatusCode::NO_CONTENT.into_response()
+    let graph_id = match store.lookup_named_graph_id(&graph_iri) {
+        Some(id) if store.named_graph_exists(id) => id,
+        _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
+    };
+
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_clear_graph(Some(&graph_iri)) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
         }
-        _ => (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
     }
+
+    store.remove_graph(graph_id);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// `HEAD /rdf-graphs/*path` — return headers only for the graph at the request URI.
@@ -640,6 +910,28 @@ pub async fn direct_gsp_post(
         Some(id) if store.named_graph_exists(id) => id,
         _ => return (StatusCode::NOT_FOUND, "Named graph not found").into_response(),
     };
+
+    if let Some(ref changelog) = state.changelog {
+        let entries: Vec<_> = tmp
+            .named_graphs
+            .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+            .map(|q| LogEntry::InsertQuad {
+                graph: Some(graph_iri.clone()),
+                s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                o: to_repr(tmp.resources.get_graph_element(q.obj)),
+            })
+            .collect();
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     copy_default_graph_to(&tmp, &mut store, graph_id);
     StatusCode::NO_CONTENT.into_response()
 }

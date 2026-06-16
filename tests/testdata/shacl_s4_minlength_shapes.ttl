@@ -1,0 +1,12 @@
+# SHACL spec §4.4.1 — sh:minLength shapes graph (MinLengthExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MinLengthConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MinLengthExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minLength 4 ;
+    ] .

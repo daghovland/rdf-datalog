@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
+sparql-parser = { path = "../sparql_parser" }
 log = "0.4"

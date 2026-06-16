@@ -1,0 +1,11 @@
+# SHACL spec §4.8.3 — sh:in data graph (InExampleShape).
+# Source: https://www.w3.org/TR/shacl/#InConstraintComponent
+# sh:in: each value of ex:status must be one of (ex:Pending ex:Active ex:Closed).
+# ex:Alice ex:status ex:Active  → in list → conforms.
+# ex:Bob   ex:status ex:Pending → in list → conforms.
+# ex:Carol ex:status ex:Unknown → not in list → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:status ex:Active .
+ex:Bob   ex:status ex:Pending .
+ex:Carol ex:status ex:Unknown .

@@ -1,0 +1,12 @@
+# SHACL spec §4.4.2 — sh:maxLength shapes graph (MaxLengthExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MaxLengthConstraintComponent
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MaxLengthExampleShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:name ;
+        sh:maxLength 5 ;
+    ] .

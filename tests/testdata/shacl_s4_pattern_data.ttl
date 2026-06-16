@@ -1,0 +1,9 @@
+# SHACL spec §4.4.3 — sh:pattern data graph (PatternExampleShape).
+# Source: https://www.w3.org/TR/shacl/#PatternConstraintComponent
+# The regex pattern is "^B\d{4}$" (B followed by exactly 4 digits).
+# ex:Alice ex:bCode "B1234" → matches → conforms.
+# ex:Bob   ex:bCode "B123X" → last char is not a digit → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:bCode "B1234" .
+ex:Bob   ex:bCode "B123X" .

@@ -1,0 +1,14 @@
+# SHACL spec §2.1.3.3 — implicit class target shapes graph.
+# Source: https://www.w3.org/TR/shacl/#implicit-targetClass
+# ex:Person is both rdfs:Class and sh:NodeShape, making it an implicit
+# class target — all instances of ex:Person are validated.
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Person
+    a rdfs:Class, sh:NodeShape ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+    ] .

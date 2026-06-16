@@ -1522,3 +1522,173 @@ async fn gsp_named_and_default_graphs_are_independent() {
         "charlie must NOT appear in default graph after named-graph PUT, got:\n{body}"
     );
 }
+
+// ── N-Quads / TriG format tests ───────────────────────────────────────────────
+
+/// TriG fixture that has one triple in the default graph and one in a named graph.
+const MIXED_TRIG: &str = r#"
+    @prefix ex: <http://example.org/> .
+
+    ex:alice a ex:Person .
+
+    <http://example.org/ng> {
+        ex:bob a ex:Employee .
+    }
+"#;
+
+/// I-1: GET ?default + Accept: application/n-quads — only returns default-graph triples.
+///
+/// Named-graph triples must NOT appear; the 4th field must be absent (N-Triples lines).
+#[tokio::test]
+async fn gsp_get_default_nquads_does_not_include_named_graph() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let resp = server
+        .client
+        .get(server.gsp_default_url())
+        .header("accept", "application/n-quads")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/alice"),
+        "alice (default graph) must be present, got:\n{body}"
+    );
+    assert!(
+        !body.contains("http://example.org/bob"),
+        "bob (named graph) must NOT appear in default-graph N-Quads response, got:\n{body}"
+    );
+    assert!(
+        !body.contains("http://example.org/ng"),
+        "named-graph IRI must NOT appear in default-graph N-Quads response, got:\n{body}"
+    );
+}
+
+/// I-2: GET ?graph=<iri> + Accept: application/n-quads — includes graph IRI as 4th field.
+#[tokio::test]
+async fn gsp_get_named_graph_nquads_includes_graph_iri() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let url = server.gsp_named_graph_url("http://example.org/ng");
+    let resp = server
+        .client
+        .get(&url)
+        .header("accept", "application/n-quads")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/bob"),
+        "bob must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/ng"),
+        "graph IRI must appear as 4th field, got:\n{body}"
+    );
+    assert!(
+        !body.contains("http://example.org/alice"),
+        "alice (default graph) must NOT appear in named-graph N-Quads response, got:\n{body}"
+    );
+}
+
+/// I-3: GET ?graph=<iri> + Accept: application/trig — wraps triples in a GRAPH block.
+#[tokio::test]
+async fn gsp_get_named_graph_trig_uses_graph_block() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let url = server.gsp_named_graph_url("http://example.org/ng");
+    let resp = server
+        .client
+        .get(&url)
+        .header("accept", "application/trig")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("GRAPH"),
+        "TriG response for a named graph must contain the GRAPH keyword, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/ng"),
+        "graph IRI must appear in GRAPH block, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/bob"),
+        "bob must appear inside the GRAPH block, got:\n{body}"
+    );
+    assert!(
+        !body.contains("http://example.org/alice"),
+        "alice (default graph) must NOT appear in named-graph TriG response, got:\n{body}"
+    );
+}
+
+/// I-4: GET (no graph param) + Accept: application/n-quads — returns all graphs.
+///
+/// Fuseki extension: no ?default / ?graph= → whole-dataset N-Quads dump.
+#[tokio::test]
+async fn gsp_get_no_param_nquads_returns_whole_dataset() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let resp = server
+        .client
+        .get(server.gsp_url())
+        .header("accept", "application/n-quads")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap_or("");
+    assert!(
+        ct.contains("application/n-quads"),
+        "expected n-quads content-type, got: {ct}"
+    );
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/alice"),
+        "alice (default graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/bob"),
+        "bob (named graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/ng"),
+        "named-graph IRI must appear as 4th field, got:\n{body}"
+    );
+}
+
+/// I-5: GET (no graph param) + Accept: application/trig — returns all graphs.
+///
+/// Fuseki extension: no ?default / ?graph= → whole-dataset TriG dump.
+#[tokio::test]
+async fn gsp_get_no_param_trig_returns_whole_dataset() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let resp = server
+        .client
+        .get(server.gsp_url())
+        .header("accept", "application/trig")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap_or("");
+    assert!(
+        ct.contains("application/trig"),
+        "expected trig content-type, got: {ct}"
+    );
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/alice"),
+        "alice (default graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/bob"),
+        "bob (named graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("GRAPH"),
+        "TriG dataset dump must use GRAPH blocks for named graphs, got:\n{body}"
+    );
+}

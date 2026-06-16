@@ -1,0 +1,9 @@
+# SHACL spec §4.6.1 — sh:not data graph (NotExampleShape).
+# Source: https://www.w3.org/TR/shacl/#core-components-logical
+# sh:not: the focus node must NOT conform to the given shape.
+# ex:Alice a ex:LegalPerson → conforms to sh:class ex:LegalPerson → violates sh:not → 1 violation.
+# ex:Bob   a ex:NaturalPerson → does not conform to sh:class ex:LegalPerson → satisfies sh:not → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:LegalPerson .
+ex:Bob   a ex:NaturalPerson .

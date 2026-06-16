@@ -1,0 +1,10 @@
+# SHACL spec §4.4.1 — sh:minLength data graph (MinLengthExampleShape).
+# Source: https://www.w3.org/TR/shacl/#MinLengthConstraintComponent
+# ex:Alice ex:name "Al"     → length 2 < 4 → 1 violation.
+# ex:Bob   ex:name "Robert" → length 6 ≥ 4 → conforms.
+# ex:Carol ex:name "Car"    → length 3 < 4 → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:name "Al" .
+ex:Bob   ex:name "Robert" .
+ex:Carol ex:name "Car" .

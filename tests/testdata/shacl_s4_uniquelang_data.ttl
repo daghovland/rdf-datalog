@@ -1,0 +1,8 @@
+# SHACL spec §4.4.5 — sh:uniqueLang data graph (UniqueLangExampleShape).
+# Source: https://www.w3.org/TR/shacl/#UniqueLangConstraintComponent
+# ex:Alice has two @en labels → duplicate language tag → 1 violation.
+# ex:Bob   has one @en and one @de → distinct language tags → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:label "Alice"@en , "Alice (1)"@en .
+ex:Bob   ex:label "Bob"@en , "Roberto"@de .

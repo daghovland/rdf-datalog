@@ -8,7 +8,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::AppState;
 use axum::{
-    Router,
+    Router, middleware,
     routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -25,9 +25,15 @@ pub fn build_router(state: AppState) -> Router {
             axum::http::Method::HEAD,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers([axum::http::header::ACCEPT, axum::http::header::CONTENT_TYPE]);
+        .allow_headers([
+            axum::http::header::ACCEPT,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ]);
 
     Router::new()
+        // ── Auth config (always public — no middleware) ───────────────────────
+        .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
         .route("/upload", post(crate::upload::upload_turtle))
@@ -82,6 +88,11 @@ pub fn build_router(state: AppState) -> Router {
             "/{name}/update",
             post(crate::dataset_routes::dataset_update_post),
         )
+        // ── Per-dataset SHACL validation (`/{name}/shacl`) ───────────────────
+        .route(
+            "/{name}/shacl",
+            post(crate::shacl_endpoint::dataset_shacl_post),
+        )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",
@@ -96,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::dataset_routes::dataset_data_get)
                 .head(crate::dataset_routes::dataset_data_head),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::auth_middleware,
+        ))
         .with_state(state)
         .layer(cors)
 }
