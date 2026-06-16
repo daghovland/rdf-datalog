@@ -141,8 +141,7 @@ const TWO_NAMED_GRAPHS_TRIG: &str = r#"
 "#;
 
 /// N-Quads fixture containing one quad in a named graph.
-const ONE_NAMED_GRAPH_NQUADS: &str =
-    "<http://example.org/nq-subject> <http://xmlns.com/foaf/0.1/name> \"NQ\" <http://example.org/graph-nq> .\n";
+const ONE_NAMED_GRAPH_NQUADS: &str = "<http://example.org/nq-subject> <http://xmlns.com/foaf/0.1/name> \"NQ\" <http://example.org/graph-nq> .\n";
 
 /// Minimal JSON-LD payload accepted by records fallback upload path.
 const SIMPLE_JSONLD: &str = r#"
@@ -1471,7 +1470,11 @@ async fn fuseki_gsp_post_data_no_params_nquads_preserves_named_graph() {
         .send()
         .await
         .expect("GET graph-nq failed");
-    assert_eq!(graph.status(), 200, "graph-nq must exist after N-Quads POST");
+    assert_eq!(
+        graph.status(),
+        200,
+        "graph-nq must exist after N-Quads POST"
+    );
 }
 
 /// G-10: POST `/{name}/data?graph=<iri>` accepts JSON-LD uploads.
