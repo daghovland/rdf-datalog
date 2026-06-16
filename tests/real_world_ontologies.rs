@@ -17,8 +17,7 @@ Contact: hovlanddag@gmail.com
 //! | `dcterms.ttl`     | <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/> |
 //! | `owl-time.ttl`    | <https://www.w3.org/2006/time> (W3C)           |
 //!
-//! OWL-RL reasoning tests are marked `#[ignore]` pending full integration
-//! verification — parsing is always tested.
+//! All tests run without `#[ignore]`.
 
 use dag_rdf::Datastore;
 use dagalog::load_file;
@@ -79,7 +78,6 @@ fn prov_o_contains_core_classes() {
 ///
 /// Source: https://www.w3.org/ns/prov-o
 #[test]
-#[ignore = "OWL-RL over PROV-O produces many inferences; verify expected output before enabling"]
 fn prov_o_owlrl_reasoning() {
     let path = testdata("prov-o.ttl");
     let mut ds = Datastore::new(100_000);
@@ -168,7 +166,6 @@ fn owl_time_contains_temporal_classes() {
 ///
 /// Source: https://www.w3.org/2006/time
 #[test]
-#[ignore = "OWL-RL over OWL-Time: verify expected reasoning output before enabling"]
 fn owl_time_owlrl_reasoning() {
     let path = testdata("owl-time.ttl");
     let mut ds = Datastore::new(100_000);
