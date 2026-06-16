@@ -883,8 +883,19 @@ fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
 fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePattern> {
     let mut out = Vec::new();
     for comp in components {
-        if let QueryComponent::BGP(tps) = comp {
-            out.extend(tps.clone());
+        match comp {
+            QueryComponent::BGP(tps) => out.extend(tps.clone()),
+            QueryComponent::Optional(inner) => {
+                out.extend(collect_bgps_from_components(inner));
+            }
+            QueryComponent::Union(left, right) => {
+                out.extend(collect_bgps_from_components(left));
+                out.extend(collect_bgps_from_components(right));
+            }
+            QueryComponent::Graph(_, inner) => {
+                out.extend(collect_bgps_from_components(inner));
+            }
+            _ => {}
         }
     }
     out

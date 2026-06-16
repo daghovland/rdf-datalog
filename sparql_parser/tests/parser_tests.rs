@@ -609,7 +609,6 @@ fn construct_literal_in_subject_is_skipped() {
 /// collects top-level BGP nodes and misses OPTIONAL triples, producing an
 /// empty result instead of the correct triples.
 #[test]
-#[ignore = "known bug: CONSTRUCT WHERE does not recurse into OPTIONAL — see docs/plans/construct-where-recursion.md"]
 fn construct_where_with_optional_includes_optional_triples() {
     let mut ds = Datastore::new(64);
     let s = add_iri(&mut ds, "http://example.org/alice");
@@ -652,7 +651,6 @@ fn construct_where_with_optional_includes_optional_triples() {
 /// Regression: CONSTRUCT WHERE { … UNION … } should use both branches as
 /// the template. Currently UNION branches are not collected.
 #[test]
-#[ignore = "known bug: CONSTRUCT WHERE does not recurse into UNION — see docs/plans/construct-where-recursion.md"]
 fn construct_where_with_union_includes_all_branches() {
     let mut ds = Datastore::new(64);
     let alice = add_iri(&mut ds, "http://example.org/alice");
