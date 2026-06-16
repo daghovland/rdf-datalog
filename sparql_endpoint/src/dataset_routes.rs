@@ -191,8 +191,19 @@ pub async fn dataset_update_post(
     // section so commit-order == apply-order under concurrent writers.
     let mut store = ds.write().await;
 
+    // Parse Turtle content once; build WAL entries and prepared apply in one pass.
+    let (prepared, log_entries) = match sparql_update::prepare_update(&store, ops) {
+        Ok(pair) => pair,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Update prepare error: {e}"),
+            )
+                .into_response();
+        }
+    };
+
     if let Some(ref changelog) = state.changelog {
-        let log_entries = sparql_update::ops_to_log_entries(&store, &ops);
         let mut cl = changelog.lock().await;
         if let Err(e) = cl.append_batch(&log_entries) {
             return (
@@ -203,7 +214,7 @@ pub async fn dataset_update_post(
         }
     }
 
-    match sparql_update::execute_update(&mut store, ops) {
+    match sparql_update::apply_prepared_update(&mut store, prepared) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

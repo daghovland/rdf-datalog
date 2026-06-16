@@ -62,3 +62,20 @@ to `/upload`, routing to the Graph Store Protocol PUT/POST handler for a named g
 
 Requires implementing DESCRIBE in the SPARQL parser. Would let the resource browser
 use `DESCRIBE <iri>` instead of two manual SELECT queries.
+
+### Graph view: save layout
+
+After nodes are dragged to preferred positions, the layout should be saveable
+so it can be restored on the next visit for the same query.
+
+**Plan:**
+1. After any node drag ends (`cyInstance.on('dragfree', 'node', ...)`), collect
+   `{ id, x, y }` positions from `cyInstance.nodes().map(n => ({ id: n.id(), ...n.position() }))`.
+2. Persist under a localStorage key derived from the query string
+   (e.g. `dagalog-layout-<sha1-or-truncated-hash-of-query>`).
+3. On `renderGraph`, after `cytoscape({...})` returns, check localStorage for a saved layout
+   matching the current query. If found, apply positions with `cy.nodes().forEach(n => n.position(savedPos[n.id()]))` 
+   and call `cy.fit()` to adjust viewport.
+4. Add a "Reset layout" button in `.cy-toolbar` that discards the saved layout and re-runs
+   the cose layout via `cyInstance.layout({ name: 'cose', ... }).run()`.
+5. Optionally: a "Save PNG" button using `cyInstance.png({ output: 'blob' })` + `triggerDownload`.

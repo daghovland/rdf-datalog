@@ -27,7 +27,7 @@ Contact: hovlanddag@gmail.com
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
 use crate::graph;
-use crate::shapes::{ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target};
+use crate::shapes::{ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target, parse_prop_constraints};
 use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
@@ -119,67 +119,42 @@ pub fn shapes_to_rules(
             viol_preds.push(viol);
         }
 
-        // sh:and — violation if ANY sub-shape constraint fails (inlined for arg-count)
+        // sh:and — all constraints in all inner shapes must hold.
+        // Each inner property shape is parsed with parse_prop_constraints and
+        // processed through the same prop_constraint_rules machinery as outer
+        // properties.  To avoid IRI collisions with the outer shape's constraint
+        // IRIs, the "prop index" part of the key is offset by sub_idx * 10_000.
         for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
-            use crate::vocab::{SH_MIN_COUNT, SH_PATH, SH_PROPERTY};
             let inner_id = inner_ref.shapes_id;
-            let viol = graph::intern_iri(work, &viol_and(si, sub_idx));
 
-            for prop_node in graph::get_objects(shapes, inner_id, SH_PROPERTY) {
+            for (pi, prop_node) in graph::get_objects(shapes, inner_id, SH_PROPERTY)
+                .into_iter()
+                .enumerate()
+            {
                 if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
                     && let Some(path_iri) = graph::iri_string(shapes, path_id)
                 {
-                    let min = graph::get_object(shapes, prop_node, SH_MIN_COUNT)
-                        .and_then(|id| graph::elem_to_u64(shapes, id))
-                        .unwrap_or(0);
-                    if min >= 1 {
-                        let path_id_work = graph::intern_iri(work, &path_iri);
-                        let has_val = graph::intern_iri(
+                    let path_id_work = graph::intern_iri(work, &path_iri);
+                    let constraints = parse_prop_constraints(shapes, prop_node);
+                    for (ci, constraint) in constraints.iter().enumerate() {
+                        // sub_idx * 10_000 + pi gives a unique "prop index" that
+                        // does not collide with the outer shape's property indices.
+                        let inner_pi = sub_idx * 10_000 + pi;
+                        let viols = prop_constraint_rules(
+                            constraint,
+                            (si, inner_pi, ci),
+                            path_id_work,
+                            target_pred,
+                            true_id,
+                            nil_id,
+                            rdf_type_id,
+                            &mut rules,
                             work,
-                            &format!("urn:dagalog:shacl:andHasVal:{si}:{sub_idx}"),
                         );
-                        rules.push(Rule {
-                            head: RuleHead::NormalHead(dgp(
-                                Term::Variable("n".into()),
-                                Term::Resource(has_val),
-                                Term::Resource(true_id),
-                            )),
-                            body: vec![
-                                pos(
-                                    Term::Variable("n".into()),
-                                    Term::Resource(target_pred),
-                                    Term::Resource(true_id),
-                                ),
-                                pos(
-                                    Term::Variable("n".into()),
-                                    Term::Resource(path_id_work),
-                                    Term::Variable("v".into()),
-                                ),
-                            ],
-                        });
-                        rules.push(Rule {
-                            head: RuleHead::NormalHead(dgp(
-                                Term::Variable("n".into()),
-                                Term::Resource(viol),
-                                Term::Resource(nil_id),
-                            )),
-                            body: vec![
-                                pos(
-                                    Term::Variable("n".into()),
-                                    Term::Resource(target_pred),
-                                    Term::Resource(true_id),
-                                ),
-                                neg(
-                                    Term::Variable("n".into()),
-                                    Term::Resource(has_val),
-                                    Term::Resource(true_id),
-                                ),
-                            ],
-                        });
+                        viol_preds.extend(viols);
                     }
                 }
             }
-            viol_preds.push(viol);
         }
 
         // sh:or — violation if NO sub-shape conforms

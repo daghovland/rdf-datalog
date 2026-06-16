@@ -19,7 +19,7 @@ Contact: hovlanddag@gmail.com
 //! `sh:closed` is evaluated separately against the original data graph before Datalog
 //! materialisation to avoid synthetic helper predicates being mistaken for real data.
 //!
-//! See `SHACL_PLAN.md` for the phased implementation roadmap.
+//! See `docs/plans/SHACL_PLAN.md` for the phased implementation roadmap.
 
 pub mod evaluate;
 pub mod graph;

@@ -12,7 +12,7 @@ Contact: hovlanddag@gmail.com
 //! <https://www.w3.org/TR/shacl/>
 //!
 //! All tests except `shacl_testdata_parses` are `#[ignore]` because SHACL
-//! validation is not yet implemented (see `SHACL_PLAN.md` and the `shacl`
+//! validation is not yet implemented (see `docs/plans/SHACL_PLAN.md` and the `shacl`
 //! crate). The test data files in `tests/testdata/shacl_*.ttl` are valid
 //! Turtle and are verified to parse by `shacl_testdata_parses`.
 //!
@@ -91,6 +91,8 @@ fn shacl_testdata_parses() {
         "shacl_s4_not_shapes.ttl",
         "shacl_s4_and_data.ttl",
         "shacl_s4_and_shapes.ttl",
+        "shacl_s4_and_datatype_data.ttl",
+        "shacl_s4_and_datatype_shapes.ttl",
         "shacl_s4_or_data.ttl",
         "shacl_s4_or_shapes.ttl",
         "shacl_s4_xone_data.ttl",
@@ -584,6 +586,31 @@ fn spec_s4_6_2_and() {
         report.results.len(),
         1,
         "ex:Bob lacks ex:lastName → sh:and violated"
+    );
+}
+
+/// Regression: `sh:and` must enforce ALL constraint types in inner shapes,
+/// not just `sh:minCount`.
+///
+/// The shape requires `ex:age` to be `xsd:integer` (inside `sh:and`).
+/// `ex:Alice` has an integer age → conforms.
+/// `ex:Bob` has a string age → violates the `sh:datatype` constraint.
+///
+/// With the bug, the datatype violation inside `sh:and` is silently ignored
+/// and the report incorrectly says the graph conforms.
+#[test]
+fn spec_s4_6_2_and_with_datatype_constraint() {
+    let data = load("shacl_s4_and_datatype_data.ttl");
+    let shapes = load("shacl_s4_and_datatype_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "ex:Bob has wrong datatype for ex:age — sh:and must catch datatype violations"
+    );
+    assert_eq!(
+        report.results.len(),
+        1,
+        "exactly one violation expected (ex:Bob's ex:age has wrong datatype)"
     );
 }
 

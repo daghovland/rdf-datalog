@@ -48,7 +48,7 @@ use ingress::{
     XSD_BOOLEAN, XSD_DATE, XSD_DATE_TIME, XSD_DECIMAL, XSD_DOUBLE, XSD_DURATION, XSD_FLOAT,
     XSD_INTEGER, XSD_TIME,
 };
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -62,7 +62,7 @@ const QUAD_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("quad_log");
 // ── Serialisable types ────────────────────────────────────────────────────────
 
 /// Serialisable representation of one RDF term (subject, predicate, or object).
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ElementRepr {
     Iri(String),
     Blank(u32),
@@ -230,10 +230,16 @@ impl QuadChangelog {
     /// Replay all log entries into a fresh `Datastore`.
     ///
     /// Called once at startup to reconstruct the in-memory store from the durable log.
+    /// The log entry count is used as a size hint to pre-allocate the Datastore.
     pub fn replay(&self) -> Result<Datastore, String> {
-        let mut ds = Datastore::new(10_000);
         let read_txn = self.db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;
+
+        // Each log entry corresponds to roughly one unique RDF term change.
+        // InsertQuad has 3 terms; use entry_count as a conservative lower bound.
+        let entry_count = table.len().map_err(|e| e.to_string())? as u32;
+        let size_hint = entry_count.max(1024);
+        let mut ds = Datastore::new(size_hint);
 
         for result in table.iter().map_err(|e| e.to_string())? {
             let (_, bytes) = result.map_err(|e| e.to_string())?;
