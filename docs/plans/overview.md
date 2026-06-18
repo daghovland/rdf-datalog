@@ -35,15 +35,18 @@ linearly with total historical mutations.  A `POST /$/compact` admin endpoint is
 planned to atomically replace the log with a minimal snapshot.
 
 ### SPARQL Aggregates (GROUP BY, COUNT, SUM, AVG, …)
-**Files**: `sparql_parser/src/` — parser and executor  
-**Impact**: Any SPARQL query using aggregate functions fails to parse.  This blocks
-analytics queries that use COUNT, SUM, MIN, MAX, AVG, GROUP_CONCAT.
+**Files**: `sparql_parser/src/` — executor only (AST + parser already done)  
+**Plan**: [`docs/plans/SPARQL_AGGREGATES_AND_PATHS_PLAN.md`](SPARQL_AGGREGATES_AND_PATHS_PLAN.md) — Track A  
+**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 ignored tests); `tests/api_integration.rs` — `sparql_aggregate_sum_group_by` (ignored); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (ignored)  
+**Impact**: GROUP BY and aggregate expressions (COUNT, SUM, MIN, MAX, AVG, GROUP_CONCAT)
+are parsed but ignored by the executor.  Analytics queries return wrong results.
 
 ### SPARQL Property Paths (beyond `/`)
-**Files**: `sparql_parser/src/`  
-**Plan**: [`docs/plans/QUERY_BUILDER_PLAN.md`](QUERY_BUILDER_PLAN.md)  
+**Files**: `sparql_parser/src/` — AST, parser, executor  
+**Plan**: [`docs/plans/SPARQL_AGGREGATES_AND_PATHS_PLAN.md`](SPARQL_AGGREGATES_AND_PATHS_PLAN.md) — Track B  
+**Tests**: `tests/sparql12_suite.rs` — `spec_s9_alternative_path`, `spec_s9_inverse_path`, `spec_s9_zero_or_more`, `spec_s9_one_or_more`, `spec_s9_zero_or_one`, `spec_s9_negated_property_set`, `spec_s9_inverse_sequence` (7 ignored tests); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (ignored)  
 **Impact**: Only the sequence path operator (`/`) is supported.  `*`, `+`, `?`,
-`|`, `^`, `!`, and `<iri>` paths are not yet implemented.
+`|`, `^`, and `!` paths are not yet implemented.
 
 ### SPARQL SERVICE (federated queries)
 **Impact**: `SERVICE <endpoint> { … }` is not parsed.

@@ -94,13 +94,14 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Aggregate {
-    Count(Box<Expression>, bool), // bool is distinct
+    CountStar,                            // COUNT(*)
+    Count(Box<Expression>, bool),         // COUNT(DISTINCT? expr), bool = distinct
     Sum(Box<Expression>, bool),
     Avg(Box<Expression>, bool),
     Min(Box<Expression>, bool),
     Max(Box<Expression>, bool),
     Sample(Box<Expression>, bool),
-    GroupConcat(Box<Expression>, String, bool), // String is separator
+    GroupConcat(Box<Expression>, String, bool), // String = separator, bool = distinct
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

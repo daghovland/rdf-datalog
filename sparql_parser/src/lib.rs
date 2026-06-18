@@ -118,7 +118,7 @@ pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'
     let distinct = distinct_opt.is_some();
 
     // Projection: * or list of ?var
-    let (input, projection) = parse_projection(input)?;
+    let (input, projection) = parse_projection(ctx)(input)?;
     let (input, _) = multispace0(input)?;
 
     // WHERE (optional keyword)
@@ -176,24 +176,51 @@ fn parse_prefix<'a>(ctx: &mut ParserContext) -> impl FnMut(&'a str) -> IResult<&
 
 // ── Projection ───────────────────────────────────────────────────────────────
 
-fn parse_projection(input: &str) -> IResult<&str, Vec<ProjectionElement>> {
-    alt((
-        // *
-        map(terminated(char('*'), multispace0), |_| {
-            vec![ProjectionElement::Star]
-        }),
-        // one or more ?var / (?expr AS ?var)
-        map(
-            many0(terminated(parse_projection_element, multispace0)),
-            |elems| elems,
-        ),
-    ))(input)
+fn parse_projection<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<ProjectionElement>> + 'a {
+    move |input| {
+        alt((
+            // *
+            map(terminated(char('*'), multispace0), |_| {
+                vec![ProjectionElement::Star]
+            }),
+            // one or more ?var / (?expr AS ?alias)
+            map(
+                many0(terminated(
+                    move |i| parse_projection_element(ctx)(i),
+                    multispace0,
+                )),
+                |elems| elems,
+            ),
+        ))(input)
+    }
 }
 
-fn parse_projection_element(input: &str) -> IResult<&str, ProjectionElement> {
-    map(preceded(char('?'), parse_varname), |name| {
-        ProjectionElement::Variable(name)
-    })(input)
+fn parse_projection_element<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, ProjectionElement> + 'a {
+    move |input| {
+        alt((
+            // (?expr AS ?alias)
+            map(
+                delimited(
+                    pair(char('('), multispace0),
+                    pair(
+                        |i| parse_expression(ctx)(i),
+                        preceded(
+                            tuple((multispace1, tag_no_case("AS"), multispace1, char('?'))),
+                            parse_varname,
+                        ),
+                    ),
+                    pair(multispace0, char(')')),
+                ),
+                |(expr, alias)| ProjectionElement::Expression(expr, alias),
+            ),
+            // ?var
+            map(preceded(char('?'), parse_varname), ProjectionElement::Variable),
+        ))(input)
+    }
 }
 
 // ── Group Graph Pattern ───────────────────────────────────────────────────────
@@ -943,7 +970,7 @@ fn parse_function_call<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
-        // Function name: bare word (regex, bound, str, lang, ...) or IRI
+        // Function name: alphanumeric + underscore (covers GROUP_CONCAT) or full IRI
         let (input, fname) = alt((
             map(
                 take_while1(|c: char| c.is_alphanumeric() || c == '_'),
@@ -955,6 +982,56 @@ fn parse_function_call<'a>(
         let (input, _) = multispace0(input)?;
         let (input, _) = char('(')(input)?;
         let (input, _) = multispace0(input)?;
+
+        // Intercept aggregate keywords and produce Expression::Aggregate
+        let fname_upper = fname.to_ascii_uppercase();
+        if matches!(
+            fname_upper.as_str(),
+            "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "SAMPLE" | "GROUP_CONCAT"
+        ) {
+            // Optional DISTINCT keyword
+            let (input, distinct) = map(
+                opt(terminated(tag_no_case("DISTINCT"), multispace1)),
+                |d| d.is_some(),
+            )(input)?;
+
+            // COUNT(*) special form
+            if fname_upper == "COUNT" && input.starts_with('*') {
+                let (input, _) = char('*')(input)?;
+                let (input, _) = multispace0(input)?;
+                let (input, _) = char(')')(input)?;
+                return Ok((input, Expression::Aggregate(Aggregate::CountStar)));
+            }
+
+            let (input, expr) = parse_expression(ctx)(input)?;
+            let (input, _) = multispace0(input)?;
+
+            // GROUP_CONCAT optional separator: ; separator="sep"
+            if fname_upper == "GROUP_CONCAT" {
+                let (input, sep) = opt(parse_group_concat_separator(ctx))(input)?;
+                let sep = sep.unwrap_or_else(|| " ".to_string());
+                let (input, _) = multispace0(input)?;
+                let (input, _) = char(')')(input)?;
+                return Ok((
+                    input,
+                    Expression::Aggregate(Aggregate::GroupConcat(Box::new(expr), sep, distinct)),
+                ));
+            }
+
+            let (input, _) = char(')')(input)?;
+            let agg = match fname_upper.as_str() {
+                "COUNT" => Aggregate::Count(Box::new(expr), distinct),
+                "SUM" => Aggregate::Sum(Box::new(expr), distinct),
+                "AVG" => Aggregate::Avg(Box::new(expr), distinct),
+                "MIN" => Aggregate::Min(Box::new(expr), distinct),
+                "MAX" => Aggregate::Max(Box::new(expr), distinct),
+                "SAMPLE" => Aggregate::Sample(Box::new(expr), distinct),
+                _ => unreachable!(),
+            };
+            return Ok((input, Expression::Aggregate(agg)));
+        }
+
+        // Regular function call
         let (input, args) =
             separated_list0(pair(multispace0, pair(char(','), multispace0)), |i| {
                 parse_expression(ctx)(i)
@@ -963,6 +1040,25 @@ fn parse_function_call<'a>(
         let (input, _) = char(')')(input)?;
 
         Ok((input, Expression::FunctionCall(fname, args)))
+    }
+}
+
+fn parse_group_concat_separator<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, String> + 'a {
+    move |input| {
+        let (input, _) = char(';')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = tag_no_case("separator")(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = char('=')(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, lit) = parse_string_literal(ctx)(input)?;
+        let sep = match lit {
+            RdfLiteral::LiteralString(s) => s,
+            _ => " ".to_string(),
+        };
+        Ok((input, sep))
     }
 }
 
