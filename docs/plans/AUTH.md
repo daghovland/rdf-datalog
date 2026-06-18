@@ -169,8 +169,8 @@ Client                             Entra ID                dagalog
   │                                    │                       │
   │── GET /{name}/sparql?query=… ─────────────────────────────>│
   │   Authorization: Bearer <token>   │                       │
-  │                                    │── validate JWT        │
-  │                                    │   check roles claim   │
+  │                                    │            validate JWT
+  │                                    │         check roles claim
   │<── 200 OK ─────────────────────────────────────────────────│
 ```
 

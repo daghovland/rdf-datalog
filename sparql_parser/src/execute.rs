@@ -9,10 +9,12 @@ Contact: hovlanddag@gmail.com
 //! SPARQL query execution against a [`Datastore`].
 //!
 //! Supports BGP, FILTER (comparison/regex/BOUND), OPTIONAL, UNION, MINUS,
-//! DISTINCT, LIMIT, OFFSET.
+//! DISTINCT, LIMIT, OFFSET, GROUP BY, HAVING, aggregates (COUNT, SUM, AVG,
+//! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern, UnaryOp,
+    Aggregate, BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern,
+    UnaryOp,
 };
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
@@ -59,9 +61,10 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
             limit,
             offset,
             distinct,
+            group_by,
+            having,
             ..
         } => {
-            let variables = projection_variables(projection, where_clause, datastore);
             let initial: Vec<PartialSub> = vec![HashMap::new()];
             let solutions = eval_components(
                 where_clause,
@@ -70,17 +73,32 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
             );
 
-            // Project
-            let mut rows: Vec<SolutionRow> = solutions
-                .iter()
-                .map(|sub| project(sub, &variables))
-                .collect();
+            let aggregate_mode = !group_by.is_empty()
+                || projection.iter().any(elem_has_aggregate);
+
+            let (variables, mut rows) = if aggregate_mode {
+                let groups = group_by_solutions(&solutions, group_by, datastore);
+                let vars = projection_variables(projection, where_clause, datastore);
+                let rows: Vec<SolutionRow> = groups
+                    .into_iter()
+                    .filter(|g| {
+                        having.iter().all(|expr| {
+                            eval_having_expr(expr, g, datastore)
+                        })
+                    })
+                    .map(|g| project_aggregate_row(projection, &g, datastore))
+                    .collect();
+                (vars, rows)
+            } else {
+                let variables = projection_variables(projection, where_clause, datastore);
+                let rows: Vec<SolutionRow> = solutions
+                    .iter()
+                    .map(|sub| project(sub, &variables))
+                    .collect();
+                (variables, rows)
+            };
 
             if *distinct {
-                // `dedup()` only removes *consecutive* duplicates; use a proper
-                // seen-set so non-adjacent identical rows are also removed.
-                // SolutionRow = HashMap<String, GraphElement> — not Hash itself,
-                // so we canonicalise each row as a sorted Vec of (var, element) pairs.
                 let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
                     std::collections::HashSet::new();
                 rows.retain(|row| {
@@ -1001,6 +1019,340 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
         }
     }
     out
+}
+
+// ── Aggregate helpers ─────────────────────────────────────────────────────────
+
+/// True if a projection element contains an aggregate expression.
+fn elem_has_aggregate(elem: &ProjectionElement) -> bool {
+    match elem {
+        ProjectionElement::Expression(expr, _) => expr_has_aggregate(expr),
+        _ => false,
+    }
+}
+
+fn expr_has_aggregate(expr: &Expression) -> bool {
+    match expr {
+        Expression::Aggregate(_) => true,
+        Expression::Binary(l, _, r) => expr_has_aggregate(l) || expr_has_aggregate(r),
+        Expression::Unary(_, inner) => expr_has_aggregate(inner),
+        Expression::FunctionCall(_, args) => args.iter().any(expr_has_aggregate),
+        _ => false,
+    }
+}
+
+/// Partition solutions into groups keyed by GROUP BY expressions.
+///
+/// When `group_by` is empty all solutions fall into one implicit group.
+fn group_by_solutions(
+    solutions: &[PartialSub],
+    group_by: &[Expression],
+    datastore: &Datastore,
+) -> Vec<Vec<PartialSub>> {
+    if group_by.is_empty() {
+        return vec![solutions.to_vec()];
+    }
+    let mut map: Vec<(Vec<Option<GraphElement>>, Vec<PartialSub>)> = Vec::new();
+    'outer: for sub in solutions {
+        let key: Vec<Option<GraphElement>> = group_by
+            .iter()
+            .map(|expr| eval_expression_value(expr, sub, datastore))
+            .collect();
+        for (k, group) in &mut map {
+            if *k == key {
+                group.push(sub.clone());
+                continue 'outer;
+            }
+        }
+        map.push((key, vec![sub.clone()]));
+    }
+    map.into_iter().map(|(_, g)| g).collect()
+}
+
+/// Build the output row for one group in an aggregate query.
+fn project_aggregate_row(
+    projection: &[ProjectionElement],
+    group: &[PartialSub],
+    datastore: &Datastore,
+) -> SolutionRow {
+    let rep = group.first().cloned().unwrap_or_default();
+    let mut row = SolutionRow::new();
+    for elem in projection {
+        match elem {
+            ProjectionElement::Variable(v) => {
+                if let Some(val) = rep.get(v) {
+                    row.insert(v.clone(), val.clone());
+                }
+            }
+            ProjectionElement::Expression(expr, alias) => {
+                if let Some(val) = eval_expr_in_group(expr, group, &rep, datastore) {
+                    row.insert(alias.clone(), val);
+                }
+            }
+            ProjectionElement::Star => {}
+        }
+    }
+    row
+}
+
+/// Evaluate an expression in the context of a group (for SELECT and HAVING).
+///
+/// Aggregate sub-expressions are computed over the full group; non-aggregate
+/// sub-expressions use the representative solution `rep`.
+fn eval_expr_in_group(
+    expr: &Expression,
+    group: &[PartialSub],
+    rep: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    match expr {
+        Expression::Aggregate(agg) => eval_aggregate_value(agg, group, datastore),
+        Expression::Binary(l, op, r) => {
+            // Arithmetic in HAVING (e.g. SUM(?x) > 5): eval both sides in group context
+            let lv = eval_expr_in_group(l, group, rep, datastore)?;
+            let rv = eval_expr_in_group(r, group, rep, datastore)?;
+            // Reuse the arithmetic helper by creating single-element "groups" (for pure values)
+            eval_binary_value(&lv, op, &rv)
+        }
+        _ => eval_expression_value(expr, rep, datastore),
+    }
+}
+
+/// Evaluate a binary operation between two already-resolved values.
+fn eval_binary_value(l: &GraphElement, op: &BinaryOp, r: &GraphElement) -> Option<GraphElement> {
+    match (l, r) {
+        (
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
+        ) => {
+            let result = match op {
+                BinaryOp::Add => a + b,
+                BinaryOp::Sub => a - b,
+                BinaryOp::Mul => a * b,
+                BinaryOp::Div => {
+                    if b == &BigInt::from(0) {
+                        return None;
+                    }
+                    a / b
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(result)))
+        }
+        _ => {
+            let af = literal_to_f64(match l {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let bf = literal_to_f64(match r {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let result = match op {
+                BinaryOp::Add => af + bf,
+                BinaryOp::Sub => af - bf,
+                BinaryOp::Mul => af * bf,
+                BinaryOp::Div => {
+                    if bf == 0.0 {
+                        return None;
+                    }
+                    af / bf
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                result.into(),
+            )))
+        }
+    }
+}
+
+/// Evaluate a HAVING expression as a boolean, with aggregates computed over the group.
+fn eval_having_expr(expr: &Expression, group: &[PartialSub], datastore: &Datastore) -> bool {
+    let rep = group.first().cloned().unwrap_or_default();
+    eval_having_bool(expr, group, &rep, datastore).unwrap_or(false)
+}
+
+fn eval_having_bool(
+    expr: &Expression,
+    group: &[PartialSub],
+    rep: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    match expr {
+        Expression::Binary(left, op, right) => match op {
+            BinaryOp::And => {
+                let l = eval_having_bool(left, group, rep, datastore).unwrap_or(false);
+                let r = eval_having_bool(right, group, rep, datastore).unwrap_or(false);
+                Some(l && r)
+            }
+            BinaryOp::Or => {
+                let l = eval_having_bool(left, group, rep, datastore).unwrap_or(false);
+                let r = eval_having_bool(right, group, rep, datastore).unwrap_or(false);
+                Some(l || r)
+            }
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le
+            | BinaryOp::Ge => {
+                let l = eval_expr_in_group(left, group, rep, datastore)?;
+                let r = eval_expr_in_group(right, group, rep, datastore)?;
+                let ord = compare_graph_elements(&l, &r)?;
+                Some(match op {
+                    BinaryOp::Eq => ord == 0,
+                    BinaryOp::Ne => ord != 0,
+                    BinaryOp::Lt => ord < 0,
+                    BinaryOp::Gt => ord > 0,
+                    BinaryOp::Le => ord <= 0,
+                    BinaryOp::Ge => ord >= 0,
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        },
+        Expression::Unary(UnaryOp::Not, inner) => {
+            Some(!eval_having_bool(inner, group, rep, datastore).unwrap_or(false))
+        }
+        _ => eval_expression_bool(
+            expr,
+            rep,
+            datastore,
+            &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+        ),
+    }
+}
+
+/// Compute an aggregate function over a group of solutions.
+fn eval_aggregate_value(
+    agg: &Aggregate,
+    group: &[PartialSub],
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    match agg {
+        Aggregate::CountStar => Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(group.len()),
+        ))),
+
+        Aggregate::Count(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(values.len()),
+            )))
+        }
+
+        Aggregate::Sum(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            sum_values(&values)
+        }
+
+        Aggregate::Avg(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            if values.is_empty() {
+                return None;
+            }
+            let sum = sum_values(&values)?;
+            let count = values.len() as f64;
+            let sum_f = literal_to_f64(match &sum {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                (sum_f / count).into(),
+            )))
+        }
+
+        Aggregate::Min(expr, _) => group
+            .iter()
+            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .reduce(|a, b| match compare_graph_elements(&a, &b) {
+                Some(ord) if ord <= 0 => a,
+                _ => b,
+            }),
+
+        Aggregate::Max(expr, _) => group
+            .iter()
+            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .reduce(|a, b| match compare_graph_elements(&a, &b) {
+                Some(ord) if ord >= 0 => a,
+                _ => b,
+            }),
+
+        Aggregate::Sample(expr, _) => group
+            .iter()
+            .find_map(|sub| eval_expression_value(expr, sub, datastore)),
+
+        Aggregate::GroupConcat(expr, sep, distinct) => {
+            let mut parts: Vec<String> = group
+                .iter()
+                .filter_map(|sub| {
+                    let el = eval_expression_value(expr, sub, datastore)?;
+                    graph_element_to_string(&el)
+                })
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = parts.drain(..).collect();
+                parts.extend(set);
+                parts.sort();
+            }
+            let result = parts.join(sep);
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(result)))
+        }
+    }
+}
+
+/// Sum a list of numeric `GraphElement` values, returning an `IntegerLiteral` if
+/// all inputs are integers or a `DoubleLiteral` for mixed/floating-point inputs.
+fn sum_values(values: &[GraphElement]) -> Option<GraphElement> {
+    if values.is_empty() {
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(0),
+        )));
+    }
+    // Try integer-only sum first
+    let mut int_sum = BigInt::from(0);
+    let mut all_int = true;
+    for v in values {
+        match v {
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => int_sum += n,
+            _ => {
+                all_int = false;
+                break;
+            }
+        }
+    }
+    if all_int {
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(int_sum)));
+    }
+    // Fall back to f64 sum
+    let mut f_sum = 0.0f64;
+    for v in values {
+        match v {
+            GraphElement::GraphLiteral(lit) => f_sum += literal_to_f64(lit)?,
+            _ => return None,
+        }
+    }
+    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+        f_sum.into(),
+    )))
 }
 
 /// Resolve a template term to a concrete `GraphElement`, remapping blank nodes per solution.

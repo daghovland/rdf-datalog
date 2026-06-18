@@ -121,6 +121,22 @@ pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'
     let (input, projection) = parse_projection(ctx)(input)?;
     let (input, _) = multispace0(input)?;
 
+    // SPARQL syntax error: duplicate projection alias (e.g. SELECT (1 AS ?x) (1 AS ?x))
+    {
+        let mut seen_aliases: Vec<&str> = Vec::new();
+        for elem in &projection {
+            if let ProjectionElement::Expression(_, alias) = elem {
+                if seen_aliases.contains(&alias.as_str()) {
+                    return Err(nom::Err::Failure(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Verify,
+                    )));
+                }
+                seen_aliases.push(alias);
+            }
+        }
+    }
+
     // WHERE (optional keyword)
     let (input, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(input)?;
 
@@ -209,7 +225,9 @@ fn parse_projection_element<'a>(
                     pair(
                         |i| parse_expression(ctx)(i),
                         preceded(
-                            tuple((multispace1, tag_no_case("AS"), multispace1, char('?'))),
+                            // multispace0 because the expression parser eagerly consumes
+                            // trailing whitespace; multispace1 would always fail here.
+                            tuple((multispace0, tag_no_case("AS"), multispace1, char('?'))),
                             parse_varname,
                         ),
                     ),

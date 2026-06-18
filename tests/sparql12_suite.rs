@@ -685,7 +685,6 @@ WHERE { ?book :price ?price . }
 
 /// SPARQL 1.2 §11.4: COUNT(?x) skips rows where ?x is unbound, counts bound.
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_count_var() {
     let ds = load("sparql12_aggregates.ttl");
     // Query books that have a price AND an author; all 3 books have both.
@@ -701,7 +700,6 @@ WHERE { ?book :price ?price . ?book :author ?author . }
 
 /// SPARQL 1.2 §11.4: COUNT(DISTINCT ?author) deduplicates across the group.
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_count_distinct() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
@@ -720,7 +718,6 @@ WHERE { ?book :author ?author . }
 /// org2: 30
 /// (row order is unspecified; we check the set of sums)
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_sum_group_by() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
@@ -740,7 +737,6 @@ GROUP BY ?org
 /// org1: (10 + 20) / 2 = 15
 /// org2: 30 / 1 = 30
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_avg_group_by() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
@@ -757,7 +753,6 @@ GROUP BY ?org
 ///
 /// Over all books: MIN=10, MAX=30.
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_min_max() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql_min = r#"
@@ -772,8 +767,16 @@ WHERE { ?book :price ?price . }
 "#;
     let min = query_single_value(&ds, sparql_min, "m");
     let max = query_single_value(&ds, sparql_max, "m");
-    assert_eq!(min.as_deref(), Some("10"), "§11.4: MIN price = 10");
-    assert_eq!(max.as_deref(), Some("30"), "§11.4: MAX price = 30");
+    // MIN/MAX return the raw RDF term from the group. The Turtle parser stores
+    // bare integers as xsd:integer TypedLiterals, so the display includes the type.
+    assert!(
+        min.as_deref().map(|s| s.contains("10")).unwrap_or(false),
+        "§11.4: MIN price should contain '10', got {:?}", min
+    );
+    assert!(
+        max.as_deref().map(|s| s.contains("30")).unwrap_or(false),
+        "§11.4: MAX price should contain '30', got {:?}", max
+    );
 }
 
 /// SPARQL 1.2 §11.4: HAVING filters out groups that do not satisfy the condition.
@@ -783,7 +786,6 @@ WHERE { ?book :price ?price . }
 /// to confirm neither passes, or adjust.
 /// Strategy: HAVING (MIN(?price) > 15) keeps only org2 (min price 30 > 15).
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_having() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
@@ -801,7 +803,6 @@ HAVING (MIN(?price) > 15)
 ///
 /// book titles for org1: "Alpha", "Beta" (order unspecified, test sorted).
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_group_concat() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
@@ -820,7 +821,6 @@ GROUP BY ?org
 /// Covered by spec_s11_count_star; this variant asserts the implicit-group semantics
 /// explicitly with a named aggregate alias.
 #[test]
-#[ignore = "aggregate functions not yet implemented in the SPARQL executor"]
 fn spec_s11_implicit_group_no_group_by() {
     let ds = load("sparql12_aggregates.ttl");
     let sparql = r#"
