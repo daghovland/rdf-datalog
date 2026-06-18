@@ -13,8 +13,8 @@ Contact: hovlanddag@gmail.com
 //! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    Aggregate, BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern,
-    UnaryOp,
+    Aggregate, BinaryOp, Expression, ProjectionElement, PropertyPath, Query, QueryComponent, Term,
+    TriplePattern, UnaryOp,
 };
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
@@ -73,8 +73,7 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
             );
 
-            let aggregate_mode = !group_by.is_empty()
-                || projection.iter().any(elem_has_aggregate);
+            let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
             let (variables, mut rows) = if aggregate_mode {
                 let groups = group_by_solutions(&solutions, group_by, datastore);
@@ -82,9 +81,9 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 let rows: Vec<SolutionRow> = groups
                     .into_iter()
                     .filter(|g| {
-                        having.iter().all(|expr| {
-                            eval_having_expr(expr, g, datastore)
-                        })
+                        having
+                            .iter()
+                            .all(|expr| eval_having_expr(expr, g, datastore))
                     })
                     .map(|g| project_aggregate_row(projection, &g, datastore))
                     .collect();
@@ -232,6 +231,11 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
                     collect_vars_from_term(&tp.object, vars);
                 }
             }
+            QueryComponent::PathPattern(subject, _, object) => {
+                // Do NOT expose internal variables; only subject and object matter.
+                collect_vars_from_term(subject, vars);
+                collect_vars_from_term(object, vars);
+            }
             QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
                 collect_vars_from_components(inner, vars);
             }
@@ -312,6 +316,11 @@ fn eval_component(
 ) -> Vec<PartialSub> {
     match comp {
         QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph),
+
+        QueryComponent::PathPattern(subject, path, object) => solutions
+            .into_iter()
+            .flat_map(|sub| eval_path_pattern(subject, path, object, sub, datastore, active_graph))
+            .collect(),
 
         QueryComponent::Filter(expr) => solutions
             .into_iter()
@@ -1005,7 +1014,7 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
     for comp in components {
         match comp {
             QueryComponent::BGP(tps) => out.extend(tps.clone()),
-            QueryComponent::Optional(inner) => {
+            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
                 out.extend(collect_bgps_from_components(inner));
             }
             QueryComponent::Union(left, right) => {
@@ -1015,10 +1024,431 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
             QueryComponent::Graph(_, inner) => {
                 out.extend(collect_bgps_from_components(inner));
             }
-            _ => {}
+            QueryComponent::PathPattern(_, _, _)
+            | QueryComponent::Filter(_)
+            | QueryComponent::Bind(_, _)
+            | QueryComponent::Values(_, _)
+            | QueryComponent::Service(_, _, _) => {}
         }
     }
     out
+}
+
+// ── Property path evaluation ──────────────────────────────────────────────────
+
+/// Evaluate a property path pattern against the datastore, extending one solution.
+fn eval_path_pattern(
+    subject_term: &Term,
+    path: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    match path {
+        PropertyPath::Iri(gel) => {
+            let tp = TriplePattern {
+                subject: subject_term.clone(),
+                predicate: Term::Constant(gel.clone()),
+                object: object_term.clone(),
+            };
+            eval_triple_pattern(&tp, &sub, datastore, active_graph)
+        }
+
+        PropertyPath::Sequence(steps) => {
+            if steps.is_empty() {
+                return vec![sub];
+            }
+            // Chain: introduce fresh bridge variables for intermediate nodes.
+            let mut current_subject = subject_term.clone();
+            let mut current_subs = vec![sub];
+            let n = steps.len();
+            for (i, step) in steps.iter().enumerate() {
+                let current_object = if i + 1 == n {
+                    object_term.clone()
+                } else {
+                    Term::Variable(format!("__path_seq_{}", i))
+                };
+                current_subs = current_subs
+                    .into_iter()
+                    .flat_map(|s| {
+                        eval_path_pattern(
+                            &current_subject,
+                            step,
+                            &current_object,
+                            s,
+                            datastore,
+                            active_graph,
+                        )
+                    })
+                    .collect();
+                current_subject = current_object;
+            }
+            // Remove internal bridge variables from each solution
+            current_subs
+                .into_iter()
+                .map(|mut s| {
+                    for i in 0..n - 1 {
+                        s.remove(&format!("__path_seq_{}", i));
+                    }
+                    s
+                })
+                .collect()
+        }
+
+        PropertyPath::Alternative(left, right) => {
+            let mut left_subs = eval_path_pattern(
+                subject_term,
+                left,
+                object_term,
+                sub.clone(),
+                datastore,
+                active_graph,
+            );
+            let right_subs = eval_path_pattern(
+                subject_term,
+                right,
+                object_term,
+                sub,
+                datastore,
+                active_graph,
+            );
+            left_subs.extend(right_subs);
+            left_subs
+        }
+
+        PropertyPath::Inverse(inner) => {
+            // Swap subject and object
+            eval_path_pattern(
+                object_term,
+                inner,
+                subject_term,
+                sub,
+                datastore,
+                active_graph,
+            )
+        }
+
+        PropertyPath::ZeroOrOne(inner) => {
+            // Zero hops: subject == object
+            let zero_hop = {
+                let s_gel = resolve_term_to_gel(subject_term, &sub, datastore);
+                let o_gel = resolve_term_to_gel(object_term, &sub, datastore);
+                match (s_gel, o_gel) {
+                    // Both bound: must be equal
+                    (Some(s), Some(o)) if s == o => vec![sub.clone()],
+                    // Subject bound, object unbound: bind object = subject
+                    (Some(s), None) => {
+                        if let Term::Variable(v) = object_term {
+                            let mut new_sub = sub.clone();
+                            new_sub.insert(v.clone(), s);
+                            vec![new_sub]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    // Object bound, subject unbound: bind subject = object
+                    (None, Some(o)) => {
+                        if let Term::Variable(v) = subject_term {
+                            let mut new_sub = sub.clone();
+                            new_sub.insert(v.clone(), o);
+                            vec![new_sub]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    _ => Vec::new(),
+                }
+            };
+            let one_hop = eval_path_pattern(
+                subject_term,
+                inner,
+                object_term,
+                sub,
+                datastore,
+                active_graph,
+            );
+            // Deduplicate (zero-hop and one-hop may produce the same solution)
+            let mut result = zero_hop;
+            for s in one_hop {
+                if !result.contains(&s) {
+                    result.push(s);
+                }
+            }
+            result
+        }
+
+        PropertyPath::OneOrMore(inner) => transitive_closure(
+            subject_term,
+            inner,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+            false,
+        ),
+
+        PropertyPath::ZeroOrMore(inner) => transitive_closure(
+            subject_term,
+            inner,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+            true,
+        ),
+
+        PropertyPath::NegatedSet(excluded) => {
+            let g = match active_graph {
+                ActiveGraph::Fixed(id) => Some(*id),
+                ActiveGraph::Variable(v) => sub
+                    .get(v)
+                    .and_then(|gel| datastore.resources.resource_map.get(gel))
+                    .copied(),
+            };
+            let s = resolve_term_to_id(subject_term, &sub, datastore);
+            let o = resolve_term_to_id(object_term, &sub, datastore);
+            let excluded_ids: HashSet<GraphElementId> = excluded
+                .iter()
+                .filter_map(|gel| datastore.resources.resource_map.get(gel).copied())
+                .collect();
+
+            let mut results = Vec::new();
+            for quad in datastore.quads_matching(g, s, None, o) {
+                let pred_gel = datastore
+                    .resources
+                    .get_graph_element(quad.predicate)
+                    .clone();
+                let pred_id = quad.predicate;
+                if excluded_ids.contains(&pred_id) {
+                    continue;
+                }
+                let mut new_sub = sub.clone();
+                let mut ok = true;
+                if let Term::Variable(v) = subject_term {
+                    let gel = datastore.resources.get_graph_element(quad.subject).clone();
+                    match new_sub.get(v) {
+                        Some(existing) if existing != &gel => {
+                            ok = false;
+                        }
+                        _ => {
+                            new_sub.insert(v.clone(), gel);
+                        }
+                    }
+                }
+                if let Term::Variable(v) = object_term {
+                    let gel = datastore.resources.get_graph_element(quad.obj).clone();
+                    match new_sub.get(v) {
+                        Some(existing) if existing != &gel => {
+                            ok = false;
+                        }
+                        _ => {
+                            new_sub.insert(v.clone(), gel);
+                        }
+                    }
+                }
+                // Suppress unused pred_gel warning
+                let _ = pred_gel;
+                if ok {
+                    results.push(new_sub);
+                }
+            }
+            results
+        }
+    }
+}
+
+/// Resolve a `Term` to a `GraphElement` using the current solution.
+fn resolve_term_to_gel(
+    term: &Term,
+    sub: &PartialSub,
+    _datastore: &Datastore,
+) -> Option<GraphElement> {
+    match term {
+        Term::Variable(v) => sub.get(v).cloned(),
+        Term::Constant(gel) => Some(gel.clone()),
+    }
+}
+
+/// Resolve a `Term` to a `GraphElementId` using the current solution.
+fn resolve_term_to_id(
+    term: &Term,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElementId> {
+    match term {
+        Term::Variable(v) => sub
+            .get(v)
+            .and_then(|gel| datastore.resources.resource_map.get(gel))
+            .copied(),
+        Term::Constant(gel) => datastore.resources.resource_map.get(gel).copied(),
+    }
+}
+
+/// Compute transitive closure of `path` from `subject_term` to `object_term`.
+///
+/// `include_zero` = true for `*` (include starting node), false for `+`.
+///
+/// Strategy: BFS from the subject if it is bound (forward traversal).
+/// If the subject is unbound and the object is bound, reverse BFS using ^path.
+fn transitive_closure(
+    subject_term: &Term,
+    path: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+    include_zero: bool,
+) -> Vec<PartialSub> {
+    let subject_gel = resolve_term_to_gel(subject_term, &sub, datastore);
+    let object_gel = resolve_term_to_gel(object_term, &sub, datastore);
+
+    // Enumerate all nodes reachable from each concrete starting point
+    // by doing BFS with the inner path as a single-hop traversal.
+    // Forward BFS: returns all nodes reachable from start_gel.
+    // For `include_zero` (p*): includes start_gel itself.
+    // For `!include_zero` (p+): excludes start_gel.
+    let reachable_from = |start_gel: GraphElement| -> Vec<GraphElement> {
+        let mut visited: HashSet<GraphElement> = HashSet::new();
+        let mut queue = vec![start_gel.clone()];
+        while let Some(current) = queue.pop() {
+            let current_term = Term::Constant(current.clone());
+            let next_subs = eval_path_pattern(
+                &current_term,
+                path,
+                &Term::Variable("__tc_next".to_string()),
+                sub.clone(),
+                datastore,
+                active_graph,
+            );
+            for s in next_subs {
+                if let Some(next_gel) = s.get("__tc_next") {
+                    if visited.insert(next_gel.clone()) {
+                        queue.push(next_gel.clone());
+                    }
+                }
+            }
+        }
+        if include_zero {
+            visited.insert(start_gel);
+        }
+        visited.into_iter().collect()
+    };
+
+    match (subject_gel, object_gel) {
+        (Some(s_gel), Some(o_gel)) => {
+            // Both bound: check if object is reachable from subject
+            let reachable = reachable_from(s_gel);
+            if reachable.contains(&o_gel) {
+                vec![sub]
+            } else {
+                Vec::new()
+            }
+        }
+        (Some(s_gel), None) => {
+            // Subject bound, object unbound: enumerate all reachable nodes
+            let reachable = reachable_from(s_gel);
+            if let Term::Variable(obj_var) = object_term {
+                reachable
+                    .into_iter()
+                    .map(|gel| {
+                        let mut new_sub = sub.clone();
+                        new_sub.insert(obj_var.clone(), gel);
+                        new_sub
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        (None, Some(o_gel)) => {
+            // Object bound, subject unbound: BFS backwards using inverse path.
+            // `visited` collects nodes that can reach o_gel in ≥1 hops.
+            // For `include_zero` (p*) also include o_gel itself (0 hops).
+            let inverse_path = PropertyPath::Inverse(Box::new(path.clone()));
+            let reachable = {
+                let mut visited: HashSet<GraphElement> = HashSet::new();
+                let mut queue = vec![o_gel.clone()];
+                while let Some(current) = queue.pop() {
+                    let current_term = Term::Constant(current.clone());
+                    let next_subs = eval_path_pattern(
+                        &current_term,
+                        &inverse_path,
+                        &Term::Variable("__tc_prev".to_string()),
+                        sub.clone(),
+                        datastore,
+                        active_graph,
+                    );
+                    for s in next_subs {
+                        if let Some(prev_gel) = s.get("__tc_prev") {
+                            if visited.insert(prev_gel.clone()) {
+                                queue.push(prev_gel.clone());
+                            }
+                        }
+                    }
+                }
+                if include_zero {
+                    visited.insert(o_gel);
+                }
+                visited
+            };
+            if let Term::Variable(subj_var) = subject_term {
+                reachable
+                    .into_iter()
+                    .map(|gel| {
+                        let mut new_sub = sub.clone();
+                        new_sub.insert(subj_var.clone(), gel);
+                        new_sub
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        (None, None) => {
+            // Both unbound: enumerate all nodes reachable from any node in graph.
+            // For each subject node, find all objects reachable from it.
+            // This is expensive; for now use the bound-subject BFS for each node.
+            let all_subjects: Vec<GraphElement> = {
+                let g = match active_graph {
+                    ActiveGraph::Fixed(id) => Some(*id),
+                    ActiveGraph::Variable(v) => sub
+                        .get(v)
+                        .and_then(|gel| datastore.resources.resource_map.get(gel))
+                        .copied(),
+                };
+                datastore
+                    .quads_matching(g, None, None, None)
+                    .into_iter()
+                    .flat_map(|q| {
+                        [
+                            datastore.resources.get_graph_element(q.subject).clone(),
+                            datastore.resources.get_graph_element(q.obj).clone(),
+                        ]
+                    })
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            };
+            let (subj_var, obj_var) = match (subject_term, object_term) {
+                (Term::Variable(s), Term::Variable(o)) => (s, o),
+                _ => return Vec::new(),
+            };
+            let mut results = Vec::new();
+            for s_gel in all_subjects {
+                let reachable = reachable_from(s_gel.clone());
+                for o_gel in reachable {
+                    let mut new_sub = sub.clone();
+                    new_sub.insert(subj_var.clone(), s_gel.clone());
+                    new_sub.insert(obj_var.clone(), o_gel);
+                    if !results.contains(&new_sub) {
+                        results.push(new_sub);
+                    }
+                }
+            }
+            results
+        }
+    }
 }
 
 // ── Aggregate helpers ─────────────────────────────────────────────────────────
@@ -1137,7 +1567,9 @@ fn eval_binary_value(l: &GraphElement, op: &BinaryOp, r: &GraphElement) -> Optio
                 }
                 _ => return None,
             };
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(result)))
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                result,
+            )))
         }
         _ => {
             let af = literal_to_f64(match l {
@@ -1191,7 +1623,11 @@ fn eval_having_bool(
                 let r = eval_having_bool(right, group, rep, datastore).unwrap_or(false);
                 Some(l || r)
             }
-            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Gt
+            | BinaryOp::Le
             | BinaryOp::Ge => {
                 let l = eval_expr_in_group(left, group, rep, datastore)?;
                 let r = eval_expr_in_group(right, group, rep, datastore)?;
@@ -1314,7 +1750,9 @@ fn eval_aggregate_value(
                 parts.sort();
             }
             let result = parts.join(sep);
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(result)))
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
         }
     }
 }
@@ -1340,7 +1778,9 @@ fn sum_values(values: &[GraphElement]) -> Option<GraphElement> {
         }
     }
     if all_int {
-        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(int_sum)));
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            int_sum,
+        )));
     }
     // Fall back to f64 sum
     let mut f_sum = 0.0f64;

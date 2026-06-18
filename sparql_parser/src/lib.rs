@@ -236,7 +236,10 @@ fn parse_projection_element<'a>(
                 |(expr, alias)| ProjectionElement::Expression(expr, alias),
             ),
             // ?var
-            map(preceded(char('?'), parse_varname), ProjectionElement::Variable),
+            map(
+                preceded(char('?'), parse_varname),
+                ProjectionElement::Variable,
+            ),
         ))(input)
     }
 }
@@ -263,7 +266,6 @@ fn parse_group_graph_pattern_contents<'a>(
     move |input| {
         let mut components: Vec<QueryComponent> = Vec::new();
         let mut current_triples: Vec<TriplePattern> = Vec::new();
-        let mut generated_path_var_index: usize = 0;
         let mut remaining = input;
 
         loop {
@@ -358,10 +360,18 @@ fn parse_group_graph_pattern_contents<'a>(
                 continue;
             }
 
-            // Triple pattern statement (supports ';', ',' and simple '/' property paths)
-            match parse_triple_pattern_statement(ctx, &mut generated_path_var_index, remaining) {
-                Ok((r, tps)) => {
-                    current_triples.extend(tps);
+            // Triple / path pattern statement
+            match parse_triple_pattern_statement(ctx, remaining) {
+                Ok((r, comps)) => {
+                    for comp in comps {
+                        match comp {
+                            QueryComponent::BGP(tps) => current_triples.extend(tps),
+                            other => {
+                                flush_triples(&mut components, &mut current_triples);
+                                components.push(other);
+                            }
+                        }
+                    }
                     remaining = r;
                     // Consume optional dot
                     remaining = multispace0(remaining)?.0;
@@ -384,16 +394,20 @@ fn flush_triples(components: &mut Vec<QueryComponent>, triples: &mut Vec<TripleP
     }
 }
 
-// ── Triple pattern ────────────────────────────────────────────────────────────
+// ── Triple / path pattern ─────────────────────────────────────────────────────
 
+/// Parse one triple or path statement (subject + one or more predicate-object pairs
+/// separated by `;`, with `,` for multiple objects per predicate).
+///
+/// Returns a list of `QueryComponent`s: `BGP([tp])` for plain triple patterns and
+/// `PathPattern(s, path, o)` for complex property paths.
 fn parse_triple_pattern_statement<'a>(
     ctx: &'a ParserContext,
-    generated_path_var_index: &mut usize,
     input: &'a str,
-) -> IResult<&'a str, Vec<TriplePattern>> {
+) -> IResult<&'a str, Vec<QueryComponent>> {
     let (input, _) = multispace0(input)?;
     let (mut remaining, subject) = parse_term(ctx)(input)?;
-    let mut triples = Vec::new();
+    let mut components: Vec<QueryComponent> = Vec::new();
     let mut first_predicate = true;
 
     loop {
@@ -402,7 +416,24 @@ fn parse_triple_pattern_statement<'a>(
         } else {
             multispace0(remaining)?
         };
-        let (r, predicate_path) = parse_property_path(ctx)(r)?;
+
+        // If the predicate is a variable (e.g. ?p), parse it directly as a Term.
+        // Variables are not valid property path expressions but are valid BGP predicates.
+        let predicate_is_var = r.starts_with('?') || r.starts_with('$');
+        let (r, pred_var_opt) = if predicate_is_var {
+            let (r, t) = parse_term(ctx)(r)?;
+            (r, Some(t))
+        } else {
+            (r, None)
+        };
+
+        let (r, path_opt) = if pred_var_opt.is_none() {
+            let (r, p) = parse_path_alternative(ctx)(r)?;
+            (r, Some(p))
+        } else {
+            (r, None)
+        };
+
         let (r, _) = multispace1(r)?;
         let (mut r, first_object) = parse_term(ctx)(r)?;
 
@@ -421,13 +452,30 @@ fn parse_triple_pattern_statement<'a>(
         }
 
         for object in objects {
-            expand_property_path_to_triples(
-                &subject,
-                &predicate_path,
-                &object,
-                generated_path_var_index,
-                &mut triples,
-            );
+            if let Some(ref pred_var) = pred_var_opt {
+                components.push(QueryComponent::BGP(vec![TriplePattern {
+                    subject: subject.clone(),
+                    predicate: pred_var.clone(),
+                    object: object.clone(),
+                }]));
+            } else if let Some(ref path) = path_opt {
+                match path {
+                    PropertyPath::Iri(gel) => {
+                        components.push(QueryComponent::BGP(vec![TriplePattern {
+                            subject: subject.clone(),
+                            predicate: Term::Constant(gel.clone()),
+                            object: object.clone(),
+                        }]));
+                    }
+                    _ => {
+                        components.push(QueryComponent::PathPattern(
+                            subject.clone(),
+                            Box::new(path.clone()),
+                            object.clone(),
+                        ));
+                    }
+                }
+            }
         }
 
         let (r_ws, _) = multispace0(r)?;
@@ -449,67 +497,169 @@ fn parse_triple_pattern_statement<'a>(
         first_predicate = false;
     }
 
-    Ok((remaining, triples))
+    Ok((remaining, components))
 }
 
-fn parse_property_path<'a>(
+// ── Property path grammar ─────────────────────────────────────────────────────
+//
+// PathAlternative := PathSequence ( '|' PathSequence )*
+// PathSequence    := PathEltOrInverse ( '/' PathEltOrInverse )*
+// PathEltOrInverse:= '^' PathElt | PathElt
+// PathElt         := PathPrimary PathMod?
+// PathMod         := '*' | '+' | '?'
+// PathPrimary     := IRI | 'a' | '!' NegSet | '(' PathAlternative ')'
+
+fn parse_path_alternative<'a>(
     ctx: &'a ParserContext,
-) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Term>> + 'a {
+) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
     move |input| {
-        let (mut input, first) = parse_term(ctx)(input)?;
-        let mut segments = vec![first];
-        loop {
-            let r_ws = multispace0(input)?.0;
-            if !r_ws.starts_with('/') {
-                break;
-            }
-            let (r_after_slash, _) = char('/')(r_ws)?;
-            let (r_after_slash, _) = multispace0(r_after_slash)?;
-            let (r_next, segment) = parse_term(ctx)(r_after_slash)?;
-            segments.push(segment);
-            input = r_next;
-        }
-        Ok((input, segments))
+        let (input, left) = parse_path_sequence(ctx)(input)?;
+        // No trailing multispace0 here — the caller (parse_triple_pattern_statement)
+        // uses multispace0 before checking for '|', so we don't want to eat the
+        // space that belongs between the path and the object term.
+        let (input, rest) = many0(preceded(
+            tuple((multispace0, char('|'), multispace0)),
+            parse_path_sequence(ctx),
+        ))(input)?;
+        Ok((
+            input,
+            rest.into_iter().fold(left, |acc, r| {
+                PropertyPath::Alternative(Box::new(acc), Box::new(r))
+            }),
+        ))
     }
 }
 
-fn expand_property_path_to_triples(
-    subject: &Term,
-    predicate_path: &[Term],
-    object: &Term,
-    generated_path_var_index: &mut usize,
-    triples: &mut Vec<TriplePattern>,
-) {
-    if predicate_path.is_empty() {
-        return;
+fn parse_path_sequence<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
+    move |input| {
+        let (input, first) = parse_path_elt_or_inverse(ctx)(input)?;
+        let (input, rest) = many0(preceded(
+            tuple((multispace0, char('/'), multispace0)),
+            |i| parse_path_elt_or_inverse(ctx)(i),
+        ))(input)?;
+        if rest.is_empty() {
+            Ok((input, first))
+        } else {
+            let mut all = vec![first];
+            all.extend(rest);
+            Ok((input, PropertyPath::Sequence(all)))
+        }
     }
+}
 
-    if predicate_path.len() == 1 {
-        triples.push(TriplePattern {
-            subject: subject.clone(),
-            predicate: predicate_path[0].clone(),
-            object: object.clone(),
-        });
-        return;
+fn parse_path_elt_or_inverse<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
+    move |input| {
+        alt((
+            map(
+                preceded(pair(char('^'), multispace0), |i| parse_path_elt(ctx)(i)),
+                |p| PropertyPath::Inverse(Box::new(p)),
+            ),
+            |i| parse_path_elt(ctx)(i),
+        ))(input)
     }
+}
 
-    let mut current_subject = subject.clone();
-    for predicate in &predicate_path[..predicate_path.len() - 1] {
-        let bridge_var = Term::Variable(format!("__path_{}", *generated_path_var_index));
-        *generated_path_var_index += 1;
-        triples.push(TriplePattern {
-            subject: current_subject,
-            predicate: predicate.clone(),
-            object: bridge_var.clone(),
-        });
-        current_subject = bridge_var;
+fn parse_path_elt<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
+    move |input| {
+        let (input, primary) = parse_path_primary(ctx)(input)?;
+        let (input, mod_char) = opt(alt((
+            map(char('*'), |_| '*'),
+            map(char('+'), |_| '+'),
+            map(char('?'), |_| '?'),
+        )))(input)?;
+        Ok((
+            input,
+            match mod_char {
+                Some('*') => PropertyPath::ZeroOrMore(Box::new(primary)),
+                Some('+') => PropertyPath::OneOrMore(Box::new(primary)),
+                Some('?') => PropertyPath::ZeroOrOne(Box::new(primary)),
+                _ => primary,
+            },
+        ))
     }
+}
 
-    triples.push(TriplePattern {
-        subject: current_subject,
-        predicate: predicate_path[predicate_path.len() - 1].clone(),
-        object: object.clone(),
-    });
+fn parse_path_primary<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
+    move |input| {
+        alt((
+            // '(' PathAlternative ')'
+            delimited(
+                pair(char('('), multispace0),
+                |i| parse_path_alternative(ctx)(i),
+                pair(multispace0, char(')')),
+            ),
+            // '!' NegatedSet
+            map(
+                preceded(pair(char('!'), multispace0), |i| {
+                    parse_path_negated_set(ctx)(i)
+                }),
+                PropertyPath::NegatedSet,
+            ),
+            // IRI / 'a'
+            map(|i| parse_path_iri(ctx)(i), PropertyPath::Iri),
+        ))(input)
+    }
+}
+
+/// Parse an IRI in path position: full `<IRI>`, prefixed name, or `a` shorthand.
+fn parse_path_iri<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, GraphElement> + 'a {
+    move |input| {
+        alt((
+            // 'a' shorthand for rdf:type (same boundary check as in parse_term)
+            |input: &'a str| {
+                if let Some(rest) = input.strip_prefix('a') {
+                    let next = rest.chars().next();
+                    if next
+                        .map(|c| !c.is_alphanumeric() && c != '_' && c != ':')
+                        .unwrap_or(true)
+                    {
+                        let iri = IriReference(
+                            "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
+                        );
+                        return Ok((rest, GraphElement::NodeOrEdge(RdfResource::Iri(iri))));
+                    }
+                }
+                Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )))
+            },
+            map(parse_iri_ref, |iri| {
+                GraphElement::NodeOrEdge(RdfResource::Iri(iri))
+            }),
+            map(parse_prefixed_name(ctx), |iri| {
+                GraphElement::NodeOrEdge(RdfResource::Iri(iri))
+            }),
+        ))(input)
+    }
+}
+
+/// Parse the body of a negated property set: `(IRI ('|' IRI)*)` or a single IRI.
+fn parse_path_negated_set<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<GraphElement>> + 'a {
+    move |input| {
+        alt((
+            delimited(
+                pair(char('('), multispace0),
+                separated_list0(tuple((multispace0, char('|'), multispace0)), |i| {
+                    parse_path_iri(ctx)(i)
+                }),
+                pair(multispace0, char(')')),
+            ),
+            map(|i| parse_path_iri(ctx)(i), |gel| vec![gel]),
+        ))(input)
+    }
 }
 
 // ── Term / literal parsing ───────────────────────────────────────────────────
@@ -1008,10 +1158,10 @@ fn parse_function_call<'a>(
             "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "SAMPLE" | "GROUP_CONCAT"
         ) {
             // Optional DISTINCT keyword
-            let (input, distinct) = map(
-                opt(terminated(tag_no_case("DISTINCT"), multispace1)),
-                |d| d.is_some(),
-            )(input)?;
+            let (input, distinct) =
+                map(opt(terminated(tag_no_case("DISTINCT"), multispace1)), |d| {
+                    d.is_some()
+                })(input)?;
 
             // COUNT(*) special form
             if fname_upper == "COUNT" && input.starts_with('*') {

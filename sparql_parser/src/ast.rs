@@ -1,5 +1,26 @@
 use dag_rdf::GraphElement;
 
+/// A SPARQL property path expression (predicate position in triple patterns).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PropertyPath {
+    /// Single named property (IRI or 'a')
+    Iri(GraphElement),
+    /// p1/p2/... — sequence
+    Sequence(Vec<PropertyPath>),
+    /// p1|p2 — alternative (union)
+    Alternative(Box<PropertyPath>, Box<PropertyPath>),
+    /// ^p — inverse
+    Inverse(Box<PropertyPath>),
+    /// p* — zero or more hops
+    ZeroOrMore(Box<PropertyPath>),
+    /// p+ — one or more hops
+    OneOrMore(Box<PropertyPath>),
+    /// p? — zero or one hop
+    ZeroOrOne(Box<PropertyPath>),
+    /// !(p1|p2|...) — negated property set
+    NegatedSet(Vec<GraphElement>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Query {
     Select {
@@ -32,6 +53,7 @@ pub enum ProjectionElement {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum QueryComponent {
     BGP(Vec<TriplePattern>),
+    PathPattern(Term, Box<PropertyPath>, Term),
     Optional(Vec<QueryComponent>),
     Union(Vec<QueryComponent>, Vec<QueryComponent>),
     Filter(Expression),
@@ -94,8 +116,8 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Aggregate {
-    CountStar,                            // COUNT(*)
-    Count(Box<Expression>, bool),         // COUNT(DISTINCT? expr), bool = distinct
+    CountStar,                    // COUNT(*)
+    Count(Box<Expression>, bool), // COUNT(DISTINCT? expr), bool = distinct
     Sum(Box<Expression>, bool),
     Avg(Box<Expression>, bool),
     Min(Box<Expression>, bool),

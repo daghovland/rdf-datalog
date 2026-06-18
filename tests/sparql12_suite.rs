@@ -693,9 +693,17 @@ PREFIX : <http://example.org/>
 SELECT (COUNT(?author) AS ?n)
 WHERE { ?book :price ?price . ?book :author ?author . }
 "#;
-    assert_eq!(query_rows(&ds, sparql), 1, "§11.4: COUNT(?author) → one row");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§11.4: COUNT(?author) → one row"
+    );
     let val = query_single_value(&ds, sparql, "n");
-    assert_eq!(val.as_deref(), Some("3"), "§11.4: COUNT(?author) = 3 (alice, alice, bob)");
+    assert_eq!(
+        val.as_deref(),
+        Some("3"),
+        "§11.4: COUNT(?author) = 3 (alice, alice, bob)"
+    );
 }
 
 /// SPARQL 1.2 §11.4: COUNT(DISTINCT ?author) deduplicates across the group.
@@ -707,9 +715,17 @@ PREFIX : <http://example.org/>
 SELECT (COUNT(DISTINCT ?author) AS ?n)
 WHERE { ?book :author ?author . }
 "#;
-    assert_eq!(query_rows(&ds, sparql), 1, "§11.4: COUNT(DISTINCT) → one row");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§11.4: COUNT(DISTINCT) → one row"
+    );
     let val = query_single_value(&ds, sparql, "n");
-    assert_eq!(val.as_deref(), Some("2"), "§11.4: COUNT(DISTINCT ?author) = 2 unique authors");
+    assert_eq!(
+        val.as_deref(),
+        Some("2"),
+        "§11.4: COUNT(DISTINCT ?author) = 2 unique authors"
+    );
 }
 
 /// SPARQL 1.2 §11.4: SUM(?price) GROUP BY ?org → 2 rows.
@@ -726,7 +742,11 @@ SELECT ?org (SUM(?price) AS ?total)
 WHERE { ?org :hasBook ?book . ?book :price ?price . }
 GROUP BY ?org
 "#;
-    assert_eq!(query_rows(&ds, sparql), 2, "§11.4: SUM GROUP BY → 2 organisation rows");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "§11.4: SUM GROUP BY → 2 organisation rows"
+    );
     let mut sums = query_values(&ds, sparql, "total");
     sums.sort();
     assert_eq!(sums, vec!["30", "30"], "§11.4: org1 sum=30, org2 sum=30");
@@ -771,11 +791,13 @@ WHERE { ?book :price ?price . }
     // bare integers as xsd:integer TypedLiterals, so the display includes the type.
     assert!(
         min.as_deref().map(|s| s.contains("10")).unwrap_or(false),
-        "§11.4: MIN price should contain '10', got {:?}", min
+        "§11.4: MIN price should contain '10', got {:?}",
+        min
     );
     assert!(
         max.as_deref().map(|s| s.contains("30")).unwrap_or(false),
-        "§11.4: MAX price should contain '30', got {:?}", max
+        "§11.4: MAX price should contain '30', got {:?}",
+        max
     );
 }
 
@@ -796,7 +818,11 @@ GROUP BY ?org
 HAVING (MIN(?price) > 15)
 "#;
     // org1 min=10 (filtered out), org2 min=30 (kept)
-    assert_eq!(query_rows(&ds, sparql), 1, "§11.4: HAVING (MIN > 15) keeps only org2");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§11.4: HAVING (MIN > 15) keeps only org2"
+    );
 }
 
 /// SPARQL 1.2 §11.4: GROUP_CONCAT concatenates string values with a separator.
@@ -811,7 +837,11 @@ SELECT ?org (GROUP_CONCAT(?title ; separator=",") AS ?titles)
 WHERE { ?org :hasBook ?book . ?book :title ?title . }
 GROUP BY ?org
 "#;
-    assert_eq!(query_rows(&ds, sparql), 2, "§11.4: GROUP_CONCAT → 2 rows (one per org)");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "§11.4: GROUP_CONCAT → 2 rows (one per org)"
+    );
     // Row content is order-dependent; only assert row count here.
 }
 
@@ -828,9 +858,17 @@ PREFIX : <http://example.org/>
 SELECT (COUNT(?book) AS ?bookCount)
 WHERE { ?book :price ?price . }
 "#;
-    assert_eq!(query_rows(&ds, sparql), 1, "§11.4: implicit group → exactly one row");
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§11.4: implicit group → exactly one row"
+    );
     let val = query_single_value(&ds, sparql, "bookCount");
-    assert_eq!(val.as_deref(), Some("3"), "§11.4: all 3 books counted in implicit group");
+    assert_eq!(
+        val.as_deref(),
+        Some("3"),
+        "§11.4: all 3 books counted in implicit group"
+    );
 }
 
 // ── §9 (extended)  Property Paths ────────────────────────────────────────────
@@ -841,12 +879,9 @@ WHERE { ?book :price ?price . }
 
 /// SPARQL 1.2 §9.2: Alternative path p1|p2 matches either predicate.
 ///
-/// ?x (foaf:knows|ex:likes) ex:frank
-///   - foaf:knows → none (frank is not in the knows chain)
-///   - ex:likes   → alice, dave
-/// Expected: 2 rows
+/// `?x (foaf:knows|ex:likes) ex:frank` — foaf:knows does not reach frank;
+/// ex:likes reaches alice and dave. Expected: 2 rows.
 #[test]
-#[ignore = "alternative property paths (|) not yet implemented"]
 fn spec_s9_alternative_path() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -869,7 +904,6 @@ SELECT ?x WHERE {
 /// bob knows carol → 1 row
 /// Expected: 1 row (?x = bob)
 #[test]
-#[ignore = "inverse property paths (^) not yet implemented"]
 fn spec_s9_inverse_path() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -901,7 +935,6 @@ SELECT ?x WHERE {
 ///   4 hops: alice
 /// Expected: 5 rows (alice, bob, carol, dave, eve)
 #[test]
-#[ignore = "zero-or-more property paths (*) not yet implemented"]
 fn spec_s9_zero_or_more() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -923,7 +956,6 @@ SELECT ?z WHERE {
 ///   ≥1 hops: dave, carol, bob, alice (eve itself excluded)
 /// Expected: 4 rows
 #[test]
-#[ignore = "one-or-more property paths (+) not yet implemented"]
 fn spec_s9_one_or_more() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -946,7 +978,6 @@ SELECT ?z WHERE {
 ///   1 hop:  bob (alice knows bob)
 /// Expected: 2 rows
 #[test]
-#[ignore = "zero-or-one property paths (?) not yet implemented"]
 fn spec_s9_zero_or_one() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -970,7 +1001,6 @@ SELECT ?z WHERE {
 ///   Excluding foaf:knows leaves: foaf:name "Alice", ex:likes frank → 2 rows.
 /// Expected: 2 rows
 #[test]
-#[ignore = "negated property set (!) not yet implemented"]
 fn spec_s9_negated_property_set() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"
@@ -1007,7 +1037,6 @@ SELECT ?y WHERE {
 ///   So 4 pairs (x=z cases, self-pairs via one common parent).
 /// Expected: 4 rows
 #[test]
-#[ignore = "inverse combined with sequence path not yet implemented"]
 fn spec_s9_inverse_sequence() {
     let ds = load("sparql12_paths.ttl");
     let sparql = r#"

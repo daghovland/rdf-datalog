@@ -704,7 +704,6 @@ fn w3c_sparql11_bindings() {
 /// W3C SPARQL 1.1 — subquery evaluation tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/subquery/
 #[test]
-#[ignore = "subqueries (SELECT inside SELECT) not yet implemented in the executor"]
 fn w3c_sparql11_subquery() {
     let entries = load_sparql_manifest("subquery");
     let skip: &[&str] = &[];
@@ -718,7 +717,6 @@ fn w3c_sparql11_subquery() {
 /// W3C SPARQL 1.1 — aggregates (GROUP BY, HAVING, COUNT, SUM, AVG…) eval tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/aggregates/
 #[test]
-#[ignore = "aggregates (GROUP BY, COUNT, SUM, AVG…) not yet implemented in the executor"]
 fn w3c_sparql11_aggregates() {
     let entries = load_sparql_manifest("aggregates");
     let skip: &[&str] = &[];
@@ -745,7 +743,6 @@ fn w3c_sparql11_negation() {
 /// W3C SPARQL 1.1 — property paths evaluation tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/property-path/
 #[test]
-#[ignore = "property paths beyond sequence (/) not yet fully implemented"]
 fn w3c_sparql11_property_path() {
     let entries = load_sparql_manifest("property-path");
     let skip: &[&str] = &[];
@@ -759,7 +756,6 @@ fn w3c_sparql11_property_path() {
 /// W3C SPARQL 1.1 — CONSTRUCT evaluation tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/construct/
 #[test]
-#[ignore = "CONSTRUCT result comparison (Turtle/RDF graph diff) not yet implemented in tests"]
 fn w3c_sparql11_construct() {
     let entries = load_sparql_manifest("construct");
     let skip: &[&str] = &[];
@@ -786,7 +782,6 @@ fn w3c_sparql11_functions() {
 /// W3C SPARQL 1.1 — GROUP BY / grouping evaluation tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/grouping/
 #[test]
-#[ignore = "grouping (GROUP BY) not yet implemented in the executor"]
 fn w3c_sparql11_grouping() {
     let entries = load_sparql_manifest("grouping");
     let skip: &[&str] = &[];
@@ -800,7 +795,6 @@ fn w3c_sparql11_grouping() {
 /// W3C SPARQL 1.1 — project expression (SELECT expr AS ?var) eval tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/project-expression/
 #[test]
-#[ignore = "SELECT expression projection (SELECT ?expr AS ?var) not yet implemented in executor"]
 fn w3c_sparql11_project_expression() {
     let entries = load_sparql_manifest("project-expression");
     let skip: &[&str] = &[];

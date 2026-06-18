@@ -1,6 +1,6 @@
 # SPARQL Aggregates and Extended Property Paths — Implementation Plan
 
-**Status**: Red phase (plan + ignored tests). Implementation in a later session.
+**Status**: Complete. Both tracks implemented and all 16 new tests passing.
 
 **Last updated**: 2026-06-18
 

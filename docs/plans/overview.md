@@ -35,18 +35,16 @@ linearly with total historical mutations.  A `POST /$/compact` admin endpoint is
 planned to atomically replace the log with a minimal snapshot.
 
 ### SPARQL Aggregates (GROUP BY, COUNT, SUM, AVG, …)
-**Files**: `sparql_parser/src/` — executor only (AST + parser already done)  
-**Plan**: [`docs/plans/SPARQL_AGGREGATES_AND_PATHS_PLAN.md`](SPARQL_AGGREGATES_AND_PATHS_PLAN.md) — Track A  
-**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 ignored tests); `tests/api_integration.rs` — `sparql_aggregate_sum_group_by` (ignored); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (ignored)  
-**Impact**: GROUP BY and aggregate expressions (COUNT, SUM, MIN, MAX, AVG, GROUP_CONCAT)
-are parsed but ignored by the executor.  Analytics queries return wrong results.
+**Status**: ✓ Implemented  
+**Files**: `sparql_parser/src/ast.rs`, `sparql_parser/src/lib.rs`, `sparql_parser/src/execute.rs`  
+**What was added**: `CountStar` AST variant; `(?expr AS ?alias)` projection parsing; aggregate function parsing (COUNT/SUM/AVG/MIN/MAX/SAMPLE/GROUP_CONCAT) in `parse_function_call`; `group_by_solutions`, `eval_aggregate_value`, `eval_having_expr`, `project_aggregate_row` in executor  
+**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 tests, all green); `tests/api_integration.rs` — `sparql_aggregate_sum_group_by` (green); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (still ignored — require W3C test data download)
 
 ### SPARQL Property Paths (beyond `/`)
-**Files**: `sparql_parser/src/` — AST, parser, executor  
-**Plan**: [`docs/plans/SPARQL_AGGREGATES_AND_PATHS_PLAN.md`](SPARQL_AGGREGATES_AND_PATHS_PLAN.md) — Track B  
-**Tests**: `tests/sparql12_suite.rs` — `spec_s9_alternative_path`, `spec_s9_inverse_path`, `spec_s9_zero_or_more`, `spec_s9_one_or_more`, `spec_s9_zero_or_one`, `spec_s9_negated_property_set`, `spec_s9_inverse_sequence` (7 ignored tests); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (ignored)  
-**Impact**: Only the sequence path operator (`/`) is supported.  `*`, `+`, `?`,
-`|`, `^`, and `!` paths are not yet implemented.
+**Status**: ✓ Implemented  
+**Files**: `sparql_parser/src/ast.rs` (`PropertyPath` enum, `QueryComponent::PathPattern`), `sparql_parser/src/lib.rs` (full path grammar parser), `sparql_parser/src/execute.rs` (`eval_path_pattern`, `transitive_closure`)  
+**What was added**: `PropertyPath` AST enum with Iri/Sequence/Alternative/Inverse/ZeroOrMore/OneOrMore/ZeroOrOne/NegatedSet; full SPARQL path grammar parser; runtime path evaluation with BFS transitive closure for `*` and `+`  
+**Tests**: `tests/sparql12_suite.rs` — all 10 `spec_s9_*` tests pass including the 7 new ones; `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (still ignored — requires W3C test data download)
 
 ### SPARQL SERVICE (federated queries)
 **Impact**: `SERVICE <endpoint> { … }` is not parsed.

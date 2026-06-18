@@ -161,16 +161,25 @@ fn test_parse_semicolon_comma_and_property_path() {
         panic!("expected Select query");
     };
 
-    assert_eq!(where_clause.len(), 1);
+    // The sequence path ex:q/ex:r is now emitted as a PathPattern component at runtime
+    // rather than being expanded to bridge-variable triples at parse time.
+    // Expected: BGP([?s ex:p ?o1, ?s ex:p ?o2]) + PathPattern(?s, Sequence(ex:q,ex:r), ?z)
+    assert_eq!(where_clause.len(), 2);
     match &where_clause[0] {
         QueryComponent::BGP(triples) => {
-            // ?s ex:p ?o1
-            // ?s ex:p ?o2
-            // ?s ex:q ?__path_n
-            // ?__path_n ex:r ?z
-            assert_eq!(triples.len(), 4);
+            assert_eq!(triples.len(), 2, "two simple predicate triples from comma list");
         }
-        other => panic!("Expected BGP, got: {:?}", other),
+        other => panic!("Expected BGP at [0], got: {:?}", other),
+    }
+    match &where_clause[1] {
+        QueryComponent::PathPattern(_, path, _) => {
+            assert!(
+                matches!(path.as_ref(), PropertyPath::Sequence(_)),
+                "ex:q/ex:r should be a Sequence PathPattern, got: {:?}",
+                path
+            );
+        }
+        other => panic!("Expected PathPattern at [1], got: {:?}", other),
     }
 }
 
