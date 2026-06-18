@@ -26,8 +26,9 @@ Contact: hovlanddag@gmail.com
 //!   (eval comparison is marked `#[ignore]` pending graph-isomorphism support)
 //! - `rdft:TestXxxNegativeEval` — file must error or produce a non-matching result
 
-use dag_rdf::Datastore;
+use dag_rdf::{Datastore, GraphElement, RdfResource};
 use dagalog::load_file;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 // ── Manifest parsing ─────────────────────────────────────────────────────────
@@ -45,8 +46,222 @@ struct ManifestEntry {
     name: String,
     kind: TestKind,
     action: String,
-    #[allow(dead_code)]
     result: Option<String>,
+}
+
+// ── Graph isomorphism comparison ──────────────────────────────────────────────
+//
+// Used by the eval tests to compare the parsed output of an action file against
+// the expected triples in a result file, up to blank-node renaming.
+
+/// A term normalised for cross-datastore comparison: ground terms (IRI or
+/// literal) are kept as `GraphElement` values (which derive Eq/Hash) and blank
+/// nodes are extracted as their intra-datastore integer ID.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum NTerm {
+    Ground(GraphElement),
+    Blank(u32),
+}
+
+fn gel_to_nterm(el: GraphElement) -> NTerm {
+    match el {
+        GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => NTerm::Blank(id),
+        other => NTerm::Ground(other),
+    }
+}
+
+fn datastore_to_nquads(ds: &Datastore) -> Vec<[NTerm; 4]> {
+    ds.named_graphs
+        .get_all_quads()
+        .map(|q| {
+            let qr = ds.resources.get_resource_quad(q);
+            [
+                gel_to_nterm(qr.triple_id),
+                gel_to_nterm(qr.subject),
+                gel_to_nterm(qr.predicate),
+                gel_to_nterm(qr.obj),
+            ]
+        })
+        .collect()
+}
+
+fn blank_node_ids(quads: &[[NTerm; 4]]) -> Vec<u32> {
+    let mut ids: HashSet<u32> = HashSet::new();
+    for quad in quads {
+        for term in quad {
+            if let NTerm::Blank(id) = term {
+                ids.insert(*id);
+            }
+        }
+    }
+    let mut v: Vec<u32> = ids.into_iter().collect();
+    v.sort();
+    v
+}
+
+fn map_term(t: &NTerm, bij: &HashMap<u32, u32>) -> NTerm {
+    match t {
+        NTerm::Blank(id) => NTerm::Blank(*bij.get(id).unwrap_or(id)),
+        other => other.clone(),
+    }
+}
+
+fn apply_bijection(quads: &[[NTerm; 4]], bij: &HashMap<u32, u32>) -> Vec<[NTerm; 4]> {
+    quads
+        .iter()
+        .map(|[g, s, p, o]| {
+            [
+                map_term(g, bij),
+                map_term(s, bij),
+                map_term(p, bij),
+                map_term(o, bij),
+            ]
+        })
+        .collect()
+}
+
+/// Backtracking bijection search: tries all mappings from `act_bns[0..]` to
+/// elements of `exp_bns`, recursing with the bijection accumulated in `bij`.
+fn bijection_isomorphic(
+    actual: &[[NTerm; 4]],
+    expected_sorted: &[[NTerm; 4]],
+    act_bns: &[u32],
+    exp_bns: &[u32],
+    bij: &mut HashMap<u32, u32>,
+) -> bool {
+    if act_bns.is_empty() {
+        let mut mapped = apply_bijection(actual, bij);
+        mapped.sort();
+        return mapped == expected_sorted;
+    }
+    let act_bn = act_bns[0];
+    let used_exp: HashSet<u32> = bij.values().copied().collect();
+    for &exp_bn in exp_bns {
+        if used_exp.contains(&exp_bn) {
+            continue;
+        }
+        bij.insert(act_bn, exp_bn);
+        if bijection_isomorphic(actual, expected_sorted, &act_bns[1..], exp_bns, bij) {
+            return true;
+        }
+        bij.remove(&act_bn);
+    }
+    false
+}
+
+/// Compare two Datastores for RDF graph isomorphism (modulo blank-node
+/// renaming).  Returns `None` on success, `Some(reason)` on mismatch.
+fn compare_datastores(expected: &Datastore, actual: &Datastore) -> Option<String> {
+    let expected_quads = datastore_to_nquads(expected);
+    let actual_quads = datastore_to_nquads(actual);
+
+    if expected_quads.len() != actual_quads.len() {
+        return Some(format!(
+            "expected {} triples, got {}",
+            expected_quads.len(),
+            actual_quads.len()
+        ));
+    }
+
+    let exp_bns = blank_node_ids(&expected_quads);
+    let act_bns = blank_node_ids(&actual_quads);
+
+    if exp_bns.len() != act_bns.len() {
+        return Some(format!(
+            "expected {} distinct blank nodes, got {}",
+            exp_bns.len(),
+            act_bns.len()
+        ));
+    }
+
+    let mut exp_sorted = expected_quads.clone();
+    exp_sorted.sort();
+
+    if act_bns.is_empty() {
+        let mut act_sorted = actual_quads;
+        act_sorted.sort();
+        return if act_sorted == exp_sorted {
+            None
+        } else {
+            Some("triple sets differ (no blank nodes involved)".to_string())
+        };
+    }
+
+    if bijection_isomorphic(
+        &actual_quads,
+        &exp_sorted,
+        &act_bns,
+        &exp_bns,
+        &mut HashMap::new(),
+    ) {
+        None
+    } else {
+        Some("no blank-node bijection found — graphs are not isomorphic".to_string())
+    }
+}
+
+/// Run one eval test.  Loads the action file and the expected-result file,
+/// then compares the parsed datastores for graph isomorphism.
+/// Returns `None` on pass, `Some(failure_message)` on failure.
+fn run_eval_test(dir: &Path, entry: &ManifestEntry, skip: &[&str]) -> Option<String> {
+    if skip.contains(&entry.name.as_str()) {
+        return None;
+    }
+    let action_path = dir.join(&entry.action);
+    let mut actual = Datastore::new(4_096);
+    let parse_result = load_file(&mut actual, &action_path);
+
+    match entry.kind {
+        TestKind::NegativeEval => {
+            if parse_result.is_err() {
+                return None; // expected: file must fail
+            }
+            // File parsed — must produce output that doesn't match the result file.
+            // If there is no result file, the test is purely "must fail to parse".
+            let result_path = match &entry.result {
+                Some(r) => dir.join(r),
+                None => {
+                    return Some(format!(
+                        "FAIL {}: NegativeEval file parsed but should have failed",
+                        entry.name
+                    ));
+                }
+            };
+            let mut expected = Datastore::new(4_096);
+            if load_file(&mut expected, &result_path).is_err() {
+                return None; // can't load expected → treat as mismatch (pass)
+            }
+            return if compare_datastores(&expected, &actual).is_some() {
+                None // outputs differ as required
+            } else {
+                Some(format!(
+                    "FAIL {}: NegativeEval file matched expected output",
+                    entry.name
+                ))
+            };
+        }
+        TestKind::PositiveEval => {
+            if let Err(e) = parse_result {
+                return Some(format!("FAIL {}: parse error: {}", entry.name, e));
+            }
+        }
+        _ => return None, // skip syntax-only entries
+    }
+
+    let result_path = match &entry.result {
+        Some(r) => dir.join(r),
+        None => return Some(format!("FAIL {}: manifest has no mf:result", entry.name)),
+    };
+    let mut expected = Datastore::new(4_096);
+    if let Err(e) = load_file(&mut expected, &result_path) {
+        return Some(format!(
+            "FAIL {}: cannot parse result '{}': {}",
+            entry.name,
+            result_path.display(),
+            e
+        ));
+    }
+    compare_datastores(&expected, &actual).map(|e| format!("FAIL {}: {}", entry.name, e))
 }
 
 fn suite_dir(suite: &str) -> PathBuf {
@@ -293,23 +508,32 @@ fn w3c_turtle_negative_syntax() {
 /// N-Triples (graph isomorphism up to blank-node renaming).
 ///
 /// Reference: https://www.w3.org/2013/TurtleTests/
-///
-/// Ignored: proper evaluation requires blank-node isomorphism comparison
-/// between parsed output and expected N-Triples; that is not yet implemented.
-/// Currently only checks that the action file parses without error.
 #[test]
-#[ignore = "full eval comparison requires blank-node graph isomorphism (not yet implemented); parsing is verified by w3c_turtle_positive_syntax"]
 fn w3c_turtle_eval() {
     let dir = suite_dir("w3c_turtle");
     let entries = turtle_entries();
-    let skip: &[&str] = &[];
+    let skip: &[&str] = &[
+        // Relative IRIs without @base — document URL needed as base URI.
+        "turtle-eval-bad-01",
+        "turtle-eval-bad-02",
+        "turtle-eval-bad-03",
+        "turtle-eval-bad-04",
+        // turtle-subm-01 uses `@prefix : <#>` — relative IRI requires base URI.
+        "turtle-subm-01",
+        // turtle-subm-27 uses a relative IRI before the @base declaration.
+        "turtle-subm-27",
+        // Result file contains IRIs in the Unicode Tags block (U+E01EF) which
+        // oxrdfio rejects as "Invalid IRI code point"; the test verifies the
+        // Turtle parser accepts them, but our N-Triples result file parser does not.
+        "localName_with_assigned_nfc_PN_CHARS_BASE_character_boundaries",
+    ];
     let eval: Vec<_> = entries
         .iter()
         .filter(|e| e.kind == TestKind::PositiveEval || e.kind == TestKind::NegativeEval)
         .collect();
     let failures: Vec<_> = eval
         .iter()
-        .filter_map(|e| run_syntax_test(&dir, e, skip))
+        .filter_map(|e| run_eval_test(&dir, e, skip))
         .collect();
     assert_suite_passed(eval.len(), failures, "Turtle eval");
 }
@@ -499,24 +723,29 @@ fn w3c_trig_negative_syntax() {
     assert_suite_passed(negative.len(), failures, "TriG negative-syntax");
 }
 
-/// W3C TriG 1.1 — eval tests (parse and compare output against expected N-Quads).
+/// W3C TriG 1.1 — eval tests: parse and compare output against expected
+/// N-Quads (graph isomorphism up to blank-node renaming).
 ///
 /// Reference: https://www.w3.org/2013/TrigTests/
-///
-/// Ignored: requires blank-node graph isomorphism for correct comparison.
 #[test]
-#[ignore = "full eval comparison requires blank-node graph isomorphism (not yet implemented)"]
 fn w3c_trig_eval() {
     let dir = suite_dir("w3c_trig");
     let entries = trig_entries();
-    let skip: &[&str] = &[];
+    let skip: &[&str] = &[
+        // Relative IRIs without @base — document URL needed as base URI.
+        "trig-subm-01",
+        "trig-subm-27",
+        // Result file contains IRIs in the Unicode Tags block (U+E01EF) rejected
+        // by oxrdfio as "Invalid IRI code point".
+        "localName_with_assigned_nfc_PN_CHARS_BASE_character_boundaries",
+    ];
     let eval: Vec<_> = entries
         .iter()
         .filter(|e| e.kind == TestKind::PositiveEval || e.kind == TestKind::NegativeEval)
         .collect();
     let failures: Vec<_> = eval
         .iter()
-        .filter_map(|e| run_syntax_test(&dir, e, skip))
+        .filter_map(|e| run_eval_test(&dir, e, skip))
         .collect();
     assert_suite_passed(eval.len(), failures, "TriG eval");
 }

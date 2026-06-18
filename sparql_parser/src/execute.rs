@@ -20,6 +20,7 @@ use dag_rdf::{
 use ingress::{
     IriReference, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER, XSD_STRING,
 };
+use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -72,7 +73,7 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
             // Project
             let mut rows: Vec<SolutionRow> = solutions
                 .iter()
-                .map(|sub| project(sub, &variables, datastore))
+                .map(|sub| project(sub, &variables))
                 .collect();
 
             if *distinct {
@@ -247,21 +248,21 @@ fn is_internal_variable(var: &str) -> bool {
     var.starts_with("__path_")
 }
 
-fn project(sub: &PartialSub, variables: &[String], datastore: &Datastore) -> SolutionRow {
+fn project(sub: &PartialSub, variables: &[String]) -> SolutionRow {
     variables
         .iter()
-        .filter_map(|v| {
-            sub.get(v).map(|&id| {
-                let el = datastore.resources.get_graph_element(id).clone();
-                (v.clone(), el)
-            })
-        })
+        .filter_map(|v| sub.get(v).map(|el| (v.clone(), el.clone())))
         .collect()
 }
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
 
-type PartialSub = HashMap<String, GraphElementId>;
+/// Internal solution mapping: variable → concrete graph element.
+///
+/// Uses `GraphElement` values directly (not interned IDs) so that computed
+/// values from `BIND` expressions can be stored without requiring a mutable
+/// reference to the datastore.
+type PartialSub = HashMap<String, GraphElement>;
 
 #[derive(Clone)]
 enum ActiveGraph {
@@ -342,8 +343,12 @@ fn eval_component(
                         ActiveGraph::Fixed(graph_id)
                     }
                     Term::Variable(var) => {
-                        if let Some(&graph_id) = sub.get(var) {
-                            ActiveGraph::Fixed(graph_id)
+                        if let Some(gel) = sub.get(var) {
+                            if let Some(&graph_id) = datastore.resources.resource_map.get(gel) {
+                                ActiveGraph::Fixed(graph_id)
+                            } else {
+                                ActiveGraph::Variable(var.clone())
+                            }
                         } else {
                             ActiveGraph::Variable(var.clone())
                         }
@@ -356,7 +361,7 @@ fn eval_component(
         QueryComponent::Bind(expr, alias) => solutions
             .into_iter()
             .filter_map(|mut sub| {
-                let val = eval_expression(expr, &sub, datastore)?;
+                let val = eval_bind_expr(expr, &sub, datastore)?;
                 sub.insert(alias.clone(), val);
                 Some(sub)
             })
@@ -373,17 +378,13 @@ fn eval_component(
                     let mut ok = true;
                     for (var, val_opt) in vars.iter().zip(row.iter()) {
                         if let Some(gel) = val_opt {
-                            let Some(&id) = datastore.resources.resource_map.get(gel) else {
-                                ok = false;
-                                break;
-                            };
                             match new_sub.get(var) {
-                                Some(&existing) if existing != id => {
+                                Some(existing) if existing != gel => {
                                     ok = false;
                                     break;
                                 }
                                 _ => {
-                                    new_sub.insert(var.clone(), id);
+                                    new_sub.insert(var.clone(), gel.clone());
                                 }
                             }
                         } // UNDEF (None) — leave unbound
@@ -406,9 +407,9 @@ fn eval_component(
 
 /// Two substitutions are compatible if they agree on all shared variables.
 fn compatible(a: &PartialSub, b: &PartialSub) -> bool {
-    for (var, &id_a) in a {
-        if let Some(&id_b) = b.get(var) {
-            if id_a != id_b {
+    for (var, gel_a) in a {
+        if let Some(gel_b) = b.get(var) {
+            if gel_a != gel_b {
                 return false;
             }
         }
@@ -456,7 +457,10 @@ fn eval_triple_pattern(
 
     let g = match active_graph {
         ActiveGraph::Fixed(id) => Some(*id),
-        ActiveGraph::Variable(v) => sub.get(v).copied(),
+        ActiveGraph::Variable(v) => sub
+            .get(v)
+            .and_then(|gel| datastore.resources.resource_map.get(gel))
+            .copied(),
     };
     let s = match ast_term_to_dag_term(&tp.subject, sub, datastore) {
         DagTerm::Resource(id) => Some(id),
@@ -475,15 +479,17 @@ fn eval_triple_pattern(
         let mut new_sub = sub.clone();
         let mut ok = true;
 
+        // Bind a variable to the GraphElement resolved from a quad-field ID.
         macro_rules! bind {
-            ($term:expr, $val:expr) => {
+            ($term:expr, $id:expr) => {
                 if let Term::Variable(v) = $term {
+                    let gel = datastore.resources.get_graph_element($id).clone();
                     match new_sub.get(v) {
-                        Some(&existing) if existing != $val => {
+                        Some(existing) if existing != &gel => {
                             ok = false;
                         }
                         _ => {
-                            new_sub.insert(v.clone(), $val);
+                            new_sub.insert(v.clone(), gel);
                         }
                     }
                 }
@@ -495,12 +501,16 @@ fn eval_triple_pattern(
         bind!(&tp.object, quad.obj);
 
         if let ActiveGraph::Variable(graph_var) = active_graph {
+            let gel = datastore
+                .resources
+                .get_graph_element(quad.triple_id)
+                .clone();
             match new_sub.get(graph_var) {
-                Some(&existing) if existing != quad.triple_id => {
+                Some(existing) if existing != &gel => {
                     ok = false;
                 }
                 _ => {
-                    new_sub.insert(graph_var.clone(), quad.triple_id);
+                    new_sub.insert(graph_var.clone(), gel);
                 }
             }
         }
@@ -515,7 +525,12 @@ fn eval_triple_pattern(
 fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> DagTerm {
     match term {
         Term::Variable(v) => match sub.get(v) {
-            Some(&id) => DagTerm::Resource(id),
+            Some(gel) => match datastore.resources.resource_map.get(gel) {
+                Some(&id) => DagTerm::Resource(id),
+                // Computed value (e.g. BIND arithmetic result) not in the store —
+                // treat as an unbound variable so no quads can match it.
+                None => DagTerm::Variable(v.clone()),
+            },
             None => DagTerm::Variable(v.clone()),
         },
         Term::Constant(gel) => match datastore.resources.resource_map.get(gel) {
@@ -542,9 +557,20 @@ pub fn eval_expr_as_filter(
     sub: &HashMap<String, GraphElementId>,
     datastore: &Datastore,
 ) -> bool {
+    // Convert the Datalog ID-based substitution to the GraphElement-based
+    // substitution expected by the SPARQL evaluator.
+    let gel_sub: PartialSub = sub
+        .iter()
+        .map(|(var, &id)| {
+            (
+                var.clone(),
+                datastore.resources.get_graph_element(id).clone(),
+            )
+        })
+        .collect();
     eval_expression_bool(
         expr,
-        sub,
+        &gel_sub,
         datastore,
         &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
     )
@@ -570,13 +596,92 @@ fn eval_expression_value(
     datastore: &Datastore,
 ) -> Option<GraphElement> {
     match expr {
-        Expression::Variable(v) => {
-            let id = sub.get(v)?;
-            Some(datastore.resources.get_graph_element(*id).clone())
-        }
+        Expression::Variable(v) => sub.get(v).cloned(),
         Expression::Constant(gel) => Some(gel.clone()),
         Expression::FunctionCall(name, args) => eval_function_value(name, args, sub, datastore),
+        Expression::Binary(l, op, r) => eval_arithmetic(l, op, r, sub, datastore),
+        Expression::Unary(UnaryOp::Plus, inner) => eval_expression_value(inner, sub, datastore),
+        Expression::Unary(UnaryOp::Minus, inner) => {
+            arithmetic_negate(eval_expression_value(inner, sub, datastore)?)
+        }
         _ => None,
+    }
+}
+
+/// Negate a numeric literal.
+fn arithmetic_negate(el: GraphElement) -> Option<GraphElement> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(-n)))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => {
+            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(-d)))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => Some(
+            GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral((-d.into_inner()).into())),
+        ),
+        _ => None,
+    }
+}
+
+/// Evaluate a binary arithmetic expression (Add/Sub/Mul/Div).
+/// Returns `None` if operands are not numeric or op is not arithmetic.
+fn eval_arithmetic(
+    left: &Expression,
+    op: &BinaryOp,
+    right: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    let l = eval_expression_value(left, sub, datastore)?;
+    let r = eval_expression_value(right, sub, datastore)?;
+    match (&l, &r) {
+        (
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
+        ) => {
+            let result = match op {
+                BinaryOp::Add => a + b,
+                BinaryOp::Sub => a - b,
+                BinaryOp::Mul => a * b,
+                BinaryOp::Div => {
+                    if b == &BigInt::from(0) {
+                        return None;
+                    }
+                    a / b
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                result,
+            )))
+        }
+        _ => {
+            // Promote to f64 for mixed / floating-point arithmetic
+            let af = literal_to_f64(match &l {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let bf = literal_to_f64(match &r {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let result = match op {
+                BinaryOp::Add => af + bf,
+                BinaryOp::Sub => af - bf,
+                BinaryOp::Mul => af * bf,
+                BinaryOp::Div => {
+                    if bf == 0.0 {
+                        return None;
+                    }
+                    af / bf
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                result.into(),
+            )))
+        }
     }
 }
 
@@ -795,17 +900,14 @@ fn eval_function_bool(
     }
 }
 
-/// Keep the old `eval_expression` for BIND which needs the ID.
-fn eval_expression(
+/// Evaluate an expression for use in `BIND`, returning its `GraphElement` value.
+/// Supports variables, constants, arithmetic, and function calls.
+fn eval_bind_expr(
     expr: &Expression,
     sub: &PartialSub,
-    _datastore: &Datastore,
-) -> Option<GraphElementId> {
-    sub.get(match expr {
-        Expression::Variable(v) => v,
-        _ => return None,
-    })
-    .copied()
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    eval_expression_value(expr, sub, datastore)
 }
 
 fn graph_element_to_string(el: &GraphElement) -> Option<String> {
@@ -907,15 +1009,12 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
 fn bind_template_term(
     term: &Term,
     sub: &PartialSub,
-    datastore: &Datastore,
+    _datastore: &Datastore,
     bnode_map: &mut HashMap<u32, u32>,
     bnode_counter: &mut u32,
 ) -> Option<GraphElement> {
     match term {
-        Term::Variable(v) => {
-            let id = sub.get(v)?;
-            Some(datastore.resources.get_graph_element(*id).clone())
-        }
+        Term::Variable(v) => sub.get(v).cloned(),
         Term::Constant(gel) => {
             if let GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(orig_id)) = gel
             {
