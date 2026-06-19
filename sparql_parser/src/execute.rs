@@ -9,10 +9,12 @@ Contact: hovlanddag@gmail.com
 //! SPARQL query execution against a [`Datastore`].
 //!
 //! Supports BGP, FILTER (comparison/regex/BOUND), OPTIONAL, UNION, MINUS,
-//! DISTINCT, LIMIT, OFFSET.
+//! DISTINCT, LIMIT, OFFSET, GROUP BY, HAVING, aggregates (COUNT, SUM, AVG,
+//! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    BinaryOp, Expression, ProjectionElement, Query, QueryComponent, Term, TriplePattern, UnaryOp,
+    Aggregate, BinaryOp, Expression, OrderCondition, ProjectionElement, PropertyPath, Query,
+    QueryComponent, Term, TriplePattern, UnaryOp,
 };
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
@@ -20,6 +22,7 @@ use dag_rdf::{
 use ingress::{
     IriReference, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER, XSD_STRING,
 };
+use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -58,9 +61,10 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
             limit,
             offset,
             distinct,
+            group_by,
+            having,
             ..
         } => {
-            let variables = projection_variables(projection, where_clause, datastore);
             let initial: Vec<PartialSub> = vec![HashMap::new()];
             let solutions = eval_components(
                 where_clause,
@@ -69,17 +73,31 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
             );
 
-            // Project
-            let mut rows: Vec<SolutionRow> = solutions
-                .iter()
-                .map(|sub| project(sub, &variables, datastore))
-                .collect();
+            let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
+
+            let (variables, mut rows) = if aggregate_mode {
+                let groups = group_by_solutions(&solutions, group_by, datastore);
+                let vars = projection_variables(projection, where_clause, datastore);
+                let rows: Vec<SolutionRow> = groups
+                    .into_iter()
+                    .filter(|g| {
+                        having
+                            .iter()
+                            .all(|expr| eval_having_expr(expr, g, datastore))
+                    })
+                    .map(|g| project_aggregate_row(projection, &g, datastore))
+                    .collect();
+                (vars, rows)
+            } else {
+                let variables = projection_variables(projection, where_clause, datastore);
+                let rows: Vec<SolutionRow> = solutions
+                    .iter()
+                    .map(|sub| project(sub, &variables))
+                    .collect();
+                (variables, rows)
+            };
 
             if *distinct {
-                // `dedup()` only removes *consecutive* duplicates; use a proper
-                // seen-set so non-adjacent identical rows are also removed.
-                // SolutionRow = HashMap<String, GraphElement> — not Hash itself,
-                // so we canonicalise each row as a sorted Vec of (var, element) pairs.
                 let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
                     std::collections::HashSet::new();
                 rows.retain(|row| {
@@ -213,6 +231,23 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
                     collect_vars_from_term(&tp.object, vars);
                 }
             }
+            QueryComponent::PathPattern(subject, _, object) => {
+                // Do NOT expose internal variables; only subject and object matter.
+                collect_vars_from_term(subject, vars);
+                collect_vars_from_term(object, vars);
+            }
+            QueryComponent::Subquery(inner_query) => {
+                // Only the inner query's projected variables are visible.
+                if let Query::Select { projection, .. } = inner_query.as_ref() {
+                    for elem in projection {
+                        match elem {
+                            ProjectionElement::Variable(v) => vars.push(v.clone()),
+                            ProjectionElement::Expression(_, alias) => vars.push(alias.clone()),
+                            ProjectionElement::Star => {}
+                        }
+                    }
+                }
+            }
             QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
                 collect_vars_from_components(inner, vars);
             }
@@ -247,21 +282,21 @@ fn is_internal_variable(var: &str) -> bool {
     var.starts_with("__path_")
 }
 
-fn project(sub: &PartialSub, variables: &[String], datastore: &Datastore) -> SolutionRow {
+fn project(sub: &PartialSub, variables: &[String]) -> SolutionRow {
     variables
         .iter()
-        .filter_map(|v| {
-            sub.get(v).map(|&id| {
-                let el = datastore.resources.get_graph_element(id).clone();
-                (v.clone(), el)
-            })
-        })
+        .filter_map(|v| sub.get(v).map(|el| (v.clone(), el.clone())))
         .collect()
 }
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
 
-type PartialSub = HashMap<String, GraphElementId>;
+/// Internal solution mapping: variable → concrete graph element.
+///
+/// Uses `GraphElement` values directly (not interned IDs) so that computed
+/// values from `BIND` expressions can be stored without requiring a mutable
+/// reference to the datastore.
+type PartialSub = HashMap<String, GraphElement>;
 
 #[derive(Clone)]
 enum ActiveGraph {
@@ -293,6 +328,24 @@ fn eval_component(
 ) -> Vec<PartialSub> {
     match comp {
         QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph),
+
+        QueryComponent::PathPattern(subject, path, object) => solutions
+            .into_iter()
+            .flat_map(|sub| eval_path_pattern(subject, path, object, sub, datastore, active_graph))
+            .collect(),
+
+        QueryComponent::Subquery(inner_query) => {
+            let inner_rows = execute_select_inner(inner_query, datastore, active_graph);
+            solutions
+                .into_iter()
+                .flat_map(|outer_sub| {
+                    inner_rows
+                        .iter()
+                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
 
         QueryComponent::Filter(expr) => solutions
             .into_iter()
@@ -342,8 +395,12 @@ fn eval_component(
                         ActiveGraph::Fixed(graph_id)
                     }
                     Term::Variable(var) => {
-                        if let Some(&graph_id) = sub.get(var) {
-                            ActiveGraph::Fixed(graph_id)
+                        if let Some(gel) = sub.get(var) {
+                            if let Some(&graph_id) = datastore.resources.resource_map.get(gel) {
+                                ActiveGraph::Fixed(graph_id)
+                            } else {
+                                ActiveGraph::Variable(var.clone())
+                            }
                         } else {
                             ActiveGraph::Variable(var.clone())
                         }
@@ -356,7 +413,7 @@ fn eval_component(
         QueryComponent::Bind(expr, alias) => solutions
             .into_iter()
             .filter_map(|mut sub| {
-                let val = eval_expression(expr, &sub, datastore)?;
+                let val = eval_bind_expr(expr, &sub, datastore)?;
                 sub.insert(alias.clone(), val);
                 Some(sub)
             })
@@ -373,17 +430,13 @@ fn eval_component(
                     let mut ok = true;
                     for (var, val_opt) in vars.iter().zip(row.iter()) {
                         if let Some(gel) = val_opt {
-                            let Some(&id) = datastore.resources.resource_map.get(gel) else {
-                                ok = false;
-                                break;
-                            };
                             match new_sub.get(var) {
-                                Some(&existing) if existing != id => {
+                                Some(existing) if existing != gel => {
                                     ok = false;
                                     break;
                                 }
                                 _ => {
-                                    new_sub.insert(var.clone(), id);
+                                    new_sub.insert(var.clone(), gel.clone());
                                 }
                             }
                         } // UNDEF (None) — leave unbound
@@ -406,9 +459,9 @@ fn eval_component(
 
 /// Two substitutions are compatible if they agree on all shared variables.
 fn compatible(a: &PartialSub, b: &PartialSub) -> bool {
-    for (var, &id_a) in a {
-        if let Some(&id_b) = b.get(var) {
-            if id_a != id_b {
+    for (var, gel_a) in a {
+        if let Some(gel_b) = b.get(var) {
+            if gel_a != gel_b {
                 return false;
             }
         }
@@ -456,7 +509,10 @@ fn eval_triple_pattern(
 
     let g = match active_graph {
         ActiveGraph::Fixed(id) => Some(*id),
-        ActiveGraph::Variable(v) => sub.get(v).copied(),
+        ActiveGraph::Variable(v) => sub
+            .get(v)
+            .and_then(|gel| datastore.resources.resource_map.get(gel))
+            .copied(),
     };
     let s = match ast_term_to_dag_term(&tp.subject, sub, datastore) {
         DagTerm::Resource(id) => Some(id),
@@ -475,15 +531,17 @@ fn eval_triple_pattern(
         let mut new_sub = sub.clone();
         let mut ok = true;
 
+        // Bind a variable to the GraphElement resolved from a quad-field ID.
         macro_rules! bind {
-            ($term:expr, $val:expr) => {
+            ($term:expr, $id:expr) => {
                 if let Term::Variable(v) = $term {
+                    let gel = datastore.resources.get_graph_element($id).clone();
                     match new_sub.get(v) {
-                        Some(&existing) if existing != $val => {
+                        Some(existing) if existing != &gel => {
                             ok = false;
                         }
                         _ => {
-                            new_sub.insert(v.clone(), $val);
+                            new_sub.insert(v.clone(), gel);
                         }
                     }
                 }
@@ -495,12 +553,16 @@ fn eval_triple_pattern(
         bind!(&tp.object, quad.obj);
 
         if let ActiveGraph::Variable(graph_var) = active_graph {
+            let gel = datastore
+                .resources
+                .get_graph_element(quad.triple_id)
+                .clone();
             match new_sub.get(graph_var) {
-                Some(&existing) if existing != quad.triple_id => {
+                Some(existing) if existing != &gel => {
                     ok = false;
                 }
                 _ => {
-                    new_sub.insert(graph_var.clone(), quad.triple_id);
+                    new_sub.insert(graph_var.clone(), gel);
                 }
             }
         }
@@ -515,7 +577,12 @@ fn eval_triple_pattern(
 fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> DagTerm {
     match term {
         Term::Variable(v) => match sub.get(v) {
-            Some(&id) => DagTerm::Resource(id),
+            Some(gel) => match datastore.resources.resource_map.get(gel) {
+                Some(&id) => DagTerm::Resource(id),
+                // Computed value (e.g. BIND arithmetic result) not in the store —
+                // treat as an unbound variable so no quads can match it.
+                None => DagTerm::Variable(v.clone()),
+            },
             None => DagTerm::Variable(v.clone()),
         },
         Term::Constant(gel) => match datastore.resources.resource_map.get(gel) {
@@ -542,9 +609,20 @@ pub fn eval_expr_as_filter(
     sub: &HashMap<String, GraphElementId>,
     datastore: &Datastore,
 ) -> bool {
+    // Convert the Datalog ID-based substitution to the GraphElement-based
+    // substitution expected by the SPARQL evaluator.
+    let gel_sub: PartialSub = sub
+        .iter()
+        .map(|(var, &id)| {
+            (
+                var.clone(),
+                datastore.resources.get_graph_element(id).clone(),
+            )
+        })
+        .collect();
     eval_expression_bool(
         expr,
-        sub,
+        &gel_sub,
         datastore,
         &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
     )
@@ -570,13 +648,92 @@ fn eval_expression_value(
     datastore: &Datastore,
 ) -> Option<GraphElement> {
     match expr {
-        Expression::Variable(v) => {
-            let id = sub.get(v)?;
-            Some(datastore.resources.get_graph_element(*id).clone())
-        }
+        Expression::Variable(v) => sub.get(v).cloned(),
         Expression::Constant(gel) => Some(gel.clone()),
         Expression::FunctionCall(name, args) => eval_function_value(name, args, sub, datastore),
+        Expression::Binary(l, op, r) => eval_arithmetic(l, op, r, sub, datastore),
+        Expression::Unary(UnaryOp::Plus, inner) => eval_expression_value(inner, sub, datastore),
+        Expression::Unary(UnaryOp::Minus, inner) => {
+            arithmetic_negate(eval_expression_value(inner, sub, datastore)?)
+        }
         _ => None,
+    }
+}
+
+/// Negate a numeric literal.
+fn arithmetic_negate(el: GraphElement) -> Option<GraphElement> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(-n)))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => {
+            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(-d)))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => Some(
+            GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral((-d.into_inner()).into())),
+        ),
+        _ => None,
+    }
+}
+
+/// Evaluate a binary arithmetic expression (Add/Sub/Mul/Div).
+/// Returns `None` if operands are not numeric or op is not arithmetic.
+fn eval_arithmetic(
+    left: &Expression,
+    op: &BinaryOp,
+    right: &Expression,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    let l = eval_expression_value(left, sub, datastore)?;
+    let r = eval_expression_value(right, sub, datastore)?;
+    match (&l, &r) {
+        (
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
+        ) => {
+            let result = match op {
+                BinaryOp::Add => a + b,
+                BinaryOp::Sub => a - b,
+                BinaryOp::Mul => a * b,
+                BinaryOp::Div => {
+                    if b == &BigInt::from(0) {
+                        return None;
+                    }
+                    a / b
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                result,
+            )))
+        }
+        _ => {
+            // Promote to f64 for mixed / floating-point arithmetic
+            let af = literal_to_f64(match &l {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let bf = literal_to_f64(match &r {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let result = match op {
+                BinaryOp::Add => af + bf,
+                BinaryOp::Sub => af - bf,
+                BinaryOp::Mul => af * bf,
+                BinaryOp::Div => {
+                    if bf == 0.0 {
+                        return None;
+                    }
+                    af / bf
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                result.into(),
+            )))
+        }
     }
 }
 
@@ -697,6 +854,22 @@ fn eval_expression_bool(
         Expression::Unary(UnaryOp::Not, inner) => {
             Some(!eval_expression_bool(inner, sub, datastore, active_graph).unwrap_or(false))
         }
+        Expression::In(expr, list) => {
+            let val = eval_expression_value(expr, sub, datastore)?;
+            Some(list.iter().any(|item| {
+                eval_expression_value(item, sub, datastore)
+                    .map(|v| v == val)
+                    .unwrap_or(false)
+            }))
+        }
+        Expression::NotIn(expr, list) => {
+            let val = eval_expression_value(expr, sub, datastore)?;
+            Some(!list.iter().any(|item| {
+                eval_expression_value(item, sub, datastore)
+                    .map(|v| v == val)
+                    .unwrap_or(false)
+            }))
+        }
         Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
         Expression::Exists(inner) => {
             let sols =
@@ -795,17 +968,14 @@ fn eval_function_bool(
     }
 }
 
-/// Keep the old `eval_expression` for BIND which needs the ID.
-fn eval_expression(
+/// Evaluate an expression for use in `BIND`, returning its `GraphElement` value.
+/// Supports variables, constants, arithmetic, and function calls.
+fn eval_bind_expr(
     expr: &Expression,
     sub: &PartialSub,
-    _datastore: &Datastore,
-) -> Option<GraphElementId> {
-    sub.get(match expr {
-        Expression::Variable(v) => v,
-        _ => return None,
-    })
-    .copied()
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    eval_expression_value(expr, sub, datastore)
 }
 
 fn graph_element_to_string(el: &GraphElement) -> Option<String> {
@@ -883,11 +1053,975 @@ fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
 fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePattern> {
     let mut out = Vec::new();
     for comp in components {
-        if let QueryComponent::BGP(tps) = comp {
-            out.extend(tps.clone());
+        match comp {
+            QueryComponent::BGP(tps) => out.extend(tps.clone()),
+            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
+                out.extend(collect_bgps_from_components(inner));
+            }
+            QueryComponent::Union(left, right) => {
+                out.extend(collect_bgps_from_components(left));
+                out.extend(collect_bgps_from_components(right));
+            }
+            QueryComponent::Graph(_, inner) => {
+                out.extend(collect_bgps_from_components(inner));
+            }
+            QueryComponent::PathPattern(_, _, _)
+            | QueryComponent::Subquery(_)
+            | QueryComponent::Filter(_)
+            | QueryComponent::Bind(_, _)
+            | QueryComponent::Values(_, _)
+            | QueryComponent::Service(_, _, _) => {}
         }
     }
     out
+}
+
+// ── Subquery helpers ──────────────────────────────────────────────────────────
+
+/// Merge two partial substitutions: succeed if they agree on shared variables.
+fn merge_solutions(outer: &PartialSub, inner: &PartialSub) -> Option<PartialSub> {
+    let mut merged = outer.clone();
+    for (var, val) in inner {
+        match merged.get(var) {
+            Some(existing) if existing != val => return None,
+            _ => {
+                merged.insert(var.clone(), val.clone());
+            }
+        }
+    }
+    Some(merged)
+}
+
+/// Execute a SELECT subquery, returning projected solution rows.
+///
+/// Applies ORDER BY, DISTINCT, LIMIT, and OFFSET from the inner query.
+fn execute_select_inner(
+    query: &Query,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    let Query::Select {
+        projection,
+        where_clause,
+        limit,
+        offset,
+        distinct,
+        group_by,
+        having,
+        order_by,
+    } = query
+    else {
+        return Vec::new();
+    };
+
+    let initial: Vec<PartialSub> = vec![HashMap::new()];
+    let solutions = eval_components(where_clause, initial, datastore, (*active_graph).clone());
+
+    let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
+
+    let mut rows: Vec<PartialSub> = if aggregate_mode {
+        let groups = group_by_solutions(&solutions, group_by, datastore);
+        groups
+            .into_iter()
+            .filter(|g| {
+                having
+                    .iter()
+                    .all(|expr| eval_having_expr(expr, g, datastore))
+            })
+            .map(|g| {
+                // Build a PartialSub from aggregate projections
+                let rep = g.first().cloned().unwrap_or_default();
+                let mut row = PartialSub::new();
+                for elem in projection.iter() {
+                    match elem {
+                        ProjectionElement::Variable(v) => {
+                            if let Some(val) = rep.get(v) {
+                                row.insert(v.clone(), val.clone());
+                            }
+                        }
+                        ProjectionElement::Expression(expr, alias) => {
+                            if let Some(val) = eval_expr_in_group(expr, &g, &rep, datastore) {
+                                row.insert(alias.clone(), val);
+                            }
+                        }
+                        ProjectionElement::Star => {}
+                    }
+                }
+                row
+            })
+            .collect()
+    } else {
+        // Build projected variables list (without expanding SELECT *)
+        let vars: Vec<String> = projection
+            .iter()
+            .filter_map(|p| match p {
+                ProjectionElement::Variable(v) => Some(v.clone()),
+                ProjectionElement::Expression(_, alias) => Some(alias.clone()),
+                ProjectionElement::Star => None,
+            })
+            .collect();
+        let proj_vars: Option<Vec<String>> = if projection
+            .iter()
+            .any(|p| matches!(p, ProjectionElement::Star))
+        {
+            None // keep all vars for SELECT *
+        } else {
+            Some(vars)
+        };
+        solutions
+            .into_iter()
+            .map(|sub| {
+                if let Some(ref pvars) = proj_vars {
+                    pvars
+                        .iter()
+                        .filter_map(|v| sub.get(v).map(|val| (v.clone(), val.clone())))
+                        .collect()
+                } else {
+                    sub
+                }
+            })
+            .collect()
+    };
+
+    // ORDER BY
+    if !order_by.is_empty() {
+        sort_solutions(&mut rows, order_by, datastore);
+    }
+
+    // DISTINCT
+    if *distinct {
+        let mut seen: HashSet<Vec<(String, GraphElement)>> = HashSet::new();
+        rows.retain(|row| {
+            let mut key: Vec<(String, GraphElement)> =
+                row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            key.sort_by(|a, b| a.0.cmp(&b.0));
+            seen.insert(key)
+        });
+    }
+
+    // OFFSET
+    if let Some(off) = offset {
+        let off = *off as usize;
+        if off < rows.len() {
+            rows = rows[off..].to_vec();
+        } else {
+            rows.clear();
+        }
+    }
+
+    // LIMIT
+    if let Some(lim) = limit {
+        rows.truncate(*lim as usize);
+    }
+
+    rows
+}
+
+/// Sort solution rows by ORDER BY conditions.
+fn sort_solutions(rows: &mut [PartialSub], order_by: &[OrderCondition], datastore: &Datastore) {
+    rows.sort_by(|a, b| {
+        for cond in order_by {
+            let av = eval_expression_value(&cond.expression, a, datastore);
+            let bv = eval_expression_value(&cond.expression, b, datastore);
+            let ord = match (&av, &bv) {
+                (Some(l), Some(r)) => compare_graph_elements_total(l, r),
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            if ord != std::cmp::Ordering::Equal {
+                return if cond.ascending { ord } else { ord.reverse() };
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+/// Total ordering for `GraphElement` values (for ORDER BY).
+fn compare_graph_elements_total(a: &GraphElement, b: &GraphElement) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    match (a, b) {
+        // Numerics first
+        (GraphElement::GraphLiteral(al), GraphElement::GraphLiteral(bl)) => {
+            if let (Some(af), Some(bf)) = (literal_to_f64(al), literal_to_f64(bl)) {
+                return af.partial_cmp(&bf).unwrap_or(Equal);
+            }
+            // String comparison of the lexical form
+            let as_ = graph_element_to_string(a).unwrap_or_default();
+            let bs = graph_element_to_string(b).unwrap_or_default();
+            as_.cmp(&bs)
+        }
+        (
+            GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(ai)),
+            GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(bi)),
+        ) => ai.0.cmp(&bi.0),
+        _ => {
+            let as_ = graph_element_to_string(a).unwrap_or_default();
+            let bs = graph_element_to_string(b).unwrap_or_default();
+            as_.cmp(&bs)
+        }
+    }
+}
+
+// ── Property path evaluation ──────────────────────────────────────────────────
+
+/// Evaluate a property path pattern against the datastore, extending one solution.
+fn eval_path_pattern(
+    subject_term: &Term,
+    path: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    match path {
+        PropertyPath::Iri(gel) => {
+            let tp = TriplePattern {
+                subject: subject_term.clone(),
+                predicate: Term::Constant(gel.clone()),
+                object: object_term.clone(),
+            };
+            eval_triple_pattern(&tp, &sub, datastore, active_graph)
+        }
+
+        PropertyPath::Sequence(steps) => {
+            if steps.is_empty() {
+                return vec![sub];
+            }
+            // Chain: introduce fresh bridge variables for intermediate nodes.
+            let mut current_subject = subject_term.clone();
+            let mut current_subs = vec![sub];
+            let n = steps.len();
+            for (i, step) in steps.iter().enumerate() {
+                let current_object = if i + 1 == n {
+                    object_term.clone()
+                } else {
+                    Term::Variable(format!("__path_seq_{}", i))
+                };
+                current_subs = current_subs
+                    .into_iter()
+                    .flat_map(|s| {
+                        eval_path_pattern(
+                            &current_subject,
+                            step,
+                            &current_object,
+                            s,
+                            datastore,
+                            active_graph,
+                        )
+                    })
+                    .collect();
+                current_subject = current_object;
+            }
+            // Remove internal bridge variables from each solution
+            current_subs
+                .into_iter()
+                .map(|mut s| {
+                    for i in 0..n - 1 {
+                        s.remove(&format!("__path_seq_{}", i));
+                    }
+                    s
+                })
+                .collect()
+        }
+
+        PropertyPath::Alternative(left, right) => {
+            let mut left_subs = eval_path_pattern(
+                subject_term,
+                left,
+                object_term,
+                sub.clone(),
+                datastore,
+                active_graph,
+            );
+            let right_subs = eval_path_pattern(
+                subject_term,
+                right,
+                object_term,
+                sub,
+                datastore,
+                active_graph,
+            );
+            left_subs.extend(right_subs);
+            left_subs
+        }
+
+        PropertyPath::Inverse(inner) => {
+            // Swap subject and object
+            eval_path_pattern(
+                object_term,
+                inner,
+                subject_term,
+                sub,
+                datastore,
+                active_graph,
+            )
+        }
+
+        PropertyPath::ZeroOrOne(inner) => {
+            // Zero hops: subject == object
+            let zero_hop = {
+                let s_gel = resolve_term_to_gel(subject_term, &sub, datastore);
+                let o_gel = resolve_term_to_gel(object_term, &sub, datastore);
+                match (s_gel, o_gel) {
+                    // Both bound: must be equal
+                    (Some(s), Some(o)) if s == o => vec![sub.clone()],
+                    // Subject bound, object unbound: bind object = subject
+                    (Some(s), None) => {
+                        if let Term::Variable(v) = object_term {
+                            let mut new_sub = sub.clone();
+                            new_sub.insert(v.clone(), s);
+                            vec![new_sub]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    // Object bound, subject unbound: bind subject = object
+                    (None, Some(o)) => {
+                        if let Term::Variable(v) = subject_term {
+                            let mut new_sub = sub.clone();
+                            new_sub.insert(v.clone(), o);
+                            vec![new_sub]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    _ => Vec::new(),
+                }
+            };
+            let one_hop = eval_path_pattern(
+                subject_term,
+                inner,
+                object_term,
+                sub,
+                datastore,
+                active_graph,
+            );
+            // Deduplicate (zero-hop and one-hop may produce the same solution)
+            let mut result = zero_hop;
+            for s in one_hop {
+                if !result.contains(&s) {
+                    result.push(s);
+                }
+            }
+            result
+        }
+
+        PropertyPath::OneOrMore(inner) => transitive_closure(
+            subject_term,
+            inner,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+            false,
+        ),
+
+        PropertyPath::ZeroOrMore(inner) => transitive_closure(
+            subject_term,
+            inner,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+            true,
+        ),
+
+        PropertyPath::NegatedSet(excluded) => {
+            let g = match active_graph {
+                ActiveGraph::Fixed(id) => Some(*id),
+                ActiveGraph::Variable(v) => sub
+                    .get(v)
+                    .and_then(|gel| datastore.resources.resource_map.get(gel))
+                    .copied(),
+            };
+            let s = resolve_term_to_id(subject_term, &sub, datastore);
+            let o = resolve_term_to_id(object_term, &sub, datastore);
+            let excluded_ids: HashSet<GraphElementId> = excluded
+                .iter()
+                .filter_map(|gel| datastore.resources.resource_map.get(gel).copied())
+                .collect();
+
+            let mut results = Vec::new();
+            for quad in datastore.quads_matching(g, s, None, o) {
+                let pred_gel = datastore
+                    .resources
+                    .get_graph_element(quad.predicate)
+                    .clone();
+                let pred_id = quad.predicate;
+                if excluded_ids.contains(&pred_id) {
+                    continue;
+                }
+                let mut new_sub = sub.clone();
+                let mut ok = true;
+                if let Term::Variable(v) = subject_term {
+                    let gel = datastore.resources.get_graph_element(quad.subject).clone();
+                    match new_sub.get(v) {
+                        Some(existing) if existing != &gel => {
+                            ok = false;
+                        }
+                        _ => {
+                            new_sub.insert(v.clone(), gel);
+                        }
+                    }
+                }
+                if let Term::Variable(v) = object_term {
+                    let gel = datastore.resources.get_graph_element(quad.obj).clone();
+                    match new_sub.get(v) {
+                        Some(existing) if existing != &gel => {
+                            ok = false;
+                        }
+                        _ => {
+                            new_sub.insert(v.clone(), gel);
+                        }
+                    }
+                }
+                // Suppress unused pred_gel warning
+                let _ = pred_gel;
+                if ok {
+                    results.push(new_sub);
+                }
+            }
+            results
+        }
+    }
+}
+
+/// Resolve a `Term` to a `GraphElement` using the current solution.
+fn resolve_term_to_gel(
+    term: &Term,
+    sub: &PartialSub,
+    _datastore: &Datastore,
+) -> Option<GraphElement> {
+    match term {
+        Term::Variable(v) => sub.get(v).cloned(),
+        Term::Constant(gel) => Some(gel.clone()),
+    }
+}
+
+/// Resolve a `Term` to a `GraphElementId` using the current solution.
+fn resolve_term_to_id(
+    term: &Term,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElementId> {
+    match term {
+        Term::Variable(v) => sub
+            .get(v)
+            .and_then(|gel| datastore.resources.resource_map.get(gel))
+            .copied(),
+        Term::Constant(gel) => datastore.resources.resource_map.get(gel).copied(),
+    }
+}
+
+/// Compute transitive closure of `path` from `subject_term` to `object_term`.
+///
+/// `include_zero` = true for `*` (include starting node), false for `+`.
+///
+/// Strategy: BFS from the subject if it is bound (forward traversal).
+/// If the subject is unbound and the object is bound, reverse BFS using ^path.
+fn transitive_closure(
+    subject_term: &Term,
+    path: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+    include_zero: bool,
+) -> Vec<PartialSub> {
+    let subject_gel = resolve_term_to_gel(subject_term, &sub, datastore);
+    let object_gel = resolve_term_to_gel(object_term, &sub, datastore);
+
+    // Enumerate all nodes reachable from each concrete starting point
+    // by doing BFS with the inner path as a single-hop traversal.
+    // Forward BFS: returns all nodes reachable from start_gel.
+    // For `include_zero` (p*): includes start_gel itself.
+    // For `!include_zero` (p+): excludes start_gel.
+    let reachable_from = |start_gel: GraphElement| -> Vec<GraphElement> {
+        let mut visited: HashSet<GraphElement> = HashSet::new();
+        let mut queue = vec![start_gel.clone()];
+        while let Some(current) = queue.pop() {
+            let current_term = Term::Constant(current.clone());
+            let next_subs = eval_path_pattern(
+                &current_term,
+                path,
+                &Term::Variable("__tc_next".to_string()),
+                sub.clone(),
+                datastore,
+                active_graph,
+            );
+            for s in next_subs {
+                if let Some(next_gel) = s.get("__tc_next") {
+                    if visited.insert(next_gel.clone()) {
+                        queue.push(next_gel.clone());
+                    }
+                }
+            }
+        }
+        if include_zero {
+            visited.insert(start_gel);
+        }
+        visited.into_iter().collect()
+    };
+
+    match (subject_gel, object_gel) {
+        (Some(s_gel), Some(o_gel)) => {
+            // Both bound: check if object is reachable from subject
+            let reachable = reachable_from(s_gel);
+            if reachable.contains(&o_gel) {
+                vec![sub]
+            } else {
+                Vec::new()
+            }
+        }
+        (Some(s_gel), None) => {
+            // Subject bound, object unbound: enumerate all reachable nodes
+            let reachable = reachable_from(s_gel);
+            if let Term::Variable(obj_var) = object_term {
+                reachable
+                    .into_iter()
+                    .map(|gel| {
+                        let mut new_sub = sub.clone();
+                        new_sub.insert(obj_var.clone(), gel);
+                        new_sub
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        (None, Some(o_gel)) => {
+            // Object bound, subject unbound: BFS backwards using inverse path.
+            // `visited` collects nodes that can reach o_gel in ≥1 hops.
+            // For `include_zero` (p*) also include o_gel itself (0 hops).
+            let inverse_path = PropertyPath::Inverse(Box::new(path.clone()));
+            let reachable = {
+                let mut visited: HashSet<GraphElement> = HashSet::new();
+                let mut queue = vec![o_gel.clone()];
+                while let Some(current) = queue.pop() {
+                    let current_term = Term::Constant(current.clone());
+                    let next_subs = eval_path_pattern(
+                        &current_term,
+                        &inverse_path,
+                        &Term::Variable("__tc_prev".to_string()),
+                        sub.clone(),
+                        datastore,
+                        active_graph,
+                    );
+                    for s in next_subs {
+                        if let Some(prev_gel) = s.get("__tc_prev") {
+                            if visited.insert(prev_gel.clone()) {
+                                queue.push(prev_gel.clone());
+                            }
+                        }
+                    }
+                }
+                if include_zero {
+                    visited.insert(o_gel);
+                }
+                visited
+            };
+            if let Term::Variable(subj_var) = subject_term {
+                reachable
+                    .into_iter()
+                    .map(|gel| {
+                        let mut new_sub = sub.clone();
+                        new_sub.insert(subj_var.clone(), gel);
+                        new_sub
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        (None, None) => {
+            // Both unbound: enumerate all nodes reachable from any node in graph.
+            // For each subject node, find all objects reachable from it.
+            // This is expensive; for now use the bound-subject BFS for each node.
+            let all_subjects: Vec<GraphElement> = {
+                let g = match active_graph {
+                    ActiveGraph::Fixed(id) => Some(*id),
+                    ActiveGraph::Variable(v) => sub
+                        .get(v)
+                        .and_then(|gel| datastore.resources.resource_map.get(gel))
+                        .copied(),
+                };
+                datastore
+                    .quads_matching(g, None, None, None)
+                    .into_iter()
+                    .flat_map(|q| {
+                        [
+                            datastore.resources.get_graph_element(q.subject).clone(),
+                            datastore.resources.get_graph_element(q.obj).clone(),
+                        ]
+                    })
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            };
+            let (subj_var, obj_var) = match (subject_term, object_term) {
+                (Term::Variable(s), Term::Variable(o)) => (s, o),
+                _ => return Vec::new(),
+            };
+            let mut results = Vec::new();
+            for s_gel in all_subjects {
+                let reachable = reachable_from(s_gel.clone());
+                for o_gel in reachable {
+                    let mut new_sub = sub.clone();
+                    new_sub.insert(subj_var.clone(), s_gel.clone());
+                    new_sub.insert(obj_var.clone(), o_gel);
+                    if !results.contains(&new_sub) {
+                        results.push(new_sub);
+                    }
+                }
+            }
+            results
+        }
+    }
+}
+
+// ── Aggregate helpers ─────────────────────────────────────────────────────────
+
+/// True if a projection element contains an aggregate expression.
+fn elem_has_aggregate(elem: &ProjectionElement) -> bool {
+    match elem {
+        ProjectionElement::Expression(expr, _) => expr_has_aggregate(expr),
+        _ => false,
+    }
+}
+
+fn expr_has_aggregate(expr: &Expression) -> bool {
+    match expr {
+        Expression::Aggregate(_) => true,
+        Expression::Binary(l, _, r) => expr_has_aggregate(l) || expr_has_aggregate(r),
+        Expression::Unary(_, inner) => expr_has_aggregate(inner),
+        Expression::FunctionCall(_, args) => args.iter().any(expr_has_aggregate),
+        _ => false,
+    }
+}
+
+/// Partition solutions into groups keyed by GROUP BY expressions.
+///
+/// When `group_by` is empty all solutions fall into one implicit group.
+fn group_by_solutions(
+    solutions: &[PartialSub],
+    group_by: &[Expression],
+    datastore: &Datastore,
+) -> Vec<Vec<PartialSub>> {
+    if group_by.is_empty() {
+        return vec![solutions.to_vec()];
+    }
+    let mut map: Vec<(Vec<Option<GraphElement>>, Vec<PartialSub>)> = Vec::new();
+    'outer: for sub in solutions {
+        let key: Vec<Option<GraphElement>> = group_by
+            .iter()
+            .map(|expr| eval_expression_value(expr, sub, datastore))
+            .collect();
+        for (k, group) in &mut map {
+            if *k == key {
+                group.push(sub.clone());
+                continue 'outer;
+            }
+        }
+        map.push((key, vec![sub.clone()]));
+    }
+    map.into_iter().map(|(_, g)| g).collect()
+}
+
+/// Build the output row for one group in an aggregate query.
+fn project_aggregate_row(
+    projection: &[ProjectionElement],
+    group: &[PartialSub],
+    datastore: &Datastore,
+) -> SolutionRow {
+    let rep = group.first().cloned().unwrap_or_default();
+    let mut row = SolutionRow::new();
+    for elem in projection {
+        match elem {
+            ProjectionElement::Variable(v) => {
+                if let Some(val) = rep.get(v) {
+                    row.insert(v.clone(), val.clone());
+                }
+            }
+            ProjectionElement::Expression(expr, alias) => {
+                if let Some(val) = eval_expr_in_group(expr, group, &rep, datastore) {
+                    row.insert(alias.clone(), val);
+                }
+            }
+            ProjectionElement::Star => {}
+        }
+    }
+    row
+}
+
+/// Evaluate an expression in the context of a group (for SELECT and HAVING).
+///
+/// Aggregate sub-expressions are computed over the full group; non-aggregate
+/// sub-expressions use the representative solution `rep`.
+fn eval_expr_in_group(
+    expr: &Expression,
+    group: &[PartialSub],
+    rep: &PartialSub,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    match expr {
+        Expression::Aggregate(agg) => eval_aggregate_value(agg, group, datastore),
+        Expression::Binary(l, op, r) => {
+            // Arithmetic in HAVING (e.g. SUM(?x) > 5): eval both sides in group context
+            let lv = eval_expr_in_group(l, group, rep, datastore)?;
+            let rv = eval_expr_in_group(r, group, rep, datastore)?;
+            // Reuse the arithmetic helper by creating single-element "groups" (for pure values)
+            eval_binary_value(&lv, op, &rv)
+        }
+        _ => eval_expression_value(expr, rep, datastore),
+    }
+}
+
+/// Evaluate a binary operation between two already-resolved values.
+fn eval_binary_value(l: &GraphElement, op: &BinaryOp, r: &GraphElement) -> Option<GraphElement> {
+    match (l, r) {
+        (
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
+        ) => {
+            let result = match op {
+                BinaryOp::Add => a + b,
+                BinaryOp::Sub => a - b,
+                BinaryOp::Mul => a * b,
+                BinaryOp::Div => {
+                    if b == &BigInt::from(0) {
+                        return None;
+                    }
+                    a / b
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                result,
+            )))
+        }
+        _ => {
+            let af = literal_to_f64(match l {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let bf = literal_to_f64(match r {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            let result = match op {
+                BinaryOp::Add => af + bf,
+                BinaryOp::Sub => af - bf,
+                BinaryOp::Mul => af * bf,
+                BinaryOp::Div => {
+                    if bf == 0.0 {
+                        return None;
+                    }
+                    af / bf
+                }
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                result.into(),
+            )))
+        }
+    }
+}
+
+/// Evaluate a HAVING expression as a boolean, with aggregates computed over the group.
+fn eval_having_expr(expr: &Expression, group: &[PartialSub], datastore: &Datastore) -> bool {
+    let rep = group.first().cloned().unwrap_or_default();
+    eval_having_bool(expr, group, &rep, datastore).unwrap_or(false)
+}
+
+fn eval_having_bool(
+    expr: &Expression,
+    group: &[PartialSub],
+    rep: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    match expr {
+        Expression::Binary(left, op, right) => match op {
+            BinaryOp::And => {
+                let l = eval_having_bool(left, group, rep, datastore).unwrap_or(false);
+                let r = eval_having_bool(right, group, rep, datastore).unwrap_or(false);
+                Some(l && r)
+            }
+            BinaryOp::Or => {
+                let l = eval_having_bool(left, group, rep, datastore).unwrap_or(false);
+                let r = eval_having_bool(right, group, rep, datastore).unwrap_or(false);
+                Some(l || r)
+            }
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Gt
+            | BinaryOp::Le
+            | BinaryOp::Ge => {
+                let l = eval_expr_in_group(left, group, rep, datastore)?;
+                let r = eval_expr_in_group(right, group, rep, datastore)?;
+                let ord = compare_graph_elements(&l, &r)?;
+                Some(match op {
+                    BinaryOp::Eq => ord == 0,
+                    BinaryOp::Ne => ord != 0,
+                    BinaryOp::Lt => ord < 0,
+                    BinaryOp::Gt => ord > 0,
+                    BinaryOp::Le => ord <= 0,
+                    BinaryOp::Ge => ord >= 0,
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        },
+        Expression::Unary(UnaryOp::Not, inner) => {
+            Some(!eval_having_bool(inner, group, rep, datastore).unwrap_or(false))
+        }
+        _ => eval_expression_bool(
+            expr,
+            rep,
+            datastore,
+            &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+        ),
+    }
+}
+
+/// Compute an aggregate function over a group of solutions.
+fn eval_aggregate_value(
+    agg: &Aggregate,
+    group: &[PartialSub],
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    match agg {
+        Aggregate::CountStar => Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(group.len()),
+        ))),
+
+        Aggregate::Count(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(values.len()),
+            )))
+        }
+
+        Aggregate::Sum(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            sum_values(&values)
+        }
+
+        Aggregate::Avg(expr, distinct) => {
+            let mut values: Vec<GraphElement> = group
+                .iter()
+                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = values.drain(..).collect();
+                values.extend(set);
+            }
+            if values.is_empty() {
+                return None;
+            }
+            let sum = sum_values(&values)?;
+            let count = values.len() as f64;
+            let sum_f = literal_to_f64(match &sum {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            })?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                (sum_f / count).into(),
+            )))
+        }
+
+        Aggregate::Min(expr, _) => group
+            .iter()
+            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .reduce(|a, b| match compare_graph_elements(&a, &b) {
+                Some(ord) if ord <= 0 => a,
+                _ => b,
+            }),
+
+        Aggregate::Max(expr, _) => group
+            .iter()
+            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .reduce(|a, b| match compare_graph_elements(&a, &b) {
+                Some(ord) if ord >= 0 => a,
+                _ => b,
+            }),
+
+        Aggregate::Sample(expr, _) => group
+            .iter()
+            .find_map(|sub| eval_expression_value(expr, sub, datastore)),
+
+        Aggregate::GroupConcat(expr, sep, distinct) => {
+            let mut parts: Vec<String> = group
+                .iter()
+                .filter_map(|sub| {
+                    let el = eval_expression_value(expr, sub, datastore)?;
+                    graph_element_to_string(&el)
+                })
+                .collect();
+            if *distinct {
+                let set: HashSet<_> = parts.drain(..).collect();
+                parts.extend(set);
+                parts.sort();
+            }
+            let result = parts.join(sep);
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+    }
+}
+
+/// Sum a list of numeric `GraphElement` values, returning an `IntegerLiteral` if
+/// all inputs are integers or a `DoubleLiteral` for mixed/floating-point inputs.
+fn sum_values(values: &[GraphElement]) -> Option<GraphElement> {
+    if values.is_empty() {
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(0),
+        )));
+    }
+    // Try integer-only sum first
+    let mut int_sum = BigInt::from(0);
+    let mut all_int = true;
+    for v in values {
+        match v {
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => int_sum += n,
+            _ => {
+                all_int = false;
+                break;
+            }
+        }
+    }
+    if all_int {
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            int_sum,
+        )));
+    }
+    // Fall back to f64 sum
+    let mut f_sum = 0.0f64;
+    for v in values {
+        match v {
+            GraphElement::GraphLiteral(lit) => f_sum += literal_to_f64(lit)?,
+            _ => return None,
+        }
+    }
+    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+        f_sum.into(),
+    )))
 }
 
 /// Resolve a template term to a concrete `GraphElement`, remapping blank nodes per solution.
@@ -896,15 +2030,12 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
 fn bind_template_term(
     term: &Term,
     sub: &PartialSub,
-    datastore: &Datastore,
+    _datastore: &Datastore,
     bnode_map: &mut HashMap<u32, u32>,
     bnode_counter: &mut u32,
 ) -> Option<GraphElement> {
     match term {
-        Term::Variable(v) => {
-            let id = sub.get(v)?;
-            Some(datastore.resources.get_graph_element(*id).clone())
-        }
+        Term::Variable(v) => sub.get(v).cloned(),
         Term::Constant(gel) => {
             if let GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(orig_id)) = gel
             {

@@ -1,0 +1,31 @@
+@prefix :    <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Two organisations, each owning several books with prices.
+# Used by the §11 aggregate tests in sparql12_suite.rs.
+#
+#   org1 owns book1 (price 10), book2 (price 20)  → sum 30, avg 15, min 10, max 20
+#   org2 owns book3 (price 30)                    → sum 30, avg 30, min 30, max 30
+#
+# Also: author names for GROUP_CONCAT tests.
+
+:org1 :hasBook :book1 .
+:book1 :price 10 .
+:book1 :title "Alpha" .
+:book1 :author :alice .
+
+:org1 :hasBook :book2 .
+:book2 :price 20 .
+:book2 :title "Beta" .
+:book2 :author :alice .
+
+:org2 :hasBook :book3 .
+:book3 :price 30 .
+:book3 :title "Gamma" .
+:book3 :author :bob .
+
+:alice :name "Alice" .
+:bob   :name "Bob" .
+
+# Total book count: 3
+# Distinct author count: 2 (alice appears twice as author)

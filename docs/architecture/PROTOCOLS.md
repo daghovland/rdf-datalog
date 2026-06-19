@@ -216,14 +216,19 @@ For update responses: `Cache-Control: no-store`.
 
 ## Summary: implementation priority
 
-| Priority | Protocol/Feature |
-|---|---|
-| **P0 — required** | SPARQL 1.1 Protocol (query + update) |
-| **P0 — required** | Content negotiation (Turtle, N-Triples, SPARQL JSON/XML) |
-| **P0 — required** | CORS headers |
-| **P1 — important** | SPARQL 1.1 Graph Store HTTP Protocol |
-| **P1 — important** | SPARQL 1.1 Service Description |
-| **P2 — recommended** | VoID description endpoint |
-| **P2 — recommended** | HTTP caching headers (ETag, Last-Modified) |
-| **P3 — future** | Linked Data Platform 1.0 |
-| **P3 — future** | JSON-LD serialization |
+| Priority | Protocol/Feature | Status |
+|---|---|---|
+| **P0 — required** | SPARQL 1.1 Protocol — query endpoint (GET/POST) | ✅ Done |
+| **P0 — required** | SPARQL 1.1 Protocol — update via `POST /sparql` | ✅ Done |
+| **P0 — required** | SPARQL 1.1 Protocol — update endpoint (INSERT/DELETE/CLEAR/DROP/CREATE) | ✅ Done |
+| **P0 — required** | Content negotiation — SELECT/ASK SPARQL JSON (default) | ✅ Done |
+| **P0 — required** | Content negotiation — SELECT/ASK SPARQL XML, CSV, 406 | ✅ Done |
+| **P0 — required** | CORS headers | ✅ Done |
+| **P1 — important** | SPARQL 1.1 Graph Store HTTP Protocol (indirect + direct) | ✅ Done |
+| **P1 — important** | SPARQL 1.1 Service Description | ✅ Done |
+| **P2 — recommended** | VoID description endpoint (`/.well-known/void`, `/void`) | ✅ Done |
+| **P2 — recommended** | HTTP caching headers (ETag via generation counter) | ✅ Done |
+| **P3 — future** | JSON-LD serialization output for Graph Store (`application/ld+json`) | ✅ Done |
+| **P3 — future** | Linked Data Platform 1.0 | ❌ Deferred |
+
+See `docs/plans/PROTOCOLS_IMPLEMENTATION.md` for the detailed implementation plan.

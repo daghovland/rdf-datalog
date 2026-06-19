@@ -1,6 +1,6 @@
 # CONSTRUCT WHERE Recursion Bug
 
-## Status: Known bug, tests pending
+## Status: FIXED ✓
 
 ## Problem
 
@@ -79,6 +79,6 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
 - [x] Create this plan document
 - [x] Create ignored integration tests (see `tests/sparql12_suite.rs` — search for
       `construct_where_with_optional`)
-- [ ] Implement the recursive fix in `sparql_parser/src/execute.rs`
-- [ ] Unignore the tests and verify they pass
-- [ ] Add CONSTRUCT WHERE tests for UNION and GRAPH patterns
+- [x] Implement the recursive fix in `sparql_parser/src/execute.rs`
+- [x] Unignore the tests and verify they pass
+- [x] Add CONSTRUCT WHERE tests for UNION and GRAPH patterns

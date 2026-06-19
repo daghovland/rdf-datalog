@@ -20,6 +20,9 @@ pub struct Datastore {
     pub reified_triples: QuadTable,
     pub named_graphs: QuadTable,
     pub resources: GraphElementManager,
+    /// Monotonically increasing write counter.  Incremented on every mutating
+    /// operation.  Used as an ETag value so HTTP clients can detect stale caches.
+    pub generation: u64,
 }
 
 impl Datastore {
@@ -29,6 +32,7 @@ impl Datastore {
             reified_triples: QuadTable::new(init_triples),
             named_graphs: QuadTable::new(init_triples),
             resources: GraphElementManager::new(init_rdf_size),
+            generation: 0,
         }
     }
 
@@ -61,10 +65,12 @@ impl Datastore {
             obj: triple.obj,
         };
         self.named_graphs.add_quad(quad);
+        self.generation += 1;
     }
 
     pub fn add_quad(&mut self, quad: Quad) {
         self.named_graphs.add_quad(quad);
+        self.generation += 1;
     }
 
     pub fn add_named_graph_triple(&mut self, graph: GraphElementId, triple: Triple) {
@@ -74,6 +80,7 @@ impl Datastore {
             predicate: triple.predicate,
             obj: triple.obj,
         });
+        self.generation += 1;
     }
 
     pub fn add_reified_triple(&mut self, triple: Triple, id: GraphElementId) {
@@ -83,6 +90,7 @@ impl Datastore {
             predicate: triple.predicate,
             obj: triple.obj,
         });
+        self.generation += 1;
     }
 
     // ── Quad queries (default graph) ─────────────────────────────────────────
@@ -192,11 +200,13 @@ impl Datastore {
     /// Equivalent to SPARQL `DROP SILENT GRAPH <g>` / `DROP SILENT DEFAULT`.
     pub fn remove_graph(&mut self, graph_id: GraphElementId) {
         self.named_graphs.remove_graph(graph_id);
+        self.generation += 1;
     }
 
     /// Remove a single quad from named_graphs; no-op if absent.
     pub fn remove_quad(&mut self, quad: crate::ingress::Quad) {
         self.named_graphs.remove_quad(quad);
+        self.generation += 1;
     }
 
     // ── Reified triple queries ────────────────────────────────────────────────

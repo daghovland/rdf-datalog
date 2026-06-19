@@ -236,9 +236,13 @@ fn get_at_most_one_normalized_rule(
     sub_conjunction: &[Class],
     prop: &ObjectPropertyExpression,
 ) -> Vec<Rule> {
+    // W3C OWL-RL rule prp-fp: if p is functional and p(X,Y1) and p(X,Y2)
+    // then sameAs(Y1,Y2).  No negation guard — matches the monotonic W3C spec
+    // rule and avoids a stratification cycle (the negated body and the head
+    // would both mention sameAs).  Firing when Y1=Y2 just derives sameAs(Y,Y),
+    // which is harmless reflexivity.
     let same_as_iri = IriReference(OWL_SAME_AS.to_owned());
     let same_as = ObjectPropertyExpression::NamedObjectProperty(FullIri(same_as_iri));
-    let not_same_as = RuleAtom::NotPattern(get_obj_prop_pattern(resources, &same_as, "Y1", "Y2"));
     let p1 = get_obj_prop_pattern(resources, prop, "X", "Y1");
     let p2 = get_obj_prop_pattern(resources, prop, "X", "Y2");
     let mut body: Vec<RuleAtom> = sub_conjunction
@@ -247,7 +251,6 @@ fn get_at_most_one_normalized_rule(
         .collect();
     body.push(RuleAtom::PositivePattern(p1));
     body.push(RuleAtom::PositivePattern(p2));
-    body.push(not_same_as);
     vec![Rule {
         head: RuleHead::NormalHead(get_obj_prop_pattern(resources, &same_as, "Y1", "Y2")),
         body,

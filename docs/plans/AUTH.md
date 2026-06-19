@@ -169,8 +169,8 @@ Client                             Entra ID                dagalog
   │                                    │                       │
   │── GET /{name}/sparql?query=… ─────────────────────────────>│
   │   Authorization: Bearer <token>   │                       │
-  │                                    │── validate JWT        │
-  │                                    │   check roles claim   │
+  │                                    │            validate JWT
+  │                                    │         check roles claim
   │<── 200 OK ─────────────────────────────────────────────────│
 ```
 
@@ -667,16 +667,16 @@ Then `curl -H "Authorization: Bearer $(gcloud auth print-identity-token ...)"`.
 | Step | Description | Status |
 |------|-------------|--------|
 | A | Add `AuthConfig` enum + `auth` field to `Config` | ✓ Done |
-| A′ | Extend CLI binary with `--api-key` / `DAGALOG_API_KEY` env var | Pending |
+| A′ | Extend CLI binary with `--api-key` / `DAGALOG_API_KEY` env var | ✓ Done |
 | B | Implement `classify()` + `auth_middleware`; wire globally into `server.rs` | ✓ Done |
-| C | `require_for_reads` flag — protect read endpoints when set | ✓ Done (library) |
-| D | Add API key input to browser UI | Pending |
-| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery | Pending |
-| F | Implement JWKS cache (`JwksCache`) and `validate_jwt` | Pending |
-| G | Implement `oidc_auth` middleware; inject `Claims` extension | Pending |
+| C | `require_for_reads` flag — protect read endpoints when set | ✓ Done |
+| D | Add API key input to browser UI | ✓ Done |
+| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery | ✓ Done |
+| F | Implement JWKS cache (`JwksCache`) and `validate_jwt` | ✓ Done |
+| G | Implement `oidc_auth` middleware; inject `Claims` extension | ✓ Done |
 | H | Unit tests for `classify()` (16 tests in `auth.rs`) | ✓ Done |
 | H′ | Integration tests for API key middleware (8 tests in `tests/auth.rs`) | ✓ Done |
-| I | Unit tests for JWT validation (test RSA key pair + `wiremock`) | Pending |
-| J | Integration test suite with embedded OIDC mock | Pending |
-| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) | Pending |
-| L | Document Managed Identity setup for Azure Container Apps / AKS | Pending |
+| I | Unit tests for JWT validation (test RSA key pair + `wiremock`) | ✓ Done |
+| J | Integration test suite with embedded OIDC mock | ✓ Done |
+| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) | ✓ Done |
+| L | Document Managed Identity setup for Azure Container Apps / AKS | ✓ Done (§Tier 3) |

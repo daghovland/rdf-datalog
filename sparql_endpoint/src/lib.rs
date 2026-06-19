@@ -24,6 +24,7 @@ pub mod service_desc;
 pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod upload;
+pub mod void;
 
 use dag_rdf::datastore::Datastore;
 use persistence::QuadChangelog;

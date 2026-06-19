@@ -56,10 +56,13 @@ pub struct ReasoningStats {
 
 // ── Data loading ──────────────────────────────────────────────────────────────
 
-/// Load one Turtle or TriG file into `datastore`.
+/// Load one RDF file into `datastore`.
 ///
-/// The format is inferred from the file extension: `.trig` → TriG, everything
-/// else → Turtle (which also accepts plain `.ttl` files).
+/// Format is inferred from the file extension:
+/// - `.trig` → TriG
+/// - `.nt` → N-Triples
+/// - `.nq` → N-Quads
+/// - everything else → Turtle
 pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     let file = File::open(path).map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
     let reader = BufReader::new(file);
@@ -67,6 +70,10 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     match ext {
         "trig" => turtle::parse_trig(datastore, reader)
             .map_err(|e| format!("TriG parse error in {}: {}", path.display(), e)),
+        "nt" => turtle::parse_ntriples(datastore, reader)
+            .map_err(|e| format!("N-Triples parse error in {}: {}", path.display(), e)),
+        "nq" => turtle::parse_nquads(datastore, reader)
+            .map_err(|e| format!("N-Quads parse error in {}: {}", path.display(), e)),
         _ => turtle::parse_turtle(datastore, reader)
             .map_err(|e| format!("Turtle parse error in {}: {}", path.display(), e)),
     }

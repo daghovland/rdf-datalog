@@ -161,16 +161,29 @@ fn test_parse_semicolon_comma_and_property_path() {
         panic!("expected Select query");
     };
 
-    assert_eq!(where_clause.len(), 1);
+    // The sequence path ex:q/ex:r is now emitted as a PathPattern component at runtime
+    // rather than being expanded to bridge-variable triples at parse time.
+    // Expected: BGP([?s ex:p ?o1, ?s ex:p ?o2]) + PathPattern(?s, Sequence(ex:q,ex:r), ?z)
+    assert_eq!(where_clause.len(), 2);
     match &where_clause[0] {
         QueryComponent::BGP(triples) => {
-            // ?s ex:p ?o1
-            // ?s ex:p ?o2
-            // ?s ex:q ?__path_n
-            // ?__path_n ex:r ?z
-            assert_eq!(triples.len(), 4);
+            assert_eq!(
+                triples.len(),
+                2,
+                "two simple predicate triples from comma list"
+            );
         }
-        other => panic!("Expected BGP, got: {:?}", other),
+        other => panic!("Expected BGP at [0], got: {:?}", other),
+    }
+    match &where_clause[1] {
+        QueryComponent::PathPattern(_, path, _) => {
+            assert!(
+                matches!(path.as_ref(), PropertyPath::Sequence(_)),
+                "ex:q/ex:r should be a Sequence PathPattern, got: {:?}",
+                path
+            );
+        }
+        other => panic!("Expected PathPattern at [1], got: {:?}", other),
     }
 }
 
@@ -609,7 +622,6 @@ fn construct_literal_in_subject_is_skipped() {
 /// collects top-level BGP nodes and misses OPTIONAL triples, producing an
 /// empty result instead of the correct triples.
 #[test]
-#[ignore = "known bug: CONSTRUCT WHERE does not recurse into OPTIONAL — see docs/plans/construct-where-recursion.md"]
 fn construct_where_with_optional_includes_optional_triples() {
     let mut ds = Datastore::new(64);
     let s = add_iri(&mut ds, "http://example.org/alice");
@@ -652,7 +664,6 @@ fn construct_where_with_optional_includes_optional_triples() {
 /// Regression: CONSTRUCT WHERE { … UNION … } should use both branches as
 /// the template. Currently UNION branches are not collected.
 #[test]
-#[ignore = "known bug: CONSTRUCT WHERE does not recurse into UNION — see docs/plans/construct-where-recursion.md"]
 fn construct_where_with_union_includes_all_branches() {
     let mut ds = Datastore::new(64);
     let alice = add_iri(&mut ds, "http://example.org/alice");
@@ -692,6 +703,51 @@ fn construct_where_with_union_includes_all_branches() {
         2,
         "CONSTRUCT WHERE should include triples from both UNION branches; got {triples:?}"
     );
+}
+
+/// Regression: CONSTRUCT WHERE { GRAPH <iri> { … } } should use the inner triples
+/// as the template. `collect_bgps_from_components` must recurse into Graph nodes.
+#[test]
+fn construct_where_with_graph_includes_named_graph_triples() {
+    let mut ds = Datastore::new(64);
+    let g = add_iri(&mut ds, "http://example.org/graph1");
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let foaf_name = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/name");
+    let name_val = add_literal(&mut ds, "Alice");
+    ds.add_named_graph_triple(
+        g,
+        dag_rdf::Triple {
+            subject: alice,
+            predicate: foaf_name,
+            obj: name_val,
+        },
+    );
+
+    let sparql = r#"
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        CONSTRUCT WHERE {
+            GRAPH <http://example.org/graph1> { ?s foaf:name ?name }
+        }
+    "#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
+    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+        panic!("expected Construct result");
+    };
+
+    assert_eq!(
+        triples.len(),
+        1,
+        "CONSTRUCT WHERE should include triples from GRAPH block; got {triples:?}"
+    );
+    assert_eq!(triples[0].subject, make_iri("http://example.org/alice"));
+    assert_eq!(
+        triples[0].predicate,
+        make_iri("http://xmlns.com/foaf/0.1/name")
+    );
+    assert_eq!(triples[0].object, make_literal("Alice"));
 }
 
 /// Output triples are deduplicated when multiple solutions produce the same constant triple.

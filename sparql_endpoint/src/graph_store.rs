@@ -134,6 +134,7 @@ enum RdfFormat {
     NTriples,
     NQuads,
     TriG,
+    JsonLd,
 }
 
 fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
@@ -148,6 +149,7 @@ fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
             "application/n-triples" => return Some(RdfFormat::NTriples),
             "application/n-quads" => return Some(RdfFormat::NQuads),
             "application/trig" => return Some(RdfFormat::TriG),
+            "application/ld+json" => return Some(RdfFormat::JsonLd),
             _ => {}
         }
     }
@@ -210,6 +212,30 @@ fn graph_response_parts(
             serialize_trig_graph(store, graph_id),
         )
             .into_response(),
+        Some(RdfFormat::JsonLd) => {
+            // Build a temporary Datastore containing only the requested graph's
+            // triples in the default-graph slot, then serialize as JSON-LD.
+            let mut tmp = dag_rdf::Datastore::new(256);
+            let quads: Vec<_> = store.named_graphs.get_graph(graph_id).collect();
+            for q in quads {
+                let s = tmp.add_resource(store.resources.get_graph_element(q.subject).clone());
+                let p = tmp.add_resource(store.resources.get_graph_element(q.predicate).clone());
+                let o = tmp.add_resource(store.resources.get_graph_element(q.obj).clone());
+                tmp.add_quad(dag_rdf::ingress::Quad {
+                    triple_id: dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID,
+                    subject: s,
+                    predicate: p,
+                    obj: o,
+                });
+            }
+            let body = jsonld_parser::serialize_jsonld(&tmp);
+            (
+                StatusCode::OK,
+                [("content-type", "application/ld+json; charset=utf-8")],
+                body,
+            )
+                .into_response()
+        }
         None => (
             StatusCode::NOT_ACCEPTABLE,
             "No supported RDF format in Accept",
@@ -237,7 +263,7 @@ fn copy_default_graph_to(
         let s = dst.add_resource(src.resources.get_graph_element(q.subject).clone());
         let p = dst.add_resource(src.resources.get_graph_element(q.predicate).clone());
         let o = dst.add_resource(src.resources.get_graph_element(q.obj).clone());
-        dst.named_graphs.add_quad(dag_rdf::ingress::Quad {
+        dst.add_quad(dag_rdf::ingress::Quad {
             triple_id: graph_id,
             subject: s,
             predicate: p,
@@ -253,7 +279,7 @@ fn copy_dataset_to(src: &dag_rdf::Datastore, dst: &mut dag_rdf::Datastore) {
         let s = dst.add_resource(src.resources.get_graph_element(q.subject).clone());
         let p = dst.add_resource(src.resources.get_graph_element(q.predicate).clone());
         let o = dst.add_resource(src.resources.get_graph_element(q.obj).clone());
-        dst.named_graphs.add_quad(dag_rdf::ingress::Quad {
+        dst.add_quad(dag_rdf::ingress::Quad {
             triple_id: graph,
             subject: s,
             predicate: p,

@@ -551,9 +551,7 @@ SELECT ?title ?price WHERE { ?x ns:price ?price . ?x dc:title ?title . FILTER (?
 // ── TestApi.TestSparqlAggregate ───────────────────────────────────────────────
 
 /// Translated from `TestApi.TestSparqlAggregate`.
-/// Marked ignore because aggregate functions (SUM + GROUP BY) are not yet implemented.
 #[test]
-#[ignore = "aggregate functions (SUM / GROUP BY) not yet implemented in the SPARQL engine"]
 fn sparql_aggregate_sum_group_by() {
     let ds = parse_inline_ttl(
         r#"

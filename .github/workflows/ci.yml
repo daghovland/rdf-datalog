@@ -96,6 +96,29 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── IMF performance tests ───────────────────────────────────────────────────
+  # Downloads imf.ttl and runs the IMF ontology pipeline tests.
+  # Kept as a separate job so a slow download does not block the core test suite.
+  imf-tests:
+    name: IMF Performance Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: imf-tests
+      - name: Download IMF ontology
+        run: |
+          mkdir -p tests/testdata
+          curl -fL --retry 3 --retry-delay 5 \
+            -o tests/testdata/imf.ttl \
+            "https://gitlab.com/imf-lab/spec/imf-ontology/-/raw/develop/owl/imf-ontology.owl.ttl?inline=false"
+      - name: cargo test — IMF performance tests
+        run: cargo test --test performance imf
+
   # ── Minimal versions ────────────────────────────────────────────────────────
   # Verifies the workspace builds with the *lowest* semver-compatible dependency
   # versions. Catches undeclared version floor bumps early.

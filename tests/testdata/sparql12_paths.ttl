@@ -22,3 +22,9 @@ ex:eve   foaf:name "Eve" .
 # A disconnected node (for FILTER/NOT EXISTS tests)
 ex:frank foaf:name "Frank" .
 
+# ex:likes edges — for alternative path ( foaf:knows | ex:likes ) tests.
+# Alice likes Frank (no foaf:knows between them).
+# Dave likes Frank.
+ex:alice ex:likes ex:frank .
+ex:dave  ex:likes ex:frank .
+

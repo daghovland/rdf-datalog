@@ -5,6 +5,13 @@ custom Datalog rules, JSON-LD 1.1 parsing/serialisation, and a SPARQL HTTP endpo
 
 Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 
+> **New here?** Start with the [5-minute quickstart](docs/user/quickstart.md) — load data and
+> run your first query without needing to read the rest of this file.
+>
+> **User docs:** [docs/user/](docs/user/) — quickstart, SPARQL guide, formats, reasoning, deployment  
+> **Developer docs:** [docs/dev/](docs/dev/) — architecture, ADRs, contributing  
+> **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ---
 
 ## Features
@@ -15,11 +22,14 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
-| SPARQL 1.1 HTTP endpoint | ✓ |
-| SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD) | ✓ |
-| SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/…) | ✓ |
+| SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
+| SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD; JSON-LD output) | ✓ |
+| SPARQL 1.1 Update (`POST /sparql`, form body, and per-dataset `/update`) | ✓ |
 | Multi-dataset server (Fuseki-compatible routing and admin API) | ✓ |
-| Static API key authentication (library API; `--api-key` CLI flag pending) | ✓ |
+| VoID dataset description (`GET /.well-known/void`) | ✓ |
+| ETag caching headers on all query responses | ✓ |
+| Static API key authentication (`--api-key` / `DAGALOG_API_KEY`) | ✓ |
+| OIDC JWT authentication (Azure Entra ID, Google, Keycloak, Auth0) | ✓ |
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
 | Custom Datalog rules with stratified negation and SPARQL FILTER guards | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
@@ -633,6 +643,230 @@ All CLI flags can also be set via environment variables (CLI flags take preceden
 | `DAGALOG_QUERY_TIMEOUT` | `--query-timeout` | Maximum query time in seconds | `30` |
 | `DAGALOG_DATA_DIR` | `--data-dir` | Directory for durable storage (`redb` changelog at `<dir>/dagalog.redb`); omit for in-memory mode | *(in-memory)* |
 | `DAGALOG_NO_PERSIST` | `--no-persist` | Force in-memory mode even if `DAGALOG_DATA_DIR` is set | `false` |
+| `DAGALOG_API_KEY` | `--api-key` | Static Bearer token; omit to disable Tier 1 auth | *(none)* |
+| `DAGALOG_AUTH_READS` | `--require-auth-for-reads` | Protect read endpoints with the API key too | `false` |
+| `DAGALOG_OIDC_ISSUER` | `--oidc-issuer` | OIDC provider base URL | *(none)* |
+| `DAGALOG_OIDC_AUDIENCE` | `--oidc-audience` | Expected `aud` JWT claim | *(none)* |
+| `DAGALOG_OIDC_JWKS_URI` | `--oidc-jwks-uri` | Explicit JWKS URI (skips OIDC discovery) | *(auto-discovered)* |
+| `DAGALOG_OIDC_ROLES_CLAIM` | `--oidc-roles-claim` | JWT claim path holding the roles array | `roles` |
+| `DAGALOG_OIDC_READ_ROLE` | `--oidc-read-role` | Role name that grants read access | `dagalog.Read` |
+| `DAGALOG_OIDC_WRITE_ROLE` | `--oidc-write-role` | Role name that grants write access | `dagalog.Write` |
+| `DAGALOG_OIDC_ADMIN_ROLE` | `--oidc-admin-role` | Role name that grants admin access | `dagalog.Admin` |
+| `DAGALOG_OIDC_BROWSER_CLIENT_ID` | `--oidc-browser-client-id` | App client ID for MSAL.js sign-in button in browser UI | *(none)* |
+
+---
+
+## Authentication
+
+The server supports three authentication tiers. The tier is selected at startup
+and cannot be changed at runtime.
+
+| Tier | Mechanism | `--serve` flag(s) | When to use |
+|------|-----------|-------------------|-------------|
+| 0 — None | No check | *(default)* | Local / trusted-network deployments |
+| 1 — API key | Static Bearer token | `--api-key` | Single-tenant, simple deployments |
+| 2 — OIDC | JWT validation | `--oidc-issuer` + `--oidc-audience` | Multi-user deployments (Azure, Google, Keycloak, …) |
+
+### Permission model
+
+Every request is classified before the auth check:
+
+| Permission | Operations |
+|------------|-----------|
+| `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, GSP GET, admin reads |
+| `Write` | `POST /{name}/update`, `PUT`/`POST`/`DELETE` on data and GSP endpoints |
+| `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop) |
+
+`Write` implies `Read`. `Admin` implies both.
+
+### Tier 1 — Static API key
+
+Protects write (and optionally read) endpoints with a shared Bearer token:
+
+```sh
+dagalog --serve --data data.ttl --api-key "my-secret-key"
+```
+
+Reads are open by default. To require the key everywhere:
+
+```sh
+dagalog --serve --data data.ttl --api-key "my-secret-key" --require-auth-for-reads
+```
+
+Clients send the key in the `Authorization` header:
+
+```sh
+curl -H "Authorization: Bearer my-secret-key" \
+     "http://localhost:3030/ds/update" \
+     --data "INSERT DATA { <urn:s> <urn:p> <urn:o> }" \
+     -H "Content-Type: application/sparql-update"
+```
+
+### Tier 2 — Azure Entra ID (OIDC)
+
+Dagalog acts as a pure resource server: it validates incoming JWTs locally using
+the public keys from Entra ID's JWKS endpoint. No OIDC library or redirect flow is
+needed on the dagalog side.
+
+**Step 1 — Register an app in Azure portal**
+
+1. Entra ID → App registrations → New registration. Name: `dagalog`.
+2. Under *Expose an API*, set the Application ID URI (e.g. `api://dagalog`).
+
+**Step 2 — Create app roles**
+
+In the app registration → *App roles* → Create:
+
+| Display name | Value | Allowed member types |
+|---|---|---|
+| Dagalog Read | `dagalog.Read` | Applications + Users |
+| Dagalog Write | `dagalog.Write` | Applications + Users |
+| Dagalog Admin | `dagalog.Admin` | Applications + Users |
+
+**Step 3 — Assign roles**
+
+In *Enterprise applications → dagalog → Users and groups*, assign users, security
+groups, or service principals to the roles above.
+
+For a service principal (app-to-app), use *API permissions → Add permission →
+My APIs → dagalog → Application permissions*, then grant admin consent.
+
+**Step 4 — Start dagalog**
+
+```sh
+dagalog --serve --data data.ttl \
+  --oidc-issuer "https://login.microsoftonline.com/<tenant-id>/v2.0" \
+  --oidc-audience "api://dagalog"
+```
+
+Or via environment variables (useful in Docker / Azure Container Apps):
+
+```sh
+export DAGALOG_OIDC_ISSUER="https://login.microsoftonline.com/<tenant-id>/v2.0"
+export DAGALOG_OIDC_AUDIENCE="api://dagalog"
+dagalog --serve --data data.ttl
+```
+
+**Calling the API**
+
+A client (service principal) acquires a token with the client-credentials flow:
+
+```sh
+TOKEN=$(curl -s -X POST \
+  "https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=<client-id>" \
+  -d "client_secret=<secret>" \
+  -d "scope=api://dagalog/.default" \
+  | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" \
+     "http://localhost:3030/sparql?query=SELECT+*+WHERE+%7B%7D"
+```
+
+**Browser sign-in (MSAL.js)**
+
+Set `--oidc-browser-client-id` to your app registration's Application (client) ID
+to enable a *Sign in* button in the browser UI:
+
+```sh
+dagalog --serve \
+  --oidc-issuer "https://login.microsoftonline.com/<tenant-id>/v2.0" \
+  --oidc-audience "api://dagalog" \
+  --oidc-browser-client-id "<application-client-id>"
+```
+
+Users then authenticate interactively via the Entra ID popup flow and tokens are
+acquired and refreshed automatically by MSAL.js.
+
+### Tier 2 — Google (OIDC)
+
+Google issues standard RS256 JWTs for service accounts and for users via Google
+Identity Platform.
+
+**Service-to-service (Google service account)**
+
+```sh
+dagalog --serve --data data.ttl \
+  --oidc-issuer "https://accounts.google.com" \
+  --oidc-audience "https://dagalog.example.com" \
+  --oidc-roles-claim "dagalog_roles"
+```
+
+Google JWTs do not carry application roles by default. You must either add a custom
+claim (`dagalog_roles`) to the token (via Workspace custom attributes or IAP policy),
+or use a custom claim mapper on the identity-provider side to flatten roles into a
+top-level claim.
+
+A client acquires a token with:
+
+```sh
+gcloud auth print-identity-token \
+  --audiences="https://dagalog.example.com"
+```
+
+Then calls the API:
+
+```sh
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token \
+       --audiences=https://dagalog.example.com)" \
+     "https://dagalog.example.com/sparql?query=SELECT+*+WHERE+%7B%7D"
+```
+
+### Custom role names
+
+The three role values are configurable, so you can use names already defined in
+your identity provider without renaming them:
+
+```sh
+dagalog --serve \
+  --oidc-issuer "https://keycloak.example.com/realms/myrealm" \
+  --oidc-audience "dagalog" \
+  --oidc-roles-claim "realm_access.roles" \
+  --oidc-read-role  "my-read-role" \
+  --oidc-write-role "my-write-role" \
+  --oidc-admin-role "my-admin-role"
+```
+
+### Auth config endpoint
+
+`GET /auth/config` is always public and returns the active auth mode, which the
+browser UI uses to decide what to show:
+
+```sh
+curl http://localhost:3030/auth/config
+# {"mode":"oidc","oidc":{"issuer":"https://…","audience":"api://dagalog"}}
+```
+
+### Library usage (OIDC)
+
+```rust
+use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve};
+
+// Azure Entra ID convenience constructor:
+let config = Config {
+    auth: AuthConfig::Oidc(OidcConfig::azure(
+        "<tenant-id>",
+        "api://dagalog",
+    )),
+    ..Config::default()
+};
+
+// Generic OIDC (Google, Keycloak, Auth0, …):
+let config = Config {
+    auth: AuthConfig::Oidc(OidcConfig {
+        issuer:      "https://accounts.google.com".to_owned(),
+        jwks_uri:    None,                       // auto-discovered
+        audience:    "https://dagalog.example.com".to_owned(),
+        roles_claim: "dagalog_roles".to_owned(),
+        read_role:   "dagalog.Read".to_owned(),
+        write_role:  "dagalog.Write".to_owned(),
+        admin_role:  "dagalog.Admin".to_owned(),
+        browser_client_id: None,
+    }),
+    ..Config::default()
+};
+```
 
 ---
 
@@ -643,16 +877,32 @@ All CLI flags can also be set via environment variables (CLI flags take preceden
 | Route | Description |
 |---|---|
 | `GET /` | Browser UI (query + upload) |
-| `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT |
-| `POST /sparql` | SPARQL 1.1 SELECT (form body or direct) |
+| `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT / ASK / CONSTRUCT |
+| `POST /sparql` (`application/sparql-query`) | SPARQL 1.1 query (direct body) |
+| `POST /sparql` (`application/x-www-form-urlencoded`) | SPARQL 1.1 query or update (form body) |
+| `POST /sparql` (`application/sparql-update`) | SPARQL 1.1 Update (direct body) |
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
+| `GET /.well-known/void` | VoID dataset description |
+| `GET /void` | VoID dataset description (alias) |
 | `POST /upload` | Load Turtle data into the default graph (legacy alias) |
+
+Response format for SELECT/ASK is negotiated via the `Accept` header:
+
+| `Accept` | Format |
+|---|---|
+| `application/sparql-results+json` (default) | SPARQL JSON |
+| `application/sparql-results+xml` | SPARQL XML |
+| `text/csv` | CSV with header row |
+| Unrecognised format | `406 Not Acceptable` |
+
+All responses include an `ETag` header based on the dataset's write generation
+counter, enabling efficient HTTP caching with conditional `If-None-Match` requests.
 
 ### Graph Store Protocol (GSP)
 
 | Route | Description |
 |---|---|
-| `GET /rdf-graph-store?default` or `?graph=<iri>` | Retrieve a graph (Turtle or N-Triples) |
+| `GET /rdf-graph-store?default` or `?graph=<iri>` | Retrieve a graph |
 | `PUT /rdf-graph-store?default` or `?graph=<iri>` | Replace a graph |
 | `POST /rdf-graph-store?default` or `?graph=<iri>` | Merge triples into a graph |
 | `POST /rdf-graph-store` | Create a new graph (server assigns IRI, returns `Location` header) |
@@ -660,6 +910,16 @@ All CLI flags can also be set via environment variables (CLI flags take preceden
 | `HEAD /rdf-graph-store?default` or `?graph=<iri>` | Existence check, no body |
 | `GET /rdf-graphs/{name}` | Direct graph identification (§4.1) |
 | `PUT /rdf-graphs/{name}` | Direct graph identification — replace |
+
+Graph Store responses support content negotiation for output format:
+
+| `Accept` | Format |
+|---|---|
+| `text/turtle` (default) | Turtle |
+| `application/n-triples` | N-Triples |
+| `application/n-quads` | N-Quads |
+| `application/trig` | TriG |
+| `application/ld+json` | JSON-LD |
 
 ### Fuseki-compatible per-dataset routes
 
@@ -816,12 +1076,16 @@ See [`docs/architecture/PROTOCOLS.md`](docs/architecture/PROTOCOLS.md) for full 
 
 | Priority | Protocol | Status |
 |---|---|---|
-| P0 | SPARQL 1.1 Protocol — SELECT, content negotiation, CORS | Done |
+| P0 | SPARQL 1.1 Protocol — SELECT/ASK/CONSTRUCT, CORS | Done |
+| P0 | Content negotiation — SPARQL JSON (default), SPARQL XML, CSV, 406 | Done |
 | P0 | SPARQL 1.1 Service Description | Done |
-| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§4.1 direct identification + §5.2–§5.6) |
-| P1 | SPARQL 1.1 Update | Done (INSERT/DELETE/CLEAR/DROP/CREATE/COPY/MOVE/ADD) |
+| P0 | SPARQL 1.1 Update via `POST /sparql` (direct + form body) | Done |
+| P1 | SPARQL 1.1 Graph Store HTTP Protocol (indirect + direct) | Done |
+| P1 | Graph Store output: Turtle, N-Triples, N-Quads, TriG, JSON-LD | Done |
+| P1 | SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/CREATE) | Done |
 | P1 | Fuseki-compatible dataset routing and admin API | Done |
-| P2 | VoID dataset description | Planned |
+| P2 | VoID dataset description (`GET /.well-known/void`, `GET /void`) | Done |
+| P2 | HTTP caching headers (ETag via generation counter) | Done |
 
 ---
 
@@ -834,7 +1098,7 @@ See [`docs/architecture/`](docs/architecture/) for protocol compliance and archi
 Upcoming areas:
 - [`docs/plans/PERSISTENCE_PLAN.md`](docs/plans/PERSISTENCE_PLAN.md) — durable transactional storage (`redb`) and incremental Datalog maintenance
 - [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) — SHACL Core validation via Datalog translation
-- [`docs/plans/AUTH.md`](docs/plans/AUTH.md) — API-key and Entra ID authentication
+- [`docs/plans/AUTH.md`](docs/plans/AUTH.md) — API-key and OIDC authentication (complete; details and Managed Identity docs)
 
 ---
 

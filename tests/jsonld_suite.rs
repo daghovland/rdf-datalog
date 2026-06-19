@@ -11,12 +11,12 @@ Contact: hovlanddag@gmail.com
 //! Each test corresponds to one or more examples from the W3C JSON-LD 1.1
 //! specification: <https://www.w3.org/TR/json-ld11/>
 //!
-//! All tests are `#[ignore]` until the `jsonld_parser` crate is implemented.
-//! Remove the `#[ignore]` attribute as features are completed.
-//!
-//! Assumed API (to be provided by a `jsonld_parser` workspace crate):
+//! The `jsonld_parser` crate provides:
 //!   - `jsonld_parser::parse_jsonld(ds: &mut Datastore, reader: impl Read) -> Result<(), Error>`
 //!   - `jsonld_parser::serialize_jsonld(ds: &Datastore) -> String`
+//!
+//! Only `parse_imported_context` is `#[ignore]` — it requires HTTP fetching
+//! of external context documents (`@import`), not yet implemented.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
 use dagalog::run_sparql_query;
@@ -75,7 +75,6 @@ fn has_iri(ds: &Datastore, iri: &str) -> bool {
 /// Spec §3.1 — a document with no @context; all keys are full IRIs.
 /// Three triples on a blank-node subject: foaf:name, foaf:homepage, foaf:img.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_no_context_expanded_iris() {
     let ds = parse_file("jsonld_no_context.jsonld");
 
@@ -109,7 +108,6 @@ fn parse_no_context_expanded_iris() {
 /// `"@type": "@id"` for IRI-coerced properties.
 /// Subject IRI is <http://manu.sporny.org/>.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_context_compact_form() {
     let ds = parse_file("jsonld_context.jsonld");
 
@@ -140,7 +138,6 @@ fn parse_context_compact_form() {
 /// Spec §3.4 — `@type` on a node maps to rdf:type triples; nested nodes with
 /// their own @id are stored as separate subjects.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_type_declarations() {
     let ds = parse_file("jsonld_types.jsonld");
 
@@ -173,7 +170,6 @@ fn parse_type_declarations() {
 /// Spec §3.5 — `@language` produces language-tagged literals (e.g. "foo"@en).
 /// dc:title has two values (one @en, one @de); dc:description is English only.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_language_tags() {
     let ds = parse_file("jsonld_language_tags.jsonld");
 
@@ -203,7 +199,6 @@ fn parse_language_tags() {
 /// Spec §4 — `"@type": "xsd:date"` and `"@type": "xsd:integer"` produce
 /// typed literals rather than plain strings.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_typed_literals() {
     let ds = parse_file("jsonld_typed_literals.jsonld");
 
@@ -248,7 +243,6 @@ fn parse_typed_literals() {
 /// Spec §4.9 — `@graph` creates a named graph. Triples inside @graph belong
 /// to the named graph identified by the outer @id.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_named_graph() {
     let ds = parse_file("jsonld_named_graph.jsonld");
 
@@ -289,7 +283,6 @@ fn parse_named_graph() {
 /// Spec §4.3 — `@list` maps to an RDF list (rdf:first / rdf:rest / rdf:nil
 /// chain). Order must be preserved.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_rdf_list() {
     let ds = parse_file("jsonld_list.jsonld");
 
@@ -317,7 +310,6 @@ fn parse_rdf_list() {
 /// A JSON-LD document whose top level is an array of node objects.
 /// Three persons: alice, bob, carol. Alice and Bob mutually foaf:know each other.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_multiple_subjects_array() {
     let ds = parse_file("jsonld_multiple_subjects.jsonld");
 
@@ -346,7 +338,6 @@ fn parse_multiple_subjects_array() {
 /// must produce `alice foaf:knows bob` and `carol foaf:knows bob`, not the
 /// other way around.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_reverse_property() {
     let ds = parse_file("jsonld_reverse.jsonld");
 
@@ -378,7 +369,6 @@ fn parse_reverse_property() {
 /// "label"     → <http://example.org/vocab/label>
 /// "count"     → <http://example.org/vocab/count> with xsd:integer type
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_vocab_shorthand() {
     let ds = parse_file("jsonld_vocab.jsonld");
 
@@ -407,7 +397,6 @@ fn parse_vocab_shorthand() {
 /// All @id nodes must be interned; blank-node address becomes a reified
 /// resource with its own property triples.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_nested_node_objects() {
     let ds = parse_file("jsonld_nested_nodes.jsonld");
 
@@ -453,7 +442,6 @@ fn parse_nested_node_objects() {
 
 /// Parse JSON-LD supplied as an inline string (bytes), without a file on disk.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_inline_jsonld_string() {
     let ds = parse_str(
         r#"{
@@ -477,7 +465,6 @@ fn parse_inline_jsonld_string() {
 
 /// Serialising a non-empty datastore must produce a non-empty string.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_non_empty() {
     let ds = parse_file("jsonld_context.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds);
@@ -486,7 +473,6 @@ fn output_non_empty() {
 
 /// The serialised output must be valid JSON (parseable by serde_json).
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_is_valid_json() {
     let ds = parse_file("jsonld_types.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds);
@@ -495,7 +481,6 @@ fn output_is_valid_json() {
 
 /// The serialised output must contain a `@context` key.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_contains_context() {
     let ds = parse_file("jsonld_context.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds);
@@ -507,7 +492,6 @@ fn output_contains_context() {
 
 /// The serialised output must contain `@id` for IRI-identified nodes.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_contains_node_ids() {
     let ds = parse_file("jsonld_types.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds);
@@ -525,7 +509,6 @@ fn output_contains_node_ids() {
 
 /// Parse → serialise → re-parse: the triple count must be identical.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn roundtrip_triple_count_preserved() {
     let ds1 = parse_file("jsonld_types.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds1);
@@ -538,7 +521,6 @@ fn roundtrip_triple_count_preserved() {
 
 /// Round-trip preserves typed literals (xsd:date, xsd:integer).
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn roundtrip_typed_literals_preserved() {
     let ds1 = parse_file("jsonld_typed_literals.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds1);
@@ -562,7 +544,6 @@ fn roundtrip_typed_literals_preserved() {
 
 /// Round-trip preserves language-tagged strings.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn roundtrip_language_tags_preserved() {
     let ds1 = parse_file("jsonld_language_tags.jsonld");
     let out = jsonld_parser::serialize_jsonld(&ds1);
@@ -580,7 +561,6 @@ fn roundtrip_language_tags_preserved() {
 
 /// Round-trip preserves named graph membership.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn roundtrip_named_graph_preserved() {
     let ds1 = parse_file("jsonld_named_graph.jsonld");
     let in_named1 = query_count(
@@ -606,7 +586,6 @@ fn roundtrip_named_graph_preserved() {
 /// Spec §3.5 — a node may carry several types; each becomes a separate
 /// rdf:type triple.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_multiple_types() {
     let ds = parse_file("jsonld_multiple_types.jsonld");
 
@@ -627,7 +606,6 @@ fn parse_multiple_types() {
 /// Spec §4.1.3 — `@base` in the context resolves relative IRI references in
 /// `@id` values.  "people/alice" → <http://example.org/people/alice>.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_base_relative_iris() {
     let ds = parse_file("jsonld_base.jsonld");
 
@@ -656,7 +634,6 @@ fn parse_base_relative_iris() {
 /// Spec §4.1.5 — compact IRIs in context-defined prefixes expand to full IRIs.
 /// "foaf:Person" → <http://xmlns.com/foaf/0.1/Person>.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_compact_iris() {
     let ds = parse_file("jsonld_compact_iris.jsonld");
 
@@ -682,7 +659,6 @@ fn parse_compact_iris() {
 /// Spec §4.1.7 — keywords like @id, @type, @value, @language may be aliased
 /// to plain terms in the context.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_keyword_aliases() {
     let ds = parse_file("jsonld_keyword_alias.jsonld");
 
@@ -719,7 +695,6 @@ fn parse_keyword_aliases() {
 /// within values of that property.  Terms like "street" should only resolve
 /// inside the "address" property.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_property_scoped_context() {
     let ds = parse_file("jsonld_scoped_context_property.jsonld");
 
@@ -760,7 +735,6 @@ fn parse_property_scoped_context() {
 /// Spec §4.1.9 — a `@context` attached to a type term applies within objects
 /// of that type.  "name" resolves to foaf:name only for foaf:Person nodes.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_type_scoped_context() {
     let ds = parse_file("jsonld_scoped_context_type.jsonld");
 
@@ -790,7 +764,6 @@ fn parse_type_scoped_context() {
 /// by a subsequent context.  The parser must accept the document and load
 /// the triple normally.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_protected_terms() {
     let ds = parse_file("jsonld_protected_terms.jsonld");
 
@@ -811,7 +784,7 @@ fn parse_protected_terms() {
 /// Spec §4.1.11 — `@import` pulls in an external context document.
 /// Requires network access; skipped in offline environments.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented; @import requires network access"]
+#[ignore = "@import requires HTTP context fetching, not yet implemented"]
 fn parse_imported_context() {
     // This test would load a JSON-LD document whose @context contains
     // "@import": "https://example.org/base-context.jsonld" and verify
@@ -826,7 +799,6 @@ fn parse_imported_context() {
 /// (rdf:JSON datatype).  The raw JSON structure must be preserved in the
 /// datastore.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_json_literal() {
     let ds = parse_file("jsonld_json_literal.jsonld");
 
@@ -854,7 +826,6 @@ fn parse_json_literal() {
 /// Spec §4.2.6 — `@direction` records the base text direction of a string
 /// value ("ltr" or "rtl").  Two title values with different directions.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_base_direction() {
     let ds = parse_file("jsonld_direction.jsonld");
 
@@ -874,7 +845,6 @@ fn parse_base_direction() {
 /// unordered.  Each value in the array becomes a separate triple; no
 /// rdf:List encoding is used.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_set_container() {
     let ds = parse_file("jsonld_set.jsonld");
 
@@ -900,7 +870,6 @@ fn parse_set_container() {
 /// itself does not appear as a predicate.  Properties inside the nest resolve
 /// as if they were at the top level.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_nested_properties_at_nest() {
     let ds = parse_file("jsonld_nest.jsonld");
 
@@ -935,7 +904,6 @@ fn parse_nested_properties_at_nest() {
 /// annotations.  Each value in the map becomes a triple; the index key itself
 /// is stored as an rdf:value annotation (or discarded, depending on impl).
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_index_map() {
     let ds = parse_file("jsonld_index_map.jsonld");
 
@@ -958,7 +926,6 @@ fn parse_index_map() {
 /// language tags, values are plain strings.  Each entry becomes a
 /// language-tagged literal triple.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_language_map() {
     let ds = parse_file("jsonld_language_map.jsonld");
 
@@ -990,7 +957,6 @@ fn parse_language_map() {
 /// Spec §4.6.5 — `@container: @id` is an id map: keys are IRI/compact IRI
 /// values and become the `@id` of the nested node.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_id_map() {
     let ds = parse_file("jsonld_id_map.jsonld");
 
@@ -1010,7 +976,6 @@ fn parse_id_map() {
 /// Spec §4.6.6 — `@container: @type` is a type map: keys are type IRIs and
 /// implicitly set `@type` on the nested node objects.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_type_map() {
     let ds = parse_file("jsonld_type_map.jsonld");
 
@@ -1038,7 +1003,6 @@ fn parse_type_map() {
 
 /// Spec §4.6.7 — `@container: @graph` wraps each value in a named graph.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_graph_container() {
     let ds = parse_file("jsonld_graph_container.jsonld");
 
@@ -1063,7 +1027,6 @@ fn parse_graph_container() {
 /// in the same output but not nested under any property.  Their triples end
 /// up in the same graph as the top-level node.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn parse_included_nodes() {
     let ds = parse_file("jsonld_included.jsonld");
 
@@ -1097,7 +1060,6 @@ fn parse_included_nodes() {
 /// Spec §5.1 — the expanded form of a JSON-LD document uses full IRIs for
 /// all keys and no @context.  The serialiser must be able to emit this form.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_expanded_form() {
     let ds = parse_file("jsonld_context.jsonld");
     let expanded = jsonld_parser::serialize_jsonld_expanded(&ds);
@@ -1128,7 +1090,6 @@ fn output_expanded_form() {
 
 /// Spec §5.2 — the compacted form uses a @context to shorten IRIs.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_compacted_form() {
     let ds = parse_file("jsonld_context.jsonld");
     let compacted = jsonld_parser::serialize_jsonld(&ds);
@@ -1148,7 +1109,6 @@ fn output_compacted_form() {
 /// Spec §5.3 — the flattened form puts all node objects at the top level
 /// (no nesting) and uses full IRIs.
 #[test]
-#[ignore = "jsonld_parser crate not yet implemented"]
 fn output_flattened_form() {
     let ds = parse_file("jsonld_nested_nodes.jsonld");
     let flattened = jsonld_parser::serialize_jsonld_flattened(&ds);
