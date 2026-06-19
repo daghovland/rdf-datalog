@@ -293,10 +293,7 @@ fn run(cli: Cli) -> Result<(), String> {
             .parse()
             .map_err(|e| format!("invalid port {}: {}", cli.port, e))?;
 
-        eprintln!(
-            "SPARQL endpoint ready at http://localhost:{}/sparql",
-            cli.port
-        );
+        eprintln!("Webpage ready at http://localhost:{}", cli.port);
 
         let auth = build_auth_config(&cli)?;
         let data_dir = if cli.no_persist {
