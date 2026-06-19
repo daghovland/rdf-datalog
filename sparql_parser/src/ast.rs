@@ -54,6 +54,8 @@ pub enum ProjectionElement {
 pub enum QueryComponent {
     BGP(Vec<TriplePattern>),
     PathPattern(Term, Box<PropertyPath>, Term),
+    /// `{ SELECT ... }` embedded inside a group graph pattern.
+    Subquery(Box<Query>),
     Optional(Vec<QueryComponent>),
     Union(Vec<QueryComponent>, Vec<QueryComponent>),
     Filter(Expression),

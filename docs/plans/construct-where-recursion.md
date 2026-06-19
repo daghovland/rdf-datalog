@@ -1,6 +1,6 @@
 # CONSTRUCT WHERE Recursion Bug
 
-## Status: Known bug, tests pending
+## Status: FIXED ✓
 
 ## Problem
 

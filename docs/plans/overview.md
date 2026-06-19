@@ -4,7 +4,7 @@ This document tracks known limitations, bugs, and planned features that have not
 yet been implemented.  Each item links to a more detailed plan document where one
 exists.
 
-Last updated: 2026-06-15.
+Last updated: 2026-06-19 (second pass).
 
 ---
 
@@ -35,16 +35,27 @@ linearly with total historical mutations.  A `POST /$/compact` admin endpoint is
 planned to atomically replace the log with a minimal snapshot.
 
 ### SPARQL Aggregates (GROUP BY, COUNT, SUM, AVG, …)
-**Status**: ✓ Implemented  
-**Files**: `sparql_parser/src/ast.rs`, `sparql_parser/src/lib.rs`, `sparql_parser/src/execute.rs`  
-**What was added**: `CountStar` AST variant; `(?expr AS ?alias)` projection parsing; aggregate function parsing (COUNT/SUM/AVG/MIN/MAX/SAMPLE/GROUP_CONCAT) in `parse_function_call`; `group_by_solutions`, `eval_aggregate_value`, `eval_having_expr`, `project_aggregate_row` in executor  
-**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 tests, all green); `tests/api_integration.rs` — `sparql_aggregate_sum_group_by` (green); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (still ignored — require W3C test data download)
+**Status**: ✓ Implemented and W3C conformance tests passing  
+**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 green); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (green)
 
 ### SPARQL Property Paths (beyond `/`)
-**Status**: ✓ Implemented  
-**Files**: `sparql_parser/src/ast.rs` (`PropertyPath` enum, `QueryComponent::PathPattern`), `sparql_parser/src/lib.rs` (full path grammar parser), `sparql_parser/src/execute.rs` (`eval_path_pattern`, `transitive_closure`)  
-**What was added**: `PropertyPath` AST enum with Iri/Sequence/Alternative/Inverse/ZeroOrMore/OneOrMore/ZeroOrOne/NegatedSet; full SPARQL path grammar parser; runtime path evaluation with BFS transitive closure for `*` and `+`  
-**Tests**: `tests/sparql12_suite.rs` — all 10 `spec_s9_*` tests pass including the 7 new ones; `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (still ignored — requires W3C test data download)
+**Status**: ✓ Implemented and W3C conformance tests passing  
+**Tests**: `tests/sparql12_suite.rs` — all 10 `spec_s9_*` green; `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (green)
+
+### SPARQL Subqueries
+**Status**: ✓ Implemented — W3C sq01–sq11 and sq13 all green; sq12/sq14 skip (CONSTRUCT TTL result comparison not implemented)  
+**Plan**: [`docs/plans/SUBQUERY_PLAN.md`](SUBQUERY_PLAN.md)
+
+### Additional parser features implemented (2026-06-19)
+- **Multiplicative arithmetic** (`*`, `/` in FILTER/BIND expressions)
+- **`IN` / `NOT IN` expressions** — parsed and evaluated
+- **Prefixed-name local part extensions** — colons, `%HH` percent-encoding, `\CHAR` escapes (all per SPARQL 1.1 PN_LOCAL grammar)
+- **Single-quoted string literals** (`'...'` and `'''...'''`)
+- **Prefixed-name function calls** (`:localfunc(args)` in expressions)
+- **Blank-node property list patterns in subject position** (`[ :p|:q ?X ]`)
+- **`SELECT *` / subquery UNION** (`{SELECT ...} UNION {SELECT ...}`)
+- **ORDER BY** — now fully implemented for outer and inner (subquery) SELECT
+- **W3C SPARQL 1.1 conformance**: all 13 non-Update test categories now active (15 tests pass, 2 Update tests still ignored)
 
 ### SPARQL SERVICE (federated queries)
 **Impact**: `SERVICE <endpoint> { … }` is not parsed.

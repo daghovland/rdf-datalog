@@ -13,8 +13,8 @@ Contact: hovlanddag@gmail.com
 //! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    Aggregate, BinaryOp, Expression, ProjectionElement, PropertyPath, Query, QueryComponent, Term,
-    TriplePattern, UnaryOp,
+    Aggregate, BinaryOp, Expression, OrderCondition, ProjectionElement, PropertyPath, Query,
+    QueryComponent, Term, TriplePattern, UnaryOp,
 };
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
@@ -236,6 +236,18 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
                 collect_vars_from_term(subject, vars);
                 collect_vars_from_term(object, vars);
             }
+            QueryComponent::Subquery(inner_query) => {
+                // Only the inner query's projected variables are visible.
+                if let Query::Select { projection, .. } = inner_query.as_ref() {
+                    for elem in projection {
+                        match elem {
+                            ProjectionElement::Variable(v) => vars.push(v.clone()),
+                            ProjectionElement::Expression(_, alias) => vars.push(alias.clone()),
+                            ProjectionElement::Star => {}
+                        }
+                    }
+                }
+            }
             QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
                 collect_vars_from_components(inner, vars);
             }
@@ -321,6 +333,19 @@ fn eval_component(
             .into_iter()
             .flat_map(|sub| eval_path_pattern(subject, path, object, sub, datastore, active_graph))
             .collect(),
+
+        QueryComponent::Subquery(inner_query) => {
+            let inner_rows = execute_select_inner(inner_query, datastore, active_graph);
+            solutions
+                .into_iter()
+                .flat_map(|outer_sub| {
+                    inner_rows
+                        .iter()
+                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
 
         QueryComponent::Filter(expr) => solutions
             .into_iter()
@@ -829,6 +854,22 @@ fn eval_expression_bool(
         Expression::Unary(UnaryOp::Not, inner) => {
             Some(!eval_expression_bool(inner, sub, datastore, active_graph).unwrap_or(false))
         }
+        Expression::In(expr, list) => {
+            let val = eval_expression_value(expr, sub, datastore)?;
+            Some(list.iter().any(|item| {
+                eval_expression_value(item, sub, datastore)
+                    .map(|v| v == val)
+                    .unwrap_or(false)
+            }))
+        }
+        Expression::NotIn(expr, list) => {
+            let val = eval_expression_value(expr, sub, datastore)?;
+            Some(!list.iter().any(|item| {
+                eval_expression_value(item, sub, datastore)
+                    .map(|v| v == val)
+                    .unwrap_or(false)
+            }))
+        }
         Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
         Expression::Exists(inner) => {
             let sols =
@@ -1025,6 +1066,7 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
                 out.extend(collect_bgps_from_components(inner));
             }
             QueryComponent::PathPattern(_, _, _)
+            | QueryComponent::Subquery(_)
             | QueryComponent::Filter(_)
             | QueryComponent::Bind(_, _)
             | QueryComponent::Values(_, _)
@@ -1032,6 +1074,193 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
         }
     }
     out
+}
+
+// ── Subquery helpers ──────────────────────────────────────────────────────────
+
+/// Merge two partial substitutions: succeed if they agree on shared variables.
+fn merge_solutions(outer: &PartialSub, inner: &PartialSub) -> Option<PartialSub> {
+    let mut merged = outer.clone();
+    for (var, val) in inner {
+        match merged.get(var) {
+            Some(existing) if existing != val => return None,
+            _ => {
+                merged.insert(var.clone(), val.clone());
+            }
+        }
+    }
+    Some(merged)
+}
+
+/// Execute a SELECT subquery, returning projected solution rows.
+///
+/// Applies ORDER BY, DISTINCT, LIMIT, and OFFSET from the inner query.
+fn execute_select_inner(
+    query: &Query,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    let Query::Select {
+        projection,
+        where_clause,
+        limit,
+        offset,
+        distinct,
+        group_by,
+        having,
+        order_by,
+    } = query
+    else {
+        return Vec::new();
+    };
+
+    let initial: Vec<PartialSub> = vec![HashMap::new()];
+    let solutions = eval_components(where_clause, initial, datastore, (*active_graph).clone());
+
+    let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
+
+    let mut rows: Vec<PartialSub> = if aggregate_mode {
+        let groups = group_by_solutions(&solutions, group_by, datastore);
+        groups
+            .into_iter()
+            .filter(|g| {
+                having
+                    .iter()
+                    .all(|expr| eval_having_expr(expr, g, datastore))
+            })
+            .map(|g| {
+                // Build a PartialSub from aggregate projections
+                let rep = g.first().cloned().unwrap_or_default();
+                let mut row = PartialSub::new();
+                for elem in projection.iter() {
+                    match elem {
+                        ProjectionElement::Variable(v) => {
+                            if let Some(val) = rep.get(v) {
+                                row.insert(v.clone(), val.clone());
+                            }
+                        }
+                        ProjectionElement::Expression(expr, alias) => {
+                            if let Some(val) = eval_expr_in_group(expr, &g, &rep, datastore) {
+                                row.insert(alias.clone(), val);
+                            }
+                        }
+                        ProjectionElement::Star => {}
+                    }
+                }
+                row
+            })
+            .collect()
+    } else {
+        // Build projected variables list (without expanding SELECT *)
+        let vars: Vec<String> = projection
+            .iter()
+            .filter_map(|p| match p {
+                ProjectionElement::Variable(v) => Some(v.clone()),
+                ProjectionElement::Expression(_, alias) => Some(alias.clone()),
+                ProjectionElement::Star => None,
+            })
+            .collect();
+        let proj_vars: Option<Vec<String>> = if projection
+            .iter()
+            .any(|p| matches!(p, ProjectionElement::Star))
+        {
+            None // keep all vars for SELECT *
+        } else {
+            Some(vars)
+        };
+        solutions
+            .into_iter()
+            .map(|sub| {
+                if let Some(ref pvars) = proj_vars {
+                    pvars
+                        .iter()
+                        .filter_map(|v| sub.get(v).map(|val| (v.clone(), val.clone())))
+                        .collect()
+                } else {
+                    sub
+                }
+            })
+            .collect()
+    };
+
+    // ORDER BY
+    if !order_by.is_empty() {
+        sort_solutions(&mut rows, order_by, datastore);
+    }
+
+    // DISTINCT
+    if *distinct {
+        let mut seen: HashSet<Vec<(String, GraphElement)>> = HashSet::new();
+        rows.retain(|row| {
+            let mut key: Vec<(String, GraphElement)> =
+                row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            key.sort_by(|a, b| a.0.cmp(&b.0));
+            seen.insert(key)
+        });
+    }
+
+    // OFFSET
+    if let Some(off) = offset {
+        let off = *off as usize;
+        if off < rows.len() {
+            rows = rows[off..].to_vec();
+        } else {
+            rows.clear();
+        }
+    }
+
+    // LIMIT
+    if let Some(lim) = limit {
+        rows.truncate(*lim as usize);
+    }
+
+    rows
+}
+
+/// Sort solution rows by ORDER BY conditions.
+fn sort_solutions(rows: &mut [PartialSub], order_by: &[OrderCondition], datastore: &Datastore) {
+    rows.sort_by(|a, b| {
+        for cond in order_by {
+            let av = eval_expression_value(&cond.expression, a, datastore);
+            let bv = eval_expression_value(&cond.expression, b, datastore);
+            let ord = match (&av, &bv) {
+                (Some(l), Some(r)) => compare_graph_elements_total(l, r),
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            if ord != std::cmp::Ordering::Equal {
+                return if cond.ascending { ord } else { ord.reverse() };
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+/// Total ordering for `GraphElement` values (for ORDER BY).
+fn compare_graph_elements_total(a: &GraphElement, b: &GraphElement) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    match (a, b) {
+        // Numerics first
+        (GraphElement::GraphLiteral(al), GraphElement::GraphLiteral(bl)) => {
+            if let (Some(af), Some(bf)) = (literal_to_f64(al), literal_to_f64(bl)) {
+                return af.partial_cmp(&bf).unwrap_or(Equal);
+            }
+            // String comparison of the lexical form
+            let as_ = graph_element_to_string(a).unwrap_or_default();
+            let bs = graph_element_to_string(b).unwrap_or_default();
+            as_.cmp(&bs)
+        }
+        (
+            GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(ai)),
+            GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(bi)),
+        ) => ai.0.cmp(&bi.0),
+        _ => {
+            let as_ = graph_element_to_string(a).unwrap_or_default();
+            let bs = graph_element_to_string(b).unwrap_or_default();
+            as_.cmp(&bs)
+        }
+    }
 }
 
 // ── Property path evaluation ──────────────────────────────────────────────────
