@@ -16,27 +16,31 @@ pub enum SelectFormat {
 
 /// Negotiate the response format for a SELECT/ASK result based on the `Accept` header value.
 ///
-/// Returns the best matching format, defaulting to SPARQL JSON.
-pub fn negotiate_select_format(accept: Option<&str>) -> SelectFormat {
+/// Returns `Some(format)` when a supported type is found (or the header is absent),
+/// or `None` when the client sent an explicit `Accept` header that contains no
+/// supported media type — the caller should respond with `406 Not Acceptable`.
+///
+/// `*/*` and `application/*` wildcard tokens are treated as JSON.
+pub fn negotiate_select_format(accept: Option<&str>) -> Option<SelectFormat> {
     let accept = match accept {
+        None | Some("") => return Some(SelectFormat::SparqlJson),
         Some(a) => a,
-        None => return SelectFormat::SparqlJson,
     };
 
-    // Walk the comma-separated media types in order (ignoring q= weights for now).
     for part in accept.split(',') {
         let mime = part.split(';').next().unwrap_or("").trim();
         match mime {
+            "*/*" | "application/*" => return Some(SelectFormat::SparqlJson),
             "application/sparql-results+json" | "application/json" => {
-                return SelectFormat::SparqlJson;
+                return Some(SelectFormat::SparqlJson);
             }
             "application/sparql-results+xml" | "application/xml" => {
-                return SelectFormat::SparqlXml;
+                return Some(SelectFormat::SparqlXml);
             }
-            "text/csv" => return SelectFormat::Csv,
+            "text/csv" => return Some(SelectFormat::Csv),
             _ => {}
         }
     }
 
-    SelectFormat::SparqlJson
+    None
 }

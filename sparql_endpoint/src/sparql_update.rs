@@ -417,7 +417,7 @@ fn apply_insert(store: &mut Datastore, tmp: Datastore) {
         let o = store
             .resources
             .add_resource(tmp.resources.get_graph_element(q.obj).clone());
-        store.named_graphs.add_quad(ingress::Quad {
+        store.add_quad(ingress::Quad {
             triple_id: DEFAULT_GRAPH_ELEMENT_ID,
             subject: s,
             predicate: p,
@@ -454,7 +454,7 @@ fn apply_delete(store: &mut Datastore, tmp: Datastore) {
         .collect();
 
     for quad in to_remove {
-        store.named_graphs.remove_quad(quad);
+        store.remove_quad(quad);
     }
 }
 

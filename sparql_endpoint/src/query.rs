@@ -15,16 +15,19 @@ Contact: hovlanddag@gmail.com
 
 use crate::{
     AppState,
-    negotiate::negotiate_select_format,
+    negotiate::{SelectFormat, negotiate_select_format},
     serialize::{
         serialize_construct_ntriples,
         sparql_json::{ask_to_sparql_json, to_sparql_json},
+        sparql_xml::{ask_to_sparql_xml, to_sparql_xml},
+        to_sparql_csv,
     },
     service_desc::service_description_turtle,
+    sparql_update::{apply_prepared_update, parse_update, prepare_update},
 };
 use axum::{
     extract::{Query as AxumQuery, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
 use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
@@ -87,6 +90,17 @@ pub async fn sparql_post_with_state(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
+    // SPARQL Update (direct body)
+    if content_type.contains("application/sparql-update") {
+        let update_str = match String::from_utf8(body.to_vec()) {
+            Ok(s) => s,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in update body").into_response();
+            }
+        };
+        return run_update(&update_str, &state).await;
+    }
+
     let query_str: String = if content_type.contains("application/sparql-query") {
         match String::from_utf8(body.to_vec()) {
             Ok(s) => s,
@@ -99,6 +113,13 @@ pub async fn sparql_post_with_state(
             Ok(s) => s,
             Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in body").into_response(),
         };
+        // Check for `update=` parameter first (SPARQL Update via form)
+        if let Some(update_val) = body_str.split('&').find_map(|part| {
+            let (k, v) = part.split_once('=')?;
+            (k == "update").then(|| urlencoding_decode(&v.replace('+', " ")))
+        }) {
+            return run_update(&update_val, &state).await;
+        }
         let query_val = body_str.split('&').find_map(|part| {
             let (k, v) = part.split_once('=')?;
             (k == "query").then(|| v.replace('+', " "))
@@ -116,6 +137,47 @@ pub async fn sparql_post_with_state(
     run_select_query(&query_str, &headers, &state).await
 }
 
+async fn run_update(update_str: &str, state: &AppState) -> Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+    let ops = match parse_update(update_str) {
+        Ok(ops) => ops,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("Update parse error: {e}")).into_response();
+        }
+    };
+    let mut store = state.store.write().await;
+    let (prepared, log_entries) = match prepare_update(&store, ops) {
+        Ok(pair) => pair,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Update prepare error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.append_batch(&log_entries) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+    match apply_prepared_update(&mut store, prepared) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Update error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
 async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState) -> Response {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
@@ -128,6 +190,7 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
     };
 
     let store = state.store.read().await;
+    let etag = format!("\"{}\"", store.generation);
     let result = match execute(&query, &store) {
         Ok(r) => r,
         Err(e) => {
@@ -141,41 +204,80 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
 
     match result {
         QueryResult::Ask(boolean) => {
-            let body = ask_to_sparql_json(boolean);
-            (
-                StatusCode::OK,
-                [(
-                    "content-type",
+            let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+            let fmt = match negotiate_select_format(accept) {
+                Some(f) => f,
+                None => {
+                    return (
+                        StatusCode::NOT_ACCEPTABLE,
+                        "No supported format in Accept header for ASK results",
+                    )
+                        .into_response();
+                }
+            };
+            let (body, ct) = match fmt {
+                SelectFormat::SparqlXml => (
+                    ask_to_sparql_xml(boolean),
+                    "application/sparql-results+xml; charset=utf-8",
+                ),
+                _ => (
+                    ask_to_sparql_json(boolean),
                     "application/sparql-results+json; charset=utf-8",
-                )],
-                body,
+                ),
+            };
+            with_etag(
+                (StatusCode::OK, [("content-type", ct)], body).into_response(),
+                &etag,
             )
-                .into_response()
         }
         QueryResult::Select(select_result) => {
             let accept = headers.get("accept").and_then(|v| v.to_str().ok());
-            let body = to_sparql_json(&select_result);
-            let _ = negotiate_select_format(accept);
-            (
-                StatusCode::OK,
-                [(
-                    "content-type",
+            let fmt = match negotiate_select_format(accept) {
+                Some(f) => f,
+                None => {
+                    return (
+                        StatusCode::NOT_ACCEPTABLE,
+                        "No supported format in Accept header for SELECT results",
+                    )
+                        .into_response();
+                }
+            };
+            let (body, ct) = match fmt {
+                SelectFormat::SparqlXml => (
+                    to_sparql_xml(&select_result),
+                    "application/sparql-results+xml; charset=utf-8",
+                ),
+                SelectFormat::Csv => (to_sparql_csv(&select_result), "text/csv; charset=utf-8"),
+                SelectFormat::SparqlJson => (
+                    to_sparql_json(&select_result),
                     "application/sparql-results+json; charset=utf-8",
-                )],
-                body,
+                ),
+            };
+            with_etag(
+                (StatusCode::OK, [("content-type", ct)], body).into_response(),
+                &etag,
             )
-                .into_response()
         }
         QueryResult::Construct(triples) => {
             let body = serialize_construct_ntriples(&triples);
-            (
-                StatusCode::OK,
-                [("content-type", "text/turtle; charset=utf-8")],
-                body,
+            with_etag(
+                (
+                    StatusCode::OK,
+                    [("content-type", "application/n-triples; charset=utf-8")],
+                    body,
+                )
+                    .into_response(),
+                &etag,
             )
-                .into_response()
         }
     }
+}
+
+fn with_etag(mut response: Response, etag: &str) -> Response {
+    if let Ok(val) = HeaderValue::from_str(etag) {
+        response.headers_mut().insert("etag", val);
+    }
+    response
 }
 
 /// Minimal percent-decoding for URL query parameters.

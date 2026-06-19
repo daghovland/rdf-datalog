@@ -545,7 +545,6 @@ fn gene_ontology_sparql_queries() {
 /// This replaces checking in a pre-generated large.datalog snapshot.
 /// Testing the whole pipeline catches bugs in any stage, not just the parser.
 #[test]
-#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
 fn imf_ontology_full_pipeline() {
     let path = test_data("imf.ttl");
     if !ensure_test_data(&path) {
@@ -581,7 +580,6 @@ SELECT ?x WHERE { ?x a imf:Descriptor }"#;
 
 /// Parse-only benchmark for the IMF ontology (no reasoning).
 #[test]
-#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
 fn imf_ontology_parse_only() {
     let path = test_data("imf.ttl");
     if !ensure_test_data(&path) {
@@ -603,7 +601,6 @@ fn imf_ontology_parse_only() {
 
 /// Rule generation benchmark: OWL→Datalog only (no reasoning, no parsing).
 #[test]
-#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
 fn imf_ontology_rule_generation() {
     let path = test_data("imf.ttl");
     if !ensure_test_data(&path) {
@@ -651,7 +648,6 @@ fn imf_ontology_rule_generation() {
 /// This is the conceptual replacement for storing large.datalog in the repo:
 /// we generate the rules on-the-fly and immediately verify they parse cleanly.
 #[test]
-#[ignore = "requires imf.ttl — run `bash scripts/download_test_ontologies.sh` first"]
 fn imf_rules_generation_and_parsing_round_trip() {
     let path = test_data("imf.ttl");
     if !ensure_test_data(&path) {

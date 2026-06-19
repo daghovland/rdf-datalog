@@ -194,11 +194,6 @@
                     color: #2b6cb0; pointer-events: none; }
     .drop-zone.drag-over .drop-overlay { display: flex; }
     /* ── Query builder ──────────────────────────────────────────────────────── */
-    .qb-class-input { width: 100%; margin-top: 0.25rem; font-size: 0.85rem;
-                      font-family: "Fira Mono","Consolas",monospace;
-                      padding: 0.5rem 0.6rem; border: 1px solid #ccc;
-                      border-radius: 4px; background: #f8f8f8; }
-    .qb-class-input:focus { outline: 2px solid #445; background: #fff; }
     .qb-canvas { display: flex; align-items: flex-start; gap: 0;
                  overflow-x: auto; padding: 0.5rem 0 0.75rem; min-height: 80px; }
     .node-card { background: #fff; border: 2px solid #ddd; border-radius: 6px;
@@ -230,21 +225,50 @@
     .btn-remove-node { padding: 0.1rem 0.4rem; font-size: 0.72rem; background: #eee;
                        color: #666; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
     .btn-remove-node:hover { background: #fdd; color: #900; border-color: #f99; }
-    /* Class picker autocomplete dropdown */
-    .qb-picker-wrap { position: relative; margin-top: 0.25rem; }
-    .qb-picker-wrap .qb-class-input { margin-top: 0; }
-    .qb-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
-                   background: #fff; border: 1px solid #ccc; border-top: none;
-                   border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto;
-                   box-shadow: 0 4px 10px rgba(0,0,0,.1); }
-    .qb-dropdown-item { padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.83rem; }
-    .qb-dropdown-item:hover, .qb-dropdown-item.focused { background: #eef3ff; }
-    .qb-item-short { font-weight: 500; color: #222; }
-    .qb-item-iri { font-size: 0.71rem; color: #888; font-family: "Fira Mono","Consolas",monospace; }
     /* Type-badge query builder link on resource page */
     .qb-type-link { font-size: 0.72rem; color: #2b6cb0; text-decoration: none;
                     margin-right: 0.2rem; vertical-align: middle; opacity: 0.7; }
     .qb-type-link:hover { opacity: 1; text-decoration: underline; }
+    /* QB lazy class hierarchy tree */
+    .qb-tree { overflow-y: auto; max-height: 18rem; border: 1px solid #e0e0e0;
+               border-radius: 4px; padding: 0.35rem 0.4rem; background: #fafafa;
+               margin-top: 0.4rem; }
+    .qb-tree-node { }
+    .qb-tree-row { display: flex; align-items: center; gap: 0.35rem;
+                   padding: 0.18rem 0.25rem; border-radius: 3px; }
+    .qb-tree-row:hover { background: #eef3ff; }
+    .qb-tree-row.qb-selected { background: #dce8f5; }
+    .qb-tree-expand { width: 1.15rem; height: 1.15rem; padding: 0; background: none;
+                      border: 1px solid #bbb; border-radius: 2px; font-size: 0.68rem;
+                      cursor: pointer; color: #555; flex-shrink: 0; line-height: 1;
+                      text-align: center; }
+    .qb-tree-expand:hover:not(:disabled) { background: #dce8f5; border-color: #88b; }
+    .qb-tree-expand[aria-hidden="true"] { visibility: hidden; }
+    .qb-tree-label { cursor: pointer; font-size: 0.83rem; color: #2b6cb0; flex: 1; }
+    .qb-tree-label:hover { text-decoration: underline; }
+    .qb-tree-children { padding-left: 1.45rem; }
+    .qb-tree-spinner { font-size: 0.8rem; color: #888; padding: 0.2rem 0.1rem; }
+    /* Help modal */
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+                      z-index: 100; align-items: center; justify-content: center; }
+    .modal-backdrop.open { display: flex; }
+    .modal-box { background: #fff; border-radius: 6px; padding: 1.5rem; max-width: 600px;
+                 width: 90%; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+    .modal-box h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    .modal-close { float: right; background: none; border: none; font-size: 1.2rem;
+                   cursor: pointer; color: #555; padding: 0; margin: -0.25rem -0.25rem 0 0; }
+    .modal-close:hover { color: #111; }
+    .modal-box pre { background: #f4f4f4; padding: 0.5rem 0.75rem; border-radius: 4px;
+                     font-size: 0.8rem; overflow-x: auto; margin: 0.3rem 0 0.9rem; }
+    .modal-box .snippet-label { font-size: 0.82rem; font-weight: 600; margin-bottom: 0.1rem; }
+    .help-btn { background: none; border: 1px solid #ccc; color: #555; border-radius: 50%;
+                width: 1.5rem; height: 1.5rem; font-size: 0.75rem; cursor: pointer;
+                line-height: 1; padding: 0; display: inline-flex; align-items: center;
+                justify-content: center; }
+    .help-btn:hover { background: #eee; color: #222; }
+    .sample-btn { background: none; border: 1px solid #ccc; color: #444; border-radius: 4px;
+                  padding: 0.3rem 0.75rem; font-size: 0.82rem; cursor: pointer; }
+    .sample-btn:hover { background: #f0f0f0; }
   </style>
 </head>
 <body>
@@ -314,6 +338,7 @@
       <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
       <div class="actions">
         <button id="run-btn" onclick="runQuery()">Run Query</button>
+        <button class="help-btn" onclick="document.getElementById('sparql-help-modal').classList.add('open')" title="SPARQL quick reference" aria-label="SPARQL quick reference">?</button>
         <span class="hint">Ctrl+Enter to run &middot; prefixes auto-prepended</span>
       </div>
       <details class="history-panel" id="history-details">
@@ -332,6 +357,7 @@
       </div>
       <div class="actions">
         <button id="upload-btn" onclick="uploadData()">Upload Turtle</button>
+        <button class="sample-btn" onclick="loadSampleData()" title="Pre-fill with a small example dataset">Load sample data</button>
         <span class="hint">Parsed and merged into the default graph</span>
       </div>
       <div class="result-area" id="upload-result"></div>
@@ -367,14 +393,8 @@
   <div id="build-view" style="display:none">
     <div class="card">
       <h2>Query Builder</h2>
-      <label class="hint">Start with a class:</label>
-      <div class="qb-picker-wrap">
-        <input id="class-picker" class="qb-class-input"
-               placeholder="Filter classes…" autocomplete="off"
-               oninput="filterQbClasses(this.value)"
-               onkeydown="qbPickerKeydown(event)" />
-        <div id="class-dropdown" class="qb-dropdown" style="display:none"></div>
-      </div>
+      <label class="hint">Select a class:</label>
+      <div id="qb-class-tree" class="qb-tree"><span class="qb-tree-spinner">Loading…</span></div>
       <div id="node-canvas" class="qb-canvas" style="margin-top:0.75rem"></div>
     </div>
 
@@ -1346,102 +1366,168 @@
       ['nav-query', 'nav-classes'].forEach(id =>
         document.getElementById(id)?.classList.remove('active'));
       document.getElementById('nav-build').classList.add('active');
-      await loadQbClasses();
+      loadQbClassTree();  // fire-and-forget — tree loads in background
       if (preselectedClass) {
-        const found = qbClassList.find(c => c.iri === preselectedClass);
-        document.getElementById('class-picker').value =
-          found ? found.short : preselectedClass;
-        document.getElementById('class-dropdown').style.display = 'none';
         await onClassSelect(preselectedClass);
       }
     }
 
-    let qbClassList = [];  // [{iri, short}] populated by loadQbClasses
-    let qbFocusedItem = -1;  // keyboard navigation index in dropdown
+    // ── QB class hierarchy tree ────────────────────────────────────────────────
 
-    async function loadQbClasses() {
+    let qbTreeSelectedRow = null;
+
+    async function loadQbClassTree() {
+      const treeEl = document.getElementById('qb-class-tree');
+      treeEl.innerHTML = '<span class="qb-tree-spinner">Loading…</span>';
+      qbTreeSelectedRow = null;
+
+      try {
+        const data = await sparqlFetch(
+          'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' +
+          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent } LIMIT 3000'
+        );
+        const bindings = data.results?.bindings ?? [];
+
+        const OWL_THING = 'http://www.w3.org/2002/07/owl#Thing';
+        const childrenByParent = new Map();   // parent IRI -> [child IRI, …]
+        const isNonThingChild  = new Set();   // IRIs that appear as child of non-owl:Thing
+
+        for (const b of bindings) {
+          const child = b.child?.value, parent = b.parent?.value;
+          if (!child || !parent) continue;
+          if (parent !== OWL_THING) isNonThingChild.add(child);
+          if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+          childrenByParent.get(parent).push(child);
+        }
+
+        // Sort children alphabetically
+        for (const [, kids] of childrenByParent) {
+          kids.sort((a, b) => shortenIri(a).localeCompare(shortenIri(b)));
+        }
+
+        if (bindings.length === 0) { await loadQbClassFlat(treeEl); return; }
+
+        // Roots: appear as parent but never as child of a non-owl:Thing class.
+        // Children of owl:Thing are also considered top-level.
+        const rootSet = new Set();
+        for (const p of childrenByParent.keys()) {
+          if (!isNonThingChild.has(p)) rootSet.add(p);
+        }
+        for (const c of (childrenByParent.get(OWL_THING) || [])) rootSet.add(c);
+        rootSet.delete(OWL_THING);
+
+        const roots = [...rootSet].sort((a, b) => shortenIri(a).localeCompare(shortenIri(b)));
+
+        treeEl.innerHTML = '';
+        for (const iri of roots) treeEl.appendChild(makeQbTreeNode(iri, childrenByParent));
+        if (roots.length === 0) await loadQbClassFlat(treeEl);
+      } catch (e) {
+        treeEl.innerHTML = '<span class="qb-tree-spinner">Error: ' + escHtml(String(e)) + '</span>';
+      }
+    }
+
+    function makeQbTreeNode(iri, childrenByParent) {
+      const kids = childrenByParent.get(iri) || [];
+      const wrap = document.createElement('div');
+      wrap.className = 'qb-tree-node';
+
+      const row = document.createElement('div');
+      row.className = 'qb-tree-row';
+
+      const expandBtn = document.createElement('button');
+      expandBtn.className = 'qb-tree-expand';
+      if (kids.length === 0) {
+        expandBtn.setAttribute('aria-hidden', 'true');
+        expandBtn.disabled = true;
+        expandBtn.tabIndex = -1;
+      } else {
+        expandBtn.textContent = '+';
+        expandBtn.title = 'Expand subclasses';
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'qb-tree-label';
+      nameSpan.textContent = shortenIri(iri);
+      nameSpan.title = iri;
+      nameSpan.addEventListener('click', () => {
+        if (qbTreeSelectedRow) qbTreeSelectedRow.classList.remove('qb-selected');
+        row.classList.add('qb-selected');
+        qbTreeSelectedRow = row;
+        onClassSelect(iri);
+      });
+
+      row.append(expandBtn, nameSpan);
+      wrap.appendChild(row);
+
+      if (kids.length > 0) {
+        const childrenEl = document.createElement('div');
+        childrenEl.className = 'qb-tree-children';
+        childrenEl.style.display = 'none';
+        let open = false, built = false;
+
+        expandBtn.addEventListener('click', () => {
+          open = !open;
+          expandBtn.textContent = open ? '−' : '+';
+          expandBtn.title = open ? 'Collapse' : 'Expand subclasses';
+          childrenEl.style.display = open ? '' : 'none';
+          if (open && !built) {
+            built = true;
+            for (const kid of kids) childrenEl.appendChild(makeQbTreeNode(kid, childrenByParent));
+          }
+        });
+
+        wrap.appendChild(childrenEl);
+      }
+
+      return wrap;
+    }
+
+    async function loadQbClassFlat(treeEl) {
       try {
         const data = await sparqlFetch(
           'SELECT DISTINCT ?c WHERE { ' +
           '{ ?c a <http://www.w3.org/2002/07/owl#Class> } UNION { [] a ?c } ' +
-          '} LIMIT 500'
+          '} LIMIT 300'
         );
-        qbClassList = [];
-        for (const b of data.results?.bindings ?? []) {
-          if (b.c?.type !== 'uri') continue;
-          qbClassList.push({ iri: b.c.value, short: shortenIri(b.c.value) });
-        }
-        qbClassList.sort((a, b) => a.short.localeCompare(b.short));
-        filterQbClasses(document.getElementById('class-picker').value);
-      } catch { /* silently ignore */ }
-    }
+        const classes = (data.results?.bindings ?? [])
+          .filter(b => b.c?.type === 'uri')
+          .map(b => b.c.value)
+          .sort((a, b) => shortenIri(a).localeCompare(shortenIri(b)));
 
-    function filterQbClasses(text) {
-      const q = text.trim().toLowerCase();
-      const dd = document.getElementById('class-dropdown');
-      const matches = q
-        ? qbClassList.filter(c =>
-            c.short.toLowerCase().includes(q) || c.iri.toLowerCase().includes(q))
-        : qbClassList;
-      if (matches.length === 0) { dd.style.display = 'none'; return; }
-      dd.innerHTML = '';
-      qbFocusedItem = -1;
-      for (const c of matches.slice(0, 80)) {
-        const item = document.createElement('div');
-        item.className = 'qb-dropdown-item';
-        item.innerHTML =
-          '<span class="qb-item-short">' + escHtml(c.short) + '</span>' +
-          '<span class="qb-item-iri">'   + escHtml(c.iri)   + '</span>';
-        item.addEventListener('mousedown', e => {
-          e.preventDefault();  // keep focus on input
-          selectQbClass(c.iri, c.short);
-        });
-        dd.appendChild(item);
+        treeEl.innerHTML = '';
+        for (const iri of classes) {
+          const row = document.createElement('div');
+          row.className = 'qb-tree-row';
+          const expandBtn = document.createElement('button');
+          expandBtn.className = 'qb-tree-expand';
+          expandBtn.setAttribute('aria-hidden', 'true');
+          expandBtn.disabled = true;
+          expandBtn.tabIndex = -1;
+          const span = document.createElement('span');
+          span.className = 'qb-tree-label';
+          span.textContent = shortenIri(iri);
+          span.title = iri;
+          span.addEventListener('click', () => {
+            if (qbTreeSelectedRow) qbTreeSelectedRow.classList.remove('qb-selected');
+            row.classList.add('qb-selected');
+            qbTreeSelectedRow = row;
+            onClassSelect(iri);
+          });
+          row.append(expandBtn, span);
+          treeEl.appendChild(row);
+        }
+        if (!treeEl.children.length) treeEl.textContent = 'No classes found.';
+      } catch (e) {
+        treeEl.innerHTML = '<span class="qb-tree-spinner">Error: ' + escHtml(String(e)) + '</span>';
       }
-      dd.style.display = '';
     }
 
     function escHtml(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    function selectQbClass(iri, short) {
-      document.getElementById('class-picker').value = short;
-      document.getElementById('class-dropdown').style.display = 'none';
-      onClassSelect(iri);
-    }
-
-    function qbPickerKeydown(e) {
-      const dd = document.getElementById('class-dropdown');
-      if (dd.style.display === 'none') return;
-      const items = dd.querySelectorAll('.qb-dropdown-item');
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        qbFocusedItem = Math.min(qbFocusedItem + 1, items.length - 1);
-        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
-        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        qbFocusedItem = Math.max(qbFocusedItem - 1, 0);
-        items.forEach((el, i) => el.classList.toggle('focused', i === qbFocusedItem));
-        if (items[qbFocusedItem]) items[qbFocusedItem].scrollIntoView({ block: 'nearest' });
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        if (qbFocusedItem >= 0 && items[qbFocusedItem]) {
-          items[qbFocusedItem].dispatchEvent(new MouseEvent('mousedown'));
-        }
-      } else if (e.key === 'Escape') {
-        dd.style.display = 'none';
-      }
-    }
-
     async function onClassSelect(classIri) {
-      let iri = classIri.trim();
-      if (!iri.startsWith('http')) {
-        const found = qbClassList.find(c => c.short === iri || c.iri === iri);
-        if (!found) return;
-        iri = found.iri;
-      }
+      const iri = classIri.trim();
       qbNodeSeq    = 0;
       const root   = { varName: 's', classIri: iri, dataProps: [], links: [], _objProps: [] };
       qbRootNode   = root;
@@ -1873,11 +1959,6 @@
         }
         if (cyInstance) setTimeout(() => cyInstance.resize(), 50);
       });
-      document.addEventListener('click', e => {
-        if (!e.target.closest('.qb-picker-wrap')) {
-          document.getElementById('class-dropdown').style.display = 'none';
-        }
-      });
 
       const params   = new URLSearchParams(location.search);
       const resource = params.get('resource');
@@ -1901,6 +1982,106 @@
         }
       }
     });
+
+    // ── Sample data playground ──────────────────────────────────────────────────
+    const SAMPLE_TURTLE = `@prefix ex:   <http://example.org/family#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+
+<http://example.org/family> a owl:Ontology .
+
+ex:Person   a owl:Class .
+ex:Employee a owl:Class ;
+    rdfs:subClassOf ex:Person .
+
+ex:Alice a ex:Person ;
+    rdfs:label "Alice" ;
+    ex:age 30 ;
+    ex:knows ex:Bob .
+
+ex:Bob a ex:Employee ;
+    rdfs:label "Bob" ;
+    ex:age 25 .
+
+ex:Carol a ex:Person ;
+    rdfs:label "Carol" ;
+    ex:age 17 .`;
+
+    const SAMPLE_QUERY = `PREFIX ex:   <http://example.org/family#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+# Find all people and their ages.
+# Try: load the data above, then run this query.
+# Tip: Bob is declared an Employee, not a Person — but after OWL-RL reasoning,
+# Employees are inferred to be People too.
+SELECT ?person ?label ?age WHERE {
+    ?person a ex:Person ;
+            rdfs:label ?label ;
+            ex:age ?age .
+}`;
+
+    function loadSampleData() {
+      document.getElementById('turtle').value = SAMPLE_TURTLE;
+      document.getElementById('query').value  = SAMPLE_QUERY;
+      document.getElementById('turtle').focus();
+    }
+
+    function closeSparqlHelp(e) {
+      if (e.target === document.getElementById('sparql-help-modal')) {
+        document.getElementById('sparql-help-modal').classList.remove('open');
+      }
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        document.getElementById('sparql-help-modal').classList.remove('open');
+      }
+    });
   </script>
+
+  <!-- ── SPARQL help modal ──────────────────────────────────────────────────── -->
+  <div class="modal-backdrop" id="sparql-help-modal" onclick="closeSparqlHelp(event)">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-label="SPARQL quick reference">
+      <button class="modal-close" onclick="document.getElementById('sparql-help-modal').classList.remove('open')" aria-label="Close">&#x2715;</button>
+      <h3>SPARQL quick reference</h3>
+
+      <div class="snippet-label">All triples (sample)</div>
+      <pre>SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</pre>
+
+      <div class="snippet-label">Match by type</div>
+      <pre>PREFIX ex: &lt;http://example.org/&gt;
+SELECT ?x WHERE { ?x a ex:Person }</pre>
+
+      <div class="snippet-label">Filter by value</div>
+      <pre>PREFIX ex: &lt;http://example.org/&gt;
+SELECT ?person ?age WHERE {
+    ?person a ex:Person ; ex:age ?age .
+    FILTER (?age &lt; 18)
+}</pre>
+
+      <div class="snippet-label">Optional data (like LEFT JOIN)</div>
+      <pre>PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+SELECT ?s ?label WHERE {
+    ?s ?p ?o .
+    OPTIONAL { ?s rdfs:label ?label }
+}</pre>
+
+      <div class="snippet-label">Follow a relationship</div>
+      <pre>PREFIX ex: &lt;http://example.org/&gt;
+SELECT ?contact WHERE {
+    ex:Alice ex:knows ?contact .
+}</pre>
+
+      <div class="snippet-label">Named graph</div>
+      <pre>SELECT ?s ?p ?o WHERE {
+    GRAPH &lt;http://example.org/myGraph&gt; { ?s ?p ?o }
+}</pre>
+
+      <p style="margin:0.75rem 0 0; font-size:0.82rem; color:#555">
+        Full guide: <a href="docs/user/sparql-guide.md" target="_blank" rel="noopener">docs/user/sparql-guide.md</a>
+        &middot; <a href="https://www.w3.org/TR/sparql11-query/" target="_blank" rel="noopener">W3C SPARQL 1.1 spec</a>
+      </p>
+    </div>
+  </div>
 </body>
 </html>

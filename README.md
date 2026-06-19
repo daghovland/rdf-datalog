@@ -5,6 +5,13 @@ custom Datalog rules, JSON-LD 1.1 parsing/serialisation, and a SPARQL HTTP endpo
 
 Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 
+> **New here?** Start with the [5-minute quickstart](docs/user/quickstart.md) — load data and
+> run your first query without needing to read the rest of this file.
+>
+> **User docs:** [docs/user/](docs/user/) — quickstart, SPARQL guide, formats, reasoning, deployment  
+> **Developer docs:** [docs/dev/](docs/dev/) — architecture, ADRs, contributing  
+> **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ---
 
 ## Features
@@ -15,10 +22,12 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
-| SPARQL 1.1 HTTP endpoint | ✓ |
-| SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD) | ✓ |
-| SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/…) | ✓ |
+| SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
+| SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD; JSON-LD output) | ✓ |
+| SPARQL 1.1 Update (`POST /sparql`, form body, and per-dataset `/update`) | ✓ |
 | Multi-dataset server (Fuseki-compatible routing and admin API) | ✓ |
+| VoID dataset description (`GET /.well-known/void`) | ✓ |
+| ETag caching headers on all query responses | ✓ |
 | Static API key authentication (`--api-key` / `DAGALOG_API_KEY`) | ✓ |
 | OIDC JWT authentication (Azure Entra ID, Google, Keycloak, Auth0) | ✓ |
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
@@ -868,16 +877,32 @@ let config = Config {
 | Route | Description |
 |---|---|
 | `GET /` | Browser UI (query + upload) |
-| `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT |
-| `POST /sparql` | SPARQL 1.1 SELECT (form body or direct) |
+| `GET /sparql?query=<encoded>` | SPARQL 1.1 SELECT / ASK / CONSTRUCT |
+| `POST /sparql` (`application/sparql-query`) | SPARQL 1.1 query (direct body) |
+| `POST /sparql` (`application/x-www-form-urlencoded`) | SPARQL 1.1 query or update (form body) |
+| `POST /sparql` (`application/sparql-update`) | SPARQL 1.1 Update (direct body) |
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
+| `GET /.well-known/void` | VoID dataset description |
+| `GET /void` | VoID dataset description (alias) |
 | `POST /upload` | Load Turtle data into the default graph (legacy alias) |
+
+Response format for SELECT/ASK is negotiated via the `Accept` header:
+
+| `Accept` | Format |
+|---|---|
+| `application/sparql-results+json` (default) | SPARQL JSON |
+| `application/sparql-results+xml` | SPARQL XML |
+| `text/csv` | CSV with header row |
+| Unrecognised format | `406 Not Acceptable` |
+
+All responses include an `ETag` header based on the dataset's write generation
+counter, enabling efficient HTTP caching with conditional `If-None-Match` requests.
 
 ### Graph Store Protocol (GSP)
 
 | Route | Description |
 |---|---|
-| `GET /rdf-graph-store?default` or `?graph=<iri>` | Retrieve a graph (Turtle or N-Triples) |
+| `GET /rdf-graph-store?default` or `?graph=<iri>` | Retrieve a graph |
 | `PUT /rdf-graph-store?default` or `?graph=<iri>` | Replace a graph |
 | `POST /rdf-graph-store?default` or `?graph=<iri>` | Merge triples into a graph |
 | `POST /rdf-graph-store` | Create a new graph (server assigns IRI, returns `Location` header) |
@@ -885,6 +910,16 @@ let config = Config {
 | `HEAD /rdf-graph-store?default` or `?graph=<iri>` | Existence check, no body |
 | `GET /rdf-graphs/{name}` | Direct graph identification (§4.1) |
 | `PUT /rdf-graphs/{name}` | Direct graph identification — replace |
+
+Graph Store responses support content negotiation for output format:
+
+| `Accept` | Format |
+|---|---|
+| `text/turtle` (default) | Turtle |
+| `application/n-triples` | N-Triples |
+| `application/n-quads` | N-Quads |
+| `application/trig` | TriG |
+| `application/ld+json` | JSON-LD |
 
 ### Fuseki-compatible per-dataset routes
 
@@ -1041,12 +1076,16 @@ See [`docs/architecture/PROTOCOLS.md`](docs/architecture/PROTOCOLS.md) for full 
 
 | Priority | Protocol | Status |
 |---|---|---|
-| P0 | SPARQL 1.1 Protocol — SELECT, content negotiation, CORS | Done |
+| P0 | SPARQL 1.1 Protocol — SELECT/ASK/CONSTRUCT, CORS | Done |
+| P0 | Content negotiation — SPARQL JSON (default), SPARQL XML, CSV, 406 | Done |
 | P0 | SPARQL 1.1 Service Description | Done |
-| P1 | SPARQL 1.1 Graph Store HTTP Protocol | Done (§4.1 direct identification + §5.2–§5.6) |
-| P1 | SPARQL 1.1 Update | Done (INSERT/DELETE/CLEAR/DROP/CREATE/COPY/MOVE/ADD) |
+| P0 | SPARQL 1.1 Update via `POST /sparql` (direct + form body) | Done |
+| P1 | SPARQL 1.1 Graph Store HTTP Protocol (indirect + direct) | Done |
+| P1 | Graph Store output: Turtle, N-Triples, N-Quads, TriG, JSON-LD | Done |
+| P1 | SPARQL 1.1 Update (INSERT/DELETE/CLEAR/DROP/CREATE) | Done |
 | P1 | Fuseki-compatible dataset routing and admin API | Done |
-| P2 | VoID dataset description | Planned |
+| P2 | VoID dataset description (`GET /.well-known/void`, `GET /void`) | Done |
+| P2 | HTTP caching headers (ETag via generation counter) | Done |
 
 ---
 

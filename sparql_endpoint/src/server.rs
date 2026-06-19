@@ -32,6 +32,9 @@ pub fn build_router(state: AppState) -> Router {
         ]);
 
     Router::new()
+        // ── VoID dataset description (§4, P2) ───────────────────────────────
+        .route("/.well-known/void", get(crate::void::void_handler))
+        .route("/void", get(crate::void::void_handler))
         // ── Auth config (always public — no middleware) ───────────────────────
         .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
