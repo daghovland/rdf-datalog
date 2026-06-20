@@ -1,0 +1,15 @@
+# SHACL spec §4.7.2 — sh:property referencing a named sh:PropertyShape (by IRI).
+# Source: https://www.w3.org/TR/shacl/#PropertyShapes
+# ex:PersonShape references ex:NamePropertyShape by IRI (not inline blank node).
+PREFIX sh:  <http://www.w3.org/ns/shacl#>
+PREFIX ex:  <http://example.com/ns#>
+
+ex:NamePropertyShape
+    a sh:PropertyShape ;
+    sh:path ex:name ;
+    sh:minCount 1 .
+
+ex:PersonShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Person ;
+    sh:property ex:NamePropertyShape .

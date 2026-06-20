@@ -1,0 +1,11 @@
+[package]
+name = "rml"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ingress = { path = "../ingress" }
+dag-rdf = { path = "../dag_rdf" }
+turtle = { path = "../turtle" }
+thiserror = "2"
+csv = "1"

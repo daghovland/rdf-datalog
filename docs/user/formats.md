@@ -63,7 +63,7 @@ JSON-based RDF with an `@context` block that maps JSON keys to RDF predicates:
 `@graph` (named graphs), `@list` (RDF lists), `@reverse`, `@included`, `@nest`,
 keyword aliasing, property-scoped and type-scoped contexts, `@protected`.
 
-Not supported: external context URL fetching (`@import`).
+For security reasons, external context URL fetching (`@import`) is not possible.
 
 ---
 

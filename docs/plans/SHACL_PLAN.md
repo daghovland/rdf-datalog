@@ -359,11 +359,16 @@ All SHACL tests are `#[ignore]` until the relevant translation slice is complete
 | §4.8.2 | `sh:hasValue` | `spec_s4_8_2_has_value` | `shacl_s4_hasvalue_*.ttl` |
 | §4.8.3 | `sh:in` | `spec_s4_8_3_in` | `shacl_s4_in_*.ttl` |
 
+### Newly added tests (all passing)
+
+| Spec | Component | Test | File pair |
+|---|---|---|---|
+| §4.3.1/4.3.3 | `sh:minExclusive`, `sh:maxExclusive` | `spec_s4_3_exclusive_range` | `shacl_s4_exclusive_*.ttl` |
+| §4.7.2 | `sh:property` referencing a named `sh:PropertyShape` by IRI | `spec_s4_7_2_property_shape_ref` | `shacl_s4_property_ref_*.ttl` |
+| §4.7.3 | `sh:qualifiedMaxCount` | `spec_s4_7_3_qualified_max_count` | `shacl_s4_qualified_max_*.ttl` |
+
 ### Not yet covered by tests
 
-- §4.3.1 `sh:minExclusive`, §4.3.3 `sh:maxExclusive`
-- §4.7.2 `sh:property` as a standalone property-shape reference
-- §4.7.3 `sh:qualifiedMaxCount`
 - §5–6 SHACL-AF SPARQL-based constraints / targets
 
 Additional W3C conformance test suite: <https://github.com/w3c/data-shapes/tree/gh-pages/shacl/tests>
@@ -422,11 +427,103 @@ Also added in this session:
 
 ### Phase 4 — SHACL-SPARQL (§5–6 of SHACL-AF)
 
+SHACL-AF §5–6 let shape authors embed SPARQL queries for targets and constraints.
+These cannot be translated to Datalog in general: a SPARQL SELECT or ASK query can
+express joins, property paths, filters, and aggregates that have no Datalog equivalent.
+They must be executed directly by the SPARQL engine against the data graph.
+
+#### Why Datalog translation is not feasible
+
+SHACL-SPARQL constraints are arbitrary SPARQL — the constraint author can write
+full graph patterns, optional joins, negation, SPARQL property paths (`^pred/pred*`),
+arithmetic filters, and aggregates. The existing SHACL→Datalog translation relies on
+the constraint having a known fixed structure (one triple pattern per constraint
+component). There is no general procedure to convert arbitrary SPARQL to Datalog.
+
+#### SHACL-AF §5 — SPARQL-based targets
+
+```turtle
+ex:MyShape
+    a sh:NodeShape ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            SELECT ?this WHERE { ?this ex:status ex:Active }
+        """
+    ] .
+```
+
+The `sh:select` query is executed against the data graph; each solution row's `?this`
+binding becomes one target node.
+
+#### SHACL-AF §6 — SPARQL-based constraints
+
+```turtle
+ex:MyShape
+    a sh:NodeShape ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "value must be a known category" ;
+        sh:select """
+            SELECT $this $value WHERE {
+                $this ex:category $value .
+                FILTER NOT EXISTS { ex:categories ex:member $value }
+            }
+        """
+    ] .
+```
+
+Each solution row of the SELECT is one `ValidationResult`. The pre-bound variables
+`$this` (focus node), `$value` (offending value), and `$path` (offending path) are
+recognised by the SHACL report builder.
+
+For ASK-based constraints, a `false` answer produces one `ValidationResult` for the
+focus node.
+
+#### Pre-binding `$this`
+
+The SHACL-AF spec says `$this` is pre-bound to the focus node for each evaluation.
+Implementation options:
+
+1. **VALUES injection (preferred)**: prepend `VALUES ($this) { (<focus>) }` to the
+   query before the WHERE clause, then execute normally through the SPARQL engine.
+   This keeps the engine unchanged and is equivalent to substitution.
+
+2. **Substitution**: textually replace `$this` in the query string with the IRI of
+   the focus node (requires careful escaping and is fragile with SPARQL variable rules).
+
+Option 1 is preferred because `sparql_parser` already handles `VALUES` clauses.
+
+#### Prefix declarations (`sh:prefixes`)
+
+SHACL-AF constraints can reference a `sh:prefixes` property pointing to an
+`owl:Ontology` node whose declared namespace prefixes are prepended to the query.
+These must be collected from the shapes graph and injected as SPARQL `PREFIX` lines
+before the query body.
+
+#### Implementation steps
+
 | Step | Change |
 |---|---|
-| 4a | Parse `sh:sparql [ sh:select "..." ]` / `sh:sparql [ sh:ask "..." ]` from shapes graph |
-| 4b | Pre-bind `$this` and execute against data using `sparql-parser::run_sparql_query` |
-| 4c | Map SELECT solution rows → `ValidationResult`; false ASK → `ValidationResult` |
+| 4a | In `shapes.rs`: add `SparqlConstraint { select_or_ask: String, message: Option<String> }` to `ParsedShape`, parse `sh:sparql [ sh:select/sh:ask "..." ; sh:message "..." ]` |
+| 4b | In `shapes.rs`: add `SparqlTarget { select: String }` to `Target`, parse `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` |
+| 4c | In `evaluate.rs` or new `sparql_constraints.rs`: for each SPARQL constraint, collect target nodes, inject `VALUES ($this) { ... }` per focus node, execute via `sparql_parser::run_sparql_query` |
+| 4d | Map SELECT solution rows → `ValidationResult` using `$this`, `$value`, `$path` projections |
+| 4e | For ASK constraints: execute as SELECT `ASK { ... }` and treat `false` as one result |
+| 4f | Add `sh:prefixes` support: collect prefix declarations from the shapes graph and prepend to the query string |
+| 4g | Integration tests: `tests/shacl_suite.rs` with `shacl_s5_sparql_target_*.ttl` and `shacl_s6_sparql_constraint_*.ttl` |
+
+#### Interaction with the Datalog path
+
+SHACL-SPARQL constraints are evaluated in a completely separate pass from the
+Datalog materialisation: they read from the **original** data graph (not the working
+store), and their results are collected into `ValidationResult`s alongside those from
+the Datalog pass. No rule translation occurs.
+
+This means SHACL-SPARQL cannot interact with OWL-RL-derived facts unless those
+facts are materialised into the data graph before validation. For now, SHACL-SPARQL
+sees only the original asserted triples. This is the same behaviour as Apache Jena
+Fuseki.
 
 ---
 
@@ -471,4 +568,5 @@ handled identically to nested property shapes.
 | Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
 | Phase 2: `sh:nodeKind`, `sh:datatype`, `sh:xone`, value range, string constraints, property pairs, `sh:node`, `sh:qualifiedValueShape` | ✓ Done |
 | Phase 3: HTTP endpoint + `report_to_turtle` | ✓ Done |
-| Phase 4: SHACL-SPARQL (§5–6) | Planned |
+| Tests for `sh:minExclusive`, `sh:maxExclusive`, `sh:property` IRI ref, `sh:qualifiedMaxCount` | ✓ Done |
+| Phase 4: SHACL-SPARQL (§5–6) | Planned (see Phase 4 section above) |

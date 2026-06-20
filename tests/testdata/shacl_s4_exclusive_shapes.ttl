@@ -1,0 +1,15 @@
+# SHACL spec §4.3.1 sh:minExclusive and §4.3.3 sh:maxExclusive shapes graph.
+# Source: https://www.w3.org/TR/shacl/#core-components-range
+# Covers sh:minExclusive (§4.3.1) and sh:maxExclusive (§4.3.3).
+# Values must be strictly within (0, 150); the boundary values themselves are violations.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:ExclusiveRangeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path ex:age ;
+        sh:minExclusive 0 ;
+        sh:maxExclusive 150 ;
+    ] .

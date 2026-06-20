@@ -9,7 +9,7 @@ writing Rust code.
 
 The execution model follows the relational algebra approach described in Freund
 et al., "Efficient Knowledge Graph Construction Based on Optimized Plans"
-(ESWC 2025). An RML mapping is compiled to a **logical plan** (a tree of
+(SEMANTICS 2025). An RML mapping is compiled to a **logical plan** (a tree of
 relational algebra operators), which is then optimized (constant folding) and
 translated to a **physical plan** (a Volcano-style pull pipeline). This
 separates concerns cleanly and enables optimizations without touching the
@@ -24,7 +24,7 @@ execution core.
 - RML test cases — <https://github.com/kg-construct/rml-test-cases>
 - Percent-encoding — <https://www.rfc-editor.org/rfc/rfc3986#section-2.1>
 - Freund et al., ESWC 2025 — relational algebra execution model, constant
-  folding, heuristic scheduling (reference implementation: konverter)
+  folding, heuristic scheduling https://ebooks.iospress.nl/doi/10.3233/SSW62 (reference implementation: konverter)
 
 The target namespace is the new W3C RML 1.0: `http://w3id.org/rml/`
 (abbreviated `rml:` throughout this document). The older Dimou-lab namespace

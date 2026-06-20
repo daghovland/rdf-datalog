@@ -1,0 +1,14 @@
+# SHACL spec §4.7.3 — sh:qualifiedValueShape with sh:qualifiedMaxCount shapes graph.
+# Source: https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent
+# Requires at most 1 ex:parent value that satisfies sh:nodeKind sh:IRI.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:QualifiedMaxShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:nodeKind sh:IRI ] ;
+        sh:qualifiedMaxCount 1 ;
+    ] .

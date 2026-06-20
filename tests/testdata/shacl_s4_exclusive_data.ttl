@@ -1,0 +1,10 @@
+# SHACL spec §4.3.1 sh:minExclusive and §4.3.3 sh:maxExclusive data graph.
+# Source: https://www.w3.org/TR/shacl/#core-components-range
+# ex:Alice ex:age 0   → equals minExclusive bound 0 → violation (must be strictly >).
+# ex:Bob   ex:age 23  → within (0, 150) → conforms.
+# ex:Carol ex:age 150 → equals maxExclusive bound 150 → violation (must be strictly <).
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:age 0 .
+ex:Bob   ex:age 23 .
+ex:Carol ex:age 150 .

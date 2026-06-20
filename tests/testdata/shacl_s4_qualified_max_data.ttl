@@ -1,0 +1,9 @@
+# SHACL spec §4.7.3 — sh:qualifiedValueShape with sh:qualifiedMaxCount data graph.
+# Source: https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent
+# sh:qualifiedMaxCount 1: at most 1 ex:parent value may satisfy sh:nodeKind sh:IRI.
+# ex:Alice has IRI parents ex:Mom and ex:Dad → 2 qualifying values > 1 → violation.
+# ex:Bob   has IRI parent ex:Mom only       → 1 qualifying value ≤ 1 → conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:parent ex:Mom , ex:Dad .
+ex:Bob   ex:parent ex:Mom .

@@ -1,0 +1,8 @@
+# SHACL spec §4.7.2 — sh:property referencing a named sh:PropertyShape (by IRI).
+# Source: https://www.w3.org/TR/shacl/#PropertyShapes
+# ex:Alice a ex:Person and has ex:name → minCount 1 satisfied → conforms.
+# ex:Bob   a ex:Person but has no ex:name → minCount 1 violated → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person ; ex:name "Alice" .
+ex:Bob   a ex:Person .

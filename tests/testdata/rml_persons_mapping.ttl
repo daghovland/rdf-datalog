@@ -1,0 +1,21 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex: <http://example.com/> .
+
+<http://example.com/PersonMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "rml_persons.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{id}" ;
+        rml:class ex:Person
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:age ;
+        rml:objectMap [ rml:reference "age" ]
+    ] .

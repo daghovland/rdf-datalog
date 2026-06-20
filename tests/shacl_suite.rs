@@ -11,9 +11,7 @@ Contact: hovlanddag@gmail.com
 //! Each test covers a code example from the W3C SHACL specification:
 //! <https://www.w3.org/TR/shacl/>
 //!
-//! All tests except `shacl_testdata_parses` are `#[ignore]` because SHACL
-//! validation is not yet implemented (see `docs/plans/SHACL_PLAN.md` and the `shacl`
-//! crate). The test data files in `tests/testdata/shacl_*.ttl` are valid
+//! The test data files in `tests/testdata/shacl_*.ttl` are valid
 //! Turtle and are verified to parse by `shacl_testdata_parses`.
 //!
 //! Test naming: `spec_s{section}_{constraint}` where `section` mirrors the
@@ -37,8 +35,6 @@ fn load(file: &str) -> Datastore {
     load_file(&mut ds, &testdata(file)).expect("test data file should parse as Turtle");
     ds
 }
-
-// ── Parse guard (not ignored) ─────────────────────────────────────────────────
 
 /// Load every SHACL test data file to confirm all parse as valid Turtle.
 /// This test is never ignored so that malformed test data is caught by CI.
@@ -107,6 +103,12 @@ fn shacl_testdata_parses() {
         "shacl_s4_hasvalue_shapes.ttl",
         "shacl_s4_in_data.ttl",
         "shacl_s4_in_shapes.ttl",
+        "shacl_s4_exclusive_data.ttl",
+        "shacl_s4_exclusive_shapes.ttl",
+        "shacl_s4_property_ref_data.ttl",
+        "shacl_s4_property_ref_shapes.ttl",
+        "shacl_s4_qualified_max_data.ttl",
+        "shacl_s4_qualified_max_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -757,5 +759,74 @@ fn spec_s4_8_3_in() {
         report.results.len(),
         1,
         "ex:Carol's status ex:Unknown is not in the allowed list"
+    );
+}
+
+// ── §4.3 (exclusive bounds) ───────────────────────────────────────────────────
+
+/// SHACL §4.3.1 and §4.3.3 — `sh:minExclusive` and `sh:maxExclusive`.
+///
+/// Source: <https://www.w3.org/TR/shacl/#core-components-range>
+///
+/// `ExclusiveRangeShape` requires `ex:age` to be strictly within (0, 150).
+/// The boundary values themselves are violations (exclusive bounds).
+/// `ex:Alice` age 0  → not strictly > 0 → violates `sh:minExclusive`.
+/// `ex:Bob`   age 23 → within (0, 150) → conforms.
+/// `ex:Carol` age 150 → not strictly < 150 → violates `sh:maxExclusive`.
+#[test]
+fn spec_s4_3_exclusive_range() {
+    let data = load("shacl_s4_exclusive_data.ttl");
+    let shapes = load("shacl_s4_exclusive_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        2,
+        "ex:Alice (age 0) and ex:Carol (age 150) each violate exclusive bounds"
+    );
+}
+
+// ── §4.7.2 Standalone sh:property reference ───────────────────────────────────
+
+/// SHACL §4.7.2 — `sh:property` referencing a named `sh:PropertyShape` by IRI.
+///
+/// Source: <https://www.w3.org/TR/shacl/#PropertyShapes>
+///
+/// `ex:PersonShape` references `ex:NamePropertyShape` by IRI (not an inline blank node).
+/// `ex:NamePropertyShape` declares `sh:path ex:name ; sh:minCount 1`.
+/// `ex:Alice` has `ex:name "Alice"` → conforms.
+/// `ex:Bob` has no `ex:name` → minCount 1 violated → 1 violation.
+#[test]
+fn spec_s4_7_2_property_shape_ref() {
+    let data = load("shacl_s4_property_ref_data.ttl");
+    let shapes = load("shacl_s4_property_ref_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "ex:Bob has no ex:name → sh:minCount 1 via named PropertyShape violated"
+    );
+}
+
+// ── §4.7.3 sh:qualifiedMaxCount ──────────────────────────────────────────────
+
+/// SHACL §4.7.3 — `sh:qualifiedValueShape` with `sh:qualifiedMaxCount`.
+///
+/// Source: <https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent>
+///
+/// `QualifiedMaxShape` requires at most 1 `ex:parent` value of kind `sh:IRI`.
+/// `ex:Alice` has IRI parents `ex:Mom` and `ex:Dad` → 2 qualifying values > 1 → violation.
+/// `ex:Bob` has only `ex:Mom` → 1 qualifying value ≤ 1 → conforms.
+#[test]
+fn spec_s4_7_3_qualified_max_count() {
+    let data = load("shacl_s4_qualified_max_data.ttl");
+    let shapes = load("shacl_s4_qualified_max_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "ex:Alice has 2 IRI parents; qualifiedMaxCount 1 violated"
     );
 }

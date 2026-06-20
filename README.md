@@ -33,7 +33,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
 | Custom Datalog rules with stratified negation and SPARQL FILTER guards | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
-| SHACL Core validation via Datalog translation | in progress |
+| SHACL Core validation via Datalog translation | ✓ complete |
 | SHACL-AF SPARQL-based constraints (§5–6) | planned |
 | OWL Manchester Syntax parser | planned |
 | Durable transactional persistence (`redb`-backed WAL) | planned |
@@ -378,10 +378,10 @@ rules (the same engine that powers OWL-RL reasoning), then materialised over the
 graph. SHACL-AF §5–6 SPARQL-based constraints are executed directly by the built-in
 SPARQL engine. No external processes or dependencies are required.
 
-The `shacl` crate types are defined; validation is in progress — see
-[`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) for the phased implementation roadmap.
+SHACL Core (§1–§4.8) is fully implemented. SHACL-AF §5–6 (SPARQL-based targets
+and constraints) is planned — see [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) Phase 4.
 
-### API (planned)
+### API
 
 ```rust
 use dag_rdf::Datastore;
@@ -447,8 +447,7 @@ The spec data graph (`shacl_s1_intro_data.ttl`) produces 4 violations:
 
 ### SHACL Core constraint components covered
 
-All tests are in [`tests/shacl_suite.rs`](tests/shacl_suite.rs) and are `#[ignore]`
-until the `shacl` crate implementation is complete. Test data lives in
+All tests are in [`tests/shacl_suite.rs`](tests/shacl_suite.rs). Test data lives in
 `tests/testdata/shacl_*.ttl`; all files are verified to parse by `shacl_testdata_parses`.
 
 | Spec section | Constraint component | Test name |
@@ -465,6 +464,7 @@ until the `shacl` crate implementation is complete. Test data lives in
 | §4.2.1 | `sh:minCount` | `spec_s4_2_1_mincount` |
 | §4.2.2 | `sh:maxCount` | `spec_s4_2_2_maxcount` |
 | §4.3 | `sh:minInclusive`, `sh:maxInclusive` | `spec_s4_3_value_range` |
+| §4.3 | `sh:minExclusive`, `sh:maxExclusive` | `spec_s4_3_exclusive_range` |
 | §4.4.1 | `sh:minLength` | `spec_s4_4_1_minlength` |
 | §4.4.2 | `sh:maxLength` | `spec_s4_4_2_maxlength` |
 | §4.4.3 | `sh:pattern` | `spec_s4_4_3_pattern` |
@@ -479,14 +479,15 @@ until the `shacl` crate implementation is complete. Test data lives in
 | §4.6.3 | `sh:or` | `spec_s4_6_3_or` |
 | §4.6.4 | `sh:xone` | `spec_s4_6_4_xone` |
 | §4.7.1 | `sh:node` | `spec_s4_7_1_node` |
+| §4.7.2 | `sh:property` referencing a named `sh:PropertyShape` by IRI | `spec_s4_7_2_property_shape_ref` |
 | §4.7.3 | `sh:qualifiedValueShape` + `sh:qualifiedMinCount` | `spec_s4_7_3_qualified_value_shape` |
+| §4.7.3 | `sh:qualifiedValueShape` + `sh:qualifiedMaxCount` | `spec_s4_7_3_qualified_max_count` |
 | §4.8.1 | `sh:closed` + `sh:ignoredProperties` | `spec_s4_8_1_closed` |
 | §4.8.2 | `sh:hasValue` | `spec_s4_8_2_has_value` |
 | §4.8.3 | `sh:in` | `spec_s4_8_3_in` |
 
-> Not yet covered: §4.3.1 `sh:minExclusive`, §4.3.3 `sh:maxExclusive`,
-> §4.7.2 `sh:property` (inline shape), §4.7.3 `sh:qualifiedMaxCount`,
-> §6 SPARQL-based constraints (SHACL-AF).
+> Not yet covered: §5–6 SPARQL-based constraints (SHACL-AF).
+> See [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) Phase 4 for the implementation plan.
 
 ---
 
