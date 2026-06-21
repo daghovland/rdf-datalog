@@ -8,6 +8,8 @@ first phase.
 
 ## 1. JSON Source for RML
 
+> **Detailed plan**: see `RML_JSON_PLAN.md`.
+
 ### Goal
 
 Extend the `rml` crate's source layer to support JSON and JSONL (newline-

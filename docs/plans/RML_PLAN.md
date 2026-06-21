@@ -1,5 +1,10 @@
 # RML Core Plan: CSV Ingestion + RDF Mapping
 
+> **Status: COMPLETE** — all tests green as of 2026-06-21.
+> The `rml` crate is fully implemented: loader, translate, constant_fold, engine.
+> 60 unit tests (csv, template, loader, plan, end-to-end W3C fixtures) +
+> 10 root-crate integration tests all pass. See `RML_JSON_PLAN.md` for the next phase.
+
 ## Goal
 
 Add a new `rml` crate that reads CSV files and maps them to RDF triples using

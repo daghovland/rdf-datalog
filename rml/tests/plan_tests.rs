@@ -45,7 +45,7 @@ fn simple_triples_map(source_file: &str, subject_template: &str) -> TriplesMap {
 // ── translate() ───────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_one_predicate_object_map_yields_one_plan() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -55,7 +55,7 @@ fn translate_one_predicate_object_map_yields_one_plan() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_two_predicate_object_maps_yield_two_plans() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
     tm.predicate_object_maps.push(PredicateObjectMap {
@@ -74,28 +74,38 @@ fn translate_two_predicate_object_maps_yield_two_plans() {
         }],
         graph_maps: vec![],
     });
-    let doc = MappingDocument { triples_maps: vec![tm] };
+    let doc = MappingDocument {
+        triples_maps: vec![tm],
+    };
     let plans = translate(&doc);
     assert_eq!(plans.len(), 2);
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_class_shorthand_adds_extra_plan() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
-    tm.subject_map.classes.push(IriReference("http://example.com/Person".to_string()));
-    let doc = MappingDocument { triples_maps: vec![tm] };
+    tm.subject_map
+        .classes
+        .push(IriReference("http://example.com/Person".to_string()));
+    let doc = MappingDocument {
+        triples_maps: vec![tm],
+    };
     let plans = translate(&doc);
     // 1 data triple plan + 1 rdf:type triple plan from rml:class
     assert_eq!(plans.len(), 2);
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_class_plan_has_constant_rdf_type_predicate() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
-    tm.subject_map.classes.push(IriReference("http://example.com/Person".to_string()));
-    let doc = MappingDocument { triples_maps: vec![tm] };
+    tm.subject_map
+        .classes
+        .push(IriReference("http://example.com/Person".to_string()));
+    let doc = MappingDocument {
+        triples_maps: vec![tm],
+    };
     let plans = translate(&doc);
 
     // Find the plan whose Predicate is Constant(rdf:type)
@@ -114,18 +124,25 @@ fn translate_class_plan_has_constant_rdf_type_predicate() {
             false
         }
     });
-    assert!(rdf_type_plan.is_some(), "expected a plan with rdf:type predicate");
+    assert!(
+        rdf_type_plan.is_some(),
+        "expected a plan with rdf:type predicate"
+    );
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_subject_template_with_column_is_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
     let plans = translate(&doc);
     if let LogicalPlan::Projection(proj) = &plans[0] {
-        let (attr, logic) = proj.attrs.iter().find(|(a, _)| *a == OutputAttr::Subject).unwrap();
+        let (attr, logic) = proj
+            .attrs
+            .iter()
+            .find(|(a, _)| *a == OutputAttr::Subject)
+            .unwrap();
         assert_eq!(*attr, OutputAttr::Subject);
         assert!(
             matches!(logic, GenerationLogic::Dynamic(ff) if matches!(ff.pattern, TermPattern::Template(_))),
@@ -137,7 +154,7 @@ fn translate_subject_template_with_column_is_dynamic() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_constant_term_map_is_constant_in_plan() {
     // TermMap::Constant should translate directly to GenerationLogic::Constant
     let doc = MappingDocument {
@@ -145,8 +162,11 @@ fn translate_constant_term_map_is_constant_in_plan() {
     };
     let plans = translate(&doc);
     if let LogicalPlan::Projection(proj) = &plans[0] {
-        let (_, pred_logic) =
-            proj.attrs.iter().find(|(a, _)| *a == OutputAttr::Predicate).unwrap();
+        let (_, pred_logic) = proj
+            .attrs
+            .iter()
+            .find(|(a, _)| *a == OutputAttr::Predicate)
+            .unwrap();
         assert!(
             matches!(pred_logic, GenerationLogic::Constant(_)),
             "constant predicate IRI should be GenerationLogic::Constant after translate"
@@ -159,14 +179,18 @@ fn translate_constant_term_map_is_constant_in_plan() {
 // ── constant_fold() ───────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn constant_fold_leaves_column_template_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
     let plans = constant_fold(translate(&doc));
     if let LogicalPlan::Projection(proj) = &plans[0] {
-        let (_, logic) = proj.attrs.iter().find(|(a, _)| *a == OutputAttr::Subject).unwrap();
+        let (_, logic) = proj
+            .attrs
+            .iter()
+            .find(|(a, _)| *a == OutputAttr::Subject)
+            .unwrap();
         assert!(
             matches!(logic, GenerationLogic::Dynamic(_)),
             "template with {{id}} column ref must stay Dynamic after folding"
@@ -177,7 +201,7 @@ fn constant_fold_leaves_column_template_dynamic() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn constant_fold_converts_no_placeholder_template_to_constant() {
     // A Template with no {…} is a constant and should be folded
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
@@ -188,12 +212,17 @@ fn constant_fold_converts_no_placeholder_template_to_constant() {
         datatype: None,
         parent_triples_map: None,
     };
-    let doc = MappingDocument { triples_maps: vec![tm] };
+    let doc = MappingDocument {
+        triples_maps: vec![tm],
+    };
     let plans = constant_fold(translate(&doc));
 
     if let LogicalPlan::Projection(proj) = &plans[0] {
-        let (_, obj_logic) =
-            proj.attrs.iter().find(|(a, _)| *a == OutputAttr::Object).unwrap();
+        let (_, obj_logic) = proj
+            .attrs
+            .iter()
+            .find(|(a, _)| *a == OutputAttr::Object)
+            .unwrap();
         assert!(
             matches!(obj_logic, GenerationLogic::Constant(_)),
             "no-placeholder template should be folded to Constant"
@@ -204,7 +233,7 @@ fn constant_fold_converts_no_placeholder_template_to_constant() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn constant_fold_already_constant_term_maps_unchanged() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -226,10 +255,13 @@ fn constant_fold_already_constant_term_maps_unchanged() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn translate_sets_scan_from_logical_source() {
     let doc = MappingDocument {
-        triples_maps: vec![simple_triples_map("students.csv", "http://example.com/{id}")],
+        triples_maps: vec![simple_triples_map(
+            "students.csv",
+            "http://example.com/{id}",
+        )],
     };
     let plans = translate(&doc);
     if let LogicalPlan::Projection(proj) = &plans[0] {

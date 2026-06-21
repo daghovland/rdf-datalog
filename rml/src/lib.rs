@@ -23,16 +23,16 @@ pub enum RmlError {
         source: csv::Error,
     },
     #[error("Missing required property {property} on {subject}")]
-    MissingProperty {
-        subject: String,
-        property: String,
-    },
+    MissingProperty { subject: String, property: String },
 }
 
 pub fn apply_rml_mapping(
-    _mapping_path: &Path,
-    _base_dir: &Path,
-    _datastore: &mut Datastore,
+    mapping_path: &Path,
+    base_dir: &Path,
+    datastore: &mut Datastore,
 ) -> Result<(), RmlError> {
-    todo!()
+    let mapping = loader::load_mapping(mapping_path)?;
+    let plans = translate::translate(&mapping);
+    let plans = optimizer::constant_fold(plans);
+    engine::execute(&plans, base_dir, datastore)
 }

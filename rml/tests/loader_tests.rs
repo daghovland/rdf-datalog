@@ -21,14 +21,14 @@ const SIMPLE_MAPPING: &str = r#"
 "#;
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_finds_one_triples_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     assert_eq!(doc.triples_maps.len(), 1);
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_sets_csv_reference_formulation() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     assert_eq!(
@@ -38,7 +38,7 @@ fn loader_sets_csv_reference_formulation() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_template_subject_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let tm = &doc.triples_maps[0];
@@ -50,7 +50,7 @@ fn loader_parses_template_subject_map() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_constant_predicate_via_shorthand() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let pom = &doc.triples_maps[0].predicate_object_maps[0];
@@ -61,18 +61,18 @@ fn loader_parses_constant_predicate_via_shorthand() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_reference_object_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let pom = &doc.triples_maps[0].predicate_object_maps[0];
     let obj = &pom.object_maps[0];
     assert_eq!(obj.term_map, TermMap::Reference("name".to_string()));
-    // ObjectMap without language/datatype defaults to Iri per RML spec
-    assert_eq!(obj.term_type, TermType::Iri);
+    // rml:reference in an objectMap defaults to Literal (CSV values are plain strings)
+    assert_eq!(obj.term_type, TermType::Literal);
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_class_shorthand() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -100,7 +100,7 @@ fn loader_parses_class_shorthand() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_language_on_object_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -129,7 +129,7 @@ fn loader_parses_language_on_object_map() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_datatype_on_object_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -161,7 +161,7 @@ fn loader_parses_datatype_on_object_map() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_graph_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -188,7 +188,7 @@ fn loader_parses_graph_map() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_parses_blank_node_term_type() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -210,11 +210,14 @@ fn loader_parses_blank_node_term_type() {
     ] .
 "#;
     let doc = load_mapping_from_str(mapping).unwrap();
-    assert_eq!(doc.triples_maps[0].subject_map.term_type, TermType::BlankNode);
+    assert_eq!(
+        doc.triples_maps[0].subject_map.term_type,
+        TermType::BlankNode
+    );
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_resolves_source_path_string() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let source = &doc.triples_maps[0].logical_source.source;
@@ -224,7 +227,7 @@ fn loader_resolves_source_path_string() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn loader_returns_error_on_invalid_turtle() {
     let result = load_mapping_from_str("this is not valid turtle @@@");
     assert!(result.is_err());
