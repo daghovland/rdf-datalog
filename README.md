@@ -20,6 +20,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 |---|---|
 | Load RDF from Turtle (`.ttl`) and TriG (`.trig`) | ✓ |
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
+| Map CSV / JSON / JSONL to RDF via RML 1.0 | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
 | SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
@@ -56,6 +57,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | `eli` | EL profile normalisation and ELI→Datalog translation |
 | `owl2rl2datalog` | OWL 2 RL → Datalog rule translation (W3C §4.3) |
 | `shacl` | SHACL Core → Datalog translation + `ValidationReport` types |
+| `rml` | RML 1.0 mapping engine: CSV, JSON, JSONL → RDF triples |
 | `rdf_owl_translator` | RDF triples → OWL 2 axiom extraction |
 | `turtle_parser` | Turtle/TriG parser (`rio_turtle`); populates a `Datastore` |
 | `jsonld_parser` | JSON-LD 1.1 parser and serialiser (expanded, compacted, flattened) |
@@ -333,6 +335,93 @@ SELECT DISTINCT ?tag WHERE { ?s <http://example.org/tag> ?tag }
 LIMIT 3
 -- test: readme_sparql_distinct_limit
 ```
+
+---
+
+## RML: mapping CSV and JSON to RDF
+
+The `rml` crate implements [RML 1.0](https://www.w3.org/TR/rml/) mapping documents.
+A mapping file declares how CSV columns or JSON fields become RDF subjects,
+predicates, and objects. The same `Datastore` can hold both the mapped triples
+and any separately loaded Turtle/JSON-LD ontologies — they are immediately
+queryable together with SPARQL.
+
+### CSV example
+
+```turtle
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/PersonMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "people.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{id}" ;
+        rml:class ex:Person
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .
+```
+
+### JSON example
+
+```turtle
+rml:logicalSource [
+    rml:source "students.json" ;
+    rml:referenceFormulation rml:JSONPath ;
+    rml:iterator "$.students[*]"    # optional: select array from document
+] ;
+rml:subjectMap [
+    rml:template "http://example.com/Student/{$.id}"
+] ;
+rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "$.name" ]
+] .
+```
+
+JSONL files (`.jsonl`, `.ndjson`) are detected by extension and read line by line.
+
+### Rust API
+
+```rust
+use rml::apply_rml_mapping;
+use dag_rdf::Datastore;
+use std::path::Path;
+
+let mut ds = Datastore::new(100_000);
+apply_rml_mapping(
+    Path::new("mapping.ttl"),  // RML mapping file
+    Path::new("."),            // base directory for rml:source paths
+    &mut ds,
+).unwrap();
+```
+
+### What is supported
+
+| Feature | Status |
+|---|---|
+| CSV sources (`rml:CSV`) | ✓ |
+| JSON array sources (`rml:JSONPath`) | ✓ |
+| JSONL sources (auto-detected by extension) | ✓ |
+| `rml:iterator` for nested arrays | ✓ |
+| Template IRI subjects | ✓ |
+| Reference literal objects | ✓ |
+| Language-tagged literals (`rml:language`) | ✓ |
+| Typed literals (`rml:datatype`) | ✓ |
+| Named graphs (`rml:graphMap`) | ✓ |
+| Blank node subjects | ✓ |
+| `rml:class` shorthand | ✓ |
+| Join conditions (`rml:JoinCondition`) | planned |
+| SQL/JDBC sources | planned |
+| XML/XPath sources | planned |
+
+See [docs/user/rml-mapping.md](docs/user/rml-mapping.md) for the full reference.
 
 ---
 

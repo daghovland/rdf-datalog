@@ -24,7 +24,11 @@ impl SourceRow for JsonRow {
         let node = path.query(&self.0).first()?;
         match node {
             serde_json::Value::String(s) => {
-                if s.is_empty() { None } else { Some(s.clone()) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.clone())
+                }
             }
             serde_json::Value::Number(n) => Some(n.to_string()),
             serde_json::Value::Bool(b) => Some(b.to_string()),
@@ -46,12 +50,19 @@ pub struct JsonSource {
 
 impl JsonSource {
     pub fn new(path: PathBuf) -> Self {
-        let format = if path.extension().map_or(false, |e| e == "jsonl" || e == "ndjson") {
+        let format = if path
+            .extension()
+            .is_some_and(|e| e == "jsonl" || e == "ndjson")
+        {
             JsonFormat::Jsonl
         } else {
             JsonFormat::Json
         };
-        JsonSource { path, format, iterator: None }
+        JsonSource {
+            path,
+            format,
+            iterator: None,
+        }
     }
 
     pub fn with_iterator(mut self, iterator: String) -> Self {
@@ -85,7 +96,11 @@ impl JsonSource {
             let path = JsonPath::parse(iter_path).map_err(|e| {
                 RmlError::MappingParse(format!("invalid JSONPath iterator '{iter_path}': {e}"))
             })?;
-            Ok(path.query(&doc).iter().map(|v| JsonRow((*v).clone())).collect())
+            Ok(path
+                .query(&doc)
+                .iter()
+                .map(|v| JsonRow((*v).clone()))
+                .collect())
         } else {
             match doc {
                 serde_json::Value::Array(arr) => Ok(arr.into_iter().map(JsonRow).collect()),

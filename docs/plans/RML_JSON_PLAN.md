@@ -1,5 +1,10 @@
 # RML JSON Source Plan
 
+> **Status: COMPLETE** — all five phases green as of 2026-06-21.
+> `SourceRow` trait, `JsonSource`/`JsonRow`, loader JSONPath recognition,
+> 9 W3C JSON fixture end-to-end tests, and 5 root-crate integration tests
+> (SPARQL, Turtle ontology, OWL-RL reasoning, deep iterator) all pass.
+
 ## Goal
 
 Extend the `rml` crate to support JSON and JSONL (newline-delimited JSON) as

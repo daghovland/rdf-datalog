@@ -2,7 +2,12 @@ use rml::sources::CsvRow;
 use rml::template::{expand_template, percent_encode};
 
 fn row(pairs: &[(&str, &str)]) -> CsvRow {
-    CsvRow(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+    CsvRow(
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
 }
 
 // ── IRI mode (encode = true) ──────────────────────────────────────────────────

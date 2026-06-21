@@ -75,10 +75,21 @@ fn execute_row(
 
     match graph_id {
         Some(g) => {
-            ds.add_named_graph_triple(g, Triple { subject: s, predicate: p, obj: o });
+            ds.add_named_graph_triple(
+                g,
+                Triple {
+                    subject: s,
+                    predicate: p,
+                    obj: o,
+                },
+            );
         }
         None => {
-            ds.add_triple(Triple { subject: s, predicate: p, obj: o });
+            ds.add_triple(Triple {
+                subject: s,
+                predicate: p,
+                obj: o,
+            });
         }
     }
     Ok(())
@@ -115,7 +126,11 @@ fn eval_format_function(
         TermPattern::Template(t) => expand_template(t, row, encode)?,
         TermPattern::Reference(key) => {
             let val = row.get_str(key)?;
-            if encode { crate::template::percent_encode(&val) } else { val }
+            if encode {
+                crate::template::percent_encode(&val)
+            } else {
+                val
+            }
         }
     };
 

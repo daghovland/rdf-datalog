@@ -48,9 +48,9 @@ pub fn detect_cell_type(cell: &str) -> CellType {
     }
 }
 
-pub mod sparql;
-pub mod rml;
 pub mod datalog;
+pub mod rml;
+pub mod sparql;
 pub mod turtle;
 
 #[cfg(test)]
@@ -61,10 +61,7 @@ mod tests {
     #[test]
     fn test_plain_sparql_cell() {
         let cell = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10";
-        assert_eq!(
-            detect_cell_type(cell),
-            CellType::Sparql(cell.to_string())
-        );
+        assert_eq!(detect_cell_type(cell), CellType::Sparql(cell.to_string()));
     }
 
     #[test]
@@ -83,7 +80,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_load_magic() {
         let cell = "%%load data/people.ttl";
         assert_eq!(
@@ -93,21 +89,18 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_reason_magic_no_args() {
         let cell = "%%reason";
         assert_eq!(detect_cell_type(cell), CellType::Reason);
     }
 
     #[test]
-    #[ignore]
     fn test_reason_magic_trailing_newline() {
         let cell = "%%reason\n";
         assert_eq!(detect_cell_type(cell), CellType::Reason);
     }
 
     #[test]
-    #[ignore]
     fn test_validate_magic() {
         let cell = "%%validate shapes/person.ttl";
         assert_eq!(
@@ -117,7 +110,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_datalog_magic_with_body() {
         let cell = "%%datalog\n?x a owl:Thing :- ?x a ex:Person .\n";
         match detect_cell_type(cell) {
@@ -129,7 +121,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_turtle_magic_with_body() {
         let cell = "%%turtle\n<http://example.com/Alice> a <http://example.com/Person> .\n";
         match detect_cell_type(cell) {
@@ -141,7 +132,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_unknown_magic_falls_back_to_sparql() {
         let cell = "%%unknown some args\nstuff";
         assert!(matches!(detect_cell_type(cell), CellType::Sparql(_)));

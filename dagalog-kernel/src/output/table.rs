@@ -1,9 +1,33 @@
 /// Render SPARQL SELECT results as an HTML `<table>`.
 ///
 /// `columns` — variable names in order.
-/// `rows` — each row is a parallel slice of string values (empty = unbound).
+/// `rows` — each row is a parallel slice of string values (empty string = unbound).
 pub fn select_results_to_html(columns: &[&str], rows: &[Vec<String>]) -> String {
-    todo!("select_results_to_html: build <table> with header + rows")
+    let mut html = String::from("<table border=\"1\">\n<thead><tr>");
+    for col in columns {
+        html.push_str("<th>");
+        html.push_str(col);
+        html.push_str("</th>");
+    }
+    html.push_str("</tr></thead>\n<tbody>");
+    for row in rows {
+        html.push_str("<tr>");
+        for cell in row {
+            html.push_str("<td>");
+            html.push_str(&escape_html(cell));
+            html.push_str("</td>");
+        }
+        html.push_str("</tr>\n");
+    }
+    html.push_str("</tbody>\n</table>");
+    html
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -11,18 +35,20 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn test_html_table_header() {
         let cols = ["s", "p", "o"];
         let html = select_results_to_html(&cols, &[]);
         assert!(html.contains("<table"), "output must contain <table");
         for col in &cols {
-            assert!(html.contains(col), "header must contain variable name '{}'", col);
+            assert!(
+                html.contains(col),
+                "header must contain variable name '{}'",
+                col
+            );
         }
     }
 
     #[test]
-    #[ignore]
     fn test_html_table_rows() {
         let cols = ["name", "age"];
         let rows = vec![
@@ -37,7 +63,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_html_table_empty_results() {
         let cols = ["s", "p", "o"];
         let html = select_results_to_html(&cols, &[]);
@@ -47,7 +72,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_html_table_escapes_special_chars() {
         let cols = ["value"];
         let rows = vec![vec!["<script>alert('xss')</script>".to_string()]];
@@ -60,12 +84,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_html_table_unbound_value() {
         let cols = ["s", "label"];
-        let rows = vec![
-            vec!["http://example.com/x".to_string(), String::new()],
-        ];
+        let rows = vec![vec!["http://example.com/x".to_string(), String::new()]];
         let html = select_results_to_html(&cols, &rows);
         // Empty string for unbound — just check it doesn't panic and produces valid structure
         assert!(html.contains("<table"));

@@ -91,8 +91,7 @@ fn json_source_nested_field_via_jsonpath() {
 
 #[test]
 fn jsonl_source_reads_lines() {
-    let content =
-        "{\"id\": 1, \"name\": \"Alice\"}\n{\"id\": 2, \"name\": \"Bob\"}\n{\"id\": 3, \"name\": \"Carol\"}\n";
+    let content = "{\"id\": 1, \"name\": \"Alice\"}\n{\"id\": 2, \"name\": \"Bob\"}\n{\"id\": 3, \"name\": \"Carol\"}\n";
     let path = write_temp("three.jsonl", content);
     let source = JsonSource::new(path);
     let rows: Vec<_> = source.rows().collect::<Result<_, _>>().unwrap();

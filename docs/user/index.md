@@ -12,7 +12,9 @@ SPARQL HTTP endpoint. It can be used as a CLI tool, a Rust library, or a server.
 | Load data and run my first query in 5 minutes | [Quickstart](quickstart.md) |
 | Learn to write SPARQL queries | [SPARQL guide](sparql-guide.md) |
 | Understand supported file formats | [Formats](formats.md) |
+| Map CSV or JSON data to RDF | [RML mapping](rml-mapping.md) |
 | Add OWL reasoning or Datalog rules | [Reasoning and rules](reasoning.md) |
+| Write interactive pipeline notebooks | [Jupyter kernel](jupyter.md) |
 | Deploy dagalog as a server | [Deployment](deployment.md) |
 
 ---

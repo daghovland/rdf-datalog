@@ -129,8 +129,14 @@ fn json_plus_owlrl_reasoning_infers_superclass_membership() {
             .rows
             .len();
 
-    assert_eq!(person_count, 2, "students inferred as Person via rdfs:subClassOf");
-    assert_eq!(agent_count, 2, "students inferred as Agent via transitive subClassOf");
+    assert_eq!(
+        person_count, 2,
+        "students inferred as Person via rdfs:subClassOf"
+    );
+    assert_eq!(
+        agent_count, 2,
+        "students inferred as Agent via transitive subClassOf"
+    );
 }
 
 // ── JSON iterator ─────────────────────────────────────────────────────────────

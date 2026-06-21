@@ -5,7 +5,12 @@ use rml::sources::{CsvRow, SourceRow};
 use serde_json::json;
 
 fn csv(pairs: &[(&str, &str)]) -> CsvRow {
-    CsvRow(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+    CsvRow(
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
 }
 
 // ── CsvRow ────────────────────────────────────────────────────────────────────

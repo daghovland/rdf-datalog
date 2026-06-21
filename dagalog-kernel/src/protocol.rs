@@ -1,8 +1,6 @@
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::HashMap;
-
 type HmacSha256 = Hmac<Sha256>;
 
 /// Jupyter wire-protocol message header.
@@ -59,11 +57,13 @@ pub fn parse_message(frames: &[Vec<u8>], key: &[u8]) -> Result<JupyterMessage, P
     if rest.len() < 5 {
         return Err(ProtocolError::FrameCount(rest.len()));
     }
-    let (hmac_frame, header_frame, parent_frame, meta_frame, content_frame) = (
-        &rest[0], &rest[1], &rest[2], &rest[3], &rest[4],
-    );
+    let (hmac_frame, header_frame, parent_frame, meta_frame, content_frame) =
+        (&rest[0], &rest[1], &rest[2], &rest[3], &rest[4]);
 
-    let expected = compute_signature(key, &[header_frame, parent_frame, meta_frame, content_frame]);
+    let expected = compute_signature(
+        key,
+        &[header_frame, parent_frame, meta_frame, content_frame],
+    );
     let got = std::str::from_utf8(hmac_frame).unwrap_or("");
     if !key.is_empty() && got != expected {
         return Err(ProtocolError::SignatureMismatch);
@@ -116,19 +116,11 @@ fn chrono_now() -> String {
     "1970-01-01T00:00:00.000000Z".to_string()
 }
 
-/// Convenience empty content maps.
-pub fn empty_metadata() -> serde_json::Value {
-    serde_json::json!({})
-}
-
-pub type ExtraMetadata = HashMap<String, serde_json::Value>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn test_hmac_signature_known_vector() {
         // Verify HMAC-SHA256 against a hand-computed reference to guard against
         // key/data ordering bugs in compute_signature.
@@ -141,7 +133,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_message_roundtrip() {
         let key = b"secret";
         let msg = JupyterMessage {
@@ -167,7 +158,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_signature_mismatch_rejected() {
         let key = b"correct-key";
         let wrong_key = b"wrong-key";
@@ -193,7 +183,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_empty_key_skips_signature_check() {
         // When key is empty, Jupyter spec says skip HMAC verification.
         let msg = JupyterMessage {

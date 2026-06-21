@@ -77,7 +77,7 @@ fi
 # We stream just the first WIKIDATA_LINES lines so the on-disk file stays small.
 # N-Triples is one triple per line, so any line boundary is a safe truncation point.
 WIKIDATA_NT="$DEST/wikidata-sample.nt"
-WIKIDATA_LINES=1000000  # ~1M triples ≈ 80–100 MB uncompressed
+WIKIDATA_LINES=10000000  # ~10M triples ≈ 800–1000 MB uncompressed
 
 if [ -f "$WIKIDATA_NT" ]; then
     echo "wikidata-sample.nt already present, skipping download."

@@ -19,8 +19,8 @@ fn install_kernel(user: bool) -> Result<(), String> {
     std::fs::create_dir_all(&base)
         .map_err(|e| format!("cannot create kernel dir {}: {}", base.display(), e))?;
 
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("cannot determine executable path: {}", e))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot determine executable path: {}", e))?;
 
     let kernel_json = serde_json::json!({
         "argv": [exe.to_string_lossy(), "launch", "--connection-file", "{connection_file}"],

@@ -35,7 +35,11 @@ fn rmltc0001b_basic_json_template_and_reference_literal() {
     let s = intern!(ds, iri("http://example.com/Student/10"));
     let p = intern!(ds, iri("http://example.com/name"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("Venus Williams".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
@@ -61,11 +65,19 @@ fn rmltc0002b_all_four_triples_present() {
 
     let p_name = intern!(ds, iri("http://example.com/name"));
     let o_name = ds.add_literal_resource(RdfLiteral::LiteralString("Alice".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p_name, obj: o_name }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p_name,
+        obj: o_name
+    }));
 
     let p_age = intern!(ds, iri("http://example.com/age"));
     let o_age = ds.add_literal_resource(RdfLiteral::LiteralString("30".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p_age, obj: o_age }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p_age,
+        obj: o_age
+    }));
 }
 
 // ── rmltc0007c: language-tagged literal ──────────────────────────────────────
@@ -82,7 +94,11 @@ fn rmltc0007c_language_tagged_literal() {
         lang: "en".to_string(),
         literal: "Tennis".to_string(),
     });
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── rmltc0007d: datatype literal ─────────────────────────────────────────────
@@ -99,7 +115,11 @@ fn rmltc0007d_datatype_literal() {
         type_iri: IriReference("http://www.w3.org/2001/XMLSchema#integer".to_string()),
         literal: "32".to_string(),
     });
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── rmltc0009b: triple in a named graph ──────────────────────────────────────
@@ -114,7 +134,12 @@ fn rmltc0009b_triple_placed_in_named_graph() {
     let s = intern!(ds, iri("http://example.com/City/Paris"));
     let p = intern!(ds, iri("http://example.com/country"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("France".to_string()));
-    assert!(ds.contains_quad(&Quad { triple_id: g, subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_quad(&Quad {
+        triple_id: g,
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
@@ -126,7 +151,11 @@ fn rmltc0009b_triple_not_in_default_graph() {
     let s = intern!(ds, iri("http://example.com/City/Paris"));
     let p = intern!(ds, iri("http://example.com/country"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("France".to_string()));
-    assert!(!ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(!ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── rmltc0010b: rml:class shorthand ──────────────────────────────────────────
@@ -140,7 +169,11 @@ fn rmltc0010b_class_shorthand_emits_rdf_type_triple() {
     let s = intern!(ds, iri("http://example.com/Student/10"));
     let p = intern!(ds, iri(RDF_TYPE));
     let o = intern!(ds, iri("http://example.com/Student"));
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
@@ -164,7 +197,11 @@ fn rmltc0014a_nested_jsonpath_extracts_deep_field() {
     let s = intern!(ds, iri("http://example.com/Student/10"));
     let p = intern!(ds, iri("http://example.com/name"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("Venus Williams".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── rmltc0015a: rml:iterator selects nested array ────────────────────────────
@@ -180,8 +217,16 @@ fn rmltc0015a_iterator_yields_two_rows() {
     let p = intern!(ds, iri("http://example.com/name"));
     let o10 = ds.add_literal_resource(RdfLiteral::LiteralString("Venus Williams".to_string()));
     let o11 = ds.add_literal_resource(RdfLiteral::LiteralString("Tom Johnson".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s10, predicate: p, obj: o10 }));
-    assert!(ds.contains_triple(&Triple { subject: s11, predicate: p, obj: o11 }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s10,
+        predicate: p,
+        obj: o10
+    }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s11,
+        predicate: p,
+        obj: o11
+    }));
 }
 
 #[test]
@@ -209,6 +254,14 @@ fn jsonl_basic_two_rows_mapped_to_two_subjects() {
     let p = intern!(ds, iri("http://example.com/name"));
     let o10 = ds.add_literal_resource(RdfLiteral::LiteralString("Alice".to_string()));
     let o11 = ds.add_literal_resource(RdfLiteral::LiteralString("Bob".to_string()));
-    assert!(ds.contains_triple(&Triple { subject: s10, predicate: p, obj: o10 }));
-    assert!(ds.contains_triple(&Triple { subject: s11, predicate: p, obj: o11 }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s10,
+        predicate: p,
+        obj: o10
+    }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s11,
+        predicate: p,
+        obj: o11
+    }));
 }
