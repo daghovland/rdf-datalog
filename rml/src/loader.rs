@@ -12,9 +12,14 @@ use crate::ast::{
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RML: &str = "http://w3id.org/rml/";
+const QL: &str = "http://semweb.mmlab.be/ns/ql#";
 
 fn rml(local: &str) -> String {
     format!("{RML}{local}")
+}
+
+fn ql(local: &str) -> String {
+    format!("{QL}{local}")
 }
 
 /// Load an RML mapping from a Turtle file on disk.
@@ -136,7 +141,10 @@ fn extract_logical_source(
         let rf_id = first_obj(ds, ls_id, &rml("referenceFormulation"));
         match rf_id.and_then(|id| get_iri(ds, id)) {
             Some(s) if s == rml("CSV") => ReferenceFormulation::Csv,
-            _ => ReferenceFormulation::Csv, // default
+            Some(s) if s == rml("JSONPath") || s == ql("JSONPath") => {
+                ReferenceFormulation::JsonPath
+            }
+            _ => ReferenceFormulation::Csv,
         }
     };
 

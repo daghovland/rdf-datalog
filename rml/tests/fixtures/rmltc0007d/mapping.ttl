@@ -1,0 +1,20 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.com/TriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "student.json" ;
+        rml:referenceFormulation rml:JSONPath
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{$.id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:age ;
+        rml:objectMap [
+            rml:reference "$.age" ;
+            rml:datatype xsd:integer
+        ]
+    ] .

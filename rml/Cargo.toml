@@ -9,3 +9,8 @@ dag-rdf = { path = "../dag_rdf" }
 turtle = { path = "../turtle" }
 thiserror = "2"
 csv = "1"
+serde_json = "1"
+serde_json_path = "0.7"
+
+[dev-dependencies]
+serde_json = "1"

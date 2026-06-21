@@ -24,6 +24,11 @@ pub enum RmlError {
     },
     #[error("Missing required property {property} on {subject}")]
     MissingProperty { subject: String, property: String },
+    #[error("JSON parse error in {file}: {source}")]
+    Json {
+        file: std::path::PathBuf,
+        source: serde_json::Error,
+    },
 }
 
 pub fn apply_rml_mapping(

@@ -71,6 +71,39 @@ else
     echo ""
 fi
 
+# ── Wikidata N-Triples sample ─────────────────────────────────────────────────
+# Source: https://dumps.wikimedia.org/wikidatawiki/entities/
+# The truthy dump contains the best-rank (truthy) direct property statements.
+# We stream just the first WIKIDATA_LINES lines so the on-disk file stays small.
+# N-Triples is one triple per line, so any line boundary is a safe truncation point.
+WIKIDATA_NT="$DEST/wikidata-sample.nt"
+WIKIDATA_LINES=1000000  # ~1M triples ≈ 80–100 MB uncompressed
+
+if [ -f "$WIKIDATA_NT" ]; then
+    echo "wikidata-sample.nt already present, skipping download."
+else
+    echo "Streaming Wikidata truthy N-Triples dump (first ${WIKIDATA_LINES} lines) …"
+    echo "  Source: https://dumps.wikimedia.org/wikidatawiki/entities/latest-truthy.nt.gz"
+    echo "  (Only the first ${WIKIDATA_LINES} lines are kept; the full dump is many GB.)"
+
+    # head closes the pipe after N lines, which sends SIGPIPE to gzip/curl (exit 141).
+    # That is expected — disable pipefail for this pipeline only.
+    set +o pipefail
+    curl -fL --no-progress-meter \
+        "https://dumps.wikimedia.org/wikidatawiki/entities/latest-truthy.nt.gz" \
+      | gzip -dc 2>/dev/null \
+      | head -n "$WIKIDATA_LINES" > "$WIKIDATA_NT" || true
+    set -o pipefail
+
+    ACTUAL_LINES=$(wc -l < "$WIKIDATA_NT")
+    if [ "$ACTUAL_LINES" -lt 10000 ]; then
+        echo "ERROR: only ${ACTUAL_LINES} lines written — download may have failed."
+        rm -f "$WIKIDATA_NT"
+        exit 1
+    fi
+    echo "wikidata-sample.nt written (${ACTUAL_LINES} lines)."
+fi
+
 echo "Done."
 echo ""
 echo "Run IMF tests (no --ignored needed):"
@@ -78,6 +111,9 @@ echo "  cargo test --test performance imf -- --nocapture"
 echo ""
 echo "Run Gene Ontology tests (still ignored — large file):"
 echo "  cargo test --test performance gene_ontology -- --ignored --nocapture"
+echo ""
+echo "Run Wikidata tests (ignored — large file):"
+echo "  cargo test --test performance wikidata -- --ignored --nocapture"
 echo ""
 echo "Run Gene Ontology benchmarks:"
 echo "  cargo bench --bench gene_ontology"

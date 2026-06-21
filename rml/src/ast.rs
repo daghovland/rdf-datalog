@@ -30,6 +30,7 @@ pub enum LogicalSourceRef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReferenceFormulation {
     Csv,
+    JsonPath,
 }
 
 #[derive(Debug, Clone)]

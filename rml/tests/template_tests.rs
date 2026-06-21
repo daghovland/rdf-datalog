@@ -1,11 +1,8 @@
+use rml::sources::CsvRow;
 use rml::template::{expand_template, percent_encode};
-use std::collections::HashMap;
 
-fn row(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-    pairs
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
+fn row(pairs: &[(&str, &str)]) -> CsvRow {
+    CsvRow(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
 }
 
 // ── IRI mode (encode = true) ──────────────────────────────────────────────────

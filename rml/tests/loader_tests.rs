@@ -21,14 +21,12 @@ const SIMPLE_MAPPING: &str = r#"
 "#;
 
 #[test]
-//#[ignore]
 fn loader_finds_one_triples_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     assert_eq!(doc.triples_maps.len(), 1);
 }
 
 #[test]
-//#[ignore]
 fn loader_sets_csv_reference_formulation() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     assert_eq!(
@@ -38,7 +36,6 @@ fn loader_sets_csv_reference_formulation() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_template_subject_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let tm = &doc.triples_maps[0];
@@ -50,7 +47,6 @@ fn loader_parses_template_subject_map() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_constant_predicate_via_shorthand() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let pom = &doc.triples_maps[0].predicate_object_maps[0];
@@ -61,7 +57,6 @@ fn loader_parses_constant_predicate_via_shorthand() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_reference_object_map() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let pom = &doc.triples_maps[0].predicate_object_maps[0];
@@ -72,7 +67,6 @@ fn loader_parses_reference_object_map() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_class_shorthand() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -100,7 +94,6 @@ fn loader_parses_class_shorthand() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_language_on_object_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -129,7 +122,6 @@ fn loader_parses_language_on_object_map() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_datatype_on_object_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -161,7 +153,6 @@ fn loader_parses_datatype_on_object_map() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_graph_map() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -188,7 +179,6 @@ fn loader_parses_graph_map() {
 }
 
 #[test]
-//#[ignore]
 fn loader_parses_blank_node_term_type() {
     let mapping = r#"
 @prefix rml: <http://w3id.org/rml/> .
@@ -217,7 +207,6 @@ fn loader_parses_blank_node_term_type() {
 }
 
 #[test]
-//#[ignore]
 fn loader_resolves_source_path_string() {
     let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
     let source = &doc.triples_maps[0].logical_source.source;
@@ -227,8 +216,83 @@ fn loader_resolves_source_path_string() {
 }
 
 #[test]
-//#[ignore]
 fn loader_returns_error_on_invalid_turtle() {
     let result = load_mapping_from_str("this is not valid turtle @@@");
     assert!(result.is_err());
+}
+
+// ── JSON reference formulation ────────────────────────────────────────────────
+
+const JSON_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TM>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "data.json" ;
+        rml:referenceFormulation rml:JSONPath ;
+        rml:iterator "$.students[*]"
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{$.id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "$.name" ]
+    ] .
+"#;
+
+const QL_JSON_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ql:  <http://semweb.mmlab.be/ns/ql#> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TM>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "data.json" ;
+        rml:referenceFormulation ql:JSONPath
+    ] ;
+    rml:subjectMap [ rml:constant <http://example.com/S> ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "$.name" ]
+    ] .
+"#;
+
+#[test]
+fn loader_parses_json_reference_formulation() {
+    let doc = load_mapping_from_str(JSON_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.reference_formulation,
+        ReferenceFormulation::JsonPath
+    );
+}
+
+#[test]
+fn loader_parses_ql_jsonpath_alias() {
+    // Dimou-lab ql:JSONPath is treated as an alias for rml:JSONPath.
+    let doc = load_mapping_from_str(QL_JSON_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.reference_formulation,
+        ReferenceFormulation::JsonPath
+    );
+}
+
+#[test]
+fn loader_parses_iterator_string() {
+    let doc = load_mapping_from_str(JSON_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.iterator.as_deref(),
+        Some("$.students[*]")
+    );
+}
+
+#[test]
+fn loader_parses_jsonpath_reference() {
+    // rml:reference "$.name" in a JSON mapping → TermMap::Reference("$.name")
+    let doc = load_mapping_from_str(JSON_MAPPING).unwrap();
+    let obj = &doc.triples_maps[0].predicate_object_maps[0].object_maps[0];
+    assert_eq!(obj.term_map, TermMap::Reference("$.name".to_string()));
 }
