@@ -1,0 +1,21 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/StudentMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "rml_students.json" ;
+        rml:referenceFormulation rml:JSONPath
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{$.id}" ;
+        rml:class ex:Student
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "$.name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:enrolledYear ;
+        rml:objectMap [ rml:reference "$.enrolled" ]
+    ] .
