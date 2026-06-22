@@ -11,6 +11,7 @@ use crate::plan::{
 use crate::sources::SourceRow;
 use crate::sources::csv::CsvSource;
 use crate::sources::json::JsonSource;
+use crate::sources::xml::XmlSource;
 use crate::template::expand_template;
 
 pub fn execute(
@@ -46,6 +47,16 @@ fn execute_plan(plan: &LogicalPlan, base_dir: &Path, ds: &mut Datastore) -> Resu
         }
         ReferenceFormulation::JsonPath => {
             let mut source = JsonSource::new(path);
+            if let Some(iter) = &scan.iterator {
+                source = source.with_iterator(iter.clone());
+            }
+            for row_result in source.rows() {
+                let row = row_result?;
+                execute_row(proj, &row, ds)?;
+            }
+        }
+        ReferenceFormulation::XPath => {
+            let mut source = XmlSource::new(path);
             if let Some(iter) = &scan.iterator {
                 source = source.with_iterator(iter.clone());
             }

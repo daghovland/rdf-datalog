@@ -296,3 +296,79 @@ fn loader_parses_jsonpath_reference() {
     let obj = &doc.triples_maps[0].predicate_object_maps[0].object_maps[0];
     assert_eq!(obj.term_map, TermMap::Reference("$.name".to_string()));
 }
+
+// ── XPath reference formulation ───────────────────────────────────────────────
+
+const XML_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TM>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "data.xml" ;
+        rml:referenceFormulation rml:XPath ;
+        rml:iterator "/students/student"
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{@id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .
+"#;
+
+const QL_XML_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ql:  <http://semweb.mmlab.be/ns/ql#> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TM>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "data.xml" ;
+        rml:referenceFormulation ql:XPath
+    ] ;
+    rml:subjectMap [ rml:constant <http://example.com/S> ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .
+"#;
+
+#[test]
+fn loader_parses_xpath_reference_formulation() {
+    let doc = load_mapping_from_str(XML_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.reference_formulation,
+        ReferenceFormulation::XPath
+    );
+}
+
+#[test]
+fn loader_parses_ql_xpath_alias() {
+    // Dimou-lab ql:XPath is treated as an alias for rml:XPath.
+    let doc = load_mapping_from_str(QL_XML_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.reference_formulation,
+        ReferenceFormulation::XPath
+    );
+}
+
+#[test]
+fn loader_parses_xml_iterator() {
+    let doc = load_mapping_from_str(XML_MAPPING).unwrap();
+    assert_eq!(
+        doc.triples_maps[0].logical_source.iterator.as_deref(),
+        Some("/students/student")
+    );
+}
+
+#[test]
+fn loader_parses_xpath_reference() {
+    // rml:reference "name" in an XML mapping → TermMap::Reference("name")
+    let doc = load_mapping_from_str(XML_MAPPING).unwrap();
+    let obj = &doc.triples_maps[0].predicate_object_maps[0].object_maps[0];
+    assert_eq!(obj.term_map, TermMap::Reference("name".to_string()));
+}

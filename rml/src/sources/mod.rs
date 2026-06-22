@@ -1,5 +1,6 @@
 pub mod csv;
 pub mod json;
+pub mod xml;
 
 use std::collections::HashMap;
 

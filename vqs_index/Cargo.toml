@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
+sparql-parser = { path = "../sparql_parser" }
 
 [dev-dependencies]
 turtle = { path = "../turtle" }

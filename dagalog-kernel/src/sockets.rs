@@ -315,6 +315,17 @@ async fn handle_shell_message(
         }
     };
 
+    eprintln!(
+        "dagalog-kernel: shell message: {}",
+        msg.header.msg_type
+    );
+
+    // Per Jupyter protocol, every request must be bracketed by
+    // status: busy (before) and status: idle (after) on IOPub.
+    // The nudge() waits for BOTH a shell reply AND at least one IOPub
+    // message, so omitting these means the kernel never appears "ready".
+    let _ = send_status(iopub, "busy", &msg.header, key).await;
+
     match msg.header.msg_type.as_str() {
         "kernel_info_request" => {
             let _ = shell_reply(
@@ -343,8 +354,11 @@ async fn handle_shell_message(
         "execute_request" => {
             let code = msg.content["code"].as_str().unwrap_or("").to_string();
             let silent = msg.content["silent"].as_bool().unwrap_or(false);
+            // handle_execute manages its own busy/idle around the cell execution.
+            let _ = send_status(iopub, "idle", &msg.header, key).await;
             let _ =
                 handle_execute(shell, iopub, session, key, &ids, &msg.header, &code, silent).await;
+            return false;
         }
         "is_complete_request" => {
             let _ = shell_reply(
@@ -368,12 +382,15 @@ async fn handle_shell_message(
                 key,
             )
             .await;
+            let _ = send_status(iopub, "idle", &msg.header, key).await;
             return true;
         }
         other => {
-            log::debug!("unhandled shell message type: {other}");
+            eprintln!("dagalog-kernel: unhandled shell message type: {other}");
         }
     }
+
+    let _ = send_status(iopub, "idle", &msg.header, key).await;
     false
 }
 
@@ -394,7 +411,34 @@ async fn handle_control_message(
         }
     };
 
+    eprintln!("dagalog-kernel: control message: {}", msg.header.msg_type);
+
     match msg.header.msg_type.as_str() {
+        "kernel_info_request" => {
+            let _ = shell_reply(
+                control,
+                &ids,
+                "kernel_info_reply",
+                &msg.header,
+                serde_json::json!({
+                    "status": "ok",
+                    "protocol_version": "5.3",
+                    "implementation": "dagalog",
+                    "implementation_version": "0.1.0",
+                    "language_info": {
+                        "name": "sparql",
+                        "version": "1.2",
+                        "file_extension": ".rq",
+                        "mimetype": "application/sparql-query"
+                    },
+                    "banner": "Dagalog SPARQL+RDF kernel 0.1.0",
+                    "help_links": []
+                }),
+                key,
+            )
+            .await;
+            false
+        }
         "shutdown_request" => {
             let restart = msg.content["restart"].as_bool().unwrap_or(false);
             let _ = shell_reply(
@@ -409,7 +453,7 @@ async fn handle_control_message(
             true
         }
         other => {
-            log::debug!("unhandled control message type: {other}");
+            eprintln!("dagalog-kernel: unhandled control message type: {other}");
             false
         }
     }
@@ -495,6 +539,13 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
     let _ = send_status(&mut iopub, "starting", &empty, &key).await;
     let _ = send_status(&mut iopub, "idle", &empty, &key).await;
 
+    // SIGINT handler: Jupyter sends SIGINT to interrupt a running cell.
+    // Without catching it, the OS default kills our process immediately.
+    // We consume each SIGINT in the select loop so the kernel stays alive.
+    let mut sigint =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .map_err(|e| format!("SIGINT handler: {e}"))?;
+
     loop {
         tokio::select! {
             result = shell.recv() => {
@@ -524,6 +575,11 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
                         break;
                     }
                 }
+            }
+            // Consume SIGINT without exiting. Jupyter uses SIGINT to interrupt
+            // long-running cells; the kernel must survive and remain available.
+            _ = sigint.recv() => {
+                eprintln!("dagalog-kernel: SIGINT received (interrupt)");
             }
         }
     }

@@ -3483,6 +3483,7 @@ version = "0.1.0"
 dependencies = [
  "dag-rdf",
  "ingress",
+ "sparql-parser",
  "turtle",
 ]
 

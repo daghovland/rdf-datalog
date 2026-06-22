@@ -16,6 +16,12 @@ Contact: hovlanddag@gmail.com
 //! values would make a partially-formed SPARQL query return no results, without
 //! firing expensive live SPARQL queries after each user interaction.
 
+pub mod basic_counts;
+pub mod config_query;
+pub mod config_set;
+pub mod estimators;
 pub mod navigation_graph;
+pub mod search;
 
+pub use basic_counts::{BasicCounts, Histogram, NavStats};
 pub use navigation_graph::{NavEdgeId, NavGraph, NavNodeId, NavNodeKind};

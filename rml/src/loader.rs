@@ -144,6 +144,7 @@ fn extract_logical_source(
             Some(s) if s == rml("JSONPath") || s == ql("JSONPath") => {
                 ReferenceFormulation::JsonPath
             }
+            Some(s) if s == rml("XPath") || s == ql("XPath") => ReferenceFormulation::XPath,
             _ => ReferenceFormulation::Csv,
         }
     };

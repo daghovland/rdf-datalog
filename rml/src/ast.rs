@@ -31,6 +31,7 @@ pub enum LogicalSourceRef {
 pub enum ReferenceFormulation {
     Csv,
     JsonPath,
+    XPath,
 }
 
 #[derive(Debug, Clone)]

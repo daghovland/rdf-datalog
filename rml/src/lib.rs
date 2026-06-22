@@ -29,6 +29,11 @@ pub enum RmlError {
         file: std::path::PathBuf,
         source: serde_json::Error,
     },
+    #[error("XML parse error in {file}: {source}")]
+    Xml {
+        file: std::path::PathBuf,
+        source: sxd_document::parser::Error,
+    },
 }
 
 pub fn apply_rml_mapping(
