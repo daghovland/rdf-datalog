@@ -445,7 +445,10 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
         .await
         .map_err(|e| format!("control bind: {e}"))?;
 
-    let mut hb = zeromq::RepSocket::new();
+    // Heartbeat: use RouterSocket because RepSocket's strict 2-frame check rejects
+    // bare pings sent by some versions of Python's zmq.REQ. A Router echoes the full
+    // multipart frame including the routing identity, which REQ strips on receipt.
+    let mut hb = zeromq::RouterSocket::new();
     hb.bind(&addr(conn.hb_port))
         .await
         .map_err(|e| format!("heartbeat bind: {e}"))?;
@@ -460,8 +463,19 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
 
     // Heartbeat: echo every ping immediately.
     tokio::spawn(async move {
-        while let Ok(msg) = hb.recv().await {
-            let _ = hb.send(msg).await;
+        eprintln!("dagalog-kernel: heartbeat task started");
+        loop {
+            match hb.recv().await {
+                Ok(msg) => {
+                    // Router prepends peer identity; echo the whole thing back so the
+                    // Router can route the reply to the right peer.
+                    let _ = hb.send(msg).await;
+                }
+                Err(e) => {
+                    eprintln!("dagalog-kernel: heartbeat recv error: {e}");
+                    // keep looping — transient errors should not kill the heartbeat
+                }
+            }
         }
     });
 
@@ -475,7 +489,9 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
         version: "5.3".to_string(),
     };
 
-    // Signal readiness.
+    eprintln!("dagalog-kernel: all sockets bound, entering message loop");
+
+    // Startup status — may be missed by late subscribers but harmless.
     let _ = send_status(&mut iopub, "starting", &empty, &key).await;
     let _ = send_status(&mut iopub, "idle", &empty, &key).await;
 
@@ -491,7 +507,7 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
                         if shutdown { break; }
                     }
                     Err(e) => {
-                        log::warn!("shell recv error: {e}");
+                        eprintln!("dagalog-kernel: shell recv error: {e}");
                         break;
                     }
                 }
@@ -504,7 +520,7 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
                         if shutdown { break; }
                     }
                     Err(e) => {
-                        log::warn!("control recv error: {e}");
+                        eprintln!("dagalog-kernel: control recv error: {e}");
                         break;
                     }
                 }
