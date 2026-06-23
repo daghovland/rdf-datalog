@@ -54,7 +54,10 @@ async fn productive_ages_returned_for_covered_property() {
     assert_eq!(body["covered"], true);
     let values = body["values"].as_array().expect("values must be an array");
     assert_eq!(values.len(), 2, "alice and bob both have an age");
-    let ages: Vec<&str> = values.iter().map(|v| v["value"].as_str().unwrap()).collect();
+    let ages: Vec<&str> = values
+        .iter()
+        .map(|v| v["value"].as_str().unwrap())
+        .collect();
     assert!(ages.contains(&"30"));
     assert!(ages.contains(&"25"));
 }

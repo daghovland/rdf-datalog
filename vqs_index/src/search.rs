@@ -22,10 +22,10 @@ Contact: hovlanddag@gmail.com
 //! A **query log** here is a list of `(weight, Vec<NavEdgeId>)` pairs, where
 //! each edge sequence represents one observed query path (root → leaf).
 
+use crate::basic_counts::NavStats;
 use crate::config_query::ConfigQuery;
 use crate::estimators::{est_ans_p, est_cost_single};
 use crate::navigation_graph::{NavEdgeId, NavGraph};
-use crate::basic_counts::NavStats;
 
 /// A single step in a search trace: one config query with its estimated cost.
 #[derive(Debug, Clone)]
@@ -43,14 +43,12 @@ pub type QueryLog = Vec<(f64, Vec<NavEdgeId>)>;
 ///
 /// Each successor extends one existing node by one of its outgoing edges in N.
 /// The query-log constraint limits expansions to edges actually seen in `log`.
-pub fn successors(
-    config: &ConfigQuery,
-    nav: &NavGraph,
-    log: &QueryLog,
-) -> Vec<ConfigQuery> {
+pub fn successors(config: &ConfigQuery, nav: &NavGraph, log: &QueryLog) -> Vec<ConfigQuery> {
     // Collect edge IRIs seen in the query log.
-    let log_edges: std::collections::HashSet<NavEdgeId> =
-        log.iter().flat_map(|(_, path)| path.iter().copied()).collect();
+    let log_edges: std::collections::HashSet<NavEdgeId> = log
+        .iter()
+        .flat_map(|(_, path)| path.iter().copied())
+        .collect();
 
     let mut result = Vec::new();
     for parent_idx in 0..config.nodes.len() {
@@ -117,7 +115,11 @@ pub fn est_precision_log(
             // extension not covered: use class count as worst case
             *stats.counts.class_count.get(&root_class).unwrap_or(&0) as f64
         };
-        let prec = if ans_qs == 0.0 { 1.0 } else { (ans_qe / ans_qs).min(1.0) };
+        let prec = if ans_qs == 0.0 {
+            1.0
+        } else {
+            (ans_qe / ans_qs).min(1.0)
+        };
         weighted_sum += weight * prec;
     }
     weighted_sum / total_weight
@@ -130,11 +132,7 @@ pub fn est_precision_log(
 /// Starts with one root-only config per class in the query log, then adds
 /// edges in decreasing order of query-log frequency.  Never evaluates cost
 /// or precision — purely frequency-driven.
-pub fn greedy_query_weight(
-    nav: &NavGraph,
-    log: &QueryLog,
-    max_steps: usize,
-) -> Vec<SearchStep> {
+pub fn greedy_query_weight(nav: &NavGraph, log: &QueryLog, max_steps: usize) -> Vec<SearchStep> {
     // Edge frequency in the log.
     let mut edge_weight: std::collections::HashMap<NavEdgeId, f64> =
         std::collections::HashMap::new();
@@ -166,7 +164,9 @@ pub fn greedy_query_weight(
             break;
         }
         let src = nav.edge(*eid).src;
-        let config = configs.entry(src).or_insert_with(|| ConfigQuery::root_only(src));
+        let config = configs
+            .entry(src)
+            .or_insert_with(|| ConfigQuery::root_only(src));
         // Extend the node whose nav_node matches edge src (first match).
         let parent_idx = config
             .nodes
@@ -208,7 +208,9 @@ pub fn random_search(
     let mut rng = seed;
     let mut edges = log_edges;
     for i in (1..edges.len()).rev() {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let j = (rng >> 33) as usize % (i + 1);
         edges.swap(i, j);
     }
@@ -226,7 +228,9 @@ pub fn random_search(
     let mut steps = Vec::new();
     for &eid in edges.iter().take(max_steps) {
         let src = nav.edge(eid).src;
-        let config = configs.entry(src).or_insert_with(|| ConfigQuery::root_only(src));
+        let config = configs
+            .entry(src)
+            .or_insert_with(|| ConfigQuery::root_only(src));
         let parent_idx = config
             .nodes
             .iter()
@@ -369,7 +373,9 @@ pub fn exploratory(
             .max_by(|a, b| {
                 let score_a = lookahead_score(a, nav, stats, log, lookahead, &mut rng);
                 let score_b = lookahead_score(b, nav, stats, log, lookahead, &mut rng);
-                score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+                score_a
+                    .partial_cmp(&score_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
 
         let Some(best) = best else { break };
@@ -382,7 +388,10 @@ pub fn exploratory(
             current.push(best.clone());
         }
 
-        steps.push(SearchStep { config: best, est_cost: cost });
+        steps.push(SearchStep {
+            config: best,
+            est_cost: cost,
+        });
     }
     steps
 }
@@ -402,7 +411,9 @@ fn lookahead_score(
     }
     // Sample `lookahead` random successors, take the best.
     for i in (1..succs.len()).rev().take(lookahead) {
-        *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let j = (*rng >> 33) as usize % (i + 1);
         succs.swap(i, j);
     }
@@ -433,9 +444,24 @@ mod tests {
         g.add_data_property("http://example.org/name", person, xsd_str);
         g.add_data_property("http://example.org/population", country, xsd_int);
         g.add_data_property("http://example.org/name", country, xsd_str);
-        g.add_object_property("http://example.org/visited", person, country, "http://example.org/visitedBy");
-        g.add_object_property("http://example.org/knows", person, person, "http://example.org/knows");
-        g.add_object_property("http://example.org/borders", country, country, "http://example.org/borders");
+        g.add_object_property(
+            "http://example.org/visited",
+            person,
+            country,
+            "http://example.org/visitedBy",
+        );
+        g.add_object_property(
+            "http://example.org/knows",
+            person,
+            person,
+            "http://example.org/knows",
+        );
+        g.add_object_property(
+            "http://example.org/borders",
+            country,
+            country,
+            "http://example.org/borders",
+        );
         g
     }
 
@@ -463,14 +489,21 @@ mod tests {
     fn simple_log(nav: &NavGraph) -> QueryLog {
         // Two queries: Person→age and Person→name (both weighted equally)
         let person_id = nav.node_by_iri("http://example.org/Person").unwrap();
-        let age_eid = nav.outgoing_edges(person_id).iter()
-            .map(|&id| nav.edge(id)).find(|e| e.iri == "http://example.org/age").unwrap().id;
-        let name_eid = nav.outgoing_edges(person_id).iter()
-            .map(|&id| nav.edge(id)).find(|e| e.iri == "http://example.org/name").unwrap().id;
-        vec![
-            (1.0, vec![age_eid]),
-            (1.0, vec![name_eid]),
-        ]
+        let age_eid = nav
+            .outgoing_edges(person_id)
+            .iter()
+            .map(|&id| nav.edge(id))
+            .find(|e| e.iri == "http://example.org/age")
+            .unwrap()
+            .id;
+        let name_eid = nav
+            .outgoing_edges(person_id)
+            .iter()
+            .map(|&id| nav.edge(id))
+            .find(|e| e.iri == "http://example.org/name")
+            .unwrap()
+            .id;
+        vec![(1.0, vec![age_eid]), (1.0, vec![name_eid])]
     }
 
     /// GreedyQueryWeight produces at least one step for a non-empty log.
@@ -506,7 +539,8 @@ mod tests {
             assert!(
                 precisions[i] >= precisions[i - 1] - 1e-9,
                 "precision should not decrease: step {i}: {} < {}",
-                precisions[i], precisions[i-1]
+                precisions[i],
+                precisions[i - 1]
             );
         }
     }
@@ -531,7 +565,10 @@ mod tests {
         let log = simple_log(&nav);
         // Run greedy precision to completion (all log edges).
         let gp_steps = greedy_precision(&nav, &stats, &log, 20, None);
-        assert!(!gp_steps.is_empty(), "greedy precision must produce at least one step");
+        assert!(
+            !gp_steps.is_empty(),
+            "greedy precision must produce at least one step"
+        );
         let gp_prec = est_precision_log(&gp_steps.last().unwrap().config, &nav, &stats, &log);
         // Greedy precision should achieve better precision than an empty config (0.0).
         assert!(

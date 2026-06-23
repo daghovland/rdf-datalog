@@ -91,10 +91,7 @@ impl ConfigQuery {
     /// (which we translate to ω in the index rows).
     pub fn to_sparql_optional(&self, nav: &NavGraph) -> String {
         let root_class_iri = &nav.node(self.nodes[0].nav_node).iri;
-        let mut out = format!(
-            "SELECT * WHERE {{\n  ?v0 a <{}> .\n",
-            root_class_iri
-        );
+        let mut out = format!("SELECT * WHERE {{\n  ?v0 a <{}> .\n", root_class_iri);
         self.write_node_sparql(0, nav, &mut out);
         out.push_str("}\n");
         out
@@ -278,7 +275,7 @@ impl IndexTable {
 /// Literal → `IndexCell::Value(GraphElement::GraphLiteral(...))`.
 /// IRI/blank → `IndexCell::Value(GraphElement::NodeOrEdge(...))`.
 fn execute_optional_sparql(sparql: &str, ds: &Datastore, n: usize) -> Vec<IndexRow> {
-    use sparql_parser::{execute, parse_query, ParserContext, QueryResult};
+    use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
     use std::collections::HashMap as HM;
 
     let mut ctx = ParserContext {
@@ -349,9 +346,9 @@ fn is_subfunction(phi: &IndexRow, phi_prime: &IndexRow) -> bool {
     if phi == phi_prime {
         return false; // identical rows are not strict sub-functions
     }
-    phi.iter().zip(phi_prime.iter()).all(|(a, b)| {
-        a == &IndexCell::Null || a == b
-    })
+    phi.iter()
+        .zip(phi_prime.iter())
+        .all(|(a, b)| a == &IndexCell::Null || a == b)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -537,20 +534,29 @@ mod tests {
     fn subfunction_detection() {
         let full = vec![
             IndexCell::Exists,
-            IndexCell::Value(GraphElement::GraphLiteral(dag_rdf::RdfLiteral::LiteralString(
-                "Alice".to_string(),
-            ))),
+            IndexCell::Value(GraphElement::GraphLiteral(
+                dag_rdf::RdfLiteral::LiteralString("Alice".to_string()),
+            )),
         ];
         let partial = vec![IndexCell::Null, IndexCell::Null];
         let other = vec![
             IndexCell::Exists,
-            IndexCell::Value(GraphElement::GraphLiteral(dag_rdf::RdfLiteral::LiteralString(
-                "Bob".to_string(),
-            ))),
+            IndexCell::Value(GraphElement::GraphLiteral(
+                dag_rdf::RdfLiteral::LiteralString("Bob".to_string()),
+            )),
         ];
 
-        assert!(is_subfunction(&partial, &full), "all-null is subfunction of full");
-        assert!(!is_subfunction(&full, &partial), "full is not subfunction of all-null");
-        assert!(!is_subfunction(&full, &other), "different values — not subfunction");
+        assert!(
+            is_subfunction(&partial, &full),
+            "all-null is subfunction of full"
+        );
+        assert!(
+            !is_subfunction(&full, &partial),
+            "full is not subfunction of all-null"
+        );
+        assert!(
+            !is_subfunction(&full, &other),
+            "different values — not subfunction"
+        );
     }
 }

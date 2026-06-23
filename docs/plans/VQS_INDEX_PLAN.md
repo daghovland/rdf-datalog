@@ -1,5 +1,12 @@
 # VQS Productive-Extension Index — Implementation Plan
 
+**Status: Phases 0–7 complete.** The `vqs_index` crate implements the navigation graph,
+basic counts, configuration queries/index, reference configurations, cost/precision
+estimators, search methods, and query-log transformation. `sparql_endpoint` exposes
+`GET /vqs/productive-values?class=<IRI>&property=<IRI>`. See the per-phase notes below
+for where the implementation diverged from this plan. **The frontend query builder does
+not call this endpoint yet** — see `docs/plans/QUERY_BUILDER_PLAN.md`.
+
 Based on:
 > Klungre, V.N., Soylu, A., Giese, M. — "Avoiding unproductive SPARQL queries through
 > optimized indices", *World Wide Web* 29:32 (2026).
@@ -314,6 +321,15 @@ Tests:
 - A synthetic log of 10 queries, including one UNION and one cyclic query: verify
   correct counts after transformation.
 
+**Implemented as:** `vqs_index/src/query_log.rs`, `transform_query_log(raw, nav) -> QueryLog`.
+Reuses `search.rs`'s existing `QueryLog = Vec<(f64, Vec<NavEdgeId>)>` (root→leaf edge paths)
+rather than introducing a separate `TypedQuery` tree type, since nothing downstream consumes
+a richer structure. One extension case is emitted per data-edge leaf in each query's
+variable tree. Known simplifications: `FILTER`/`BIND`/`VALUES`/`MINUS`/`GRAPH`/`SERVICE`/
+subqueries contribute no triples (only `BGP`/`OPTIONAL` bodies are scanned); ambiguous
+predicate→edge matches (same property IRI on multiple domain classes) resolve to the first
+match in `NavGraph::edges()` order, with no type-aware disambiguation. 9 tests, all green.
+
 ---
 
 ## Phase 7 — Integration with the query builder
@@ -336,6 +352,16 @@ The endpoint:
 
 Index persistence: serialize `IndexTable`s to a binary file (e.g. using `bincode` or
 `postcard`) so they don't need to be rebuilt on each server restart.
+
+**Implemented as:** `GET /vqs/productive-values?class=<IRI>&property=<IRI>` in
+`sparql_endpoint/src/vqs_routes.rs` — a `GET` with query params instead of the `POST`
+with a partial-query body sketched above, since the current frontend has no caller yet
+and a simple class/property lookup against the **Wld** reference configuration
+(`ConfigSet::w_local_data_only`) covers today's use case. No offline persistence: the
+`NavGraph` + `ConfigSet` are rebuilt in-memory and cached per dataset, keyed on the
+`Datastore` generation counter (already used for HTTP ETags), invalidating automatically
+on writes. Revisit persistence/`bincode` if rebuild cost becomes a problem at larger
+dataset sizes.
 
 ---
 

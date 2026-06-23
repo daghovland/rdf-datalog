@@ -232,12 +232,7 @@ impl NavGraph {
 
     /// Add a data property edge `src -[iri]-> tgt` where `tgt` is a datatype.
     /// Data edges have no inverse.  Returns the edge id.
-    pub fn add_data_property(
-        &mut self,
-        iri: &str,
-        src: NavNodeId,
-        tgt: NavNodeId,
-    ) -> NavEdgeId {
+    pub fn add_data_property(&mut self, iri: &str, src: NavNodeId, tgt: NavNodeId) -> NavEdgeId {
         let id = self.edges.len() as NavEdgeId;
         self.edges.push(NavEdge {
             id,
@@ -564,7 +559,9 @@ mod tests {
 
         let g = NavGraph::from_datastore(&ds);
 
-        let person = g.node_by_iri("http://example.org/Person").expect("Person class");
+        let person = g
+            .node_by_iri("http://example.org/Person")
+            .expect("Person class");
         let integer = g
             .node_by_iri("http://www.w3.org/2001/XMLSchema#integer")
             .expect("xsd:integer datatype");

@@ -224,7 +224,11 @@ mod tests {
         let wrd = ConfigSet::w_property_data_only(&nav, &ds);
 
         let data_edge_count = nav.data_edges().count();
-        assert_eq!(wrd.tables.len(), data_edge_count, "Wrd has one table per data edge");
+        assert_eq!(
+            wrd.tables.len(),
+            data_edge_count,
+            "Wrd has one table per data edge"
+        );
         // Wr has data edges + forward object edges (visited, knows, borders — 3 object props)
         assert!(
             wr.tables.len() >= data_edge_count,

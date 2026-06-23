@@ -86,7 +86,12 @@ pub async fn productive_values(
     let cache = state.vqs_cache.read().await;
     let cache = cache.as_ref().expect("just rebuilt or already fresh");
 
-    match find_productive_values(&cache.config_set, &cache.nav, &params.class, &params.property) {
+    match find_productive_values(
+        &cache.config_set,
+        &cache.nav,
+        &params.class,
+        &params.property,
+    ) {
         Some(values) => Json(json!({
             "covered": true,
             "values": values.iter().map(graph_element_to_json).collect::<Vec<_>>(),

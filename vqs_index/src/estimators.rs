@@ -34,11 +34,7 @@ pub fn branching_factor(edge: NavEdgeId, nav: &NavGraph, stats: &NavStats) -> f6
     let src_class = nav.edge(edge).src;
     let ce = *stats.counts.edge_count.get(&edge).unwrap_or(&0) as f64;
     let cc = *stats.counts.class_count.get(&src_class).unwrap_or(&0) as f64;
-    if cc == 0.0 {
-        0.0
-    } else {
-        ce / cc
-    }
+    if cc == 0.0 { 0.0 } else { ce / cc }
 }
 
 /// Estimate |ans(Q, D)| for a filterless configuration query Q (paper §4.4.3).
@@ -111,21 +107,24 @@ fn expansion_factor(
     if node.children.is_empty() {
         return 1.0;
     }
-    node.children.iter().map(|&child_idx| {
-        let child_node = &config.nodes[child_idx];
-        let eid = child_node.parent_edge.unwrap();
-        let src_class = nav.edge(eid).src;
+    node.children
+        .iter()
+        .map(|&child_idx| {
+            let child_node = &config.nodes[child_idx];
+            let eid = child_node.parent_edge.unwrap();
+            let src_class = nav.edge(eid).src;
 
-        let ce = *stats.counts.edge_count.get(&eid).unwrap_or(&0) as f64;
-        let ces = *stats.counts.edge_src_count.get(&eid).unwrap_or(&0) as f64;
-        let cc = *stats.counts.class_count.get(&src_class).unwrap_or(&0) as f64;
+            let ce = *stats.counts.edge_count.get(&eid).unwrap_or(&0) as f64;
+            let ces = *stats.counts.edge_src_count.get(&eid).unwrap_or(&0) as f64;
+            let cc = *stats.counts.class_count.get(&src_class).unwrap_or(&0) as f64;
 
-        let p = if cc > 0.0 { ces / cc } else { 0.0 };
-        let avg_expand = if ces > 0.0 { ce / ces } else { 0.0 };
+            let p = if cc > 0.0 { ces / cc } else { 0.0 };
+            let avg_expand = if ces > 0.0 { ce / ces } else { 0.0 };
 
-        let m_vc = expansion_factor(child_idx, config, nav, stats);
-        (1.0 - p) + p * avg_expand * m_vc
-    }).product()
+            let m_vc = expansion_factor(child_idx, config, nav, stats);
+            (1.0 - p) + p * avg_expand * m_vc
+        })
+        .product()
 }
 
 /// Estimate |ans^E(Z, D)| — compressed index cardinality (paper §4.4.7).
@@ -163,7 +162,9 @@ fn possible_assignments(
         *stats.counts.edge_tgt_count.get(&eid).unwrap_or(&0) as f64 + 1.0
     } else {
         // object variable: 1 (ω) + Π_{children} d_vc
-        1.0 + node.children.iter()
+        1.0 + node
+            .children
+            .iter()
             .map(|&ci| possible_assignments(ci, config, nav, stats))
             .product::<f64>()
     }
@@ -193,7 +194,12 @@ pub fn est_precision_case(
     stats: &NavStats,
 ) -> f64 {
     let ans_qe = est_ans_p(ext_config, ext_node, nav, stats);
-    let ans_qs = est_ans_p(pruned_config, pruned_config.variable_count() - 1, nav, stats);
+    let ans_qs = est_ans_p(
+        pruned_config,
+        pruned_config.variable_count() - 1,
+        nav,
+        stats,
+    );
     if ans_qs == 0.0 {
         return 1.0; // no suggestions → precision vacuously 1
     }
@@ -220,9 +226,24 @@ mod tests {
         g.add_data_property("http://example.org/name", person, xsd_str);
         g.add_data_property("http://example.org/population", country, xsd_int);
         g.add_data_property("http://example.org/name", country, xsd_str);
-        g.add_object_property("http://example.org/visited", person, country, "http://example.org/visitedBy");
-        g.add_object_property("http://example.org/knows", person, person, "http://example.org/knows");
-        g.add_object_property("http://example.org/borders", country, country, "http://example.org/borders");
+        g.add_object_property(
+            "http://example.org/visited",
+            person,
+            country,
+            "http://example.org/visitedBy",
+        );
+        g.add_object_property(
+            "http://example.org/knows",
+            person,
+            person,
+            "http://example.org/knows",
+        );
+        g.add_object_property(
+            "http://example.org/borders",
+            country,
+            country,
+            "http://example.org/borders",
+        );
         g
     }
 
@@ -250,10 +271,13 @@ mod tests {
     fn person_age_config(nav: &NavGraph) -> (ConfigQuery, usize) {
         let person_id = nav.node_by_iri("http://example.org/Person").unwrap();
         let mut z = ConfigQuery::root_only(person_id);
-        let age_edge = nav.outgoing_edges(person_id).iter()
+        let age_edge = nav
+            .outgoing_edges(person_id)
+            .iter()
             .map(|&id| nav.edge(id))
             .find(|e| e.iri == "http://example.org/age")
-            .unwrap().id;
+            .unwrap()
+            .id;
         let age_node = z.extend(0, age_edge, nav);
         (z, age_node)
     }
@@ -263,10 +287,13 @@ mod tests {
     fn branching_factor_age_is_one() {
         let (nav, stats) = figure3_stats();
         let person_id = nav.node_by_iri("http://example.org/Person").unwrap();
-        let age_eid = nav.outgoing_edges(person_id).iter()
+        let age_eid = nav
+            .outgoing_edges(person_id)
+            .iter()
             .map(|&id| nav.edge(id))
             .find(|e| e.iri == "http://example.org/age")
-            .unwrap().id;
+            .unwrap()
+            .id;
         let bf = branching_factor(age_eid, &nav, &stats);
         assert!((bf - 1.0).abs() < 1e-9, "bf(age) = {bf}");
     }
@@ -318,8 +345,14 @@ mod tests {
         let (nav, stats) = figure3_stats();
         let (config, _) = person_age_config(&nav);
         let ans_e = est_ans_e(&config, &nav, &stats);
-        assert!(ans_e > 0.0, "ãns^E should be positive for non-empty dataset");
-        assert!(ans_e <= 7.0, "ãns^E should not greatly exceed C_et, got {ans_e}");
+        assert!(
+            ans_e > 0.0,
+            "ãns^E should be positive for non-empty dataset"
+        );
+        assert!(
+            ans_e <= 7.0,
+            "ãns^E should not greatly exceed C_et, got {ans_e}"
+        );
     }
 
     /// Empty dataset: all estimates are 0.
@@ -331,10 +364,13 @@ mod tests {
         let person_id = nav.node_by_iri("http://example.org/Person").unwrap();
         let (config, age_node) = {
             let mut z = ConfigQuery::root_only(person_id);
-            let age_eid = nav.outgoing_edges(person_id).iter()
+            let age_eid = nav
+                .outgoing_edges(person_id)
+                .iter()
                 .map(|&id| nav.edge(id))
                 .find(|e| e.iri == "http://example.org/age")
-                .unwrap().id;
+                .unwrap()
+                .id;
             let an = z.extend(0, age_eid, &nav);
             (z, an)
         };

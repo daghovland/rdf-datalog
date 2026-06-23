@@ -54,6 +54,23 @@ filter types or discovery queries.
 
 ---
 
+## VQS productive-extension index (backend, not yet wired to the UI)
+
+`GET /vqs/productive-values?class=<IRI>&property=<IRI>` (see `sparql_endpoint/src/vqs_routes.rs`)
+returns the productive values of a data property for instances of a class, computed from a
+precomputed index instead of a live SPARQL query. Implemented per
+`docs/plans/VQS_INDEX_PLAN.md` (all 7 phases complete, `vqs_index` crate).
+
+**Not yet called by the frontend.** The builder's data-property filter inputs (Phase 3 above)
+still let the user type any value, even ones that would return zero rows — the dead-end problem
+the VQS paper addresses. Wiring this endpoint in (e.g. to grey out / autocomplete unproductive
+filter values) is unimplemented frontend work, tracked as a future phase here.
+
+Requires `rdfs:domain`/`rdfs:range` declared on the properties being indexed; pure instance data
+with no schema triples yields an empty navigation graph and every lookup reports `covered: false`.
+
+---
+
 ## Running tests
 
 ```bash

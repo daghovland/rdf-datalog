@@ -21,9 +21,11 @@ pub mod config_query;
 pub mod config_set;
 pub mod estimators;
 pub mod navigation_graph;
+pub mod query_log;
 pub mod search;
 
 pub use basic_counts::{BasicCounts, Histogram, NavStats};
 pub use config_query::{ConfigQuery, IndexCell, IndexTable};
 pub use config_set::ConfigSet;
 pub use navigation_graph::{NavEdgeId, NavGraph, NavNodeId, NavNodeKind};
+pub use query_log::{RawLogEntry, transform_query_log};

@@ -209,7 +209,17 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
                 if added == 1 { "" } else { "s" }
             )))
         }
-        CellType::Rml(path) => execute_rml(ds, &path).map(CellOutput::Stream),
+        CellType::Rml(path) => {
+            eprintln!(
+                "dagalog-kernel: rml path = {:?}, cwd = {:?}, exists = {}, canon = {:?}, read = {:?}",
+                path,
+                std::env::current_dir(),
+                path.exists(),
+                path.canonicalize(),
+                std::fs::read_to_string(&path).map(|s| s.len())
+            );
+            execute_rml(ds, &path).map(CellOutput::Stream)
+        }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
             let ontology_doc = rdf_owl_translator::rdf2owl(ds);
@@ -315,10 +325,7 @@ async fn handle_shell_message(
         }
     };
 
-    eprintln!(
-        "dagalog-kernel: shell message: {}",
-        msg.header.msg_type
-    );
+    eprintln!("dagalog-kernel: shell message: {}", msg.header.msg_type);
 
     // Per Jupyter protocol, every request must be bracketed by
     // status: busy (before) and status: idle (after) on IOPub.
@@ -462,6 +469,7 @@ async fn handle_control_message(
 // ── Main kernel entry point ───────────────────────────────────────────────────
 
 pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), String> {
+    eprintln!("dagalog-kernel: cwd = {:?}", std::env::current_dir());
     let json_str = std::fs::read_to_string(connection_file_path)
         .map_err(|e| format!("cannot read connection file: {e}"))?;
     let conn: ConnectionFile =
@@ -542,9 +550,8 @@ pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), St
     // SIGINT handler: Jupyter sends SIGINT to interrupt a running cell.
     // Without catching it, the OS default kills our process immediately.
     // We consume each SIGINT in the select loop so the kernel stays alive.
-    let mut sigint =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-            .map_err(|e| format!("SIGINT handler: {e}"))?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .map_err(|e| format!("SIGINT handler: {e}"))?;
 
     loop {
         tokio::select! {

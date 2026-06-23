@@ -114,9 +114,7 @@ impl NavStats {
                     let dt_iri = &nav.node(edge.tgt).iri;
                     is_literal_of_type(&obj_elem, dt_iri)
                 } else {
-                    typing
-                        .get(&quad.obj)
-                        .is_some_and(|c| c.contains(&edge.tgt))
+                    typing.get(&quad.obj).is_some_and(|c| c.contains(&edge.tgt))
                 };
                 if !tgt_ok {
                     continue;
@@ -360,9 +358,18 @@ mod tests {
             .find(|e| e.iri == "http://example.org/name" && nav.node(e.tgt).iri.contains("string"))
             .expect("person name edge");
 
-        assert_eq!(stats.counts.edge_count[&name_edge.id], 5, "C_e(name/Person)");
-        assert_eq!(stats.counts.edge_src_count[&name_edge.id], 4, "C_es(name/Person)");
-        assert_eq!(stats.counts.edge_tgt_count[&name_edge.id], 5, "C_et(name/Person)");
+        assert_eq!(
+            stats.counts.edge_count[&name_edge.id], 5,
+            "C_e(name/Person)"
+        );
+        assert_eq!(
+            stats.counts.edge_src_count[&name_edge.id], 4,
+            "C_es(name/Person)"
+        );
+        assert_eq!(
+            stats.counts.edge_tgt_count[&name_edge.id], 5,
+            "C_et(name/Person)"
+        );
     }
 
     /// Object edge `visited` (Person → Country): P1 and P2 visited Belgium → C_e=2, C_es=2, C_et=1.
@@ -381,8 +388,14 @@ mod tests {
             .expect("visited edge");
 
         assert_eq!(stats.counts.edge_count[&visited_edge.id], 2, "C_e(visited)");
-        assert_eq!(stats.counts.edge_src_count[&visited_edge.id], 2, "C_es(visited)");
-        assert_eq!(stats.counts.edge_tgt_count[&visited_edge.id], 1, "C_et(visited)");
+        assert_eq!(
+            stats.counts.edge_src_count[&visited_edge.id], 2,
+            "C_es(visited)"
+        );
+        assert_eq!(
+            stats.counts.edge_tgt_count[&visited_edge.id], 1,
+            "C_et(visited)"
+        );
     }
 
     /// The `age` histogram sums to 1.0 and each of the 6 ages has probability 1/6.
@@ -405,10 +418,16 @@ mod tests {
         assert_eq!(hist.len(), 6, "6 distinct ages");
 
         let total: f64 = hist.values().sum();
-        assert!((total - 1.0).abs() < 1e-9, "histogram sums to 1.0, got {total}");
+        assert!(
+            (total - 1.0).abs() < 1e-9,
+            "histogram sums to 1.0, got {total}"
+        );
 
         for &p in hist.values() {
-            assert!((p - 1.0 / 6.0).abs() < 1e-9, "each age has prob 1/6, got {p}");
+            assert!(
+                (p - 1.0 / 6.0).abs() < 1e-9,
+                "each age has prob 1/6, got {p}"
+            );
         }
     }
 

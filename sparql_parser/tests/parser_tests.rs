@@ -807,7 +807,9 @@ fn test_empty_blank_node_subject_finds_classes() {
     });
 
     let sparql = "SELECT DISTINCT ?c WHERE { [] a ?c } LIMIT 10";
-    let mut ctx = ParserContext { prefixes: HashMap::new() };
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
         panic!("expected SELECT result");
@@ -829,35 +831,54 @@ fn test_class_picker_union_query() {
 
     // One class declared as owl:Class
     let owl_class = add_iri_str(&mut ds, "http://www.w3.org/2002/07/owl#Class");
-    let rdf_type  = add_iri_str(&mut ds, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
-    let my_class  = add_iri_str(&mut ds, "http://example.org/MyClass");
-    ds.add_triple(dag_rdf::Triple { subject: my_class, predicate: rdf_type, obj: owl_class });
+    let rdf_type = add_iri_str(&mut ds, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let my_class = add_iri_str(&mut ds, "http://example.org/MyClass");
+    ds.add_triple(dag_rdf::Triple {
+        subject: my_class,
+        predicate: rdf_type,
+        obj: owl_class,
+    });
 
     // One class found via instance
     let other_class = add_iri_str(&mut ds, "http://example.org/OtherClass");
-    let instance    = add_iri_str(&mut ds, "http://example.org/inst1");
-    ds.add_triple(dag_rdf::Triple { subject: instance, predicate: rdf_type, obj: other_class });
+    let instance = add_iri_str(&mut ds, "http://example.org/inst1");
+    ds.add_triple(dag_rdf::Triple {
+        subject: instance,
+        predicate: rdf_type,
+        obj: other_class,
+    });
 
-    let sparql =
-        "SELECT DISTINCT ?c WHERE { \
+    let sparql = "SELECT DISTINCT ?c WHERE { \
            { ?c a <http://www.w3.org/2002/07/owl#Class> } \
            UNION \
            { [] a ?c } \
          } LIMIT 300";
-    let mut ctx = ParserContext { prefixes: HashMap::new() };
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
         panic!("expected SELECT result");
     };
 
-    let found: Vec<_> = result.rows.iter()
+    let found: Vec<_> = result
+        .rows
+        .iter()
         .filter_map(|r| {
             if let GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(s))) = &r["c"] {
                 Some(s.as_str())
-            } else { None }
+            } else {
+                None
+            }
         })
         .collect();
 
-    assert!(found.contains(&"http://example.org/MyClass"), "MyClass via owl:Class");
-    assert!(found.contains(&"http://example.org/OtherClass"), "OtherClass via instance");
+    assert!(
+        found.contains(&"http://example.org/MyClass"),
+        "MyClass via owl:Class"
+    );
+    assert!(
+        found.contains(&"http://example.org/OtherClass"),
+        "OtherClass via instance"
+    );
 }
