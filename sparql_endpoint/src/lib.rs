@@ -158,6 +158,14 @@ pub struct Config {
     /// `Some(path)` → a redb changelog is created at `<path>/dagalog.redb`;
     ///   committed writes survive crash and restart.
     pub data_dir: Option<PathBuf>,
+    /// Maximum request body size for the RML mapping endpoints
+    /// (`POST /{name}/rml`, `POST /rml/map`), in bytes.
+    ///
+    /// These routes accept arbitrary CSV/XML/JSON source files as multipart
+    /// parts, which routinely exceed axum's server-wide 2 MB
+    /// `DefaultBodyLimit`. This field overrides the limit for just those two
+    /// routes; every other route keeps the 2 MB default.
+    pub max_rml_upload_bytes: usize,
 }
 
 impl Default for Config {
@@ -169,6 +177,7 @@ impl Default for Config {
             max_query_timeout_secs: 30,
             auth: AuthConfig::None,
             data_dir: None,
+            max_rml_upload_bytes: 64 * 1024 * 1024,
         }
     }
 }
