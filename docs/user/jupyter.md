@@ -91,8 +91,8 @@ Load a Turtle, TriG, or N-Triples file from disk.
 
 ### `%%rml` — apply an RML mapping
 
-Apply an [RML mapping file](rml-mapping.md) to its declared sources (CSV, JSON)
-and add the resulting triples to the session datastore.
+Apply an [RML mapping file](rml-mapping.md) to its declared sources (CSV, JSON,
+XML) and add the resulting triples to the session datastore.
 
 ```
 %%rml mappings/persons.ttl

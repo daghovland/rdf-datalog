@@ -1,6 +1,12 @@
 # Jupyter Kernel Plan: `dagalog-kernel`
 
-> **Status: RED PHASE** — stubs and ignored tests created; awaiting review before implementation.
+> **Status: MOSTLY COMPLETE** — phases 1–5 implemented and green (protocol
+> skeleton, SPARQL execute, session state, `%%rml`/`%%load`/`%%turtle`
+> magics, `%%reason`/`%%validate`). 7 tests passing, 0 ignored
+> (`cargo test -p dagalog-kernel`). Phase 6 (`complete_request` — SPARQL
+> keyword completion) is not yet implemented; everything else in this plan
+> is done. This status line was stale until 2026-06-23 — the plan had been
+> fully implemented without the banner being updated.
 
 ## Goal
 

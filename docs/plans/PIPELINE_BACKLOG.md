@@ -8,7 +8,13 @@ first phase.
 
 ## 1. JSON Source for RML
 
-> **Detailed plan**: see `RML_JSON_PLAN.md`.
+> **Status: COMPLETE.** Detailed plan: `RML_JSON_PLAN.md`. XML/XPath sources
+> were also added afterward (not originally scoped here) — see
+> `RML_XML_PLAN.md` — and the mapping engine is now also exposed over HTTP
+> (`POST /{name}/rml`, `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`.
+> Remaining RML gaps (not yet planned): `rml:JoinCondition` (cross-source
+> joins — partial AST/plan scaffolding already exists in `rml/src/plan.rs`
+> but is unwired), SQL/JDBC sources, FunctionMap (FNML).
 
 ### Goal
 
@@ -61,6 +67,10 @@ W3C RML test cases JSON subset:
 ---
 
 ## 2. Jupyter Kernel
+
+> **Status: MOSTLY COMPLETE.** Detailed plan: `JUPYTER_KERNEL_PLAN.md`. The
+> `dagalog-kernel` crate exists with phases 1–5 done, including the `%%rml`
+> magic. Only phase 6 (SPARQL keyword completion) remains.
 
 ### Goal
 
@@ -361,13 +371,17 @@ an instances file, and expected N-Triples output). Copy fixtures into
 ## Dependency ordering
 
 ```
-CSV ingestion (rml crate, CSV source)
+CSV ingestion (rml crate, CSV source)                          — done
     ↓
-JSON ingestion (rml crate, JSON source extension)
+JSON ingestion (rml crate, JSON source extension)               — done
     ↓
-OTTR templates (ottr crate — independent of rml, but most useful after mapping)
+XML ingestion (rml crate, XPath source extension)                — done (not originally scoped)
     ↓
-Jupyter kernel (dagalog-kernel crate — depends on all above for full magic coverage)
+REST endpoints (sparql_endpoint crate, POST /{name}/rml, /rml/map) — done (not originally scoped)
+    ↓
+OTTR templates (ottr crate — independent of rml, but most useful after mapping) — not started
+    ↓
+Jupyter kernel (dagalog-kernel crate — depends on all above for full magic coverage) — mostly done; %%ottr magic still pending the ottr crate
 ```
 
 OTTR and JSON source can be developed in parallel after the `rml` CSV core is

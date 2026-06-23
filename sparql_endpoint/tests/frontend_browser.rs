@@ -517,6 +517,56 @@ ex:Person  a owl:Class .
 ex:Company a owl:Class .
 "#;
 
+// QB_BLANK_NODE_FIXTURE reproduces the imf.ttl symptom: a named class whose only
+// rdfs:subClassOf edge points to an anonymous OWL restriction, plus a second named
+// class that subclasses the first — real ontologies do this routinely.
+const QB_BLANK_NODE_FIXTURE: &str = r#"
+@prefix ex:   <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+
+ex:Person a owl:Class ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:hasAge ; owl:someValuesFrom ex:Age ] .
+ex:Employee a owl:Class ; rdfs:subClassOf ex:Person .
+"#;
+
+fn looks_like_blank_node_label(label: &str) -> bool {
+    let rest = label.strip_prefix('b').unwrap_or_default();
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
+}
+
+#[tokio::test]
+async fn qb_class_tree_excludes_owl_restriction_blank_nodes() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_BLANK_NODE_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#qb-class-tree .qb-tree-row", 4000).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let labels = driver
+        .find_all(By::Css("#qb-class-tree .qb-tree-label"))
+        .await
+        .unwrap();
+    let mut texts = Vec::new();
+    for l in &labels {
+        texts.push(l.text().await.unwrap());
+    }
+    assert!(
+        texts.iter().any(|t| t.contains("Person")),
+        "Person should still be selectable as a class, got: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| looks_like_blank_node_label(t)),
+        "OWL restriction blank nodes must not appear as selectable classes, got: {texts:?}"
+    );
+    driver.quit().await.unwrap();
+}
+
 // ── QB Layer 3a: JS self-test harness ────────────────────────────────────────
 // Un-ignore after QB Phase 1 implements generateSparql() so QB_SELF_TESTS pass.
 

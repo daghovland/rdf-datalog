@@ -20,7 +20,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 |---|---|
 | Load RDF from Turtle (`.ttl`) and TriG (`.trig`) | ✓ |
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
-| Map CSV / JSON / JSONL to RDF via RML 1.0 | ✓ |
+| Map CSV / JSON / JSONL / XML to RDF via RML 1.0 (Rust API, CLI, and REST) | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
 | SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
@@ -57,7 +57,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | `eli` | EL profile normalisation and ELI→Datalog translation |
 | `owl2rl2datalog` | OWL 2 RL → Datalog rule translation (W3C §4.3) |
 | `shacl` | SHACL Core → Datalog translation + `ValidationReport` types |
-| `rml` | RML 1.0 mapping engine: CSV, JSON, JSONL → RDF triples |
+| `rml` | RML 1.0 mapping engine: CSV, JSON, JSONL, XML → RDF triples |
 | `rdf_owl_translator` | RDF triples → OWL 2 axiom extraction |
 | `turtle_parser` | Turtle/TriG parser (`rio_turtle`); populates a `Datastore` |
 | `jsonld_parser` | JSON-LD 1.1 parser and serialiser (expanded, compacted, flattened) |
@@ -338,12 +338,12 @@ LIMIT 3
 
 ---
 
-## RML: mapping CSV and JSON to RDF
+## RML: mapping CSV, JSON, and XML to RDF
 
 The `rml` crate implements [RML 1.0](https://www.w3.org/TR/rml/) mapping documents.
-A mapping file declares how CSV columns or JSON fields become RDF subjects,
-predicates, and objects. The same `Datastore` can hold both the mapped triples
-and any separately loaded Turtle/JSON-LD ontologies — they are immediately
+A mapping file declares how CSV columns, JSON fields, or XML elements become RDF
+subjects, predicates, and objects. The same `Datastore` can hold both the mapped
+triples and any separately loaded Turtle/JSON-LD ontologies — they are immediately
 queryable together with SPARQL.
 
 ### CSV example
@@ -387,6 +387,27 @@ rml:predicateObjectMap [
 
 JSONL files (`.jsonl`, `.ndjson`) are detected by extension and read line by line.
 
+### XML example
+
+```turtle
+rml:logicalSource [
+    rml:source "students.xml" ;
+    rml:referenceFormulation rml:XPath ;
+    rml:iterator "/students/student"    # XPath selecting the repeating nodes
+] ;
+rml:subjectMap [
+    rml:template "http://example.com/Student/{id}"
+] ;
+rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "name" ]
+] .
+```
+
+`rml:reference` and template expressions are XPath 1.0, evaluated relative to
+each node selected by `rml:iterator` — element names (`name`), attributes
+(`@id`), and relative paths (`address/city`) are all supported.
+
 ### Rust API
 
 ```rust
@@ -409,7 +430,8 @@ apply_rml_mapping(
 | CSV sources (`rml:CSV`) | ✓ |
 | JSON array sources (`rml:JSONPath`) | ✓ |
 | JSONL sources (auto-detected by extension) | ✓ |
-| `rml:iterator` for nested arrays | ✓ |
+| XML sources (`rml:XPath`) | ✓ |
+| `rml:iterator` for nested arrays/elements | ✓ |
 | Template IRI subjects | ✓ |
 | Reference literal objects | ✓ |
 | Language-tagged literals (`rml:language`) | ✓ |
@@ -419,7 +441,6 @@ apply_rml_mapping(
 | `rml:class` shorthand | ✓ |
 | Join conditions (`rml:JoinCondition`) | planned |
 | SQL/JDBC sources | planned |
-| XML/XPath sources | planned |
 
 See [docs/user/rml-mapping.md](docs/user/rml-mapping.md) for the full reference.
 
@@ -680,7 +701,7 @@ dagalog --data ontology.ttl --mapping mapping.ttl --ontology ontology.ttl \
         --query "SELECT ?x WHERE { ?x a <http://example.com/Person> }"
 ```
 
-`--mapping` applies an [RML](#rml-mapping-csv-and-json-to-rdf) mapping file, generating
+`--mapping` applies an [RML](#rml-mapping-csv-json-and-xml-to-rdf) mapping file, generating
 triples from the CSV/JSON/XML sources it references (resolved relative to the mapping
 file's own directory). Mappings run after `--data` is loaded and before `--ontology`/
 `--rules`, so mapped triples participate in reasoning. Multiple `--mapping` flags may
@@ -780,7 +801,7 @@ Every request is classified before the auth check:
 | Permission | Operations |
 |------------|-----------|
 | `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, GSP GET, admin reads |
-| `Write` | `POST /{name}/update`, `PUT`/`POST`/`DELETE` on data and GSP endpoints |
+| `Write` | `POST /{name}/update`, `POST /{name}/rml`, `PUT`/`POST`/`DELETE` on data and GSP endpoints |
 | `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop) |
 
 `Write` implies `Read`. `Admin` implies both.
@@ -1036,8 +1057,13 @@ The server exposes a `default` dataset at `/ds` (and any datasets created via th
 | `GET /{name}/sparql` or `/{name}/query` | SPARQL SELECT |
 | `POST /{name}/sparql` or `/{name}/query` | SPARQL SELECT (form or direct body) |
 | `POST /{name}/update` | SPARQL Update (INSERT/DELETE/CLEAR/DROP/…) |
+| `POST /{name}/rml` | Apply an RML mapping (`multipart/form-data`), merge into the dataset |
 | `GET|PUT|POST|DELETE|HEAD /{name}/data` | GSP read-write |
 | `GET|HEAD /{name}/get` | GSP read-only |
+
+`POST /rml/map` (root-level, not dataset-scoped) applies an RML mapping and
+returns the generated RDF directly, touching no dataset — see the
+[RML mapping guide](docs/user/rml-mapping.md#applying-mappings-over-http).
 
 ### Admin API (`/$/…`)
 

@@ -135,9 +135,9 @@ load_file(&mut ds, Path::new("org.jsonld")).unwrap();
 
 ## Mapping structured data to RDF (RML)
 
-CSV, JSON, and JSONL files are not native RDF formats, but dagalog can map them
-to RDF triples using **RML** (RDF Mapping Language). A mapping file declares
-how columns or JSON fields become subjects, predicates, and objects.
+CSV, JSON, JSONL, and XML files are not native RDF formats, but dagalog can map
+them to RDF triples using **RML** (RDF Mapping Language). A mapping file declares
+how columns, JSON fields, or XML elements become subjects, predicates, and objects.
 
 ```turtle
 @prefix rml: <http://w3id.org/rml/> .
@@ -147,7 +147,7 @@ how columns or JSON fields become subjects, predicates, and objects.
     a rml:TriplesMap ;
     rml:logicalSource [
         rml:source "people.csv" ;
-        rml:referenceFormulation rml:CSV       # or rml:JSONPath for JSON/JSONL
+        rml:referenceFormulation rml:CSV       # or rml:JSONPath / rml:XPath for JSON/JSONL / XML
     ] ;
     rml:subjectMap [ rml:template "http://example.com/Person/{id}" ] ;
     rml:predicateObjectMap [

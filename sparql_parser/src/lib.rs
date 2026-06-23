@@ -21,6 +21,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 pub mod execute;
+mod join_ordering;
 pub use execute::{
     eval_expr_as_filter, execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
 };
