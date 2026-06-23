@@ -670,6 +670,22 @@ dagalog --data data.ttl --rules rules.datalog \
 
 Multiple `--data`, `--ontology`, and `--rules` flags may be given.
 
+### RML mapping (CSV / JSON / XML → RDF)
+
+```sh
+dagalog --mapping mapping.ttl \
+        --query "SELECT ?name WHERE { ?p <http://example.com/name> ?name }"
+
+dagalog --data ontology.ttl --mapping mapping.ttl --ontology ontology.ttl \
+        --query "SELECT ?x WHERE { ?x a <http://example.com/Person> }"
+```
+
+`--mapping` applies an [RML](#rml-mapping-csv-and-json-to-rdf) mapping file, generating
+triples from the CSV/JSON/XML sources it references (resolved relative to the mapping
+file's own directory). Mappings run after `--data` is loaded and before `--ontology`/
+`--rules`, so mapped triples participate in reasoning. Multiple `--mapping` flags may
+be given; see the [RML mapping guide](docs/user/rml-mapping.md) for the mapping syntax.
+
 ### Output formats
 
 ```sh

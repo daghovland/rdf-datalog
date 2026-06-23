@@ -187,10 +187,16 @@ jupyter kernelspec list
 ### Launch JupyterLab and open the example notebook
 
 ```bash
-jupyter lab notebooks/dagalog_intro.ipynb
+jupyter lab --ServerApp.root_dir=. notebooks/dagalog_intro.ipynb
 ```
 
 Select "Dagalog (SPARQL + RDF)" as the kernel. Run cells in order.
+
+> **Why `--ServerApp.root_dir=.`**: when given a notebook path, Jupyter Server
+> defaults `root_dir` (and therefore the kernel's working directory) to the
+> *directory containing the notebook* (`notebooks/`), not the directory you
+> launched from. Without pinning `root_dir` to the repo root, relative paths
+> in `%%rml`/`%%load` cells (e.g. `tests/testdata/...`) won't resolve.
 
 ### What the example notebook does
 

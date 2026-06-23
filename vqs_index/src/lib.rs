@@ -24,4 +24,6 @@ pub mod navigation_graph;
 pub mod search;
 
 pub use basic_counts::{BasicCounts, Histogram, NavStats};
+pub use config_query::{ConfigQuery, IndexCell, IndexTable};
+pub use config_set::ConfigSet;
 pub use navigation_graph::{NavEdgeId, NavGraph, NavNodeId, NavNodeKind};

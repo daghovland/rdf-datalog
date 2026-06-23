@@ -78,6 +78,19 @@ After this call, `ds` contains the triples:
                                 ex:age         "25" .
 ```
 
+Or apply it directly from the CLI with `--mapping`:
+
+```sh
+dagalog --mapping mapping.ttl \
+        --query "SELECT ?name WHERE { ?p <http://example.com/name> ?name }"
+```
+
+`rml:source` paths inside the mapping are resolved relative to the mapping
+file's own directory, so `mapping.ttl` and `data.csv` can live anywhere as
+long as they're next to each other. Multiple `--mapping` flags may be given;
+each is applied in order, and mapped triples can be combined with `--data`,
+`--ontology`, and `--rules` in the same run.
+
 ---
 
 ## JSON sources

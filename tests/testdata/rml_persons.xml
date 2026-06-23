@@ -1,0 +1,12 @@
+<persons>
+  <person>
+    <id>1</id>
+    <name>Alice</name>
+    <age>30</age>
+  </person>
+  <person>
+    <id>2</id>
+    <name>Bob</name>
+    <age>25</age>
+  </person>
+</persons>

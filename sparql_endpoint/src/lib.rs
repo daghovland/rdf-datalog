@@ -25,6 +25,7 @@ pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod upload;
 pub mod void;
+pub mod vqs_routes;
 
 use dag_rdf::datastore::Datastore;
 use persistence::QuadChangelog;
@@ -184,6 +185,9 @@ pub struct AppState {
     pub jwks_cache: auth::JwksCache,
     /// Durable changelog.  `None` when the server runs in in-memory mode (no `data_dir`).
     pub changelog: Option<Arc<Mutex<QuadChangelog>>>,
+    /// Cached VQS productive-extension index (navigation graph + Wld configuration
+    /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
+    pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -230,6 +234,7 @@ pub async fn serve_on_listener(
         jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
         changelog,
         config,
+        vqs_cache: Arc::new(RwLock::new(None)),
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

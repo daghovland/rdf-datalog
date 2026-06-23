@@ -2907,6 +2907,7 @@ dependencies = [
  "tower-http",
  "turtle",
  "urlencoding",
+ "vqs-index",
  "wiremock",
 ]
 

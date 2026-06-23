@@ -47,7 +47,7 @@ pub fn to_sparql_json(result: &SelectResult) -> String {
     doc.to_string()
 }
 
-fn graph_element_to_json(el: &GraphElement) -> Value {
+pub(crate) fn graph_element_to_json(el: &GraphElement) -> Value {
     match el {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             json!({ "type": "uri", "value": iri.0 })

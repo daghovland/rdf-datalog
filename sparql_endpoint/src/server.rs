@@ -40,6 +40,11 @@ pub fn build_router(state: AppState) -> Router {
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
         .route("/upload", post(crate::upload::upload_turtle))
+        // ── VQS productive-extension index (query-builder support) ──────────
+        .route(
+            "/vqs/productive-values",
+            get(crate::vqs_routes::productive_values),
+        )
         // ── SPARQL Protocol — root endpoint ──────────────────────────────────
         .route("/sparql", get(crate::query::sparql_get))
         .route("/sparql", post(crate::query::sparql_post))
