@@ -334,6 +334,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_query_timeout_secs: cli.query_timeout,
             auth,
             data_dir,
+            ..Default::default()
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

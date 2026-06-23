@@ -3,6 +3,10 @@ name = "dagalog-kernel"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "dagalog_kernel"
+path = "src/lib.rs"
+
 [[bin]]
 name = "dagalog-kernel"
 path = "src/main.rs"

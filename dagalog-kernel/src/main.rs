@@ -1,10 +1,6 @@
 use std::path::PathBuf;
 
-mod cell;
-mod output;
-mod protocol;
-mod session;
-mod sockets;
+use dagalog_kernel::sockets;
 
 /// Install the kernel spec into `~/.local/share/jupyter/kernels/dagalog/`.
 fn install_kernel(user: bool) -> Result<(), String> {

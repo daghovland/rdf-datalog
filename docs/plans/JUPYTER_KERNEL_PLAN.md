@@ -85,7 +85,7 @@ Cells with a `%%` magic line:
 ```
 ```
 %%datalog
-?x rdf:type owl:Thing :- ?x rdf:type ex:Person .
+[?x, rdf:type, owl:Thing] :- [?x, rdf:type, ex:Person] .
 ```
 ```
 %%turtle

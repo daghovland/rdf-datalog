@@ -129,6 +129,7 @@ impl TestServer {
             max_query_timeout_secs: 10,
             auth,
             data_dir: data_dir.map(Path::to_path_buf),
+            ..Default::default()
         };
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)
@@ -226,6 +227,12 @@ impl TestServer {
     pub fn dataset_rml_url(&self, dataset: &str) -> String {
         let name = dataset.trim_start_matches('/');
         format!("{}/{name}/rml", self.base_url)
+    }
+
+    /// `POST /rml/map` — apply an RML mapping and return the generated RDF
+    /// directly, without touching any dataset.
+    pub fn rml_map_url(&self) -> String {
+        format!("{}/rml/map", self.base_url)
     }
 
     /// `GET/PUT/POST/DELETE/HEAD /{name}/data` — Fuseki GSP read-write endpoint.

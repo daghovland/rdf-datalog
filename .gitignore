@@ -29,3 +29,4 @@ target
 /datalog_parser/tests/testdata/large.datalog
 /tests/testdata/large.datalog
 /tests/testdata/wikidata-sample.nt
+/tests/testdata/dblp-sample.nt
