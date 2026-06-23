@@ -18,6 +18,7 @@ pub mod persistence;
 pub mod query;
 pub mod query_builder;
 pub mod registry;
+pub mod rml_endpoint;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;

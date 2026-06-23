@@ -222,6 +222,12 @@ impl TestServer {
         format!("{}/{name}/update", self.base_url)
     }
 
+    /// `POST /{name}/rml` — apply an RML mapping (multipart/form-data) to a dataset.
+    pub fn dataset_rml_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/rml", self.base_url)
+    }
+
     /// `GET/PUT/POST/DELETE/HEAD /{name}/data` — Fuseki GSP read-write endpoint.
     pub fn dataset_data_url(&self, dataset: &str) -> String {
         let name = dataset.trim_start_matches('/');

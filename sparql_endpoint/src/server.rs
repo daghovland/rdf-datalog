@@ -101,6 +101,8 @@ pub fn build_router(state: AppState) -> Router {
             "/{name}/shacl",
             post(crate::shacl_endpoint::dataset_shacl_post),
         )
+        // ── Per-dataset RML mapping (`/{name}/rml`) ──────────────────────────
+        .route("/{name}/rml", post(crate::rml_endpoint::dataset_rml_post))
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",

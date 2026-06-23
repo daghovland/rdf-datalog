@@ -104,6 +104,39 @@ else
     echo "wikidata-sample.nt written (${ACTUAL_LINES} lines)."
 fi
 
+# ── DBLP N-Triples sample ────────────────────────────────────────────────────
+# Source: https://dblp.org/rdf/dblp.nt.gz (main bibliography, no citations)
+# This is genuine N-Triples (one triple per line), unlike dblp.ttl.gz which is
+# pretty-printed multi-line Turtle and unsafe to truncate by line.
+# We stream just the first DBLP_LINES lines so the on-disk file stays small.
+DBLP_NT="$DEST/dblp-sample.nt"
+DBLP_LINES=15000000  # ~15M triples, used by the dblp_benchmark.rs diagnostic suite
+
+if [ -f "$DBLP_NT" ]; then
+    echo "dblp-sample.nt already present, skipping download."
+else
+    echo "Streaming DBLP N-Triples dump (first ${DBLP_LINES} lines) …"
+    echo "  Source: https://dblp.org/rdf/dblp.nt.gz"
+    echo "  (Only the first ${DBLP_LINES} lines are kept; the full dump is ~5 GB compressed.)"
+
+    # head closes the pipe after N lines, which sends SIGPIPE to gzip/curl (exit 141).
+    # That is expected — disable pipefail for this pipeline only.
+    set +o pipefail
+    curl -fL --no-progress-meter \
+        "https://dblp.org/rdf/dblp.nt.gz" \
+      | gzip -dc 2>/dev/null \
+      | head -n "$DBLP_LINES" > "$DBLP_NT" || true
+    set -o pipefail
+
+    ACTUAL_LINES=$(wc -l < "$DBLP_NT")
+    if [ "$ACTUAL_LINES" -lt 10000 ]; then
+        echo "ERROR: only ${ACTUAL_LINES} lines written — download may have failed."
+        rm -f "$DBLP_NT"
+        exit 1
+    fi
+    echo "dblp-sample.nt written (${ACTUAL_LINES} lines)."
+fi
+
 echo "Done."
 echo ""
 echo "Run IMF tests (no --ignored needed):"
@@ -114,6 +147,9 @@ echo "  cargo test --test performance gene_ontology -- --ignored --nocapture"
 echo ""
 echo "Run Wikidata tests (ignored — large file):"
 echo "  cargo test --test performance wikidata -- --ignored --nocapture"
+echo ""
+echo "Run DBLP benchmark diagnostic (ignored — large file):"
+echo "  cargo test --test dblp_benchmark -- --ignored --nocapture"
 echo ""
 echo "Run Gene Ontology benchmarks:"
 echo "  cargo bench --bench gene_ontology"

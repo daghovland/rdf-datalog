@@ -41,12 +41,8 @@ pub fn apply_rml_mapping(
     base_dir: &Path,
     datastore: &mut Datastore,
 ) -> Result<(), RmlError> {
-    eprintln!("apply_rml_mapping: about to load_mapping({:?})", mapping_path);
-    let mapping = loader::load_mapping(mapping_path).inspect_err(|e| eprintln!("load_mapping failed: {e}"))?;
-    eprintln!("apply_rml_mapping: loaded {} triples maps", mapping.triples_maps.len());
+    let mapping = loader::load_mapping(mapping_path)?;
     let plans = translate::translate(&mapping);
-    eprintln!("apply_rml_mapping: translated {} plans", plans.len());
     let plans = optimizer::constant_fold(plans);
-    eprintln!("apply_rml_mapping: about to engine::execute with base_dir={:?}", base_dir);
-    engine::execute(&plans, base_dir, datastore).inspect_err(|e| eprintln!("engine::execute failed: {e}"))
+    engine::execute(&plans, base_dir, datastore)
 }

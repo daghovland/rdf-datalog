@@ -209,17 +209,7 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
                 if added == 1 { "" } else { "s" }
             )))
         }
-        CellType::Rml(path) => {
-            eprintln!(
-                "dagalog-kernel: rml path = {:?}, cwd = {:?}, exists = {}, canon = {:?}, read = {:?}",
-                path,
-                std::env::current_dir(),
-                path.exists(),
-                path.canonicalize(),
-                std::fs::read_to_string(&path).map(|s| s.len())
-            );
-            execute_rml(ds, &path).map(CellOutput::Stream)
-        }
+        CellType::Rml(path) => execute_rml(ds, &path).map(CellOutput::Stream),
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
             let ontology_doc = rdf_owl_translator::rdf2owl(ds);
@@ -361,8 +351,10 @@ async fn handle_shell_message(
         "execute_request" => {
             let code = msg.content["code"].as_str().unwrap_or("").to_string();
             let silent = msg.content["silent"].as_bool().unwrap_or(false);
-            // handle_execute manages its own busy/idle around the cell execution.
-            let _ = send_status(iopub, "idle", &msg.header, key).await;
+            // handle_execute sends its own busy/idle pair bracketing the actual
+            // work; sending an idle here first would let strict clients (e.g.
+            // nbclient) think the cell is already done and stop collecting its
+            // output before the real busy/idle/output messages arrive.
             let _ =
                 handle_execute(shell, iopub, session, key, &ids, &msg.header, &code, silent).await;
             return false;
@@ -469,7 +461,6 @@ async fn handle_control_message(
 // ── Main kernel entry point ───────────────────────────────────────────────────
 
 pub async fn run_kernel(connection_file_path: &std::path::Path) -> Result<(), String> {
-    eprintln!("dagalog-kernel: cwd = {:?}", std::env::current_dir());
     let json_str = std::fs::read_to_string(connection_file_path)
         .map_err(|e| format!("cannot read connection file: {e}"))?;
     let conn: ConnectionFile =

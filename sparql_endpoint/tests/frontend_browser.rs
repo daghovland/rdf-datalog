@@ -935,6 +935,129 @@ async fn qb_filter_text_appears_in_generated_sparql() {
     driver.quit().await.unwrap();
 }
 
+// ── VQS productive-extension index wiring ────────────────────────────────────
+// Unlike QB_FIXTURE, this declares rdfs:domain/rdfs:range for ex:age so the
+// navigation graph is non-empty and /vqs/productive-values reports `covered`.
+// A single data property keeps the "first checkbox" selector unambiguous.
+
+const VQS_FIXTURE: &str = r#"
+@prefix ex:   <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:age rdfs:domain ex:Person ; rdfs:range xsd:integer .
+
+ex:alice a ex:Person ; ex:age 30 .
+ex:bob   a ex:Person ; ex:age 25 .
+
+ex:Person a owl:Class .
+"#;
+
+#[tokio::test]
+async fn qb_checking_covered_data_prop_shows_known_value_count() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(VQS_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#data-prop-list .qb-prod-hint", 4000).await,
+        "productive-value hint never populated after checking a covered data prop"
+    );
+    let hint = driver
+        .find(By::Css("#data-prop-list .qb-prod-hint"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        hint.contains("2 known value"),
+        "expected hint to report 2 known values, got:\n{hint}"
+    );
+    let datalist_options = driver
+        .find_all(By::Css("#data-prop-list datalist option"))
+        .await
+        .unwrap();
+    assert_eq!(
+        datalist_options.len(),
+        2,
+        "expected 2 datalist options for the covered property"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn qb_typing_unproductive_filter_value_shows_warning() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(VQS_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#data-prop-list .qb-prod-hint", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list .prop-filter-input"))
+        .await
+        .unwrap()
+        .send_keys("99")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let hint = driver
+        .find(By::Css("#data-prop-list .qb-prod-hint"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        hint.contains("no known value matches"),
+        "expected a dead-end warning after typing an unproductive value, got:\n{hint}"
+    );
+    driver.quit().await.unwrap();
+}
+
 // ── CONSTRUCT query rendering ─────────────────────────────────────────────────
 
 /// Regression: `CONSTRUCT {?s ?p ?o} WHERE { ?s ?p ?o }` must render as a

@@ -605,6 +605,12 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "red phase: classify() does not yet treat /rml as a write — see RML_REST_ENDPOINT_PLAN.md"]
+    fn post_dataset_rml_is_write() {
+        assert_eq!(classify(&Method::POST, "/ds/rml"), Permission::Write);
+    }
+
+    #[test]
     fn put_gsp_is_write() {
         assert_eq!(
             classify(&Method::PUT, "/rdf-graph-store"),
