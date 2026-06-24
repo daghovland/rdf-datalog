@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use ingress::{GraphElement, IriReference, RdfResource};
+use rml::ast::JoinConditionRef;
 use rml::ast::{
     LogicalSource, LogicalSourceRef, MappingDocument, ObjectMap, PredicateObjectMap,
     ReferenceFormulation, SubjectMap, TermMap, TermType, TriplesMap,
@@ -36,6 +37,7 @@ fn simple_triples_map(source_file: &str, subject_template: &str) -> TriplesMap {
                 language: None,
                 datatype: None,
                 parent_triples_map: None,
+                join_conditions: vec![],
             }],
             graph_maps: vec![],
         }],
@@ -71,6 +73,7 @@ fn translate_two_predicate_object_maps_yield_two_plans() {
             language: None,
             datatype: None,
             parent_triples_map: None,
+            join_conditions: vec![],
         }],
         graph_maps: vec![],
     });
@@ -211,6 +214,7 @@ fn constant_fold_converts_no_placeholder_template_to_constant() {
         language: None,
         datatype: None,
         parent_triples_map: None,
+        join_conditions: vec![],
     };
     let doc = MappingDocument {
         triples_maps: vec![tm],
@@ -271,4 +275,117 @@ fn translate_sets_scan_from_logical_source() {
     } else {
         panic!("expected Projection wrapping a Scan");
     }
+}
+
+// ── rml:joinCondition → LogicalPlan::Join (red phase; see RML_JOIN_PLAN.md) ──
+
+fn sport_parent_triples_map() -> TriplesMap {
+    let mut tm = simple_triples_map("sport.csv", "http://example.com/sport/{ID}");
+    tm.id = IriReference("http://example.com/SportMap".to_string());
+    tm
+}
+
+fn triples_map_with_join(parent_id: &str, conditions: Vec<JoinConditionRef>) -> TriplesMap {
+    let mut tm = simple_triples_map("student.csv", "http://example.com/student/{ID}");
+    tm.predicate_object_maps.push(PredicateObjectMap {
+        predicate_maps: vec![(
+            TermMap::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                "http://example.com/practises".to_string(),
+            )))),
+            TermType::Iri,
+        )],
+        object_maps: vec![ObjectMap {
+            term_map: TermMap::Reference(String::new()),
+            term_type: TermType::Iri,
+            language: None,
+            datatype: None,
+            parent_triples_map: Some(IriReference(parent_id.to_string())),
+            join_conditions: conditions,
+        }],
+        graph_maps: vec![],
+    });
+    tm
+}
+
+#[test]
+fn translate_object_map_with_parent_triples_map_yields_join_plan() {
+    let tm = triples_map_with_join(
+        "http://example.com/SportMap",
+        vec![JoinConditionRef {
+            child: "Sport".to_string(),
+            parent: "ID".to_string(),
+        }],
+    );
+    let doc = MappingDocument {
+        triples_maps: vec![tm, sport_parent_triples_map()],
+    };
+    let plans = translate(&doc);
+    assert!(
+        plans.iter().any(|p| matches!(
+            p,
+            LogicalPlan::Projection(proj) if matches!(&*proj.input, LogicalPlan::Join(_))
+        )),
+        "expected a Projection wrapping a LogicalPlan::Join for the predicateObjectMap with a parentTriplesMap"
+    );
+}
+
+fn find_join(plans: &[LogicalPlan]) -> &rml::plan::LogicalJoin {
+    plans
+        .iter()
+        .find_map(|p| match p {
+            LogicalPlan::Projection(proj) => match proj.input.as_ref() {
+                LogicalPlan::Join(j) => Some(j),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("expected a Projection wrapping a LogicalPlan::Join")
+}
+
+#[test]
+fn translate_join_condition_maps_child_to_left_parent_to_right() {
+    let tm = triples_map_with_join(
+        "http://example.com/SportMap",
+        vec![JoinConditionRef {
+            child: "Sport".to_string(),
+            parent: "ID".to_string(),
+        }],
+    );
+    let doc = MappingDocument {
+        triples_maps: vec![tm, sport_parent_triples_map()],
+    };
+    let plans = translate(&doc);
+    let join = find_join(&plans);
+    assert_eq!(join.conditions.len(), 1);
+    assert_eq!(join.conditions[0].left_column, "Sport");
+    assert_eq!(join.conditions[0].right_column, "ID");
+}
+
+#[test]
+fn translate_multi_column_join_condition_preserves_all_conditions() {
+    let tm = triples_map_with_join(
+        "http://example.com/SportMap",
+        vec![
+            JoinConditionRef {
+                child: "Sport".to_string(),
+                parent: "ID".to_string(),
+            },
+            JoinConditionRef {
+                child: "Year".to_string(),
+                parent: "Year".to_string(),
+            },
+        ],
+    );
+    let doc = MappingDocument {
+        triples_maps: vec![tm, sport_parent_triples_map()],
+    };
+    let plans = translate(&doc);
+    let join = plans
+        .iter()
+        .find_map(|p| match p {
+            LogicalPlan::Join(j) => Some(j),
+            _ => None,
+        })
+        .expect("expected a LogicalPlan::Join");
+    assert_eq!(join.conditions.len(), 2);
 }

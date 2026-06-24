@@ -132,6 +132,34 @@ async fn test_datalog_bracket_cell_materializes_colleagues() {
 }
 
 #[tokio::test]
+async fn test_validate_cell_reports_violations() {
+    let mut kernel = KernelHarness::start(&repo_root()).await;
+    kernel
+        .execute("%%load tests/testdata/shacl_s1_intro_data.ttl")
+        .await;
+    let outcome = kernel
+        .execute("%%validate tests/testdata/shacl_s1_intro_shapes.ttl")
+        .await;
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(outcome.stream.as_deref(), Some("4 violation(s)."));
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_validate_cell_reports_conforms() {
+    let mut kernel = KernelHarness::start(&repo_root()).await;
+    kernel
+        .execute("%%load tests/testdata/shacl_s2_target_subjects_data.ttl")
+        .await;
+    let outcome = kernel
+        .execute("%%validate tests/testdata/shacl_s2_target_subjects_shapes.ttl")
+        .await;
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(outcome.stream.as_deref(), Some("Conforms. 0 violation(s)."));
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
 async fn test_full_notebook_replay() {
     let root = repo_root();
     let cells = notebook_code_cells(&root);

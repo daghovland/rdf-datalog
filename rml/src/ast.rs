@@ -56,6 +56,16 @@ pub struct ObjectMap {
     pub language: Option<String>,
     pub datatype: Option<IriReference>,
     pub parent_triples_map: Option<IriReference>,
+    pub join_conditions: Vec<JoinConditionRef>,
+}
+
+/// A single `rml:joinCondition` (`rml:child`/`rml:parent`) pair on an `ObjectMap`
+/// that has a `rml:parentTriplesMap`. Multiple conditions on the same object map
+/// are combined with AND semantics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JoinConditionRef {
+    pub child: String,
+    pub parent: String,
 }
 
 #[derive(Debug, Clone)]

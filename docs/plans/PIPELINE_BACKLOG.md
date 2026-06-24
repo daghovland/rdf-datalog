@@ -12,9 +12,11 @@ first phase.
 > were also added afterward (not originally scoped here) — see
 > `RML_XML_PLAN.md` — and the mapping engine is now also exposed over HTTP
 > (`POST /{name}/rml`, `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`.
-> Remaining RML gaps (not yet planned): `rml:JoinCondition` (cross-source
-> joins — partial AST/plan scaffolding already exists in `rml/src/plan.rs`
-> but is unwired), SQL/JDBC sources, FunctionMap (FNML).
+> Remaining RML gaps: `rml:JoinCondition` (cross-source joins — plan at
+> `RML_JOIN_PLAN.md`, now in **red phase**: AST/loader/plan scaffolding plus
+> 12 ignored stub tests exist, execution not yet implemented); SQL/JDBC
+> sources (plan at `RML_SQL_PLAN.md`, phase-1 design only, no tests yet);
+> FunctionMap (FNML, not yet planned).
 
 ### Goal
 

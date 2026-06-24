@@ -28,7 +28,9 @@ pub struct LogicalProjection {
 pub struct LogicalJoin {
     pub left: Box<LogicalPlan>,
     pub right: Box<LogicalPlan>,
-    pub condition: JoinCondition,
+    /// AND-combined join conditions; `rml:joinCondition` allows more than one
+    /// child/parent column pair on a single object map.
+    pub conditions: Vec<JoinCondition>,
     pub algorithm: JoinAlgorithm,
 }
 

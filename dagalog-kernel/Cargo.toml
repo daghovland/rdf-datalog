@@ -21,6 +21,7 @@ turtle = { path = "../turtle" }
 rml = { path = "../rml" }
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
+shacl = { path = "../shacl" }
 
 tokio = { version = "1", features = ["full"] }
 zeromq = "0.6"

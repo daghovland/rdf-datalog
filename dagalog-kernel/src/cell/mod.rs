@@ -50,6 +50,7 @@ pub fn detect_cell_type(cell: &str) -> CellType {
 
 pub mod datalog;
 pub mod rml;
+pub mod shacl;
 pub mod sparql;
 pub mod turtle;
 

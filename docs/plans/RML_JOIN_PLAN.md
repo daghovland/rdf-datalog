@@ -1,8 +1,18 @@
 # RML Join Plan: `rml:JoinCondition` (cross-source joins)
 
-> **Status: RED PHASE** — plan + ignored stub tests only. No execution logic
-> implemented. `cargo test -p rml` must compile clean with the new tests
-> showing as `ignored`. See "TDD phases" below for the green-phase order.
+> **Status: RED PHASE** — plan + ignored stub tests are now both in place (no
+> execution logic implemented yet). `ast.rs` has the new `JoinConditionRef`
+> struct and `ObjectMap.join_conditions` field; `plan.rs`'s `LogicalJoin` now
+> takes `conditions: Vec<JoinCondition>` (pluralized per "Why the existing
+> `plan.rs` types need one change" below); `loader.rs` parses
+> `rml:joinCondition`/`rml:child`/`rml:parent`. 12 new `#[ignore]`d tests exist
+> and compile clean: 6 in `rml/tests/join_end_to_end.rs` (against the
+> `rmltc0009a_join`/`rmltc0009b_join` fixtures), 3 in `rml/tests/plan_tests.rs`,
+> 3 in `rml/tests/loader_tests.rs`. `cargo test -p rml`, `cargo fmt --all --
+> --check`, and `cargo clippy -p rml --all-targets -- -D warnings` are all
+> clean. `translate.rs` and `engine.rs` are unchanged — no `LogicalPlan::Join`
+> is constructed or executed yet. See "TDD phases" below for the green-phase
+> order.
 
 ## Goal
 
