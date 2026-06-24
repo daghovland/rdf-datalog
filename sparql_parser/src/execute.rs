@@ -477,8 +477,15 @@ fn eval_bgp(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
 ) -> Vec<PartialSub> {
+    let already_bound: HashSet<String> = solutions
+        .first()
+        .map(|sub| sub.keys().cloned().collect())
+        .unwrap_or_default();
+    let order = crate::join_ordering::order_patterns(patterns, &already_bound, datastore);
+
     let mut current = solutions;
-    for pattern in patterns {
+    for &idx in &order {
+        let pattern = &patterns[idx];
         current = current
             .into_iter()
             .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph))

@@ -18,6 +18,7 @@ pub mod persistence;
 pub mod query;
 pub mod query_builder;
 pub mod registry;
+pub mod rml_endpoint;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
@@ -25,6 +26,7 @@ pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod upload;
 pub mod void;
+pub mod vqs_routes;
 
 use dag_rdf::datastore::Datastore;
 use persistence::QuadChangelog;
@@ -156,6 +158,14 @@ pub struct Config {
     /// `Some(path)` → a redb changelog is created at `<path>/dagalog.redb`;
     ///   committed writes survive crash and restart.
     pub data_dir: Option<PathBuf>,
+    /// Maximum request body size for the RML mapping endpoints
+    /// (`POST /{name}/rml`, `POST /rml/map`), in bytes.
+    ///
+    /// These routes accept arbitrary CSV/XML/JSON source files as multipart
+    /// parts, which routinely exceed axum's server-wide 2 MB
+    /// `DefaultBodyLimit`. This field overrides the limit for just those two
+    /// routes; every other route keeps the 2 MB default.
+    pub max_rml_upload_bytes: usize,
 }
 
 impl Default for Config {
@@ -167,6 +177,7 @@ impl Default for Config {
             max_query_timeout_secs: 30,
             auth: AuthConfig::None,
             data_dir: None,
+            max_rml_upload_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -184,6 +195,9 @@ pub struct AppState {
     pub jwks_cache: auth::JwksCache,
     /// Durable changelog.  `None` when the server runs in in-memory mode (no `data_dir`).
     pub changelog: Option<Arc<Mutex<QuadChangelog>>>,
+    /// Cached VQS productive-extension index (navigation graph + Wld configuration
+    /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
+    pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -230,6 +244,7 @@ pub async fn serve_on_listener(
         jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
         changelog,
         config,
+        vqs_cache: Arc::new(RwLock::new(None)),
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

@@ -38,7 +38,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::time::Instant;
-use turtle::parse_turtle;
+use turtle::{parse_ntriples, parse_turtle};
 
 /// Read current resident set size from /proc/self/status (Linux only).
 fn rss_mb() -> u64 {
@@ -790,4 +790,126 @@ fn gene_ontology_materialise_progress() {
     println!();
     println!("  Total inferred after {MAX_ITER} iterations: {total_inferred}");
     report_mem("after partial materialisation", rss_mb());
+}
+
+// ── Wikidata N-Triples sample ─────────────────────────────────────────────────
+//
+// Tests load `tests/testdata/wikidata-sample.nt`, a partial stream of the
+// Wikidata truthy N-Triples dump (~1 M triples).  Download it first:
+//
+//   bash scripts/download_test_ontologies.sh
+//
+// Then run:
+//   cargo test --test performance wikidata -- --ignored --nocapture
+
+/// Parse-only benchmark for the Wikidata N-Triples sample.
+///
+/// Measures N-Triples parsing throughput on a real-world large knowledge base.
+/// Wikidata uses fully qualified IRIs with no blank nodes in the truthy dump.
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn wikidata_parse_only() {
+    let path = test_data("wikidata-sample.nt");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Wikidata — parse only ===");
+    let t0 = Instant::now();
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).unwrap();
+    parse_ntriples(&mut datastore, BufReader::new(file)).expect("N-Triples parse must succeed");
+    let elapsed = t0.elapsed();
+    let triples = datastore.named_graphs.quad_count;
+    println!("  triples: {}", triples);
+    println!("  elapsed: {} ms", elapsed.as_millis());
+    println!(
+        "  throughput: {:.0} triples/sec",
+        triples as f64 / elapsed.as_secs_f64()
+    );
+    assert!(
+        triples > 100_000,
+        "expected >100k triples from Wikidata sample, got {}",
+        triples
+    );
+}
+
+/// SPARQL query benchmark over the Wikidata N-Triples sample.
+///
+/// Loads the sample, then executes representative queries against the
+/// Wikidata data model:
+///   - Enumerate items (rdf:type wikibase:Item)
+///   - Find instance-of (wdt:P31) statements
+///   - Retrieve arbitrary triples
+#[test]
+#[ignore = "large file required — run `bash scripts/download_test_ontologies.sh` first"]
+fn wikidata_sparql_queries() {
+    let path = test_data("wikidata-sample.nt");
+    if !ensure_test_data(&path) {
+        return;
+    }
+
+    println!("\n=== Wikidata — SPARQL query benchmark ===");
+    let t0 = Instant::now();
+
+    let mut datastore = Datastore::new(2_000_000);
+    let file = File::open(&path).expect("test data file must be readable");
+    parse_ntriples(&mut datastore, BufReader::new(file)).expect("N-Triples parse must succeed");
+    let triple_count = datastore.named_graphs.quad_count;
+    report("N-Triples parse", t0.elapsed().as_millis());
+    println!("    triples loaded:        {}", triple_count);
+    println!();
+
+    let queries: &[(&str, &str)] = &[
+        (
+            "SELECT * (LIMIT 10)",
+            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
+        ),
+        (
+            "wikibase:Item instances (LIMIT 100)",
+            "PREFIX wikibase: <http://wikiba.se/ontology#>\n\
+             SELECT ?item WHERE { ?item a wikibase:Item } LIMIT 100",
+        ),
+        (
+            "wdt:P31 instance-of (LIMIT 100)",
+            "PREFIX wdt: <http://www.wikidata.org/prop/direct/>\n\
+             SELECT ?item ?class WHERE { ?item wdt:P31 ?class } LIMIT 100",
+        ),
+        (
+            "schema:about (LIMIT 100)",
+            "PREFIX schema: <http://schema.org/>\n\
+             SELECT ?dataset ?entity WHERE { ?dataset schema:about ?entity } LIMIT 100",
+        ),
+    ];
+
+    println!("  {:<45} {:>10}  Rows", "Query", "Time (ms)");
+    println!("  {}", "-".repeat(65));
+    let mut all_rows: Vec<usize> = Vec::new();
+    for (label, query_str) in queries {
+        let t = Instant::now();
+        let rows = run_sparql(&datastore, query_str);
+        println!(
+            "  {:<45} {:>10}  {}",
+            label,
+            t.elapsed().as_millis(),
+            rows.len()
+        );
+        all_rows.push(rows.len());
+    }
+
+    report("TOTAL", t0.elapsed().as_millis());
+
+    assert!(
+        triple_count > 100_000,
+        "expected >100k triples from Wikidata sample, got {}",
+        triple_count
+    );
+    assert!(
+        all_rows[0] > 0,
+        "expected at least some triples from SELECT *"
+    );
+    assert!(
+        all_rows[1] > 0,
+        "expected wikibase:Item instances in the Wikidata sample"
+    );
 }

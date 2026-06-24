@@ -13,6 +13,16 @@ Implementation of new features follow test-driven development and go in these ph
 Each agent session only works on 
 Always create tests that cover new functionality before creating the functionality. The tests are initially ignored and tests are usually checked by the user before implementaiton.
 
+## Github backlog
+
+The backlog and progress overview is in the github project "Dagalog" https://github.com/users/daghovland/projects/11. 
+Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
+in issues under this project in github. The top-level issues under the project are larger "epics". Most concrete work will be on a sub-issue and not on the top-level.
+Include links to relevant epics (or issues) in markdwon documentation, and avoid metnioning work status in repository documentaton, use the issues for this.
+Include links to relevant documentation in the issues and epics. Whenever mentioning documentation in the issue, create actual clickable links. 
+Reference the current working branch of the repository in the issue when working on it. 
+
+When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to the issue or epic that will fix it
 
 ## Commands
 
@@ -39,6 +49,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test --workspace --release
+cargo check --workspace --all-targets
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo audit
 # Note: the CI minimal-versions job requires nightly and mutates Cargo.lock;

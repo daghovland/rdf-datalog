@@ -37,6 +37,8 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         config: state.config.clone(),
         jwks_cache: state.jwks_cache.clone(),
         changelog: state.changelog.clone(),
+        // Each dataset has its own store, hence its own VQS index cache.
+        vqs_cache: Arc::new(RwLock::new(None)),
     }
 }
 

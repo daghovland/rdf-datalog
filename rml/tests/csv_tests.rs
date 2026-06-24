@@ -10,7 +10,7 @@ fn write_temp_csv(name: &str, content: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_reads_header_and_rows() {
     let path = write_temp_csv("basic.csv", "id,name\n1,Alice\n2,Bob\n");
     let source = CsvSource::new(path);
@@ -23,7 +23,7 @@ fn csv_source_reads_header_and_rows() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_empty_file_yields_no_rows() {
     let path = write_temp_csv("empty.csv", "id,name\n");
     let source = CsvSource::new(path);
@@ -32,7 +32,7 @@ fn csv_source_empty_file_yields_no_rows() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_empty_cell_is_empty_string_not_absent() {
     let path = write_temp_csv("empty_cell.csv", "id,name\n1,\n");
     let source = CsvSource::new(path);
@@ -44,7 +44,7 @@ fn csv_source_empty_cell_is_empty_string_not_absent() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_missing_file_yields_error() {
     let path = PathBuf::from("/tmp/rml_csv_tests/does_not_exist_xyz.csv");
     let source = CsvSource::new(path);
@@ -53,7 +53,7 @@ fn csv_source_missing_file_yields_error() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_semicolon_delimiter() {
     let path = write_temp_csv("semicolon.csv", "id;name\n1;Alice\n");
     let source = CsvSource::new(path).with_delimiter(b';');
@@ -64,7 +64,7 @@ fn csv_source_semicolon_delimiter() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_quoted_field_with_comma() {
     let path = write_temp_csv("quoted.csv", "id,name\n1,\"Smith, Alice\"\n");
     let source = CsvSource::new(path);
@@ -73,7 +73,7 @@ fn csv_source_quoted_field_with_comma() {
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn csv_source_single_column() {
     let path = write_temp_csv("single.csv", "name\nAlice\nBob\n");
     let source = CsvSource::new(path);

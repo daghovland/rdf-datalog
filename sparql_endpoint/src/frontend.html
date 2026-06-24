@@ -1342,6 +1342,18 @@
              bodyLines.join('\n') + '\n}';
     }
 
+    // Decide whether a typed filter value could still match at least one
+    // known-productive value, using the same case-insensitive substring
+    // semantics as the regex(?var, text, "i") filter generateSparql emits.
+    // An empty/blank typed value is never unproductive (no constraint yet).
+    //
+    // MIRROR: keep in sync with filter_value_is_productive() in query_builder.rs.
+    function filterValueIsProductive(typed, productiveValues) {
+      if (!typed || !typed.trim()) return true;
+      const needle = typed.toLowerCase();
+      return productiveValues.some(v => String(v).toLowerCase().includes(needle));
+    }
+
     // ── Query builder — state ──────────────────────────────────────────────────
     // Each QueryNode: { varName, classIri, dataProps, links, _objProps }
     // _objProps stores discovered object-property IRIs (UI only, not in generate_sparql).
@@ -1384,7 +1396,8 @@
       try {
         const data = await sparqlFetch(
           'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' +
-          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent } LIMIT 3000'
+          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent . ' +
+          'FILTER(isIRI(?child) && isIRI(?parent)) } LIMIT 3000'
         );
         const bindings = data.results?.bindings ?? [];
 
@@ -1623,6 +1636,54 @@
       renderQbObjProps();
     }
 
+    // Fetches the VQS productive-values index for one (class, property) pair.
+    // Returns { covered: false, values: [] } on any network/parse failure or
+    // when the navigation graph has no schema (rdfs:domain/range) for this
+    // pair — callers must treat "not covered" as "no hint available", not
+    // as "no values exist".
+    async function fetchProductiveValues(classIri, propIri) {
+      try {
+        const url = '/vqs/productive-values?class=' + encodeURIComponent(classIri) +
+                    '&property=' + encodeURIComponent(propIri);
+        const resp = await fetch(url);
+        if (!resp.ok) return { covered: false, values: [] };
+        return await resp.json();
+      } catch (e) {
+        return { covered: false, values: [] };
+      }
+    }
+
+    // Updates the productive-value hint/datalist for one data-prop row from
+    // dp.vqsResult ({ covered, values } | undefined). `values` holds SPARQL-JSON
+    // binding objects ({type, value, datatype?}), same shape as query results.
+    // No-ops (hides the hint) until the result has been fetched, or when the
+    // index doesn't cover this (class, property) pair.
+    function updateQbProdHint(dp, hintEl, filterInput, datalistEl) {
+      const result = dp.vqsResult;
+      datalistEl.innerHTML = '';
+      if (!result || result.covered === false) {
+        hintEl.style.display = 'none';
+        return;
+      }
+      const values = (result.values ?? []).map(v => v.value);
+      for (const v of values) {
+        const opt = document.createElement('option');
+        opt.value = v;
+        datalistEl.appendChild(opt);
+      }
+      hintEl.style.display = '';
+      if (values.length === 0) {
+        hintEl.textContent = 'No known values for this class — a filter here would return nothing';
+        hintEl.style.color = '#a83232';
+      } else if (!filterValueIsProductive(dp.filter, values)) {
+        hintEl.textContent = '⚠ no known value matches — this filter would return 0 rows';
+        hintEl.style.color = '#a83232';
+      } else {
+        hintEl.textContent = values.length + ' known value(s)';
+        hintEl.style.color = '#888';
+      }
+    }
+
     function renderQbDataProps() {
       const list  = document.getElementById('data-prop-list');
       list.innerHTML = '';
@@ -1634,7 +1695,9 @@
         list.appendChild(p);
         return;
       }
+      const node = qbActiveNode;
       for (const dp of props) {
+        const wrap = document.createElement('div');
         const row = document.createElement('div');
         row.className = 'qb-prop-row';
         const cb = document.createElement('input');
@@ -1648,13 +1711,30 @@
         filterInput.style.cssText =
           'display:none;font-size:0.75rem;padding:0.15rem 0.3rem;' +
           'border:1px solid #ccc;border-radius:3px;width:7rem;margin-left:0.3rem;';
+        const datalistId = 'qb-dl-' + node.varName + '-' + dp.varName;
+        const datalist = document.createElement('datalist');
+        datalist.id = datalistId;
+        filterInput.setAttribute('list', datalistId);
+        const hint = document.createElement('small');
+        hint.className = 'qb-prod-hint';
+        hint.style.cssText = 'display:none;margin-left:1.6rem;font-size:0.72rem;';
         filterInput.addEventListener('input', () => {
           dp.filter = filterInput.value;
+          updateQbProdHint(dp, hint, filterInput, datalist);
           regenerateSparql();
         });
-        cb.addEventListener('change', () => {
+        cb.addEventListener('change', async () => {
           dp.checked = cb.checked;
           filterInput.style.display = cb.checked ? '' : 'none';
+          if (!cb.checked) {
+            hint.style.display = 'none';
+            regenerateSparql();
+            return;
+          }
+          if (dp.vqsResult === undefined) {
+            dp.vqsResult = await fetchProductiveValues(node.classIri, dp.propIri);
+          }
+          updateQbProdHint(dp, hint, filterInput, datalist);
           regenerateSparql();
         });
         if (dp.checked) filterInput.style.display = '';
@@ -1665,8 +1745,10 @@
         const varEl = document.createElement('span');
         varEl.className = 'qb-prop-var';
         varEl.textContent = '→ ?' + dp.varName;
-        row.append(cb, lbl, varEl, filterInput);
-        list.appendChild(row);
+        row.append(cb, lbl, varEl, filterInput, datalist);
+        wrap.append(row, hint);
+        list.appendChild(wrap);
+        if (dp.checked) updateQbProdHint(dp, hint, filterInput, datalist);
       }
     }
 
@@ -1920,6 +2002,34 @@
           assertHas(out, '?s <http://example.org/knows> ?n2 .');
           assertHas(out, '?n1 a <http://example.org/Company> .');
           assertHas(out, '?n2 a <http://example.org/Person> .');
+        },
+      },
+      // -- VQS productive-value hint --
+      {
+        name: 'empty filter is always productive',
+        fn() {
+          assertEq(filterValueIsProductive('', []), true);
+          assertEq(filterValueIsProductive('  ', ['Alice', 'Bob']), true);
+        },
+      },
+      {
+        name: 'filter matching known value case-insensitively is productive',
+        fn() {
+          const values = ['Alice', 'Bob'];
+          assertEq(filterValueIsProductive('ali', values), true);
+          assertEq(filterValueIsProductive('ALICE', values), true);
+        },
+      },
+      {
+        name: 'filter matching no known value is unproductive',
+        fn() {
+          assertEq(filterValueIsProductive('zzz', ['Alice', 'Bob']), false);
+        },
+      },
+      {
+        name: 'nonempty filter against no known values is unproductive',
+        fn() {
+          assertEq(filterValueIsProductive('anything', []), false);
         },
       },
     ];

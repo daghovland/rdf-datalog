@@ -21,6 +21,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 pub mod execute;
+mod join_ordering;
 pub use execute::{
     eval_expr_as_filter, execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
 };
@@ -395,6 +396,31 @@ fn parse_group_graph_pattern_contents<'a>(
                     // Inline sub-group: flatten into current components
                     components.extend(left);
                     remaining = r;
+                }
+                continue;
+            }
+
+            // Empty blank node shorthand [] in subject position.
+            // `[] pred obj` ≡ `_:fresh pred obj` with a fresh anonymous blank node.
+            if remaining.starts_with("[]") {
+                let (r, _) = tag("[]")(remaining)?;
+                let (r, _) = multispace0(r)?;
+                let bn_var = Term::Variable(format!("__bn_{}", blank_node_counter));
+                blank_node_counter += 1;
+                let (r, inner_comps) = parse_predobj_pairs(ctx, &bn_var, r)?;
+                for comp in inner_comps {
+                    match comp {
+                        QueryComponent::BGP(tps) => current_triples.extend(tps),
+                        other => {
+                            flush_triples(&mut components, &mut current_triples);
+                            components.push(other);
+                        }
+                    }
+                }
+                remaining = r;
+                remaining = multispace0(remaining)?.0;
+                if remaining.starts_with('.') && !remaining.starts_with("..") {
+                    remaining = &remaining[1..];
                 }
                 continue;
             }

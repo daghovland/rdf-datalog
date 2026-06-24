@@ -62,7 +62,9 @@ pub fn classify(method: &Method, path: &str) -> Permission {
     }
 
     // Explicit write-POST endpoints (POST on SPARQL query endpoints is a Read).
-    if method == Method::POST && (path == "/upload" || path.ends_with("/update")) {
+    if method == Method::POST
+        && (path == "/upload" || path.ends_with("/update") || path.ends_with("/rml"))
+    {
         return Permission::Write;
     }
 
@@ -602,6 +604,11 @@ mod tests {
     #[test]
     fn post_upload_is_write() {
         assert_eq!(classify(&Method::POST, "/upload"), Permission::Write);
+    }
+
+    #[test]
+    fn post_dataset_rml_is_write() {
+        assert_eq!(classify(&Method::POST, "/ds/rml"), Permission::Write);
     }
 
     #[test]

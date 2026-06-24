@@ -1,0 +1,12 @@
+<root>
+  <group>
+    <student>
+      <id>1</id>
+      <name>Eve</name>
+    </student>
+    <student>
+      <id>2</id>
+      <name>Frank</name>
+    </student>
+  </group>
+</root>

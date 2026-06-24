@@ -15,6 +15,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Options:
 //!   -d, --data <FILE>          Turtle/TriG data file(s) to load [repeatable]
+//!   -m, --mapping <FILE>       RML mapping file(s) to apply [repeatable]
 //!   -o, --ontology <FILE>      OWL ontology file(s) → OWL-RL reasoning [repeatable]
 //!   -r, --rules <FILE>         Datalog rules file(s) [repeatable]
 //!   -Q, --query <SPARQL|FILE>  Inline SPARQL SELECT or path to .sparql file
@@ -30,7 +31,8 @@ Contact: hovlanddag@gmail.com
 use clap::Parser;
 use dag_rdf::Datastore;
 use dagalog::{
-    OutputFormat, apply_ontologies, apply_rules, format_results, load_file, run_sparql_query,
+    OutputFormat, apply_ontologies, apply_rml_mappings, apply_rules, format_results, load_file,
+    run_sparql_query,
 };
 use sparql_endpoint::{AuthConfig, OidcConfig};
 use std::path::PathBuf;
@@ -48,6 +50,10 @@ struct Cli {
     /// Turtle or TriG data file(s) to load (repeatable)
     #[arg(short = 'd', long = "data", value_name = "FILE")]
     data: Vec<PathBuf>,
+
+    /// RML mapping file(s) to apply — maps CSV/JSON/XML sources to RDF (repeatable)
+    #[arg(short = 'm', long = "mapping", value_name = "FILE")]
+    mapping: Vec<PathBuf>,
 
     /// OWL ontology file(s) — loads and applies OWL-RL reasoning (repeatable)
     #[arg(short = 'o', long = "ontology", value_name = "FILE")]
@@ -240,6 +246,26 @@ fn run(cli: Cli) -> Result<(), String> {
         }
     }
 
+    if !cli.mapping.is_empty() {
+        if cli.verbose {
+            for p in &cli.mapping {
+                eprintln!("applying RML mapping: {}", p.display());
+            }
+        }
+        let triples_before = datastore.named_graphs.quad_count;
+        apply_rml_mappings(&mut datastore, &cli.mapping)?;
+        if cli.verbose {
+            eprintln!(
+                "Triples after RML mapping: {} (+{})",
+                datastore.named_graphs.quad_count,
+                datastore
+                    .named_graphs
+                    .quad_count
+                    .saturating_sub(triples_before)
+            );
+        }
+    }
+
     if !cli.ontology.is_empty() {
         if cli.verbose {
             for p in &cli.ontology {
@@ -308,6 +334,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_query_timeout_secs: cli.query_timeout,
             auth,
             data_dir,
+            ..Default::default()
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()
@@ -318,7 +345,11 @@ fn run(cli: Cli) -> Result<(), String> {
     } else if let Some(sparql_str) = &sparql {
         let result = run_sparql_query(&datastore, sparql_str)?;
         print!("{}", format_results(&result, &format));
-    } else if cli.data.is_empty() && cli.ontology.is_empty() && cli.rules.is_empty() {
+    } else if cli.data.is_empty()
+        && cli.mapping.is_empty()
+        && cli.ontology.is_empty()
+        && cli.rules.is_empty()
+    {
         eprintln!("No data files or query provided. Run with --help for usage.");
     } else {
         eprintln!(

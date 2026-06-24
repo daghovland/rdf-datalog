@@ -166,6 +166,22 @@ fn collect_node(node: &QueryNode, select: &mut Vec<String>, body: &mut Vec<Strin
     }
 }
 
+/// Decide whether a typed filter value could still match at least one known
+/// productive value, using the same case-insensitive substring semantics as
+/// the `regex(?var, text, "i")` filter `generate_sparql` emits.
+///
+/// An empty/blank typed value is never "unproductive" — there's no
+/// constraint yet, so it can't dead-end the query.
+pub fn filter_value_is_productive(typed: &str, productive_values: &[String]) -> bool {
+    if typed.trim().is_empty() {
+        return true;
+    }
+    let needle = typed.to_lowercase();
+    productive_values
+        .iter()
+        .any(|v| v.to_lowercase().contains(&needle))
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 //
 // All tests are mirrored in the JS `QB_SELF_TESTS` array in frontend.html.
@@ -339,5 +355,35 @@ SELECT ?s ?s_label ?n1 ?n1_label WHERE {
         assert!(sparql.contains("?s <http://example.org/knows> ?n2 ."));
         assert!(sparql.contains("?n1 a <http://example.org/Company> ."));
         assert!(sparql.contains("?n2 a <http://example.org/Person> ."));
+    }
+
+    // ── VQS productive-value hint ─────────────────────────────────────────────
+    // Mirrored by filterValueIsProductive() / QB_SELF_TESTS in frontend.html.
+
+    #[test]
+    fn empty_filter_is_always_productive() {
+        assert!(filter_value_is_productive("", &[]));
+        assert!(filter_value_is_productive(
+            "  ",
+            &["Alice".to_string(), "Bob".to_string()]
+        ));
+    }
+
+    #[test]
+    fn filter_matching_known_value_case_insensitively_is_productive() {
+        let values = vec!["Alice".to_string(), "Bob".to_string()];
+        assert!(filter_value_is_productive("ali", &values));
+        assert!(filter_value_is_productive("ALICE", &values));
+    }
+
+    #[test]
+    fn filter_matching_no_known_value_is_unproductive() {
+        let values = vec!["Alice".to_string(), "Bob".to_string()];
+        assert!(!filter_value_is_productive("zzz", &values));
+    }
+
+    #[test]
+    fn nonempty_filter_against_no_known_values_is_unproductive() {
+        assert!(!filter_value_is_productive("anything", &[]));
     }
 }

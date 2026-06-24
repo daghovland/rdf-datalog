@@ -1,0 +1,20 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "student.xml" ;
+        rml:referenceFormulation rml:XPath ;
+        rml:iterator "/students/student"
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:sport ;
+        rml:objectMap [
+            rml:reference "sport" ;
+            rml:language "en"
+        ]
+    ] .
