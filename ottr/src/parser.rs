@@ -160,6 +160,10 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
     move |input: &'a str| {
         alt((
             map(parse_variable, Term::Variable),
+            map(parse_literal(ctx), Term::Literal),
+            // Blank node labels (`_:b1`) must be tried before prefixed names,
+            // since `_` is itself a valid (if unusual) prefix name character.
+            map(parse_blank_node_label, Term::BlankNode),
             map(parse_prefixed_name(ctx), Term::Iri),
             map(parse_iri_ref, Term::Iri),
         ))(input)
