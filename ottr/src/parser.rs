@@ -1,7 +1,7 @@
 use crate::ast::{Argument, Instance, Parameter, StottrDocument, TemplateDef, Term};
 use crate::error::OttrError;
 use crate::types::OttrType;
-use ingress::IriReference;
+use ingress::{IriReference, RdfLiteral};
 use nom::{
     IResult,
     branch::alt,
@@ -9,7 +9,7 @@ use nom::{
     character::complete::{char, multispace0, multispace1},
     combinator::{map, opt},
     multi::{many0, separated_list0},
-    sequence::{delimited, pair},
+    sequence::{delimited, pair, preceded, terminated},
 };
 use std::collections::HashMap;
 
@@ -62,6 +62,53 @@ fn parse_variable(input: &str) -> IResult<&str, String> {
     let (input, _) = char('?')(input)?;
     let (input, name) = take_while1(is_name_char)(input)?;
     Ok((input, name.to_string()))
+}
+
+fn parse_blank_node_label(input: &str) -> IResult<&str, String> {
+    let (input, _) = tag("_:")(input)?;
+    let (input, label) = take_while1(is_name_char)(input)?;
+    Ok((input, label.to_string()))
+}
+
+fn parse_quoted_string(input: &str) -> IResult<&str, String> {
+    map(
+        delimited(char('"'), take_while(|c: char| c != '"'), char('"')),
+        |s: &str| s.to_string(),
+    )(input)
+}
+
+/// Parse a literal: a quoted string, optionally followed by `^^datatype`
+/// (typed literal) or `@lang` (language-tagged string).
+fn parse_literal<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, RdfLiteral> + 'a {
+    move |input: &'a str| {
+        let (input, lexical) = parse_quoted_string(input)?;
+        let (input, type_iri) = opt(preceded(tag("^^"), parse_prefixed_name(ctx)))(input)?;
+        if let Some(type_iri) = type_iri {
+            return Ok((
+                input,
+                RdfLiteral::TypedLiteral {
+                    type_iri,
+                    literal: lexical,
+                },
+            ));
+        }
+        let (input, lang) = opt(preceded(
+            char('@'),
+            take_while1(|c: char| c.is_alphanumeric() || c == '-'),
+        ))(input)?;
+        if let Some(lang) = lang {
+            return Ok((
+                input,
+                RdfLiteral::LangLiteral {
+                    lang: lang.to_string(),
+                    literal: lexical,
+                },
+            ));
+        }
+        Ok((input, RdfLiteral::LiteralString(lexical)))
+    }
 }
 
 /// Parse a parameter type: `ottr:IRI`, `ottr:BlankNode`, `ottr:Literal`, or a

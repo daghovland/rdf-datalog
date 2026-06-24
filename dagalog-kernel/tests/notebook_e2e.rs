@@ -160,6 +160,44 @@ async fn test_validate_cell_reports_conforms() {
 }
 
 #[tokio::test]
+#[ignore]
+async fn test_complete_request_over_zmq() {
+    let mut kernel = KernelHarness::start(&repo_root()).await;
+    let reply = kernel
+        .request(
+            "complete_request",
+            serde_json::json!({ "code": "SEL", "cursor_pos": 3 }),
+        )
+        .await;
+    let matches: Vec<String> = reply["matches"]
+        .as_array()
+        .expect("matches array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    assert!(matches.contains(&"SELECT".to_string()));
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inspect_request_over_zmq() {
+    let mut kernel = KernelHarness::start(&repo_root()).await;
+    let reply = kernel
+        .request(
+            "inspect_request",
+            serde_json::json!({ "code": "REGEX", "cursor_pos": 2, "detail_level": 0 }),
+        )
+        .await;
+    assert_eq!(reply["found"], serde_json::json!(true));
+    let text = reply["data"]["text/plain"]
+        .as_str()
+        .expect("text/plain doc");
+    assert!(text.contains("regular expression"));
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
 async fn test_full_notebook_replay() {
     let root = repo_root();
     let cells = notebook_code_cells(&root);
