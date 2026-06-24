@@ -245,7 +245,11 @@ impl KernelHarness {
 
     /// Send an arbitrary shell message and wait for the matching shell reply
     /// (by `msg_id`), returning its `content`.
-    pub async fn request(&mut self, msg_type: &str, content: serde_json::Value) -> serde_json::Value {
+    pub async fn request(
+        &mut self,
+        msg_type: &str,
+        content: serde_json::Value,
+    ) -> serde_json::Value {
         let msg = request(msg_type, &self.session, content);
         let req_msg_id = msg.header.msg_id.clone();
         let frames = encode_message(&msg, &self.key, &[]).expect("encode request");

@@ -3,21 +3,57 @@
 
 #[allow(dead_code)]
 const KEYWORDS: &[&str] = &[
-    "SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "FROM", "FILTER", "OPTIONAL", "UNION",
-    "MINUS", "GRAPH", "BIND", "VALUES", "GROUP", "BY", "HAVING", "ORDER", "ASC", "DESC", "LIMIT",
-    "OFFSET", "DISTINCT", "PREFIX", "AS", "EXISTS", "NOT", "SEPARATOR", "UNDEF", "TRUE", "FALSE",
+    "SELECT",
+    "CONSTRUCT",
+    "ASK",
+    "DESCRIBE",
+    "WHERE",
+    "FROM",
+    "FILTER",
+    "OPTIONAL",
+    "UNION",
+    "MINUS",
+    "GRAPH",
+    "BIND",
+    "VALUES",
+    "GROUP",
+    "BY",
+    "HAVING",
+    "ORDER",
+    "ASC",
+    "DESC",
+    "LIMIT",
+    "OFFSET",
+    "DISTINCT",
+    "PREFIX",
+    "AS",
+    "EXISTS",
+    "NOT",
+    "SEPARATOR",
+    "UNDEF",
+    "TRUE",
+    "FALSE",
 ];
 
 #[allow(dead_code)]
 const FUNCTIONS: &[(&str, &str)] = &[
-    ("STR", "STR(x) — the lexical/string form of a literal or IRI."),
-    ("LANG", "LANG(x) — the language tag of a literal, or \"\" if none."),
+    (
+        "STR",
+        "STR(x) — the lexical/string form of a literal or IRI.",
+    ),
+    (
+        "LANG",
+        "LANG(x) — the language tag of a literal, or \"\" if none.",
+    ),
     (
         "LANGMATCHES",
         "LANGMATCHES(lang, pattern) — whether a language tag matches a language range.",
     ),
     ("DATATYPE", "DATATYPE(x) — the datatype IRI of a literal."),
-    ("BOUND", "BOUND(?var) — whether a variable is bound in the current solution."),
+    (
+        "BOUND",
+        "BOUND(?var) — whether a variable is bound in the current solution.",
+    ),
     ("ISIRI", "ISIRI(x) — whether the term is an IRI."),
     ("ISURI", "ISURI(x) — alias for ISIRI."),
     ("ISBLANK", "ISBLANK(x) — whether the term is a blank node."),

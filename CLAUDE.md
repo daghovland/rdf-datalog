@@ -22,7 +22,7 @@ Include links to relevant epics (or issues) in markdwon documentation, and avoid
 Include links to relevant documentation in the issues and epics. Whenever mentioning documentation in the issue, create actual clickable links. 
 Reference the current working branch of the repository in the issue when working on it. 
 
-When marking code as incomplete, f.ex. tests that are ignored, or todo's, always link to the issue or epic that will fix it
+When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to the issue or epic that will fix it
 
 ## Commands
 
