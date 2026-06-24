@@ -380,12 +380,6 @@ fn translate_multi_column_join_condition_preserves_all_conditions() {
         triples_maps: vec![tm, sport_parent_triples_map()],
     };
     let plans = translate(&doc);
-    let join = plans
-        .iter()
-        .find_map(|p| match p {
-            LogicalPlan::Join(j) => Some(j),
-            _ => None,
-        })
-        .expect("expected a LogicalPlan::Join");
+    let join = find_join(&plans);
     assert_eq!(join.conditions.len(), 2);
 }

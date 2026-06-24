@@ -11,11 +11,8 @@ use crate::plan::{
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
 pub fn translate(mapping: &MappingDocument) -> Vec<LogicalPlan> {
-    let parent_by_id: HashMap<&IriReference, &TriplesMap> = mapping
-        .triples_maps
-        .iter()
-        .map(|tm| (&tm.id, tm))
-        .collect();
+    let parent_by_id: HashMap<&IriReference, &TriplesMap> =
+        mapping.triples_maps.iter().map(|tm| (&tm.id, tm)).collect();
 
     let mut plans = Vec::new();
     for tm in &mapping.triples_maps {
@@ -70,9 +67,9 @@ fn translate_triples_map(
             for obj_map in &pom.object_maps {
                 let (input, obj_logic) = match &obj_map.parent_triples_map {
                     Some(parent_id) => {
-                        let parent_tm = parent_by_id
-                            .get(parent_id)
-                            .unwrap_or_else(|| panic!("unknown rml:parentTriplesMap {parent_id:?}"));
+                        let parent_tm = parent_by_id.get(parent_id).unwrap_or_else(|| {
+                            panic!("unknown rml:parentTriplesMap {parent_id:?}")
+                        });
                         let conditions: Vec<JoinCondition> = obj_map
                             .join_conditions
                             .iter()

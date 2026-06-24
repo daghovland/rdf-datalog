@@ -13,6 +13,11 @@ Implementation of new features follow test-driven development and go in these ph
 Each agent session only works on 
 Always create tests that cover new functionality before creating the functionality. The tests are initially ignored and tests are usually checked by the user before implementaiton.
 
+## Github backlog
+
+The backlog and progress overview is in github projects. Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
+in issues and projects in github. The projects are referenced with the repository, and are f.ex.
+https://github.com/users/daghovland/projects/10 for OTTR and https://github.com/users/daghovland/projects/11 for Jupyter pipeline 
 
 ## Commands
 

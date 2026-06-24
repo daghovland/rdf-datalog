@@ -107,8 +107,16 @@ restriction in advance).
 - Cost model, per pattern, given the set of variables already bound by
   patterns scheduled so far:
   1. `bound_count` = number of {subject, predicate, object} terms that are
-     either `Term::Constant` or a `Term::Variable` already in the bound
-     set. Higher is more selective; this is the primary sort key.
+     `Term::Variable` and already in the bound set. **Constants do not
+     count here** — a constant's selectivity is already measured exactly
+     by the cardinality tie-break below, so counting it again in the
+     primary key would double-count it and can only make the ordering
+     worse, never better (see worked counterexample below — found during
+     the green phase, not anticipated in the original draft). Higher
+     `bound_count` means more of this pattern's runtime restriction comes
+     from joins already performed, which `known_cardinality` cannot see
+     since it's computed before any binding happens. This is the primary
+     sort key.
   2. Tie-break with a real cardinality computed *only* from the pattern's
      constant terms, via direct `.len()` lookups on `QuadTable`'s public
      index fields (no allocation, no `.collect()`):
@@ -125,25 +133,33 @@ restriction in advance).
      cost model — there's no combined graph+predicate index, so it
      wouldn't be O(1), and the default-graph case (the overwhelming
      majority of queries) makes it unnecessary.
+
+  **Worked counterexample for why constants must not count toward
+  `bound_count`:** pattern X = `(const, const, var)` with
+  `subject_predicate_index[s][p].len()` = 1000, vs. pattern Y =
+  `(var, const, var)` with `predicate_index[q].len()` = 1. Counting
+  constants would give X a `bound_count` of 2 vs. Y's 1, scheduling X
+  first — even though X produces 1000x more intermediate rows than Y. The
+  exact cardinality already available for both makes the constant-count
+  signal not just redundant but actively wrong whenever it disagrees with
+  cardinality.
 - Ordering algorithm: greedy, not exact DP. Seed the "bound" set with
-  `already_bound`. At each step: if any not-yet-scheduled pattern shares a
-  variable with the current bound set, restrict candidates to those
-  (connected); otherwise (including the very first pick when
-  `already_bound` is empty, where nothing can be connected yet) consider
-  all remaining patterns. There is no separate "first pick" special case —
-  it falls out of the same rule, since an empty bound set makes every
-  pattern equally "disconnected." Among the candidate set, pick the one
-  with the best `(bound_count desc, tie-break cardinality asc)` key. Note
-  this connectedness filter must apply even when `already_bound` is
-  non-empty (a BGP nested after an earlier component): otherwise a cheap
-  but disconnected pattern could win on cardinality and force a cartesian
-  product against the incoming bindings, which is exactly what the filter
-  exists to prevent. This is the standard "selectivity + connectedness"
-  heuristic from the SPARQL/Datalog reordering literature (OptARQ,
-  distance-based triple reordering). Exact DP was the original idea but
-  doesn't fit cleanly once cardinalities for bound-but-unknown-value
-  variables are admitted to be unknown rather than exact — revisit DP only
-  if the greedy heuristic measurably underperforms on the benchmark.
+  `already_bound`. At each step, pick the not-yet-scheduled pattern with
+  the best `(bound_count desc, tie-break cardinality asc)` key, then add
+  its variables to "bound" before the next step. There is no separate
+  connectedness filter to implement — it falls out of the corrected cost
+  model for free: a pattern sharing no bound variable with anything
+  scheduled so far has `bound_count == 0` (constants no longer
+  contribute), while a pattern sharing at least one bound variable has
+  `bound_count >= 1`. Ranking by `bound_count` descending therefore always
+  prefers a connected candidate over a disconnected one whenever both
+  exist, with no extra bookkeeping. This is the standard "selectivity +
+  connectedness" heuristic from the SPARQL/Datalog reordering literature
+  (OptARQ, distance-based triple reordering). Exact DP was the original
+  idea but doesn't fit cleanly once cardinalities for bound-but-unknown-
+  value variables are admitted to be unknown rather than exact — revisit
+  DP only if the greedy heuristic measurably underperforms on the
+  benchmark.
 - Where this plugs in: a new `sparql_parser::join_ordering` module, with
   `fn order_patterns(patterns: &[TriplePattern], already_bound: &HashSet<String>, datastore: &Datastore) -> Vec<usize>`
   (returns a permutation of pattern indices), called from `eval_bgp` before

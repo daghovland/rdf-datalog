@@ -2,11 +2,12 @@
 
 > **Status: MOSTLY COMPLETE** — phases 1–5 implemented and green (protocol
 > skeleton, SPARQL execute, session state, `%%rml`/`%%load`/`%%turtle`
-> magics, `%%reason`/`%%validate`). 7 tests passing, 0 ignored
-> (`cargo test -p dagalog-kernel`). Phase 6 (`complete_request` — SPARQL
-> keyword completion) is not yet implemented; everything else in this plan
-> is done. This status line was stale until 2026-06-23 — the plan had been
-> fully implemented without the banner being updated.
+> magics, `%%reason`/`%%validate`). `%%validate` wires to the `shacl` crate
+> (see `VALIDATE_MAGIC_PLAN.md`). Phase 6 remains:
+> [complete_request](https://github.com/daghovland/rdf-datalog/issues/23),
+> [inspect_request](https://github.com/daghovland/rdf-datalog/issues/24).
+> `%%ottr` magic also pending:
+> [issue #22](https://github.com/daghovland/rdf-datalog/issues/22).
 
 ## Goal
 
@@ -160,7 +161,7 @@ a live Jupyter client (see developer setup below).
 3. **Session state** — persistent Datastore, `%%load` and `%%turtle` magics
 4. **RML magic** — `%%rml` (depends on `rml` crate)
 5. **`%%reason`, `%%validate`** — wire OWL-RL and SHACL
-6. **Completion** — keyword completion for SPARQL
+6. **Completion** — keyword completion for SPARQL ([issue #23](https://github.com/daghovland/rdf-datalog/issues/23)), hover docs ([issue #24](https://github.com/daghovland/rdf-datalog/issues/24))
 
 ---
 

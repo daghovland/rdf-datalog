@@ -1,7 +1,4 @@
 /// End-to-end tests for `rml:joinCondition` (cross-source-map joins).
-/// Red phase: fixtures and test bodies are in place, but `translate.rs`/
-/// `engine.rs` do not construct or execute `LogicalPlan::Join` yet, so all
-/// tests here are `#[ignore]`d until the join is implemented.
 /// See `docs/plans/RML_JOIN_PLAN.md` for the design.
 use dag_rdf::ingress::{Quad, Triple};
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
@@ -28,7 +25,6 @@ macro_rules! intern {
 // ── rmltc0009a_join: child/parent join via rml:joinCondition ────────────────
 
 #[test]
-#[ignore]
 fn rmltc0009a_join_matched_row_produces_object_iri_from_parent_subject() {
     let dir = fixture("rmltc0009a_join");
     let mut ds = Datastore::new(100);
@@ -45,7 +41,6 @@ fn rmltc0009a_join_matched_row_produces_object_iri_from_parent_subject() {
 }
 
 #[test]
-#[ignore]
 fn rmltc0009a_join_unmatched_row_produces_no_join_triple() {
     let dir = fixture("rmltc0009a_join");
     let mut ds = Datastore::new(100);
@@ -64,7 +59,6 @@ fn rmltc0009a_join_unmatched_row_produces_no_join_triple() {
 }
 
 #[test]
-#[ignore]
 fn rmltc0009a_join_unmatched_row_still_gets_non_join_triples() {
     let dir = fixture("rmltc0009a_join");
     let mut ds = Datastore::new(100);
@@ -81,7 +75,6 @@ fn rmltc0009a_join_unmatched_row_still_gets_non_join_triples() {
 }
 
 #[test]
-#[ignore]
 fn rmltc0009a_join_parent_triples_map_also_produces_its_own_triples() {
     let dir = fixture("rmltc0009a_join");
     let mut ds = Datastore::new(100);
@@ -98,7 +91,6 @@ fn rmltc0009a_join_parent_triples_map_also_produces_its_own_triples() {
 }
 
 #[test]
-#[ignore]
 fn rmltc0009a_join_produces_exactly_one_join_triple_for_matched_row() {
     let dir = fixture("rmltc0009a_join");
     let mut ds = Datastore::new(100);
@@ -117,7 +109,6 @@ fn rmltc0009a_join_produces_exactly_one_join_triple_for_matched_row() {
 // ── rmltc0009b_join: same join, with the join triple placed in a named graph ─
 
 #[test]
-#[ignore]
 fn rmltc0009b_join_with_named_graphs_matched_row() {
     let dir = fixture("rmltc0009b_join");
     let mut ds = Datastore::new(100);

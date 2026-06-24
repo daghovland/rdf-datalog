@@ -1835,6 +1835,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ottr"
+version = "0.1.0"
+dependencies = [
+ "dag-rdf",
+ "ingress",
+ "log",
+ "nom",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "owl-ontology"
 version = "0.1.0"
 dependencies = [

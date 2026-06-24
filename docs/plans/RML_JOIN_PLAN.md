@@ -1,18 +1,22 @@
 # RML Join Plan: `rml:JoinCondition` (cross-source joins)
 
-> **Status: RED PHASE** — plan + ignored stub tests are now both in place (no
-> execution logic implemented yet). `ast.rs` has the new `JoinConditionRef`
-> struct and `ObjectMap.join_conditions` field; `plan.rs`'s `LogicalJoin` now
-> takes `conditions: Vec<JoinCondition>` (pluralized per "Why the existing
-> `plan.rs` types need one change" below); `loader.rs` parses
-> `rml:joinCondition`/`rml:child`/`rml:parent`. 12 new `#[ignore]`d tests exist
-> and compile clean: 6 in `rml/tests/join_end_to_end.rs` (against the
-> `rmltc0009a_join`/`rmltc0009b_join` fixtures), 3 in `rml/tests/plan_tests.rs`,
-> 3 in `rml/tests/loader_tests.rs`. `cargo test -p rml`, `cargo fmt --all --
-> --check`, and `cargo clippy -p rml --all-targets -- -D warnings` are all
-> clean. `translate.rs` and `engine.rs` are unchanged — no `LogicalPlan::Join`
-> is constructed or executed yet. See "TDD phases" below for the green-phase
-> order.
+> **Status: COMPLETE** — all phases green. `ast.rs` has `JoinConditionRef` /
+> `ObjectMap.join_conditions`; `plan.rs`'s `LogicalJoin` takes
+> `conditions: Vec<JoinCondition>`; `loader.rs` parses
+> `rml:joinCondition`/`rml:child`/`rml:parent`; `translate.rs` builds a
+> `parent_by_id` index and constructs `LogicalPlan::Join` (nested inside a
+> `Projection`, same convention as `Scan`) whenever an `ObjectMap` has a
+> `parent_triples_map`, sourcing the join `Object`'s generation logic from the
+> parent's subject map; `engine.rs` executes it as a hash join (`execute_join`
+> in `engine.rs`) that materialises and indexes the parent side, streams the
+> child side, and — critically — evaluates the join `Object` against the
+> matched parent row while Subject/Predicate/Graph/non-join-Object stay on the
+> child row, keeping the two sides separate even when column names collide.
+> All 12 originally-stubbed tests pass (3 `loader_tests.rs`, 3 `plan_tests.rs`,
+> 6 `join_end_to_end.rs`), plus the full `rml` crate suite (150 tests),
+> `cargo fmt --all -- --check`, and `cargo clippy -p rml --all-targets -- -D
+> warnings` are all clean. Phase 6 (optional root-crate integration test) was
+> not done — not required for this plan's scope.
 
 ## Goal
 

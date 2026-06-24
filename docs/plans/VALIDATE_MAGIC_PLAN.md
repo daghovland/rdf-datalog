@@ -1,6 +1,6 @@
 # Wiring `%%validate` to the `shacl` crate
 
-> Status: RED PHASE — tests written and ignored, awaiting review before implementation.
+> Status: COMPLETE — `%%validate` wired to `shacl::validate`, all 6 tests green.
 
 ## Problem
 

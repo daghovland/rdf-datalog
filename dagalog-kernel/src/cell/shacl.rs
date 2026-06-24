@@ -9,8 +9,8 @@ pub fn execute_validate(ds: &Datastore, shapes_path: &Path) -> Result<String, St
     let mut shapes_store = Datastore::new(4096);
     turtle::parse_turtle(&mut shapes_store, std::io::BufReader::new(file))
         .map_err(|e| format!("Turtle parse error in shapes file: {}", e))?;
-    let report = shacl::validate(ds, &shapes_store)
-        .map_err(|e| format!("SHACL validation error: {}", e))?;
+    let report =
+        shacl::validate(ds, &shapes_store).map_err(|e| format!("SHACL validation error: {}", e))?;
     if report.conforms {
         Ok("Conforms. 0 violation(s).".to_string())
     } else {

@@ -24,33 +24,51 @@ use std::collections::HashSet;
 /// Return a permutation of `0..patterns.len()` giving the evaluation order
 /// `eval_bgp` should use, given the variables already bound by solutions
 /// flowing into this BGP.
-#[allow(dead_code)]
 pub(crate) fn order_patterns(
     patterns: &[TriplePattern],
     already_bound: &HashSet<String>,
     datastore: &Datastore,
 ) -> Vec<usize> {
-    let _ = (patterns, already_bound, datastore);
-    unimplemented!(
-        "Phase A: selectivity-based BGP reordering — see docs/plans/JOIN_REORDERING_PLAN.md"
-    )
+    let mut bound: HashSet<String> = already_bound.clone();
+    let mut remaining: Vec<usize> = (0..patterns.len()).collect();
+    let mut order = Vec::with_capacity(patterns.len());
+
+    while !remaining.is_empty() {
+        let best_pos = remaining
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &i)| {
+                let bc = bound_count(&patterns[i], &bound);
+                let cardinality = known_cardinality(&patterns[i], datastore);
+                (bc, std::cmp::Reverse(cardinality))
+            })
+            .map(|(pos, _)| pos)
+            .expect("remaining is non-empty inside the loop");
+
+        let best = remaining.remove(best_pos);
+        bound.extend(pattern_variables(&patterns[best]).cloned());
+        order.push(best);
+    }
+
+    order
 }
 
-/// Number of {subject, predicate, object} terms that are either a constant
-/// or a variable already in `bound`. Higher means more selective.
-#[allow(dead_code)]
+/// Number of {subject, predicate, object} terms that are variables already
+/// in `bound`. Constants deliberately do not count: their selectivity is
+/// already measured exactly by `known_cardinality`, so counting them here
+/// too would double-count them and can outrank a far cheaper pattern (see
+/// the worked counterexample in `docs/plans/JOIN_REORDERING_PLAN.md`).
 fn bound_count(tp: &TriplePattern, bound: &HashSet<String>) -> usize {
     [&tp.subject, &tp.predicate, &tp.object]
         .into_iter()
         .filter(|t| match t {
-            Term::Constant(_) => true,
+            Term::Constant(_) => false,
             Term::Variable(v) => bound.contains(v),
         })
         .count()
 }
 
 /// Variables referenced by a triple pattern's subject/predicate/object.
-#[allow(dead_code)]
 fn pattern_variables(tp: &TriplePattern) -> impl Iterator<Item = &String> {
     [&tp.subject, &tp.predicate, &tp.object]
         .into_iter()
@@ -60,16 +78,89 @@ fn pattern_variables(tp: &TriplePattern) -> impl Iterator<Item = &String> {
         })
 }
 
+/// Resolves a `Term` to its interned `GraphElementId` if it's a constant
+/// that's actually registered in the datastore. `None` for a variable;
+/// `Some(None)` for a constant that was never interned (can never match).
+fn resolve_constant(term: &Term, datastore: &Datastore) -> Option<Option<dag_rdf::GraphElementId>> {
+    match term {
+        Term::Variable(_) => None,
+        Term::Constant(ge) => Some(datastore.resources.resource_map.get(ge).copied()),
+    }
+}
+
 /// Cardinality estimate using only the pattern's constant terms, via direct
 /// `.len()` lookups on `QuadTable`'s public index fields — no allocation,
 /// no `.collect()`. Returns 0 if a constant term doesn't resolve to a known
 /// resource (the pattern can never match).
-#[allow(dead_code)]
 fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> usize {
-    let _ = (tp, datastore);
-    unimplemented!(
-        "Phase A: constant-term cardinality estimate — see docs/plans/JOIN_REORDERING_PLAN.md"
-    )
+    let table = &datastore.named_graphs;
+
+    let subject = resolve_constant(&tp.subject, datastore);
+    let predicate = resolve_constant(&tp.predicate, datastore);
+    let object = resolve_constant(&tp.object, datastore);
+
+    // Any constant that didn't resolve to a known resource means the
+    // pattern can never match.
+    if [&subject, &predicate, &object]
+        .into_iter()
+        .any(|r| matches!(r, Some(None)))
+    {
+        return 0;
+    }
+
+    // Flatten `Option<Option<Id>>` to `Option<Id>`: `None` (variable) or
+    // `Some(None)` (unresolved constant, already handled above) both leave
+    // the slot unconstrained from here on.
+    let subject = subject.flatten();
+    let predicate = predicate.flatten();
+    let object = object.flatten();
+
+    match (subject, predicate, object) {
+        (Some(s), Some(p), Some(o)) => {
+            let sp = table
+                .subject_predicate_index
+                .get(&s)
+                .and_then(|m| m.get(&p))
+                .map_or(0, |v| v.len());
+            let op = table
+                .object_predicate_index
+                .get(&o)
+                .and_then(|m| m.get(&p))
+                .map_or(0, |v| v.len());
+            sp.min(op)
+        }
+        (Some(s), Some(p), None) => table
+            .subject_predicate_index
+            .get(&s)
+            .and_then(|m| m.get(&p))
+            .map_or(0, |v| v.len()),
+        (None, Some(p), Some(o)) => table
+            .object_predicate_index
+            .get(&o)
+            .and_then(|m| m.get(&p))
+            .map_or(0, |v| v.len()),
+        (None, Some(p), None) => table.predicate_index.get(&p).map_or(0, |v| v.len()),
+        (Some(s), None, Some(o)) => {
+            let s_sum = table
+                .subject_predicate_index
+                .get(&s)
+                .map_or(0, |m| m.values().map(|v| v.len()).sum());
+            let o_sum = table
+                .object_predicate_index
+                .get(&o)
+                .map_or(0, |m| m.values().map(|v| v.len()).sum());
+            s_sum.min(o_sum)
+        }
+        (Some(s), None, None) => table
+            .subject_predicate_index
+            .get(&s)
+            .map_or(0, |m| m.values().map(|v| v.len()).sum()),
+        (None, None, Some(o)) => table
+            .object_predicate_index
+            .get(&o)
+            .map_or(0, |m| m.values().map(|v| v.len()).sum()),
+        (None, None, None) => table.quad_count,
+    }
 }
 
 #[cfg(test)]
@@ -107,7 +198,6 @@ mod tests {
     const P3: &str = "http://example.org/p3";
 
     #[test]
-    #[ignore = "Phase A red phase: order_patterns not yet implemented"]
     fn picks_pattern_with_smallest_predicate_cardinality_first() {
         let mut ds = Datastore::new(1_000);
         // P1: 1 quad (most selective).
@@ -150,17 +240,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Phase A red phase: order_patterns not yet implemented"]
     fn prefers_connected_pattern_over_cheaper_disconnected_pattern() {
-        // This test isolates the connectedness *filter*, not just bound_count:
-        // after A is scheduled, B and C tie on bound_count (2 each — B via a
-        // bound variable, C via two constants), but C has the cheaper
-        // tie-break cardinality. If bound_count alone decided the order, C
-        // would win the tie on cardinality despite sharing no variable with
-        // anything scheduled so far. The connectedness rule must restrict
-        // candidates to connected ones (here, just B) before applying the
-        // cardinality tie-break, so B is picked next regardless of C's lower
-        // cardinality.
+        // This test isolates the connectedness behavior that falls out of
+        // the corrected `bound_count` (variables only, not constants): once
+        // A is scheduled, B becomes connected (shares `y` with A's object,
+        // bound_count 1) while C remains disconnected (no shared variable
+        // with anything scheduled, bound_count 0) even though C has a
+        // strictly cheaper cardinality (2) than B (5). B must still be
+        // picked next, because bound_count ranks ahead of the cardinality
+        // tie-break and a disconnected pattern can never have a
+        // higher-than-zero bound_count.
         let mut ds = Datastore::new(1_000);
         // A: P1, cardinality 1 — strictly cheapest, so it wins the first (unconstrained) pick.
         add_default_graph_quad(
@@ -178,13 +267,20 @@ mod tests {
                 &format!("http://example.org/oB_{i}"),
             );
         }
-        // C: subject AND predicate both constant (cardinality 1, cheaper than
-        // B's 5), but shares no variable with A or B — disconnected.
+        // C: subject AND predicate both constant, cardinality 2 (cheaper
+        // than B's 5, but more expensive than A's 1 so it can't win the
+        // first pick either), and shares no variable with A or B — disconnected.
         add_default_graph_quad(
             &mut ds,
             "http://example.org/sC",
             P3,
-            "http://example.org/oC",
+            "http://example.org/oC_0",
+        );
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/sC",
+            P3,
+            "http://example.org/oC_1",
         );
 
         // Patterns deliberately scrambled: [C, B, A].
@@ -209,12 +305,11 @@ mod tests {
         assert_eq!(
             order,
             vec![2, 1, 0],
-            "A first (cheapest, unconstrained), then B (connected via `y`, bound_count ties with C but C is disconnected), then C last"
+            "A first (cheapest, unconstrained), then B (connected via `y`, bound_count 1 beats C's bound_count 0), then C last"
         );
     }
 
     #[test]
-    #[ignore = "Phase A red phase: order_patterns not yet implemented"]
     fn pattern_with_unresolvable_constant_has_zero_cardinality_and_is_scheduled_first() {
         let mut ds = Datastore::new(1_000);
         // Y: a normal, resolvable, nonzero-cardinality pattern.
@@ -248,12 +343,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Phase A red phase: order_patterns not yet implemented"]
-    fn more_bound_terms_outranks_fewer_even_with_unknown_cardinality() {
-        // Both D and E share variable `x` with `already_bound`, so both pass
-        // the connectedness filter — isolating bound_count as the deciding
-        // factor (unlike a disconnected-vs-connected setup, where the
-        // connectedness filter alone would explain the outcome).
+    fn more_bound_variables_outranks_fewer_at_equal_cardinality() {
+        // P and Q have the *same* constant predicate, so `known_cardinality`
+        // is identical for both — isolating bound_count (now variables-only)
+        // as the sole deciding factor, since the cardinality tie-break can't
+        // distinguish them. `already_bound` = {x, y}: P reuses both (subject
+        // `x` and object `y`), Q reuses only `x` (its object `w` is a fresh,
+        // unbound variable).
         let mut ds = Datastore::new(1_000);
         for i in 0..10 {
             add_default_graph_quad(
@@ -264,34 +360,33 @@ mod tests {
             );
         }
 
-        // D: subject `x` is already bound, predicate constant -> bound_count 2.
-        let pattern_d = TriplePattern {
+        // P: subject `x` and object `y` are both already bound -> bound_count 2.
+        let pattern_p = TriplePattern {
             subject: var("x"),
             predicate: iri_const(P1),
-            object: var("z"),
+            object: var("y"),
         };
-        // E: subject `x` is also already bound (so E is connected too), but
-        // predicate is an unbound variable, not a constant -> bound_count 1.
-        let pattern_e = TriplePattern {
+        // Q: only subject `x` is already bound; `w` is a fresh variable -> bound_count 1.
+        let pattern_q = TriplePattern {
             subject: var("x"),
-            predicate: var("pred"),
-            object: var("z"),
+            predicate: iri_const(P1),
+            object: var("w"),
         };
-        let patterns = vec![pattern_e, pattern_d];
+        let patterns = vec![pattern_q, pattern_p];
 
         let mut already_bound = HashSet::new();
         already_bound.insert("x".to_string());
+        already_bound.insert("y".to_string());
 
         let order = order_patterns(&patterns, &already_bound, &ds);
         assert_eq!(
             order,
             vec![1, 0],
-            "D (bound_count 2: bound `x` + constant predicate) must be scheduled before E (bound_count 1: bound `x` only), even though both are equally connected"
+            "P (bound_count 2: bound `x` and `y`) must be scheduled before Q (bound_count 1: bound `x` only), even though both have identical cardinality via the shared predicate P1"
         );
     }
 
     #[test]
-    #[ignore = "Phase A red phase: known_cardinality not yet implemented"]
     fn known_cardinality_uses_subject_predicate_index_when_both_constant() {
         let mut ds = Datastore::new(1_000);
         // Same subject+predicate, 3 different objects -> subject_predicate
