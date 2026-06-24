@@ -44,6 +44,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test --workspace --release
+cargo check --workspace --all-targets
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo audit
 # Note: the CI minimal-versions job requires nightly and mutates Cargo.lock;

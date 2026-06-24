@@ -12,10 +12,11 @@ first phase.
 > were also added afterward (not originally scoped here) — see
 > `RML_XML_PLAN.md` — and the mapping engine is now also exposed over HTTP
 > (`POST /{name}/rml`, `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`.
-> Remaining RML gaps: SQL/JDBC sources (plan at `RML_SQL_PLAN.md`, phase-1
-> design only, no tests yet); FunctionMap (FNML, not yet planned).
 > `rml:JoinCondition` (cross-source joins) is now **complete** — see
-> `RML_JOIN_PLAN.md`.
+> `RML_JOIN_PLAN.md`. Remaining RML gaps tracked in
+> [epic #25](https://github.com/daghovland/rdf-datalog/issues/25):
+> [SQL/JDBC sources](https://github.com/daghovland/rdf-datalog/issues/26),
+> [FunctionMap (FNML)](https://github.com/daghovland/rdf-datalog/issues/27).
 
 ### Goal
 

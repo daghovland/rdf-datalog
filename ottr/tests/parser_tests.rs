@@ -15,7 +15,6 @@ ex:Person [ ottr:IRI ?person ] :: {
 "#;
 
 #[test]
-#[ignore]
 fn parses_signature_with_single_typed_parameter() {
     let doc = parse_stottr(SINGLE_PARAM).unwrap();
     assert_eq!(doc.templates.len(), 1);
@@ -43,7 +42,6 @@ ex:Person [ ottr:IRI ?person, xsd:string ?name ] :: {
 "#;
 
 #[test]
-#[ignore]
 fn parses_signature_with_multiple_mixed_type_parameters() {
     let doc = parse_stottr(MIXED_PARAMS).unwrap();
     let tmpl = &doc.templates[0];
@@ -58,7 +56,6 @@ fn parses_signature_with_multiple_mixed_type_parameters() {
 }
 
 #[test]
-#[ignore]
 fn parses_body_with_single_ottr_triple_instance() {
     let doc = parse_stottr(SINGLE_PARAM).unwrap();
     let tmpl = &doc.templates[0];
@@ -81,7 +78,6 @@ fn parses_body_with_single_ottr_triple_instance() {
 }
 
 #[test]
-#[ignore]
 fn parses_body_with_multiple_instances() {
     let doc = parse_stottr(MIXED_PARAMS).unwrap();
     let tmpl = &doc.templates[0];
@@ -99,7 +95,6 @@ fn parses_body_with_multiple_instances() {
 }
 
 #[test]
-#[ignore]
 fn resolves_prefixed_names_into_full_iris() {
     let doc = parse_stottr(SINGLE_PARAM).unwrap();
     let tmpl = &doc.templates[0];
