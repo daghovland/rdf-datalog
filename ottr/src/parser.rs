@@ -238,6 +238,27 @@ fn parse_template_def<'a>(
     }
 }
 
+enum Statement {
+    Template(TemplateDef),
+    Instance(Instance),
+}
+
+/// A top-level statement is either a template definition (`id [...] :: {...} .`)
+/// or a bare instance call (`id (...) .`), as found in an instance/data file.
+fn parse_statement<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Statement> + 'a {
+    move |input: &'a str| {
+        alt((
+            map(parse_template_def(ctx), Statement::Template),
+            map(
+                terminated(parse_instance(ctx), pair(multispace0, char('.'))),
+                Statement::Instance,
+            ),
+        ))(input)
+    }
+}
+
 /// Parse a stOTTR source file (template definitions and/or instances).
 pub fn parse_stottr(input: &str) -> Result<StottrDocument, OttrError> {
     let (rest, decls) = many0(delimited(multispace0, parse_prefix_decl, multispace0))(input)
@@ -245,12 +266,9 @@ pub fn parse_stottr(input: &str) -> Result<StottrDocument, OttrError> {
     let prefixes = decls.into_iter().collect();
     let ctx = ParserContext { prefixes };
 
-    let (rest, templates) = many0(delimited(
-        multispace0,
-        parse_template_def(&ctx),
-        multispace0,
-    ))(rest)
-    .map_err(|e: nom::Err<nom::error::Error<&str>>| OttrError::Parse(format!("{e:?}")))?;
+    let (rest, statements) =
+        many0(delimited(multispace0, parse_statement(&ctx), multispace0))(rest)
+            .map_err(|e: nom::Err<nom::error::Error<&str>>| OttrError::Parse(format!("{e:?}")))?;
 
     if !rest.trim().is_empty() {
         return Err(OttrError::Parse(format!(
@@ -259,8 +277,17 @@ pub fn parse_stottr(input: &str) -> Result<StottrDocument, OttrError> {
         )));
     }
 
+    let mut templates = Vec::new();
+    let mut instances = Vec::new();
+    for statement in statements {
+        match statement {
+            Statement::Template(t) => templates.push(t),
+            Statement::Instance(i) => instances.push(i),
+        }
+    }
+
     Ok(StottrDocument {
         templates,
-        instances: Vec::new(),
+        instances,
     })
 }

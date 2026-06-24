@@ -1,12 +1,14 @@
 //! Plain-text completion/inspection for SPARQL cells, used by
 //! `complete_request`/`inspect_request` (see docs/plans/COMPLETION_INSPECT_PLAN.md).
 
+#[allow(dead_code)]
 const KEYWORDS: &[&str] = &[
     "SELECT", "CONSTRUCT", "ASK", "DESCRIBE", "WHERE", "FROM", "FILTER", "OPTIONAL", "UNION",
     "MINUS", "GRAPH", "BIND", "VALUES", "GROUP", "BY", "HAVING", "ORDER", "ASC", "DESC", "LIMIT",
     "OFFSET", "DISTINCT", "PREFIX", "AS", "EXISTS", "NOT", "SEPARATOR", "UNDEF", "TRUE", "FALSE",
 ];
 
+#[allow(dead_code)]
 const FUNCTIONS: &[(&str, &str)] = &[
     ("STR", "STR(x) — the lexical/string form of a literal or IRI."),
     ("LANG", "LANG(x) — the language tag of a literal, or \"\" if none."),

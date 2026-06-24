@@ -15,9 +15,14 @@ Always create tests that cover new functionality before creating the functionali
 
 ## Github backlog
 
-The backlog and progress overview is in github projects. Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
-in issues and projects in github. The projects are referenced with the repository, and are f.ex.
-https://github.com/users/daghovland/projects/10 for OTTR and https://github.com/users/daghovland/projects/11 for Jupyter pipeline 
+The backlog and progress overview is in the github project "Dagalog" https://github.com/users/daghovland/projects/11. 
+Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
+in issues under this project in github. The top-level issues under the project are larger "epics". Most concrete work will be on a sub-issue and not on the top-level.
+Include links to relevant epics (or issues) in markdwon documentation, and avoid metnioning work status in repository documentaton, use the issues for this.
+Include links to relevant documentation in the issues and epics. Whenever mentioning documentation in the issue, create actual clickable links. 
+Reference the current working branch of the repository in the issue when working on it. 
+
+When marking code as incomplete, f.ex. tests that are ignored, or todo's, always link to the issue or epic that will fix it
 
 ## Commands
 

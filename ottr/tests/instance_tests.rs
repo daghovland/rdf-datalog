@@ -9,7 +9,6 @@ ex:Person(<http://example.com/Alice>, <http://example.com/Acme>) .
 "#;
 
 #[test]
-#[ignore]
 fn parses_single_instance_with_iri_arguments() {
     let doc = parse_stottr(IRI_ARGS).unwrap();
     assert_eq!(doc.instances.len(), 1);
@@ -39,7 +38,6 @@ ex:Person(<http://example.com/Alice>, "Alice", "42"^^xsd:integer, "hello"@en) .
 "#;
 
 #[test]
-#[ignore]
 fn parses_literal_arguments_plain_typed_and_lang_tagged() {
     let doc = parse_stottr(LITERAL_ARGS).unwrap();
     let instance = &doc.instances[0];
@@ -72,7 +70,6 @@ ex:Person(_:b1, "Alice") .
 "#;
 
 #[test]
-#[ignore]
 fn parses_blank_node_argument() {
     let doc = parse_stottr(BLANK_NODE_ARG).unwrap();
     let instance = &doc.instances[0];
@@ -90,7 +87,6 @@ ex:Person(<http://example.com/Bob>, "Bob") .
 "#;
 
 #[test]
-#[ignore]
 fn parses_multiple_instances_in_one_file() {
     let doc = parse_stottr(MULTIPLE_INSTANCES).unwrap();
     assert_eq!(doc.instances.len(), 2);
