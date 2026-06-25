@@ -8,6 +8,8 @@ can satisfy `IRecordBackend.ValidateContentWithShacl` and `IRecordBackend.Valida
 The records library uses SHACL to validate content graphs against domain shapes before
 accepting or publishing a record (e.g., IMF equipment templates, P&ID schemas).
 
+See <https://github.com/daghovland/rdf-datalog/issues/65> for progress
+
 ## Spec references
 
 - SHACL Core — <https://www.w3.org/TR/shacl/>
@@ -17,9 +19,9 @@ accepting or publishing a record (e.g., IMF equipment templates, P&ID schemas).
 
 ---
 
-## How the records library uses SHACL
+## Common usage pattern for SHACL validation
 
-`FusekiRecordBackend` calls:
+HTTP calls:
 
 ```
 POST /{dataset}/shacl?graph=<content-graph-iri>
@@ -28,8 +30,7 @@ Content-Type: text/turtle
 → 200 text/turtle  (SHACL validation report)
 ```
 
-The response is a SHACL validation report graph. `ShaclValidationOutcome` in the records
-library parses `sh:conforms`, `sh:result`, `sh:focusNode`, and `sh:resultMessage`.
+The response is a SHACL validation report graph. The caller parses `sh:conforms`, `sh:result`, `sh:focusNode`, and `sh:resultMessage`.
 
 ---
 
