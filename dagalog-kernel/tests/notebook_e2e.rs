@@ -160,7 +160,6 @@ async fn test_validate_cell_reports_conforms() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_complete_request_over_zmq() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let reply = kernel
@@ -180,7 +179,6 @@ async fn test_complete_request_over_zmq() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_inspect_request_over_zmq() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let reply = kernel

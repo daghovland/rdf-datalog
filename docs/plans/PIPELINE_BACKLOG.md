@@ -8,12 +8,11 @@ first phase.
 
 ## 1. JSON Source for RML
 
-> **Status: COMPLETE.** Detailed plan: `RML_JSON_PLAN.md`. XML/XPath sources
-> were also added afterward (not originally scoped here) — see
-> `RML_XML_PLAN.md` — and the mapping engine is now also exposed over HTTP
-> (`POST /{name}/rml`, `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`.
-> `rml:JoinCondition` (cross-source joins) is now **complete** — see
-> `RML_JOIN_PLAN.md`. Remaining RML gaps tracked in
+> Detailed plan: `RML_JSON_PLAN.md`. XML/XPath sources were also added
+> afterward (not originally scoped here) — see `RML_XML_PLAN.md` — and the
+> mapping engine is now also exposed over HTTP (`POST /{name}/rml`,
+> `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`. `rml:JoinCondition`
+> (cross-source joins): see `RML_JOIN_PLAN.md`. Tracked in
 > [epic #25](https://github.com/daghovland/rdf-datalog/issues/25):
 > [SQL/JDBC sources](https://github.com/daghovland/rdf-datalog/issues/26),
 > [FunctionMap (FNML)](https://github.com/daghovland/rdf-datalog/issues/27).
@@ -70,11 +69,8 @@ W3C RML test cases JSON subset:
 
 ## 2. Jupyter Kernel
 
-> **Status: MOSTLY COMPLETE.** Detailed plan: `JUPYTER_KERNEL_PLAN.md`. The
-> `dagalog-kernel` crate exists with phases 1–5 done, including the `%%rml`
-> magic. Only phase 6 remains:
-> [complete_request](https://github.com/daghovland/rdf-datalog/issues/23),
-> [inspect_request](https://github.com/daghovland/rdf-datalog/issues/24).
+> Detailed plan: `JUPYTER_KERNEL_PLAN.md`. Tracked in
+> [epic #28](https://github.com/daghovland/rdf-datalog/issues/28).
 
 ### Goal
 

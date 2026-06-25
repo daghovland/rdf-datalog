@@ -370,6 +370,45 @@ async fn handle_shell_message(
             )
             .await;
         }
+        "complete_request" => {
+            let code = msg.content["code"].as_str().unwrap_or("");
+            let cursor_pos = msg.content["cursor_pos"].as_u64().unwrap_or(0) as usize;
+            let result = crate::completion::complete(code, cursor_pos);
+            let _ = shell_reply(
+                shell,
+                &ids,
+                "complete_reply",
+                &msg.header,
+                serde_json::json!({
+                    "status": "ok",
+                    "matches": result.matches,
+                    "cursor_start": result.cursor_start,
+                    "cursor_end": result.cursor_end,
+                    "metadata": {}
+                }),
+                key,
+            )
+            .await;
+        }
+        "inspect_request" => {
+            let code = msg.content["code"].as_str().unwrap_or("");
+            let cursor_pos = msg.content["cursor_pos"].as_u64().unwrap_or(0) as usize;
+            let doc = crate::completion::inspect(code, cursor_pos);
+            let _ = shell_reply(
+                shell,
+                &ids,
+                "inspect_reply",
+                &msg.header,
+                serde_json::json!({
+                    "status": "ok",
+                    "found": doc.is_some(),
+                    "data": doc.map(|d| serde_json::json!({ "text/plain": d })).unwrap_or(serde_json::json!({})),
+                    "metadata": {}
+                }),
+                key,
+            )
+            .await;
+        }
         "shutdown_request" => {
             let restart = msg.content["restart"].as_bool().unwrap_or(false);
             let _ = shell_reply(

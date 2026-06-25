@@ -178,15 +178,20 @@ SELECT * WHERE { ?s ?p ?o } LIMIT 5
 | Basic graph patterns, `;` and `,` shorthand | ✓ |
 | `FILTER` — comparisons, `regex()`, `lang()`, `bound()`, `EXISTS`, `NOT EXISTS` | ✓ |
 | `OPTIONAL` | ✓ |
-| `UNION` | ✓ |
+| `UNION`, `MINUS` | ✓ |
 | `GRAPH` — named-graph patterns | ✓ |
-| `BIND` | ✓ |
+| `BIND`, subqueries | ✓ |
 | `VALUES` — inline data | ✓ |
 | `LIMIT`, `OFFSET` | ✓ |
-| Property paths — `/` (sequence) | ✓ |
-| `GROUP BY`, `HAVING`, `ORDER BY` | Parsed; execution not yet complete |
-| Aggregates (`COUNT`, `SUM`, `AVG`, …) | Not yet implemented |
-| `CONSTRUCT`, `ASK`, `DESCRIBE` | Not yet implemented |
+| Property paths — `/`, `*`, `+`, `?`, `\|`, `^`, `!` (all forms) | ✓ |
+| `GROUP BY`, `HAVING`, `ORDER BY` | ✓ |
+| Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`) | ✓ |
+| `CONSTRUCT`, `ASK` | ✓ |
+| `DESCRIBE` | Not yet implemented ([#49](https://github.com/daghovland/rdf-datalog/issues/49)) |
+| `FROM` / `FROM NAMED` dataset clauses | Not yet implemented ([#50](https://github.com/daghovland/rdf-datalog/issues/50)) |
+| `SERVICE` federated queries | Parsed; silently returns empty ([#51](https://github.com/daghovland/rdf-datalog/issues/51)) |
+| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, date/time, hash…) | Partial ([#52](https://github.com/daghovland/rdf-datalog/issues/52)) |
+| SPARQL Update `INSERT/DELETE WHERE` | Not yet implemented ([#53](https://github.com/daghovland/rdf-datalog/issues/53)) |
 
 ---
 
