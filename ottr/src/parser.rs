@@ -253,10 +253,8 @@ fn parse_body_instance<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Instance> + 'a {
     move |input: &'a str| {
-        let (input, expander) = opt(terminated(
-            parse_expander,
-            pair(multispace0, char('|')),
-        ))(input)?;
+        let (input, expander) =
+            opt(terminated(parse_expander, pair(multispace0, char('|'))))(input)?;
         let (input, _) = multispace0(input)?;
         let (input, mut instance) = parse_instance(ctx)(input)?;
         instance.expander = expander;
