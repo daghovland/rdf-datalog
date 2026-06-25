@@ -34,6 +34,21 @@ The response is a SHACL validation report graph. The caller parses `sh:conforms`
 
 ---
 
+## SHACL for input validation
+
+A shacl shape can also be registered as input validator for a graph. The calls for this have not been designed,
+but the idea is that something like
+
+```
+POST /{dataset}/shacl-input-validation?graph=<content-graph-iri>
+Content-Type: text/turtle
+[SHACL shapes graph in body]
+→ 200 
+```
+And after this, any rdf input to the graph which does not validate, will result in a 422 unprocessable
+content message with the shacl validation report in the body
+
+
 ## Implementation approach
 
 No external processes or external Rust crates. Two complementary strategies:
@@ -432,6 +447,12 @@ SHACL-AF §5–6 let shape authors embed SPARQL queries for targets and constrai
 These cannot be translated to Datalog in general: a SPARQL SELECT or ASK query can
 express joins, property paths, filters, and aggregates that have no Datalog equivalent.
 They must be executed directly by the SPARQL engine against the data graph.
+
+### Phase 5 - SHACL for input validation
+
+This is not designed ready, but the work includes finding ok http calls for providing a datastore
+with the shacl validation graph, and whether the output can be given. This might lead to changes in 
+the design of how the shacl translated datalog is materialized
 
 #### Why Datalog translation is not feasible
 
