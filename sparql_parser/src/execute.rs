@@ -737,6 +737,30 @@ fn eval_arithmetic(
     }
 }
 
+/// Shared implementation for the boolean-valued string predicates
+/// `STRSTARTS`, `STRENDS`, and `CONTAINS` (SPARQL 1.1 §17.4.3).
+///
+/// Used by both `eval_function_value` (for `BIND`/projection contexts,
+/// wrapped in a `BooleanLiteral`) and `eval_function_bool` (for direct
+/// `FILTER` contexts) so the two dispatch paths cannot diverge.
+fn eval_string_predicate(
+    name: &str,
+    args: &[Expression],
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+    let text = graph_element_to_string(&text_el)?;
+    let arg_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+    let arg = graph_element_to_string(&arg_el)?;
+    match name {
+        "STRSTARTS" => Some(text.starts_with(arg.as_str())),
+        "STRENDS" => Some(text.ends_with(arg.as_str())),
+        "CONTAINS" => Some(text.contains(arg.as_str())),
+        _ => None,
+    }
+}
+
 fn eval_function_value(
     name: &str,
     args: &[Expression],
@@ -745,6 +769,44 @@ fn eval_function_value(
 ) -> Option<GraphElement> {
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
+        "STRSTARTS" | "STRENDS" | "CONTAINS" => {
+            let b = eval_string_predicate(upper.as_str(), args, sub, datastore)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+        }
+        "STRBEFORE" => {
+            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text = graph_element_to_string(&text_el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = if sep.is_empty() {
+                String::new()
+            } else {
+                match text.find(sep.as_str()) {
+                    Some(idx) => text[..idx].to_string(),
+                    None => String::new(),
+                }
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "STRAFTER" => {
+            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text = graph_element_to_string(&text_el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = if sep.is_empty() {
+                text.clone()
+            } else {
+                match text.find(sep.as_str()) {
+                    Some(idx) => text[idx + sep.len()..].to_string(),
+                    None => String::new(),
+                }
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
         "STR" => {
             let el = eval_expression_value(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
@@ -805,8 +867,116 @@ fn eval_function_value(
                 IriReference(dt_iri),
             )))
         }
+        "ABS" | "CEIL" | "FLOOR" | "ROUND" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            eval_numeric_function(upper.as_str(), &el)
+        }
+        "YEAR" | "MONTH" | "DAY" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let n = extract_date_component(upper.as_str(), &s)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                type_iri: IriReference(XSD_INTEGER.to_string()),
+                literal: n.to_string(),
+            }))
+        }
         _ => None,
     }
+}
+
+/// Numeric IRI suffix for an integer-valued xsd type (used to decide whether
+/// the input to ABS/CEIL/FLOOR/ROUND should be treated as already-integral).
+fn is_integer_typed(lit: &RdfLiteral) -> bool {
+    matches!(lit, RdfLiteral::IntegerLiteral(_))
+        || matches!(lit, RdfLiteral::TypedLiteral { type_iri, .. } if type_iri.0 == XSD_INTEGER)
+}
+
+/// Evaluate ABS/CEIL/FLOOR/ROUND (SPARQL 1.1 §17.4.5) on a literal.
+///
+/// Integer-typed inputs stay integer-typed (ABS of an integer is an integer;
+/// CEIL/FLOOR/ROUND of an integer is unchanged). All other numeric types are
+/// promoted to `xsd:double`-style f64 arithmetic, matching the precision
+/// already used by `eval_arithmetic`/`literal_to_f64` elsewhere in this file.
+///
+/// `ROUND` follows the SPARQL/XPath `fn:round` rule of rounding half values
+/// *toward positive infinity* (so `ROUND(-2.5) == -2`, not `-3` as Rust's
+/// `f64::round` — which rounds half away from zero — would give).
+fn eval_numeric_function(name: &str, el: &GraphElement) -> Option<GraphElement> {
+    let lit = match el {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    if is_integer_typed(lit) {
+        // Integers are already whole numbers; ABS is the only one that can
+        // change the value, and CEIL/FLOOR/ROUND are no-ops.
+        let n = match lit {
+            RdfLiteral::IntegerLiteral(n) => n.clone(),
+            RdfLiteral::TypedLiteral { literal, .. } => literal.parse::<BigInt>().ok()?,
+            _ => unreachable!(),
+        };
+        let result = if name == "ABS" {
+            n.magnitude().clone().into()
+        } else {
+            n
+        };
+        return Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_INTEGER.to_string()),
+            literal: result.to_string(),
+        }));
+    }
+    let f = literal_to_f64(lit)?;
+    let result = match name {
+        "ABS" => f.abs(),
+        "CEIL" => f.ceil(),
+        "FLOOR" => f.floor(),
+        "ROUND" => (f + 0.5).floor(),
+        _ => return None,
+    };
+    // CEIL/FLOOR/ROUND always yield an integer value per spec; represent it
+    // as xsd:integer. ABS preserves the (non-integer) input type as a double,
+    // matching the f64-promotion behaviour used throughout this file.
+    if name == "ABS" {
+        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+            result.into(),
+        )))
+    } else {
+        Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_INTEGER.to_string()),
+            literal: (result as i64).to_string(),
+        }))
+    }
+}
+
+/// Extract YEAR/MONTH/DAY from the lexical form of an `xsd:date`,
+/// `xsd:dateTime`, or `xsd:gYear` literal without a calendar library.
+///
+/// Expected forms: `YYYY-MM-DD...`, `YYYY-MM-DDTHH:MM:SS...`, or `YYYY` alone
+/// (gYear). A leading `-` (BCE years) is preserved as part of the year.
+fn extract_date_component(name: &str, s: &str) -> Option<i64> {
+    // Split off the date portion before any 'T' (dateTime) and strip a
+    // leading '-' for BCE years before splitting on '-' so it isn't mistaken
+    // for a field separator.
+    let date_part = s.split('T').next().unwrap_or(s);
+    let (sign, rest) = if let Some(stripped) = date_part.strip_prefix('-') {
+        (-1i64, stripped)
+    } else {
+        (1i64, date_part)
+    };
+    let mut fields = rest.split('-');
+    let year: i64 = fields.next()?.parse().ok()?;
+    let year = sign * year;
+    if name == "YEAR" {
+        return Some(year);
+    }
+    let month: i64 = fields.next()?.parse().ok()?;
+    if name == "MONTH" {
+        return Some(month);
+    }
+    let day: i64 = fields.next()?.parse().ok()?;
+    if name == "DAY" {
+        return Some(day);
+    }
+    None
 }
 
 fn eval_expression_bool(
@@ -903,6 +1073,9 @@ fn eval_function_bool(
 ) -> Option<bool> {
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
+        "STRSTARTS" | "STRENDS" | "CONTAINS" => {
+            eval_string_predicate(upper.as_str(), args, sub, datastore)
+        }
         "BOUND" => {
             if let Some(Expression::Variable(v)) = args.first() {
                 Some(sub.contains_key(v))
