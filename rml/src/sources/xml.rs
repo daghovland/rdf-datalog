@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use sxd_document::dom;
@@ -6,19 +7,33 @@ use sxd_xpath::{Context, Factory, Value};
 use crate::RmlError;
 use crate::sources::SourceRow;
 
-/// XML row — wraps a serialized XML element (the text of one selected node).
+/// XML row — holds a pre-parsed `Package` containing one selected element.
 ///
-/// References are XPath 1.0 expressions evaluated relative to the root element
-/// of the wrapped XML fragment. The fragment is re-parsed on each `get_str` call.
-#[derive(Debug)]
-pub struct XmlRow(pub String);
+/// References are XPath 1.0 expressions evaluated relative to the root element.
+/// The XML is parsed once at construction; subsequent `get_str` calls only
+/// evaluate XPath against the already-parsed tree. See [#89](https://github.com/daghovland/rdf-datalog/issues/89).
+pub struct XmlRow {
+    package: sxd_document::Package,
+}
+
+impl XmlRow {
+    /// Parse `xml` once and return `Some(XmlRow)`, or `None` if the XML is malformed.
+    pub fn from_xml(xml: &str) -> Option<Self> {
+        let package = sxd_document::parser::parse(xml).ok()?;
+        Some(XmlRow { package })
+    }
+}
+
+impl fmt::Debug for XmlRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("XmlRow").finish_non_exhaustive()
+    }
+}
 
 impl SourceRow for XmlRow {
     fn get_str(&self, reference: &str) -> Option<String> {
-        let package = sxd_document::parser::parse(&self.0).ok()?;
-        let doc = package.as_document();
+        let doc = self.package.as_document();
 
-        // Context node = the root element of the serialized fragment
         let root_element = doc.root().children().into_iter().find_map(|c| match c {
             dom::ChildOfRoot::Element(e) => Some(e),
             _ => None,
@@ -34,17 +49,16 @@ impl SourceRow for XmlRow {
     }
 }
 
-/// Serializes an element and its subtree to XML by deep-copying into a
-/// temporary document and formatting it. The resulting string is a
-/// self-contained XML document with the element as its root.
-pub(crate) fn element_to_xml(element: dom::Element<'_>) -> Result<String, std::io::Error> {
+/// Deep-copies `element` into a fresh `Package` and returns it.
+///
+/// Used by `collect_rows` to give each row its own owned parsed tree,
+/// avoiding a serialize-then-reparse round-trip.
+fn element_to_package(element: dom::Element<'_>) -> sxd_document::Package {
     let pkg = sxd_document::Package::new();
     let doc = pkg.as_document();
     let new_elem = deep_copy_element(element, doc);
     doc.root().append_child(new_elem);
-    let mut buf: Vec<u8> = Vec::new();
-    sxd_document::writer::format_document(&doc, &mut buf)?;
-    Ok(String::from_utf8(buf).unwrap_or_default())
+    pkg
 }
 
 fn deep_copy_element<'s, 'd>(src: dom::Element<'s>, doc: dom::Document<'d>) -> dom::Element<'d> {
@@ -132,8 +146,9 @@ impl XmlSource {
         if let Value::Nodeset(ns) = value {
             for node in ns.document_order() {
                 if let Some(elem) = node.element() {
-                    let xml_str = element_to_xml(elem).map_err(RmlError::Io)?;
-                    rows.push(XmlRow(xml_str));
+                    rows.push(XmlRow {
+                        package: element_to_package(elem),
+                    });
                 }
             }
         }

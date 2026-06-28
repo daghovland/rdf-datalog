@@ -7,7 +7,23 @@ use rml::sources::SourceRow;
 use rml::sources::xml::XmlRow;
 
 fn row(xml: &str) -> XmlRow {
-    XmlRow(xml.to_string())
+    XmlRow::from_xml(xml).expect("test XML should be valid")
+}
+
+// ── Constructor ───────────────────────────────────────────────────────────────
+
+#[test]
+fn xml_row_from_invalid_xml_returns_none() {
+    assert!(XmlRow::from_xml("<unclosed").is_none());
+}
+
+#[test]
+fn xml_row_get_str_called_multiple_times_same_result() {
+    // Regression: get_str must not re-parse on each call (issue #89).
+    let r = row("<student><name>Alice</name></student>");
+    assert_eq!(r.get_str("name"), Some("Alice".to_string()));
+    assert_eq!(r.get_str("name"), Some("Alice".to_string()));
+    assert_eq!(r.get_str("name"), Some("Alice".to_string()));
 }
 
 // ── Element text content ──────────────────────────────────────────────────────
