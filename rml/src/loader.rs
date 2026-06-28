@@ -2,7 +2,7 @@ use std::path::Path;
 
 use dag_rdf::{Datastore, GraphElementId, RdfLiteral, RdfResource};
 use ingress::{GraphElement, IriReference};
-use turtle::parse_turtle;
+use turtle::{parse_turtle, parse_turtle_with_base};
 
 use crate::RmlError;
 use crate::ast::{
@@ -23,9 +23,19 @@ fn ql(local: &str) -> String {
 }
 
 /// Load an RML mapping from a Turtle file on disk.
+///
+/// The file's absolute path is used as the Turtle base IRI so that relative
+/// fragment IRIs such as `<#TriplesMap1>` inside the mapping file can be
+/// resolved correctly.
 pub fn load_mapping(path: &Path) -> Result<MappingDocument, RmlError> {
     let content = std::fs::read_to_string(path)?;
-    load_mapping_from_str(&content)
+    let mut ds = Datastore::new(1_000);
+    // Build a file:// base IRI from the canonical (absolute) path.
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let base_iri = format!("file://{}", abs.display());
+    parse_turtle_with_base(&mut ds, content.as_bytes(), &base_iri)
+        .map_err(|e| RmlError::MappingParse(e.to_string()))?;
+    extract_mapping(&ds)
 }
 
 /// Load an RML mapping from a Turtle string (convenience for tests).

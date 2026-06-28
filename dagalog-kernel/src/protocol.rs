@@ -1,6 +1,7 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Jupyter wire-protocol message header.
@@ -60,13 +61,17 @@ pub fn parse_message(frames: &[Vec<u8>], key: &[u8]) -> Result<JupyterMessage, P
     let (hmac_frame, header_frame, parent_frame, meta_frame, content_frame) =
         (&rest[0], &rest[1], &rest[2], &rest[3], &rest[4]);
 
-    let expected = compute_signature(
-        key,
-        &[header_frame, parent_frame, meta_frame, content_frame],
-    );
-    let got = std::str::from_utf8(hmac_frame).unwrap_or("");
-    if !key.is_empty() && got != expected {
-        return Err(ProtocolError::SignatureMismatch);
+    if !key.is_empty() {
+        let expected = compute_signature(
+            key,
+            &[header_frame, parent_frame, meta_frame, content_frame],
+        );
+        // Use constant-time comparison to prevent timing side-channels.
+        // See [#87](https://github.com/daghovland/rdf-datalog/issues/87).
+        let ok: bool = hmac_frame.as_slice().ct_eq(expected.as_bytes()).into();
+        if !ok {
+            return Err(ProtocolError::SignatureMismatch);
+        }
     }
 
     Ok(JupyterMessage {

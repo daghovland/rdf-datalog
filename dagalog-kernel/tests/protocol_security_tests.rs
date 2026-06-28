@@ -12,7 +12,6 @@ use dagalog_kernel::protocol::{ProtocolError, encode_message, parse_message};
 /// The implementation MUST use `subtle::ConstantTimeEq` (not `==`) to prevent
 /// a timing oracle on the session key. See [#87](https://github.com/daghovland/rdf-datalog/issues/87).
 #[test]
-#[ignore] // #87 https://github.com/daghovland/rdf-datalog/issues/87
 fn every_corrupted_signature_byte_is_rejected() {
     use dagalog_kernel::protocol::Header;
 
@@ -62,7 +61,6 @@ fn every_corrupted_signature_byte_is_rejected() {
 }
 
 #[test]
-#[ignore] // #87 https://github.com/daghovland/rdf-datalog/issues/87
 fn valid_signature_is_accepted() {
     use dagalog_kernel::protocol::Header;
 
@@ -87,7 +85,6 @@ fn valid_signature_is_accepted() {
 }
 
 #[test]
-#[ignore] // #87 https://github.com/daghovland/rdf-datalog/issues/87
 fn wrong_key_is_rejected() {
     use dagalog_kernel::protocol::Header;
 
@@ -116,7 +113,6 @@ fn wrong_key_is_rejected() {
 }
 
 #[test]
-#[ignore] // #87 https://github.com/daghovland/rdf-datalog/issues/87
 fn empty_key_skips_hmac_check_per_jupyter_spec() {
     use dagalog_kernel::protocol::Header;
 
