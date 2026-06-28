@@ -1,6 +1,6 @@
 # RML Join Plan: `rml:JoinCondition` (cross-source joins)
 
-> **Status: COMPLETE** — all phases green. `ast.rs` has `JoinConditionRef` /
+> Part of [#25 RML pipeline remaining source/function gaps](https://github.com/daghovland/rdf-datalog/issues/25). `ast.rs` has `JoinConditionRef` /
 > `ObjectMap.join_conditions`; `plan.rs`'s `LogicalJoin` takes
 > `conditions: Vec<JoinCondition>`; `loader.rs` parses
 > `rml:joinCondition`/`rml:child`/`rml:parent`; `translate.rs` builds a

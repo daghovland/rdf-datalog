@@ -1,6 +1,6 @@
 # SPARQL Aggregates and Extended Property Paths — Implementation Plan
 
-**Status**: Complete. Both tracks implemented and all 16 new tests passing.
+Part of [#48 SPARQL missing features epic](https://github.com/daghovland/rdf-datalog/issues/48).
 
 **Last updated**: 2026-06-18
 

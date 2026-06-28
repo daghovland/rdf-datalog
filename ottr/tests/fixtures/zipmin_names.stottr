@@ -1,0 +1,17 @@
+@prefix ex:   <http://example.com/> .
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:PersonName [ ottr:IRI ?person, xsd:string ?name ] :: {
+  ottr:Triple (?person, foaf:name, ?name)
+} .
+
+ex:PairedNames [ ottr:IRI ?person, xsd:string ?name ] :: {
+  zipMin | ex:PersonName (++?person, ++?name)
+} .
+
+ex:PairedNames(
+  (<http://example.com/alice>, <http://example.com/bob>, <http://example.com/carol>),
+  ("Alice", "Bob")
+) .

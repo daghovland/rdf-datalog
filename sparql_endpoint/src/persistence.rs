@@ -317,7 +317,7 @@ impl QuadChangelog {
     /// This is used at startup when `--data` files are pre-loaded before enabling
     /// persistence: the changelog records HTTP-driven mutations that happened during
     /// previous runs and must be applied on top of the file-based base data.
-    /// See: https://github.com/daghovland/rdf-datalog/issues/66
+    /// See: <https://github.com/daghovland/rdf-datalog/issues/66>
     pub fn replay_into(&self, ds: &mut Datastore) -> Result<(), String> {
         let read_txn = self.db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;

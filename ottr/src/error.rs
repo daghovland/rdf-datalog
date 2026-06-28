@@ -14,4 +14,6 @@ pub enum OttrError {
     },
     #[error("Recursive template definition: {0}")]
     RecursiveTemplate(String),
+    #[error("Unbound variable: ?{0}")]
+    UnboundVariable(String),
 }

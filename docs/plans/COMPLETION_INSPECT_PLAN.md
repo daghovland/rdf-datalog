@@ -1,6 +1,6 @@
 # `complete_request`/`inspect_request` for `dagalog-kernel`
 
-> Status: RED PHASE — tests written and ignored, awaiting review before implementation.
+> Tracked under [#28 Jupyter kernel epic](https://github.com/daghovland/rdf-datalog/issues/28).
 
 ## Problem
 
@@ -21,10 +21,9 @@ cell type). `%%`-magic cells are out of scope — completion/inspect on a
 `%%rml`/`%%datalog`/... cell falls back to "no matches" / "not found", same
 as an unrecognized language would.
 
-Keyword and builtin-function lists are taken directly from what
-`sparql_parser` actually implements (grep of `tag_no_case!`/`match` arms in
-`sparql_parser/src/execute.rs`), not the full SPARQL 1.1 grammar, so
-completion never suggests something the engine can't execute:
+Keyword and builtin-function lists are taken directly from the full SPARQL 1.1 grammar, so
+completion might suggest something the engine can't execute. This is intentional, to trigger:
+implementation of these lacking features. The list below is the implemented keywords:
 
 - Keywords: `SELECT`, `CONSTRUCT`, `ASK`, `DESCRIBE`, `WHERE`, `FROM`,
   `FILTER`, `OPTIONAL`, `UNION`, `MINUS`, `GRAPH`, `BIND`, `VALUES`, `GROUP`,

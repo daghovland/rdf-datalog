@@ -13,8 +13,8 @@ Contact: hovlanddag@gmail.com
 //! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    Aggregate, BinaryOp, Expression, OrderCondition, ProjectionElement, PropertyPath, Query,
-    QueryComponent, Term, TriplePattern, UnaryOp,
+    Aggregate, BinaryOp, DatasetClause, Expression, OrderCondition, ProjectionElement,
+    PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
 use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
@@ -45,15 +45,35 @@ pub struct ResolvedTriple {
     pub object: GraphElement,
 }
 
-/// The result of executing a SPARQL query (SELECT, ASK, or CONSTRUCT).
+/// The result of executing a SPARQL query.
 pub enum QueryResult {
     Select(SelectResult),
     Ask(bool),
     Construct(Vec<ResolvedTriple>),
+    /// Graph of triples describing the requested resources (DESCRIBE).
+    Describe(Vec<ResolvedTriple>),
 }
 
 /// Execute a parsed SPARQL query against `datastore`.
 pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, String> {
+    // Reject non-SILENT SERVICE before executing — the executor does not implement
+    // federation and silently returning empty results would be a correctness footgun.
+    // SILENT SERVICE (which the spec says must return empty on error) is still allowed
+    // and continues to return empty results.
+    let where_clause = match query {
+        Query::Select { where_clause, .. } => where_clause.as_slice(),
+        Query::Ask { where_clause, .. } => where_clause.as_slice(),
+        Query::Construct { where_clause, .. } => where_clause.as_slice(),
+        Query::Describe { where_clause, .. } => where_clause.as_slice(),
+    };
+    if let Some(endpoint) = first_non_silent_service(where_clause) {
+        return Err(format!(
+            "SERVICE federation is not yet implemented (endpoint: {endpoint:?}). \
+             Use SERVICE SILENT to suppress this error and return empty results instead. \
+             See https://github.com/daghovland/rdf-datalog/issues/51"
+        ));
+    }
+
     match query {
         Query::Select {
             projection,
@@ -63,14 +83,15 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
             distinct,
             group_by,
             having,
-            ..
+            dataset,
+            order_by: _,
         } => {
             let initial: Vec<PartialSub> = vec![HashMap::new()];
             let solutions = eval_components(
                 where_clause,
                 initial,
                 datastore,
-                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+                dataset_active_graph(dataset, datastore),
             );
 
             let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
@@ -92,7 +113,7 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
                 let variables = projection_variables(projection, where_clause, datastore);
                 let rows: Vec<SolutionRow> = solutions
                     .iter()
-                    .map(|sub| project(sub, &variables))
+                    .map(|sub| project_with_exprs(sub, projection, datastore))
                     .collect();
                 (variables, rows)
             };
@@ -122,26 +143,77 @@ pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, Stri
 
             Ok(QueryResult::Select(SelectResult { variables, rows }))
         }
-        Query::Ask { where_clause } => {
-            let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions = eval_components(
-                where_clause,
-                initial,
-                datastore,
-                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
-            );
-            Ok(QueryResult::Ask(!solutions.is_empty()))
-        }
-        Query::Construct {
-            template,
+        Query::Ask {
             where_clause,
+            dataset,
         } => {
             let initial: Vec<PartialSub> = vec![HashMap::new()];
             let solutions = eval_components(
                 where_clause,
                 initial,
                 datastore,
-                ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+                dataset_active_graph(dataset, datastore),
+            );
+            Ok(QueryResult::Ask(!solutions.is_empty()))
+        }
+        Query::Describe {
+            resources,
+            where_clause,
+            dataset,
+        } => {
+            let initial: Vec<PartialSub> = vec![HashMap::new()];
+            let solutions = eval_components(
+                where_clause,
+                initial,
+                datastore,
+                dataset_active_graph(dataset, datastore),
+            );
+
+            let mut output: HashSet<ResolvedTriple> = HashSet::new();
+
+            for sub in &solutions {
+                let candidates: Vec<GraphElement> = if resources.is_empty() {
+                    // DESCRIBE *: describe all variables bound in this solution
+                    sub.values().cloned().collect()
+                } else {
+                    resources
+                        .iter()
+                        .filter_map(|t| resolve_term_to_gel(t, sub, datastore))
+                        .collect()
+                };
+
+                for gel in candidates {
+                    if let Some(&subject_id) = datastore.resources.resource_map.get(&gel) {
+                        for quad in datastore.named_graphs.get_quads_with_subject(subject_id) {
+                            let s = datastore.resources.get_graph_element(quad.subject).clone();
+                            let p = datastore
+                                .resources
+                                .get_graph_element(quad.predicate)
+                                .clone();
+                            let o = datastore.resources.get_graph_element(quad.obj).clone();
+                            output.insert(ResolvedTriple {
+                                subject: s,
+                                predicate: p,
+                                object: o,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Ok(QueryResult::Describe(output.into_iter().collect()))
+        }
+        Query::Construct {
+            template,
+            where_clause,
+            dataset,
+        } => {
+            let initial: Vec<PartialSub> = vec![HashMap::new()];
+            let solutions = eval_components(
+                where_clause,
+                initial,
+                datastore,
+                dataset_active_graph(dataset, datastore),
             );
 
             let effective_template: Vec<TriplePattern> = if template.is_empty() {
@@ -282,11 +354,70 @@ fn is_internal_variable(var: &str) -> bool {
     var.starts_with("__path_")
 }
 
-fn project(sub: &PartialSub, variables: &[String]) -> SolutionRow {
-    variables
-        .iter()
-        .filter_map(|v| sub.get(v).map(|el| (v.clone(), el.clone())))
-        .collect()
+/// Returns `Some(endpoint_iri)` for the first non-SILENT SERVICE node found,
+/// or `None` if the query contains no non-SILENT SERVICE.
+fn first_non_silent_service(components: &[QueryComponent]) -> Option<&Term> {
+    for comp in components {
+        match comp {
+            QueryComponent::Service(endpoint, inner, silent) => {
+                if !silent {
+                    return Some(endpoint);
+                }
+                if let Some(ep) = first_non_silent_service(inner) {
+                    return Some(ep);
+                }
+            }
+            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
+                if let Some(ep) = first_non_silent_service(inner) {
+                    return Some(ep);
+                }
+            }
+            QueryComponent::Graph(_, inner) => {
+                if let Some(ep) = first_non_silent_service(inner) {
+                    return Some(ep);
+                }
+            }
+            QueryComponent::Union(left, right) => {
+                if let Some(ep) = first_non_silent_service(left) {
+                    return Some(ep);
+                }
+                if let Some(ep) = first_non_silent_service(right) {
+                    return Some(ep);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Project a solution row, evaluating any `(expr AS ?alias)` projection elements.
+fn project_with_exprs(
+    sub: &PartialSub,
+    projection: &[ProjectionElement],
+    datastore: &Datastore,
+) -> SolutionRow {
+    let mut row: SolutionRow = HashMap::new();
+    for elem in projection {
+        match elem {
+            ProjectionElement::Star => {
+                for (k, v) in sub {
+                    row.insert(k.clone(), v.clone());
+                }
+            }
+            ProjectionElement::Variable(v) => {
+                if let Some(val) = sub.get(v) {
+                    row.insert(v.clone(), val.clone());
+                }
+            }
+            ProjectionElement::Expression(expr, alias) => {
+                if let Some(val) = eval_expression_value(expr, sub, datastore) {
+                    row.insert(alias.clone(), val);
+                }
+            }
+        }
+    }
+    row
 }
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
@@ -296,12 +427,27 @@ fn project(sub: &PartialSub, variables: &[String]) -> SolutionRow {
 /// Uses `GraphElement` values directly (not interned IDs) so that computed
 /// values from `BIND` expressions can be stored without requiring a mutable
 /// reference to the datastore.
-type PartialSub = HashMap<String, GraphElement>;
+type PartialSub = SolutionRow;
 
 #[derive(Clone)]
 enum ActiveGraph {
     Fixed(GraphElementId),
     Variable(String),
+}
+
+/// Compute the active graph for a query from its dataset clauses.
+///
+/// A `FROM <g>` clause makes `<g>` the default graph; the first such clause wins.
+/// If no `FROM` clauses are present, the default graph is used unchanged.
+fn dataset_active_graph(dataset: &[DatasetClause], datastore: &Datastore) -> ActiveGraph {
+    for clause in dataset {
+        if let DatasetClause::Default(gel) = clause {
+            if let Some(&id) = datastore.resources.resource_map.get(gel) {
+                return ActiveGraph::Fixed(id);
+            }
+        }
+    }
+    ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID)
 }
 
 fn eval_components(
@@ -636,6 +782,29 @@ pub fn eval_expr_as_filter(
     .unwrap_or(false)
 }
 
+/// Evaluate a SPARQL expression as a boolean filter against the default graph.
+///
+/// `sub` maps variable names to their bound `GraphElement` values.  This is
+/// the public entry point for downstream crates (e.g. `datalog`, `shacl`) that
+/// need to test a SPARQL `Expression` guard without access to the internal
+/// `ActiveGraph` type.  EXISTS / NOT EXISTS expressions use the default graph.
+///
+/// Returns `false` on evaluation error or when the expression is unbound.
+/// See: <https://github.com/daghovland/rdf-datalog/issues/60>
+pub fn eval_expression_bool_filter(
+    expr: &Expression,
+    sub: &SolutionRow,
+    datastore: &Datastore,
+) -> bool {
+    eval_expression_bool(
+        expr,
+        sub,
+        datastore,
+        &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+    )
+    .unwrap_or(false)
+}
+
 fn eval_filter(
     expr: &Expression,
     sub: &PartialSub,
@@ -647,9 +816,14 @@ fn eval_filter(
 
 /// Evaluate an expression to a concrete GraphElement value.
 ///
-/// Constants in the query (e.g. `"SPARQL"` in `regex(?x, "SPARQL")`) are
-/// returned directly — they need not exist in the datastore's resource map.
-fn eval_expression_value(
+/// `sub` maps variable names to their current bindings.  Constants in the
+/// query (e.g. `"SPARQL"` in `regex(?x, "SPARQL")`) are returned directly
+/// without touching the datastore.
+///
+/// Returns `None` when the expression is unbound or evaluation fails (e.g.
+/// division by zero, type mismatch).
+/// See: <https://github.com/daghovland/rdf-datalog/issues/60>
+pub fn eval_expression_value(
     expr: &Expression,
     sub: &PartialSub,
     datastore: &Datastore,
@@ -679,6 +853,22 @@ fn arithmetic_negate(el: GraphElement) -> Option<GraphElement> {
         GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => Some(
             GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral((-d.into_inner()).into())),
         ),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            ref type_iri,
+            ref literal,
+        }) => {
+            if type_iri.0 == XSD_INTEGER {
+                let n: i64 = literal.parse().ok()?;
+                Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                    BigInt::from(-n),
+                )))
+            } else {
+                let f = literal.parse::<f64>().ok()?;
+                Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                    (-f).into(),
+                )))
+            }
+        }
         _ => None,
     }
 }
@@ -812,8 +1002,468 @@ fn eval_function_value(
                 IriReference(dt_iri),
             )))
         }
+        // ── String functions ──────────────────────────────────────────────────
+        "UCASE" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                s.to_uppercase(),
+            )))
+        }
+        "LCASE" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                s.to_lowercase(),
+            )))
+        }
+        "CONCAT" => {
+            let mut result = String::new();
+            for arg in args {
+                let el = eval_expression_value(arg, sub, datastore)?;
+                result.push_str(&graph_element_to_string(&el)?);
+            }
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "SUBSTR" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s: Vec<char> = graph_element_to_string(&el)?.chars().collect();
+            let start_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let start: usize = element_to_usize(&start_el)?.saturating_sub(1);
+            let result: String = if let Some(len_expr) = args.get(2) {
+                let len_el = eval_expression_value(len_expr, sub, datastore)?;
+                let len: usize = element_to_usize(&len_el)?;
+                s.iter().skip(start).take(len).collect()
+            } else {
+                s.iter().skip(start).collect()
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "STRBEFORE" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = s
+                .find(sep.as_str())
+                .map(|i| s[..i].to_string())
+                .unwrap_or_default();
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "STRAFTER" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = s
+                .find(sep.as_str())
+                .map(|i| s[i + sep.len()..].to_string())
+                .unwrap_or_default();
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "STRSTARTS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat = graph_element_to_string(&pat_el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+                s.starts_with(pat.as_str()),
+            )))
+        }
+        "STRENDS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat = graph_element_to_string(&pat_el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+                s.ends_with(pat.as_str()),
+            )))
+        }
+        "CONTAINS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat = graph_element_to_string(&pat_el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+                s.contains(pat.as_str()),
+            )))
+        }
+        // ── Term construction ─────────────────────────────────────────────────
+        "IRI" | "URI" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let iri_str = graph_element_to_string(&el)?;
+            Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
+                IriReference(iri_str),
+            )))
+        }
+        "STRDT" => {
+            let lex_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let literal = graph_element_to_string(&lex_el)?;
+            let dt_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let type_iri = match dt_el {
+                GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => iri,
+                _ => return None,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                type_iri,
+                literal,
+            }))
+        }
+        "STRLANG" => {
+            let lex_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let literal = graph_element_to_string(&lex_el)?;
+            let lang_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let lang = graph_element_to_string(&lang_el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
+                lang,
+                literal,
+            }))
+        }
+        // ── Type testing ──────────────────────────────────────────────────────
+        "ISNUMERIC" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let is_numeric = match &el {
+                GraphElement::GraphLiteral(
+                    RdfLiteral::IntegerLiteral(_)
+                    | RdfLiteral::DecimalLiteral(_)
+                    | RdfLiteral::DoubleLiteral(_)
+                    | RdfLiteral::FloatLiteral(_),
+                ) => true,
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, .. }) => {
+                    matches!(
+                        type_iri.0.as_str(),
+                        XSD_INTEGER | XSD_DECIMAL | XSD_DOUBLE | XSD_FLOAT
+                    )
+                }
+                _ => false,
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+                is_numeric,
+            )))
+        }
+        "SAMETERM" => {
+            let a = eval_expression_value(args.first()?, sub, datastore)?;
+            let b = eval_expression_value(args.get(1)?, sub, datastore)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+                a == b,
+            )))
+        }
+        // ── Numeric functions ─────────────────────────────────────────────────
+        "ABS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                        if n < BigInt::from(0) { -n } else { n },
+                    )))
+                }
+                GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => Some(
+                    GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d.abs())),
+                ),
+                GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => {
+                    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                        d.into_inner().abs().into(),
+                    )))
+                }
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                    ref type_iri,
+                    ref literal,
+                }) if type_iri.0 == XSD_INTEGER => {
+                    let n: i64 = literal.parse().ok()?;
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                        BigInt::from(n.abs()),
+                    )))
+                }
+                GraphElement::GraphLiteral(lit) => {
+                    let f = literal_to_f64(&lit)?;
+                    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                        f.abs().into(),
+                    )))
+                }
+                _ => None,
+            }
+        }
+        "ROUND" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+                }
+                GraphElement::GraphLiteral(lit) => {
+                    let f = literal_to_f64(&lit)?;
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                        BigInt::from(f.round() as i64),
+                    )))
+                }
+                _ => None,
+            }
+        }
+        "CEIL" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+                }
+                GraphElement::GraphLiteral(lit) => {
+                    let f = literal_to_f64(&lit)?;
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                        BigInt::from(f.ceil() as i64),
+                    )))
+                }
+                _ => None,
+            }
+        }
+        "FLOOR" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+                }
+                GraphElement::GraphLiteral(lit) => {
+                    let f = literal_to_f64(&lit)?;
+                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                        BigInt::from(f.floor() as i64),
+                    )))
+                }
+                _ => None,
+            }
+        }
+        // ── Logic / control ───────────────────────────────────────────────────
+        "COALESCE" => args
+            .iter()
+            .find_map(|arg| eval_expression_value(arg, sub, datastore)),
+        "IF" => {
+            let cond_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let cond = element_to_bool(&cond_el)?;
+            if cond {
+                eval_expression_value(args.get(1)?, sub, datastore)
+            } else {
+                eval_expression_value(args.get(2)?, sub, datastore)
+            }
+        }
+        // ── Blank nodes ───────────────────────────────────────────────────────
+        "BNODE" => {
+            // BNODE() or BNODE(str): produce a fresh anonymous blank node.
+            // The optional string argument (a label hint) is intentionally
+            // ignored; we always return a freshly minted ID.
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static BNODE_COUNTER: AtomicU32 = AtomicU32::new(0);
+            let id = BNODE_COUNTER.fetch_add(1, Ordering::Relaxed);
+            Some(GraphElement::NodeOrEdge(
+                dag_rdf::RdfResource::AnonymousBlankNode(id),
+            ))
+        }
+        // ── String functions (continued) ──────────────────────────────────────
+        "ENCODE_FOR_URI" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let mut out = String::new();
+            for byte in s.bytes() {
+                match byte {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        out.push(byte as char);
+                    }
+                    _ => out.push_str(&format!("%{byte:02X}")),
+                }
+            }
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(out)))
+        }
+        "REPLACE" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat = graph_element_to_string(&pat_el)?;
+            let rep_el = eval_expression_value(args.get(2)?, sub, datastore)?;
+            let rep = graph_element_to_string(&rep_el)?;
+            let flags = if let Some(flag_expr) = args.get(3) {
+                if let Some(f_el) = eval_expression_value(flag_expr, sub, datastore) {
+                    graph_element_to_string(&f_el).unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let pattern = if flags.contains('i') {
+                format!("(?i){pat}")
+            } else {
+                pat
+            };
+            let re = regex::Regex::new(&pattern).ok()?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                re.replace_all(&s, rep.as_str()).into_owned(),
+            )))
+        }
+        // ── Numeric functions (random) ────────────────────────────────────────
+        "RAND" => {
+            use rand::Rng;
+            let v: f64 = rand::thread_rng().gen();
+            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+                v.into(),
+            )))
+        }
+        // ── Datetime functions ────────────────────────────────────────────────
+        "NOW" => Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
+            chrono::Utc::now(),
+        ))),
+        "YEAR" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Datelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(dt.year()),
+            )))
+        }
+        "MONTH" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Datelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(dt.month()),
+            )))
+        }
+        "DAY" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Datelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(dt.day()),
+            )))
+        }
+        "HOURS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Timelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(dt.hour()),
+            )))
+        }
+        "MINUTES" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Timelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+                BigInt::from(dt.minute()),
+            )))
+        }
+        "SECONDS" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let dt = parse_xsd_datetime(&el)?;
+            use chrono::Timelike;
+            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+                rust_decimal::Decimal::from(dt.second()),
+            )))
+        }
+        "TZ" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let tz_str = extract_tz_string(&el)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                tz_str,
+            )))
+        }
+        // ── Hash functions ────────────────────────────────────────────────────
+        "MD5" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            let hash = md5::compute(s.as_bytes());
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                format!("{hash:x}"),
+            )))
+        }
+        "SHA1" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            use sha1::Digest;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                hex::encode(sha1::Sha1::digest(s.as_bytes())),
+            )))
+        }
+        "SHA256" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            use sha2::Digest;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                hex::encode(sha2::Sha256::digest(s.as_bytes())),
+            )))
+        }
+        "SHA384" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            use sha2::Digest;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                hex::encode(sha2::Sha384::digest(s.as_bytes())),
+            )))
+        }
+        "SHA512" => {
+            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let s = graph_element_to_string(&el)?;
+            use sha2::Digest;
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                hex::encode(sha2::Sha512::digest(s.as_bytes())),
+            )))
+        }
+        // ── UUID functions ────────────────────────────────────────────────────
+        "UUID" => {
+            let id = uuid::Uuid::new_v4();
+            Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
+                IriReference(format!("urn:uuid:{id}")),
+            )))
+        }
+        "STRUUID" => {
+            let id = uuid::Uuid::new_v4();
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                id.to_string(),
+            )))
+        }
         _ => None,
     }
+}
+
+/// Parse an XSD dateTime graph element into a `chrono::DateTime<Utc>`.
+/// Handles both `DateTimeLiteral` (already parsed) and `TypedLiteral` strings.
+fn parse_xsd_datetime(el: &GraphElement) -> Option<chrono::DateTime<chrono::Utc>> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => Some(*dt),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+            chrono::DateTime::parse_from_rfc3339(literal.as_str())
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        }
+        _ => None,
+    }
+}
+
+/// Extract the timezone string from an XSD dateTime graph element.
+/// Returns `"Z"` for UTC, `"+HH:MM"` / `"-HH:MM"` for fixed offsets, and
+/// `""` for naive (no-timezone) values.
+fn extract_tz_string(el: &GraphElement) -> Option<String> {
+    let raw = match el {
+        GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(_)) => return Some("Z".to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => literal.as_str(),
+        _ => return None,
+    };
+    if raw.ends_with('Z') {
+        return Some("Z".to_string());
+    }
+    // After the 'T' separator the time portion is HH:MM:SS[.frac].
+    // A timezone offset ('+'/'-') can only appear after the seconds.
+    if let Some(t_pos) = raw.find('T') {
+        let after_t = &raw[t_pos + 1..];
+        for (i, c) in after_t.char_indices() {
+            if i >= 5 && (c == '+' || c == '-') {
+                return Some(after_t[i..].to_string());
+            }
+        }
+    }
+    Some(String::new())
 }
 
 fn eval_expression_bool(
@@ -985,6 +1635,32 @@ fn eval_bind_expr(
     eval_expression_value(expr, sub, datastore)
 }
 
+/// Extract an integer from either `IntegerLiteral` or `TypedLiteral(xsd:integer)`.
+fn element_to_usize(el: &GraphElement) -> Option<usize> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.to_string().parse().ok(),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_INTEGER =>
+        {
+            literal.parse().ok()
+        }
+        _ => None,
+    }
+}
+
+/// Coerce a boolean from either `BooleanLiteral` or `TypedLiteral(xsd:boolean)`.
+fn element_to_bool(el: &GraphElement) -> Option<bool> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(*b),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            Some(literal == "true")
+        }
+        _ => None,
+    }
+}
+
 fn graph_element_to_string(el: &GraphElement) -> Option<String> {
     match el {
         GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s.clone()),
@@ -1116,6 +1792,7 @@ fn execute_select_inner(
         group_by,
         having,
         order_by,
+        ..
     } = query
     else {
         return Vec::new();

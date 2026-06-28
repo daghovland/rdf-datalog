@@ -12,6 +12,12 @@ pub use error::OttrError;
 pub use expander::expand;
 pub use parser::parse_stottr;
 
+/// Read a stOTTR file from disk and parse it.
+pub fn load_stottr_file(path: &std::path::Path) -> Result<ast::StottrDocument, OttrError> {
+    let text = std::fs::read_to_string(path)?;
+    parse_stottr(&text)
+}
+
 /// Merge multiple parsed documents (e.g. a templates file + an instances
 /// file), then expand all instances into `datastore`.
 pub fn expand_documents(

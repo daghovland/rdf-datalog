@@ -23,7 +23,8 @@ pub mod ast;
 pub mod execute;
 mod join_ordering;
 pub use execute::{
-    eval_expr_as_filter, execute, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
+    eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute, QueryResult,
+    ResolvedTriple, SelectResult, SolutionRow,
 };
 
 use crate::ast::*;
@@ -32,7 +33,7 @@ use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_INTEGER};
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_until, take_while, take_while1},
-    character::complete::{char, multispace0, multispace1},
+    character::complete::char,
     combinator::{map, opt},
     multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
@@ -44,13 +45,46 @@ pub struct ParserContext {
     pub prefixes: HashMap<String, String>,
 }
 
+// ── Whitespace + comment skipping ────────────────────────────────────────────
+
+/// Skip zero or more whitespace characters or SPARQL line comments (`# … \n`).
+/// SPARQL spec §26.1: a `#` outside an IRI or string literal begins a comment
+/// that extends to the end of the line.
+fn sp(input: &str) -> IResult<&str, ()> {
+    let mut rest = input;
+    loop {
+        let ws_end = rest
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(rest.len());
+        rest = &rest[ws_end..];
+        if rest.starts_with('#') {
+            let end = rest.find(['\n', '\r']).map(|i| i + 1).unwrap_or(rest.len());
+            rest = &rest[end..];
+        } else {
+            break;
+        }
+    }
+    Ok((rest, ()))
+}
+
+/// Skip one or more whitespace characters or SPARQL line comments.
+fn sp1(input: &str) -> IResult<&str, ()> {
+    match input.chars().next() {
+        Some(c) if c.is_whitespace() || c == '#' => sp(input),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Space,
+        ))),
+    }
+}
+
 // ── Top-level entry point ────────────────────────────────────────────────────
 
 pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'a str, Query> {
-    let (input, _) = multispace0(input)?;
+    let (input, _) = sp(input)?;
     // PREFIX declarations — may mutate ctx with new prefix bindings
     let (mut input, _) = many0(parse_prefix(ctx))(input)?;
-    input = multispace0(input)?.0;
+    input = sp(input)?.0;
     parse_query_body(ctx)(input)
 }
 
@@ -62,9 +96,9 @@ fn parse_query_body<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Query> + 'a {
     move |input| {
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
-        // ASK query: ASK [WHERE] GroupGraphPattern
+        // ASK query: ASK [FROM …] [WHERE] GroupGraphPattern
         if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("ASK")(input) {
             let boundary = rest
                 .chars()
@@ -72,15 +106,23 @@ fn parse_query_body<'a>(
                 .map(|c| c.is_whitespace() || c == '{')
                 .unwrap_or(true);
             if boundary {
-                let (rest, _) = multispace0(rest)?;
-                let (rest, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, dataset) = parse_dataset_clauses(ctx)(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
                 let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
-                let (rest, _) = multispace0(rest)?;
-                return Ok((rest, Query::Ask { where_clause }));
+                let (rest, _) = sp(rest)?;
+                return Ok((
+                    rest,
+                    Query::Ask {
+                        dataset,
+                        where_clause,
+                    },
+                ));
             }
         }
 
-        // CONSTRUCT query: CONSTRUCT [{ template }] [WHERE] { pattern }
+        // CONSTRUCT query: CONSTRUCT [{ template }] [FROM …] [WHERE] { pattern }
         if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("CONSTRUCT")(input) {
             let boundary = rest
                 .chars()
@@ -88,7 +130,7 @@ fn parse_query_body<'a>(
                 .map(|c| c.is_whitespace() || c == '{')
                 .unwrap_or(true);
             if boundary {
-                let (rest, _) = multispace0(rest)?;
+                let (rest, _) = sp(rest)?;
 
                 // Parse optional explicit template block (full form) or leave empty (short form).
                 let (rest, template) = if rest.starts_with('{') {
@@ -108,14 +150,52 @@ fn parse_query_body<'a>(
                     (rest, vec![])
                 };
 
-                let (rest, _) = multispace0(rest)?;
-                let (rest, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, dataset) = parse_dataset_clauses(ctx)(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
                 let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
-                let (rest, _) = multispace0(rest)?;
+                let (rest, _) = sp(rest)?;
                 return Ok((
                     rest,
                     Query::Construct {
                         template,
+                        dataset,
+                        where_clause,
+                    },
+                ));
+            }
+        }
+
+        // DESCRIBE query: DESCRIBE (<iri> | ?var)+ | * [FROM …] [WHERE] [{ pattern }]
+        // See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md and issue #49.
+        if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("DESCRIBE")(input) {
+            let boundary = rest
+                .chars()
+                .next()
+                .map(|c| c.is_whitespace() || c == '<' || c == '?' || c == '*')
+                .unwrap_or(false);
+            if boundary {
+                let (rest, _) = sp(rest)?;
+                let (rest, resources) = parse_describe_resources(ctx)(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, dataset) = parse_dataset_clauses(ctx)(rest)?;
+                let (rest, _) = sp(rest)?;
+                let (rest, where_clause) = if rest.trim_start().starts_with("WHERE")
+                    || rest.trim_start().starts_with('{')
+                {
+                    let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
+                    let (rest, _) = sp(rest)?;
+                    parse_group_graph_pattern(ctx)(rest)?
+                } else {
+                    (rest, vec![])
+                };
+                let (rest, _) = sp(rest)?;
+                return Ok((
+                    rest,
+                    Query::Describe {
+                        resources,
+                        dataset,
                         where_clause,
                     },
                 ));
@@ -124,15 +204,15 @@ fn parse_query_body<'a>(
 
         // SELECT query
         let (input, _) = tag_no_case("SELECT")(input)?;
-        let (input, _) = multispace1(input)?;
+        let (input, _) = sp1(input)?;
 
         // DISTINCT keyword
-        let (input, distinct_opt) = opt(terminated(tag_no_case("DISTINCT"), multispace1))(input)?;
+        let (input, distinct_opt) = opt(terminated(tag_no_case("DISTINCT"), sp1))(input)?;
         let distinct = distinct_opt.is_some();
 
         // Projection: * or list of ?var
         let (input, projection) = parse_projection(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         // SPARQL syntax error: duplicate projection alias (e.g. SELECT (1 AS ?x) (1 AS ?x))
         {
@@ -150,30 +230,36 @@ fn parse_query_body<'a>(
             }
         }
 
+        // FROM / FROM NAMED dataset clauses
+        let (input, _) = sp(input)?;
+        let (input, dataset) = parse_dataset_clauses(ctx)(input)?;
+
         // WHERE (optional keyword)
-        let (input, _) = opt(terminated(tag_no_case("WHERE"), multispace0))(input)?;
+        let (input, _) = sp(input)?;
+        let (input, _) = opt(terminated(tag_no_case("WHERE"), sp))(input)?;
 
         // Group graph pattern
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, where_clause) = parse_group_graph_pattern(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         // Optional modifiers: GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
         let (input, group_by) = parse_group_by(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, having) = parse_having(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, order_by) = parse_order_by(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, limit) = parse_limit_offset("LIMIT")(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, offset) = parse_limit_offset("OFFSET")(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         Ok((
             input,
             Query::Select {
                 projection,
+                dataset,
                 where_clause,
                 group_by,
                 having,
@@ -190,13 +276,13 @@ fn parse_query_body<'a>(
 
 fn parse_prefix<'a>(ctx: &mut ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, ()> + '_ {
     move |input| {
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = tag_no_case("PREFIX")(input)?;
-        let (input, _) = multispace1(input)?;
+        let (input, _) = sp1(input)?;
         // prefix name: optional alphanumeric + colon (e.g. "foaf:", ":")
         let (input, prefix_name) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
         let (input, _) = char(':')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, iri) = parse_iri_ref(input)?;
         let (input, _) = opt(char('.'))(input)?;
         ctx.prefixes.insert(prefix_name.to_string(), iri.0);
@@ -212,15 +298,10 @@ fn parse_projection<'a>(
     move |input| {
         alt((
             // *
-            map(terminated(char('*'), multispace0), |_| {
-                vec![ProjectionElement::Star]
-            }),
+            map(terminated(char('*'), sp), |_| vec![ProjectionElement::Star]),
             // one or more ?var / (?expr AS ?alias)
             map(
-                many0(terminated(
-                    move |i| parse_projection_element(ctx)(i),
-                    multispace0,
-                )),
+                many0(terminated(move |i| parse_projection_element(ctx)(i), sp)),
                 |elems| elems,
             ),
         ))(input)
@@ -235,17 +316,17 @@ fn parse_projection_element<'a>(
             // (?expr AS ?alias)
             map(
                 delimited(
-                    pair(char('('), multispace0),
+                    pair(char('('), sp),
                     pair(
                         |i| parse_expression(ctx)(i),
                         preceded(
-                            // multispace0 because the expression parser eagerly consumes
-                            // trailing whitespace; multispace1 would always fail here.
-                            tuple((multispace0, tag_no_case("AS"), multispace1, char('?'))),
+                            // sp because the expression parser eagerly consumes
+                            // trailing whitespace; sp1 would always fail here.
+                            tuple((sp, tag_no_case("AS"), sp1, char('?'))),
                             parse_varname,
                         ),
                     ),
-                    pair(multispace0, char(')')),
+                    pair(sp, char(')')),
                 ),
                 |(expr, alias)| ProjectionElement::Expression(expr, alias),
             ),
@@ -264,11 +345,11 @@ fn parse_group_graph_pattern<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<QueryComponent>> + 'a {
     move |input| {
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('{')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, components) = parse_group_graph_pattern_contents(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('}')(input)?;
         Ok((input, components))
     }
@@ -284,7 +365,7 @@ fn parse_group_graph_pattern_contents<'a>(
         let mut blank_node_counter: usize = 0;
 
         loop {
-            remaining = multispace0(remaining)?.0;
+            remaining = sp(remaining)?.0;
 
             // Check for close brace — end of group
             if remaining.starts_with('}') {
@@ -295,7 +376,7 @@ fn parse_group_graph_pattern_contents<'a>(
             if remaining.to_ascii_uppercase().starts_with("OPTIONAL") {
                 flush_triples(&mut components, &mut current_triples);
                 let (r, inner) = preceded(
-                    pair(tag_no_case("OPTIONAL"), multispace0),
+                    pair(tag_no_case("OPTIONAL"), sp),
                     parse_group_graph_pattern(ctx),
                 )(remaining)?;
                 components.push(QueryComponent::Optional(inner));
@@ -316,9 +397,9 @@ fn parse_group_graph_pattern_contents<'a>(
             if remaining.to_ascii_uppercase().starts_with("GRAPH") {
                 flush_triples(&mut components, &mut current_triples);
                 let (r, _) = tag_no_case("GRAPH")(remaining)?;
-                let (r, _) = multispace1(r)?;
+                let (r, _) = sp1(r)?;
                 let (r, graph_term) = parse_term(ctx)(r)?;
-                let (r, _) = multispace0(r)?;
+                let (r, _) = sp(r)?;
                 let (r, inner) = parse_group_graph_pattern(ctx)(r)?;
                 components.push(QueryComponent::Graph(graph_term, inner));
                 remaining = r;
@@ -329,7 +410,7 @@ fn parse_group_graph_pattern_contents<'a>(
             if remaining.to_ascii_uppercase().starts_with("MINUS") {
                 flush_triples(&mut components, &mut current_triples);
                 let (r, inner) = preceded(
-                    pair(tag_no_case("MINUS"), multispace0),
+                    pair(tag_no_case("MINUS"), sp),
                     parse_group_graph_pattern(ctx),
                 )(remaining)?;
                 components.push(QueryComponent::Minus(inner));
@@ -353,6 +434,44 @@ fn parse_group_graph_pattern_contents<'a>(
                 components.push(vals);
                 remaining = r;
                 continue;
+            }
+
+            // SERVICE [SILENT] VarOrIri GroupGraphPattern
+            if remaining.to_ascii_uppercase().starts_with("SERVICE") {
+                let after_keyword = &remaining[7..];
+                let is_word_boundary = after_keyword
+                    .chars()
+                    .next()
+                    .map(|c| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(true);
+                if is_word_boundary {
+                    flush_triples(&mut components, &mut current_triples);
+                    let (r, _) = tag_no_case("SERVICE")(remaining)?;
+                    let (r, _) = sp1(r)?;
+                    let (r, silent) = if r.to_ascii_uppercase().starts_with("SILENT") {
+                        let after = &r[6..];
+                        let boundary = after
+                            .chars()
+                            .next()
+                            .map(|c| !c.is_alphanumeric() && c != '_')
+                            .unwrap_or(true);
+                        if boundary {
+                            let (r2, _) = tag_no_case("SILENT")(r)?;
+                            let (r2, _) = sp1(r2)?;
+                            (r2, true)
+                        } else {
+                            (r, false)
+                        }
+                    } else {
+                        (r, false)
+                    };
+                    let (r, endpoint) = parse_term(ctx)(r)?;
+                    let (r, _) = sp(r)?;
+                    let (r, inner) = parse_group_graph_pattern(ctx)(r)?;
+                    components.push(QueryComponent::Service(endpoint, inner, silent));
+                    remaining = r;
+                    continue;
+                }
             }
 
             // SubSelect: SELECT appears directly in group pattern position (no extra braces).
@@ -384,11 +503,11 @@ fn parse_group_graph_pattern_contents<'a>(
                 flush_triples(&mut components, &mut current_triples);
 
                 let (r, left) = parse_group_graph_pattern(ctx)(remaining)?;
-                let r = multispace0(r)?.0;
+                let r = sp(r)?.0;
                 // Check for UNION
                 if r.to_ascii_uppercase().starts_with("UNION") {
                     let (r, _) = tag_no_case("UNION")(r)?;
-                    let (r, _) = multispace0(r)?;
+                    let (r, _) = sp(r)?;
                     let (r, right) = parse_group_graph_pattern(ctx)(r)?;
                     components.push(QueryComponent::Union(left, right));
                     remaining = r;
@@ -404,7 +523,7 @@ fn parse_group_graph_pattern_contents<'a>(
             // `[] pred obj` ≡ `_:fresh pred obj` with a fresh anonymous blank node.
             if remaining.starts_with("[]") {
                 let (r, _) = tag("[]")(remaining)?;
-                let (r, _) = multispace0(r)?;
+                let (r, _) = sp(r)?;
                 let bn_var = Term::Variable(format!("__bn_{}", blank_node_counter));
                 blank_node_counter += 1;
                 let (r, inner_comps) = parse_predobj_pairs(ctx, &bn_var, r)?;
@@ -418,7 +537,7 @@ fn parse_group_graph_pattern_contents<'a>(
                     }
                 }
                 remaining = r;
-                remaining = multispace0(remaining)?.0;
+                remaining = sp(remaining)?.0;
                 if remaining.starts_with('.') && !remaining.starts_with("..") {
                     remaining = &remaining[1..];
                 }
@@ -430,7 +549,7 @@ fn parse_group_graph_pattern_contents<'a>(
             if remaining.starts_with('[') && !remaining.starts_with("[]") {
                 flush_triples(&mut components, &mut current_triples);
                 let (r, _) = char('[')(remaining)?;
-                let (r, _) = multispace0(r)?;
+                let (r, _) = sp(r)?;
                 // Generate a fresh internal variable for the blank node
                 let bn_var = Term::Variable(format!("__bn_{}", blank_node_counter));
                 blank_node_counter += 1;
@@ -445,11 +564,11 @@ fn parse_group_graph_pattern_contents<'a>(
                         }
                     }
                 }
-                let (r, _) = multispace0(r)?;
+                let (r, _) = sp(r)?;
                 let (r, _) = char(']')(r)?;
                 remaining = r;
                 // Consume optional dot
-                remaining = multispace0(remaining)?.0;
+                remaining = sp(remaining)?.0;
                 if remaining.starts_with('.') && !remaining.starts_with("..") {
                     remaining = &remaining[1..];
                 }
@@ -470,7 +589,7 @@ fn parse_group_graph_pattern_contents<'a>(
                     }
                     remaining = r;
                     // Consume optional dot
-                    remaining = multispace0(remaining)?.0;
+                    remaining = sp(remaining)?.0;
                     if remaining.starts_with('.') && !remaining.starts_with("..") {
                         remaining = &remaining[1..];
                     }
@@ -505,27 +624,27 @@ fn parse_predobj_pairs<'a>(
     let mut remaining = input;
 
     loop {
-        remaining = multispace0(remaining)?.0;
+        remaining = sp(remaining)?.0;
         if remaining.starts_with(']') || remaining.is_empty() {
             break;
         }
-        let (r, _) = multispace0(remaining)?;
+        let (r, _) = sp(remaining)?;
         let (r, path) = match parse_path_alternative(ctx)(r) {
             Ok(x) => x,
             Err(_) => break,
         };
-        let (r, _) = multispace1(r)?;
+        let (r, _) = sp1(r)?;
         let (mut r, first_obj) = parse_term(ctx)(r)?;
 
         let mut objects = vec![first_obj];
         loop {
-            let (rws, _) = multispace0(r)?;
+            let (rws, _) = sp(r)?;
             if !rws.starts_with(',') {
                 r = rws;
                 break;
             }
             let (rc, _) = char(',')(rws)?;
-            let (rc, _) = multispace0(rc)?;
+            let (rc, _) = sp(rc)?;
             let (rn, obj) = parse_term(ctx)(rc)?;
             objects.push(obj);
             r = rn;
@@ -550,13 +669,13 @@ fn parse_predobj_pairs<'a>(
             }
         }
 
-        let (rws, _) = multispace0(r)?;
+        let (rws, _) = sp(r)?;
         if !rws.starts_with(';') {
             remaining = rws;
             break;
         }
         let (rws, _) = char(';')(rws)?;
-        let (rws, _) = multispace0(rws)?;
+        let (rws, _) = sp(rws)?;
         if rws.starts_with(']') {
             remaining = rws;
             break;
@@ -575,16 +694,16 @@ fn parse_triple_pattern_statement<'a>(
     ctx: &'a ParserContext,
     input: &'a str,
 ) -> IResult<&'a str, Vec<QueryComponent>> {
-    let (input, _) = multispace0(input)?;
+    let (input, _) = sp(input)?;
     let (mut remaining, subject) = parse_term(ctx)(input)?;
     let mut components: Vec<QueryComponent> = Vec::new();
     let mut first_predicate = true;
 
     loop {
         let (r, _) = if first_predicate {
-            multispace1(remaining)?
+            sp1(remaining)?
         } else {
-            multispace0(remaining)?
+            sp(remaining)?
         };
 
         // If the predicate is a variable (e.g. ?p), parse it directly as a Term.
@@ -604,18 +723,18 @@ fn parse_triple_pattern_statement<'a>(
             (r, None)
         };
 
-        let (r, _) = multispace1(r)?;
+        let (r, _) = sp1(r)?;
         let (mut r, first_object) = parse_term(ctx)(r)?;
 
         let mut objects = vec![first_object];
         loop {
-            let (r_ws, _) = multispace0(r)?;
+            let (r_ws, _) = sp(r)?;
             if !r_ws.starts_with(',') {
                 r = r_ws;
                 break;
             }
             let (r_after_comma, _) = char(',')(r_ws)?;
-            let (r_after_comma, _) = multispace0(r_after_comma)?;
+            let (r_after_comma, _) = sp(r_after_comma)?;
             let (r_next, obj) = parse_term(ctx)(r_after_comma)?;
             objects.push(obj);
             r = r_next;
@@ -648,14 +767,14 @@ fn parse_triple_pattern_statement<'a>(
             }
         }
 
-        let (r_ws, _) = multispace0(r)?;
+        let (r_ws, _) = sp(r)?;
         if !r_ws.starts_with(';') {
             remaining = r_ws;
             break;
         }
 
         let (r_after_semi, _) = char(';')(r_ws)?;
-        let (r_after_semi, _) = multispace0(r_after_semi)?;
+        let (r_after_semi, _) = sp(r_after_semi)?;
 
         // Allow trailing semicolon before '.' or '}'.
         if r_after_semi.starts_with('.') || r_after_semi.starts_with('}') {
@@ -684,11 +803,11 @@ fn parse_path_alternative<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
     move |input| {
         let (input, left) = parse_path_sequence(ctx)(input)?;
-        // No trailing multispace0 here — the caller (parse_triple_pattern_statement)
-        // uses multispace0 before checking for '|', so we don't want to eat the
+        // No trailing sp here — the caller (parse_triple_pattern_statement)
+        // uses sp before checking for '|', so we don't want to eat the
         // space that belongs between the path and the object term.
         let (input, rest) = many0(preceded(
-            tuple((multispace0, char('|'), multispace0)),
+            tuple((sp, char('|'), sp)),
             parse_path_sequence(ctx),
         ))(input)?;
         Ok((
@@ -705,10 +824,9 @@ fn parse_path_sequence<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
     move |input| {
         let (input, first) = parse_path_elt_or_inverse(ctx)(input)?;
-        let (input, rest) = many0(preceded(
-            tuple((multispace0, char('/'), multispace0)),
-            |i| parse_path_elt_or_inverse(ctx)(i),
-        ))(input)?;
+        let (input, rest) = many0(preceded(tuple((sp, char('/'), sp)), |i| {
+            parse_path_elt_or_inverse(ctx)(i)
+        }))(input)?;
         if rest.is_empty() {
             Ok((input, first))
         } else {
@@ -725,7 +843,7 @@ fn parse_path_elt_or_inverse<'a>(
     move |input| {
         alt((
             map(
-                preceded(pair(char('^'), multispace0), |i| parse_path_elt(ctx)(i)),
+                preceded(pair(char('^'), sp), |i| parse_path_elt(ctx)(i)),
                 |p| PropertyPath::Inverse(Box::new(p)),
             ),
             |i| parse_path_elt(ctx)(i),
@@ -762,15 +880,13 @@ fn parse_path_primary<'a>(
         alt((
             // '(' PathAlternative ')'
             delimited(
-                pair(char('('), multispace0),
+                pair(char('('), sp),
                 |i| parse_path_alternative(ctx)(i),
-                pair(multispace0, char(')')),
+                pair(sp, char(')')),
             ),
             // '!' NegatedSet
             map(
-                preceded(pair(char('!'), multispace0), |i| {
-                    parse_path_negated_set(ctx)(i)
-                }),
+                preceded(pair(char('!'), sp), |i| parse_path_negated_set(ctx)(i)),
                 PropertyPath::NegatedSet,
             ),
             // IRI / 'a'
@@ -821,11 +937,9 @@ fn parse_path_negated_set<'a>(
     move |input| {
         alt((
             delimited(
-                pair(char('('), multispace0),
-                separated_list0(tuple((multispace0, char('|'), multispace0)), |i| {
-                    parse_path_iri(ctx)(i)
-                }),
-                pair(multispace0, char(')')),
+                pair(char('('), sp),
+                separated_list0(tuple((sp, char('|'), sp)), |i| parse_path_iri(ctx)(i)),
+                pair(sp, char(')')),
             ),
             map(|i| parse_path_iri(ctx)(i), |gel| vec![gel]),
         ))(input)
@@ -1247,7 +1361,7 @@ fn parse_filter<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, _) = tag_no_case("FILTER")(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         parse_expression(ctx)(input)
     }
 }
@@ -1278,11 +1392,8 @@ fn parse_or_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, left) = parse_and_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
-        let (input, rest) = many0(preceded(
-            pair(tag("||"), multispace0),
-            parse_and_expression(ctx),
-        ))(input)?;
+        let (input, _) = sp(input)?;
+        let (input, rest) = many0(preceded(pair(tag("||"), sp), parse_and_expression(ctx)))(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, r| {
@@ -1297,9 +1408,9 @@ fn parse_and_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, left) = parse_relational_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, rest) = many0(preceded(
-            pair(tag("&&"), multispace0),
+            pair(tag("&&"), sp),
             parse_relational_expression(ctx),
         ))(input)?;
         Ok((
@@ -1316,7 +1427,7 @@ fn parse_relational_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, left) = parse_additive_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         // NOT IN — must check before comparison operators and before unary NOT
         if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("NOT")(input) {
@@ -1326,10 +1437,8 @@ fn parse_relational_expression<'a>(
                 .map(|c| c.is_whitespace())
                 .unwrap_or(false);
             if boundary {
-                if let Ok((rest2, _)) = preceded(
-                    multispace1,
-                    tag_no_case::<_, _, nom::error::Error<&str>>("IN"),
-                )(rest)
+                if let Ok((rest2, _)) =
+                    preceded(sp1, tag_no_case::<_, _, nom::error::Error<&str>>("IN"))(rest)
                 {
                     let kw_end = rest2
                         .chars()
@@ -1337,7 +1446,7 @@ fn parse_relational_expression<'a>(
                         .map(|c| !c.is_alphanumeric() && c != '_')
                         .unwrap_or(true);
                     if kw_end {
-                        let (rest2, _) = multispace0(rest2)?;
+                        let (rest2, _) = sp(rest2)?;
                         let (rest2, list) = parse_expression_list(ctx)(rest2)?;
                         return Ok((rest2, Expression::NotIn(Box::new(left), list)));
                     }
@@ -1353,7 +1462,7 @@ fn parse_relational_expression<'a>(
                 .map(|c| !c.is_alphanumeric() && c != '_')
                 .unwrap_or(true);
             if kw_end {
-                let (rest, _) = multispace0(rest)?;
+                let (rest, _) = sp(rest)?;
                 if rest.starts_with('(') {
                     let (rest, list) = parse_expression_list(ctx)(rest)?;
                     return Ok((rest, Expression::In(Box::new(left), list)));
@@ -1371,7 +1480,7 @@ fn parse_relational_expression<'a>(
                 map(tag(">"), |_| BinaryOp::Gt),
                 map(tag("="), |_| BinaryOp::Eq),
             )),
-            preceded(multispace0, |i| parse_additive_expression(ctx)(i)),
+            preceded(sp, |i| parse_additive_expression(ctx)(i)),
         ))(input)?;
         Ok((
             input,
@@ -1388,11 +1497,10 @@ fn parse_expression_list<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
     move |input| {
         let (input, _) = char('(')(input)?;
-        let (input, _) = multispace0(input)?;
-        let (input, list) = separated_list0(tuple((multispace0, char(','), multispace0)), |i| {
-            parse_expression(ctx)(i)
-        })(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
+        let (input, list) =
+            separated_list0(tuple((sp, char(','), sp)), |i| parse_expression(ctx)(i))(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
         Ok((input, list))
     }
@@ -1403,13 +1511,13 @@ fn parse_additive_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, left) = parse_multiplicative_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, rest) = many0(pair(
             alt((
                 map(char('+'), |_| BinaryOp::Add),
                 map(char('-'), |_| BinaryOp::Sub),
             )),
-            preceded(multispace0, |i| parse_multiplicative_expression(ctx)(i)),
+            preceded(sp, |i| parse_multiplicative_expression(ctx)(i)),
         ))(input)?;
         Ok((
             input,
@@ -1425,13 +1533,13 @@ fn parse_multiplicative_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         let (input, left) = parse_unary_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, rest) = many0(pair(
             alt((
                 map(char('*'), |_| BinaryOp::Mul),
                 map(char('/'), |_| BinaryOp::Div),
             )),
-            preceded(multispace0, |i| parse_unary_expression(ctx)(i)),
+            preceded(sp, |i| parse_unary_expression(ctx)(i)),
         ))(input)?;
         Ok((
             input,
@@ -1448,15 +1556,11 @@ fn parse_unary_expression<'a>(
     move |input| {
         alt((
             map(
-                preceded(pair(char('!'), multispace0), |i| {
-                    parse_primary_expression(ctx)(i)
-                }),
+                preceded(pair(char('!'), sp), |i| parse_primary_expression(ctx)(i)),
                 |e| Expression::Unary(UnaryOp::Not, Box::new(e)),
             ),
             map(
-                preceded(pair(char('-'), multispace0), |i| {
-                    parse_primary_expression(ctx)(i)
-                }),
+                preceded(pair(char('-'), sp), |i| parse_primary_expression(ctx)(i)),
                 |e| Expression::Unary(UnaryOp::Minus, Box::new(e)),
             ),
             |i| parse_primary_expression(ctx)(i),
@@ -1472,21 +1576,16 @@ fn parse_primary_expression<'a>(
             // Parenthesised expression
             map(
                 delimited(
-                    pair(char('('), multispace0),
+                    pair(char('('), sp),
                     |i| parse_expression(ctx)(i),
-                    pair(multispace0, char(')')),
+                    pair(sp, char(')')),
                 ),
                 |e| e,
             ),
             // NOT EXISTS
             map(
                 preceded(
-                    tuple((
-                        tag_no_case("NOT"),
-                        multispace1,
-                        tag_no_case("EXISTS"),
-                        multispace0,
-                    )),
+                    tuple((tag_no_case("NOT"), sp1, tag_no_case("EXISTS"), sp)),
                     parse_group_graph_pattern(ctx),
                 ),
                 Expression::NotExists,
@@ -1494,7 +1593,7 @@ fn parse_primary_expression<'a>(
             // EXISTS
             map(
                 preceded(
-                    pair(tag_no_case("EXISTS"), multispace0),
+                    pair(tag_no_case("EXISTS"), sp),
                     parse_group_graph_pattern(ctx),
                 ),
                 Expression::Exists,
@@ -1538,9 +1637,9 @@ fn parse_function_call<'a>(
             map(parse_prefixed_name(ctx), |iri| iri.0),
         ))(input)?;
 
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('(')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         // Intercept aggregate keywords and produce Expression::Aggregate
         let fname_upper = fname.to_ascii_uppercase();
@@ -1549,27 +1648,26 @@ fn parse_function_call<'a>(
             "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "SAMPLE" | "GROUP_CONCAT"
         ) {
             // Optional DISTINCT keyword
-            let (input, distinct) =
-                map(opt(terminated(tag_no_case("DISTINCT"), multispace1)), |d| {
-                    d.is_some()
-                })(input)?;
+            let (input, distinct) = map(opt(terminated(tag_no_case("DISTINCT"), sp1)), |d| {
+                d.is_some()
+            })(input)?;
 
             // COUNT(*) special form
             if fname_upper == "COUNT" && input.starts_with('*') {
                 let (input, _) = char('*')(input)?;
-                let (input, _) = multispace0(input)?;
+                let (input, _) = sp(input)?;
                 let (input, _) = char(')')(input)?;
                 return Ok((input, Expression::Aggregate(Aggregate::CountStar)));
             }
 
             let (input, expr) = parse_expression(ctx)(input)?;
-            let (input, _) = multispace0(input)?;
+            let (input, _) = sp(input)?;
 
             // GROUP_CONCAT optional separator: ; separator="sep"
             if fname_upper == "GROUP_CONCAT" {
                 let (input, sep) = opt(parse_group_concat_separator(ctx))(input)?;
                 let sep = sep.unwrap_or_else(|| " ".to_string());
-                let (input, _) = multispace0(input)?;
+                let (input, _) = sp(input)?;
                 let (input, _) = char(')')(input)?;
                 return Ok((
                     input,
@@ -1592,10 +1690,8 @@ fn parse_function_call<'a>(
 
         // Regular function call
         let (input, args) =
-            separated_list0(pair(multispace0, pair(char(','), multispace0)), |i| {
-                parse_expression(ctx)(i)
-            })(input)?;
-        let (input, _) = multispace0(input)?;
+            separated_list0(pair(sp, pair(char(','), sp)), |i| parse_expression(ctx)(i))(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
 
         Ok((input, Expression::FunctionCall(fname, args)))
@@ -1607,11 +1703,11 @@ fn parse_group_concat_separator<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, String> + 'a {
     move |input| {
         let (input, _) = char(';')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = tag_no_case("separator")(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('=')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, lit) = parse_string_literal(ctx)(input)?;
         let sep = match lit {
             RdfLiteral::LiteralString(s) => s,
@@ -1628,15 +1724,15 @@ fn parse_bind<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, (Expression, String)> + 'a {
     move |input| {
         let (input, _) = tag_no_case("BIND")(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('(')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, expr) = parse_expression(ctx)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = tag_no_case("AS")(input)?;
-        let (input, _) = multispace1(input)?;
+        let (input, _) = sp1(input)?;
         let (input, var) = preceded(char('?'), parse_varname)(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
         Ok((input, (expr, var)))
     }
@@ -1649,7 +1745,7 @@ fn parse_values<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, QueryComponent> + 'a {
     move |input| {
         let (input, _) = tag_no_case("VALUES")(input)?;
-        let (input, _) = multispace1(input)?;
+        let (input, _) = sp1(input)?;
 
         // Single variable: VALUES ?x { ... }
         // Multiple: VALUES (?x ?y) { ... }
@@ -1658,20 +1754,20 @@ fn parse_values<'a>(
             map(preceded(char('?'), parse_varname), |v| vec![v]),
             // Multiple in parens
             delimited(
-                pair(char('('), multispace0),
-                many0(terminated(preceded(char('?'), parse_varname), multispace0)),
+                pair(char('('), sp),
+                many0(terminated(preceded(char('?'), parse_varname), sp)),
                 char(')'),
             ),
         ))(input)?;
 
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('{')(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
 
         // Rows
         let (input, rows) = many0(parse_values_row(ctx, vars.len()))(input)?;
 
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         let (input, _) = char('}')(input)?;
 
         Ok((input, QueryComponent::Values(vars, rows)))
@@ -1683,19 +1779,19 @@ fn parse_values_row<'a>(
     n_vars: usize,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Option<GraphElement>>> + 'a {
     move |input| {
-        let (input, _) = multispace0(input)?;
+        let (input, _) = sp(input)?;
         if n_vars == 1 {
             // Without parens for single var
             let (input, val) = parse_values_value(ctx)(input)?;
-            let (input, _) = multispace0(input)?;
+            let (input, _) = sp(input)?;
             Ok((input, vec![val]))
         } else {
             let (input, _) = char('(')(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, vals) = separated_list0(multispace1, parse_values_value(ctx))(input)?;
-            let (input, _) = multispace0(input)?;
+            let (input, _) = sp(input)?;
+            let (input, vals) = separated_list0(sp1, parse_values_value(ctx))(input)?;
+            let (input, _) = sp(input)?;
             let (input, _) = char(')')(input)?;
-            let (input, _) = multispace0(input)?;
+            let (input, _) = sp(input)?;
             Ok((input, vals))
         }
     }
@@ -1722,13 +1818,8 @@ fn parse_group_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
     move |input| {
         let (input, gb) = opt(preceded(
-            tuple((
-                tag_no_case("GROUP"),
-                multispace1,
-                tag_no_case("BY"),
-                multispace1,
-            )),
-            separated_list1(multispace1, |i| parse_expression(ctx)(i)),
+            tuple((tag_no_case("GROUP"), sp1, tag_no_case("BY"), sp1)),
+            separated_list1(sp1, |i| parse_expression(ctx)(i)),
         ))(input)?;
         Ok((input, gb.unwrap_or_default()))
     }
@@ -1738,7 +1829,7 @@ fn parse_having<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
     move |input| {
-        let (input, hv) = opt(preceded(pair(tag_no_case("HAVING"), multispace1), |i| {
+        let (input, hv) = opt(preceded(pair(tag_no_case("HAVING"), sp1), |i| {
             parse_expression(ctx)(i)
         }))(input)?;
         Ok((input, hv.map(|e| vec![e]).unwrap_or_default()))
@@ -1750,13 +1841,8 @@ fn parse_order_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<OrderCondition>> + 'a {
     move |input| {
         let (input, ob) = opt(preceded(
-            tuple((
-                tag_no_case("ORDER"),
-                multispace1,
-                tag_no_case("BY"),
-                multispace1,
-            )),
-            separated_list1(multispace1, parse_order_condition(ctx)),
+            tuple((tag_no_case("ORDER"), sp1, tag_no_case("BY"), sp1)),
+            separated_list1(sp1, parse_order_condition(ctx)),
         ))(input)?;
         Ok((input, ob.unwrap_or_default()))
     }
@@ -1768,18 +1854,14 @@ fn parse_order_condition<'a>(
     move |input| {
         alt((
             map(
-                preceded(pair(tag_no_case("ASC"), multispace0), |i| {
-                    parse_expression(ctx)(i)
-                }),
+                preceded(pair(tag_no_case("ASC"), sp), |i| parse_expression(ctx)(i)),
                 |e| OrderCondition {
                     expression: e,
                     ascending: true,
                 },
             ),
             map(
-                preceded(pair(tag_no_case("DESC"), multispace0), |i| {
-                    parse_expression(ctx)(i)
-                }),
+                preceded(pair(tag_no_case("DESC"), sp), |i| parse_expression(ctx)(i)),
                 |e| OrderCondition {
                     expression: e,
                     ascending: false,
@@ -1799,11 +1881,101 @@ fn parse_order_condition<'a>(
 fn parse_limit_offset(keyword: &str) -> impl Fn(&str) -> IResult<&str, Option<u64>> + '_ {
     move |input| {
         let (input, val) = opt(preceded(
-            pair(tag_no_case(keyword), multispace1),
+            pair(tag_no_case(keyword), sp1),
             map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
                 s.parse::<u64>().unwrap_or(0)
             }),
         ))(input)?;
         Ok((input, val))
+    }
+}
+
+// ── FROM / FROM NAMED dataset clauses (issue #50) ────────────────────────────
+
+fn parse_dataset_clauses<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<DatasetClause>> + 'a {
+    move |mut input| {
+        let mut clauses = Vec::new();
+        loop {
+            let (rest, _) = sp(input)?;
+            if let Ok((rest2, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("FROM")(rest) {
+                let (rest2, _) = sp1(rest2)?;
+                // Check for NAMED keyword
+                if let Ok((rest3, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("NAMED")(rest2)
+                {
+                    let (rest3, _) = sp(rest3)?;
+                    let (rest3, ge) = parse_dataset_iri(ctx)(rest3)?;
+                    clauses.push(DatasetClause::Named(ge));
+                    input = rest3;
+                } else {
+                    let (rest2, ge) = parse_dataset_iri(ctx)(rest2)?;
+                    clauses.push(DatasetClause::Default(ge));
+                    input = rest2;
+                }
+            } else {
+                input = rest;
+                break;
+            }
+        }
+        Ok((input, clauses))
+    }
+}
+
+/// Parse the IRI in a FROM clause — either `<iri>` or a prefixed name.
+fn parse_dataset_iri<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, GraphElement> + 'a {
+    move |input| {
+        let term = parse_term(ctx)(input)?;
+        let (rest, t) = term;
+        match t {
+            crate::ast::Term::Constant(ge) => Ok((rest, ge)),
+            crate::ast::Term::Variable(_) => Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            ))),
+        }
+    }
+}
+
+// ── DESCRIBE resource list (issue #49) ───────────────────────────────────────
+
+/// Parse the resource list after DESCRIBE: `*` (empty Vec) or one or more `<iri>`/`?var`.
+fn parse_describe_resources<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Term>> + 'a {
+    move |input| {
+        // DESCRIBE * → empty list (described separately in executor)
+        if let Ok((rest, _)) = tag_no_case::<_, _, nom::error::Error<&str>>("*")(input) {
+            return Ok((rest, vec![]));
+        }
+        // One or more IRIs or variables
+        let (input, first) = parse_term(ctx)(input)?;
+        let mut resources = vec![first];
+        let mut rest = input;
+        loop {
+            let (r, _) = sp(rest)?;
+            // Stop if we hit WHERE, FROM, or {
+            if r.is_empty()
+                || r.starts_with('{')
+                || tag_no_case::<_, _, nom::error::Error<&str>>("WHERE")(r).is_ok()
+                || tag_no_case::<_, _, nom::error::Error<&str>>("FROM")(r).is_ok()
+            {
+                rest = r;
+                break;
+            }
+            match parse_term(ctx)(r) {
+                Ok((r2, t)) => {
+                    resources.push(t);
+                    rest = r2;
+                }
+                Err(_) => {
+                    rest = r;
+                    break;
+                }
+            }
+        }
+        Ok((rest, resources))
     }
 }

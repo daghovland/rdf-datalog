@@ -26,7 +26,9 @@ fn run_query(ds: &Datastore, query: &str) -> sparql_parser::SelectResult {
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     match execute(&parsed, ds).expect("query should execute") {
         QueryResult::Select(r) => r,
-        QueryResult::Ask(_) | QueryResult::Construct(_) => panic!("expected SELECT result"),
+        QueryResult::Ask(_) | QueryResult::Construct(_) | QueryResult::Describe(_) => {
+            panic!("expected SELECT result")
+        }
     }
 }
 
@@ -208,4 +210,50 @@ fn construct_wildcard_returns_default_graph_triples() {
         iri_node("http://xmlns.com/foaf/0.1/name")
     );
     assert_eq!(triples[0].object, iri_node("http://example.org/name/alice"));
+}
+
+// ── SERVICE: non-silent returns error, silent returns empty ───────────────────
+
+#[test]
+fn service_non_silent_returns_error() {
+    let ds = Datastore::new(64);
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let query = r#"
+        SELECT * WHERE {
+          SERVICE <https://query.wikidata.org/sparql> { ?s ?p ?o }
+        } LIMIT 5
+    "#;
+    let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
+    let err = execute(&parsed, &ds)
+        .err()
+        .expect("non-SILENT SERVICE must return an error");
+    assert!(
+        err.contains("SERVICE federation is not yet implemented"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn service_silent_returns_empty() {
+    let ds = Datastore::new(64);
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let query = r#"
+        SELECT * WHERE {
+          SERVICE SILENT <https://query.wikidata.org/sparql> { ?s ?p ?o }
+        }
+    "#;
+    let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
+    let result = execute(&parsed, &ds).expect("SILENT SERVICE must not error");
+    let rows = match result {
+        QueryResult::Select(r) => r.rows,
+        _ => panic!("expected SELECT result"),
+    };
+    assert!(
+        rows.is_empty(),
+        "SILENT SERVICE with unreachable endpoint must return empty"
+    );
 }

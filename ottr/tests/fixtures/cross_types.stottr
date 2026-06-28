@@ -1,0 +1,14 @@
+@prefix ex:   <http://example.com/> .
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:Type [ ottr:IRI ?individual, ottr:IRI ?type ] :: {
+  ottr:Triple (?individual, rdf:type, ?type)
+} .
+
+ex:Types [ ottr:IRI ?inst, ottr:IRI ?class ] :: {
+  cross | ex:Type (?inst, ++?class)
+} .
+
+ex:Types(<http://example.com/ann>,   (<http://example.com/Person>, <http://example.com/Employee>)) .
+ex:Types(<http://example.com/carol>, (<http://example.com/Person>, <http://example.com/Manager>)) .

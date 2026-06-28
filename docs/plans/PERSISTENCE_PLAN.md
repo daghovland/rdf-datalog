@@ -1,12 +1,16 @@
 # Persistence Plan
 
+> Progress tracking: [#34 Persistence epic](https://github.com/daghovland/rdf-datalog/issues/34)
+
 Two orthogonal goals live here:
 
 1. **Durable transactional storage** — when the server returns `200 OK` to a
    mutating HTTP request, the written data is guaranteed to survive a crash or restart.
+   Tracked by [#34](https://github.com/daghovland/rdf-datalog/issues/34).
 2. **Incremental Datalog maintenance** — when base facts change (insert or delete),
    the materialised closure is updated incrementally using the Backward/Forward (BF)
    algorithm rather than re-materialising from scratch.
+   Tracked by [#83](https://github.com/daghovland/rdf-datalog/issues/83).
 
 ---
 

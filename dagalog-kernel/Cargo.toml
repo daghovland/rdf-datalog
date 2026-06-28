@@ -19,6 +19,7 @@ datalog-parser = { path = "../datalog_parser" }
 sparql-parser = { path = "../sparql_parser" }
 turtle = { path = "../turtle" }
 rml = { path = "../rml" }
+ottr = { path = "../ottr" }
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
 shacl = { path = "../shacl" }
@@ -35,3 +36,7 @@ hex = "0.4"
 dirs = "6"
 thiserror = "2"
 log = "0.4"
+
+[dev-dependencies]
+serial_test = "3"
+tokio = { version = "1", features = ["full"] }

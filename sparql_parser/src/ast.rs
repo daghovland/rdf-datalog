@@ -21,10 +21,20 @@ pub enum PropertyPath {
     NegatedSet(Vec<GraphElement>),
 }
 
+/// A dataset clause from `FROM` or `FROM NAMED`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DatasetClause {
+    /// `FROM <iri>` — contributes to the default graph.
+    Default(GraphElement),
+    /// `FROM NAMED <iri>` — adds to the set of accessible named graphs.
+    Named(GraphElement),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Query {
     Select {
         projection: Vec<ProjectionElement>,
+        dataset: Vec<DatasetClause>,
         where_clause: Vec<QueryComponent>,
         group_by: Vec<Expression>,
         having: Vec<Expression>,
@@ -34,11 +44,19 @@ pub enum Query {
         distinct: bool,
     },
     Ask {
+        dataset: Vec<DatasetClause>,
         where_clause: Vec<QueryComponent>,
     },
     Construct {
         /// Template triple patterns; empty means short form (use WHERE BGPs as template).
         template: Vec<TriplePattern>,
+        dataset: Vec<DatasetClause>,
+        where_clause: Vec<QueryComponent>,
+    },
+    Describe {
+        /// Resources to describe: IRIs or variables.  Empty means `DESCRIBE *`.
+        resources: Vec<Term>,
+        dataset: Vec<DatasetClause>,
         where_clause: Vec<QueryComponent>,
     },
 }
