@@ -1,4 +1,4 @@
-use crate::ast::{Argument, Instance, Parameter, StottrDocument, TemplateDef, Term};
+use crate::ast::{Argument, Expander, Instance, Parameter, StottrDocument, TemplateDef, Term};
 use crate::error::OttrError;
 use crate::types::OttrType;
 use ingress::{IriReference, RdfLiteral};
@@ -170,12 +170,59 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
     }
 }
 
-fn parse_argument<'a>(
-    ctx: &'a ParserContext,
-) -> impl Fn(&'a str) -> IResult<&'a str, Argument> + 'a {
-    move |input: &'a str| map(parse_term(ctx), Argument::Term)(input)
+fn parse_none(input: &str) -> IResult<&str, Argument> {
+    let (rest, _) = tag("none")(input)?;
+    // Reject if immediately followed by a name char or ':' — would be a prefix name.
+    if rest.starts_with(|c: char| is_name_char(c) || c == ':') {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+    Ok((rest, Argument::None))
 }
 
+/// Parse `++?varname` — marks a position that should be iterated by cross/zipMin.
+fn parse_list_expand(input: &str) -> IResult<&str, Argument> {
+    let (input, _) = tag("++")(input)?;
+    let (input, var) = parse_variable(input)?;
+    Ok((input, Argument::ListExpand(var)))
+}
+
+/// Parse `(arg, arg, …)` as a list literal.
+/// Uses plain-fn style (not a closure) to avoid recursive closure-type issues
+/// with `parse_argument`.
+fn parse_list_literal<'a>(ctx: &'a ParserContext, input: &'a str) -> IResult<&'a str, Argument> {
+    map(
+        delimited(
+            pair(char('('), multispace0),
+            separated_list0(delimited(multispace0, char(','), multispace0), move |i| {
+                parse_argument(ctx, i)
+            }),
+            pair(multispace0, char(')')),
+        ),
+        Argument::List,
+    )(input)
+}
+
+fn parse_argument<'a>(ctx: &'a ParserContext, input: &'a str) -> IResult<&'a str, Argument> {
+    alt((
+        parse_none,
+        parse_list_expand,
+        |i| parse_list_literal(ctx, i),
+        map(parse_term(ctx), Argument::Term),
+    ))(input)
+}
+
+fn parse_expander(input: &str) -> IResult<&str, Expander> {
+    alt((
+        map(tag("cross"), |_| Expander::Cross),
+        map(tag("zipMin"), |_| Expander::ZipMin),
+    ))(input)
+}
+
+/// Parse a bare instance call (no expander): `prefixed:Name(arg, …)`.
+/// Used for both top-level instance calls and the inner part of body instances.
 fn parse_instance<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Instance> + 'a {
@@ -184,7 +231,9 @@ fn parse_instance<'a>(
         let (input, _) = multispace0(input)?;
         let (input, arguments) = delimited(
             pair(char('('), multispace0),
-            comma_separated0(parse_argument(ctx)),
+            separated_list0(delimited(multispace0, char(','), multispace0), |i| {
+                parse_argument(ctx, i)
+            }),
             pair(multispace0, char(')')),
         )(input)?;
         Ok((
@@ -198,13 +247,28 @@ fn parse_instance<'a>(
     }
 }
 
+/// Parse a body instance: optionally prefixed with `cross |` or `zipMin |`.
+/// Per stOTTR spec the expander precedes the instance template IRI.
+fn parse_body_instance<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Instance> + 'a {
+    move |input: &'a str| {
+        let (input, expander) =
+            opt(terminated(parse_expander, pair(multispace0, char('|'))))(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, mut instance) = parse_instance(ctx)(input)?;
+        instance.expander = expander;
+        Ok((input, instance))
+    }
+}
+
 fn parse_instance_list<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Instance>> + 'a {
     move |input: &'a str| {
         delimited(
             pair(char('{'), multispace0),
-            comma_separated0(parse_instance(ctx)),
+            comma_separated0(parse_body_instance(ctx)),
             pair(multispace0, char('}')),
         )(input)
     }

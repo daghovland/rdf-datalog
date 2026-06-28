@@ -1,5 +1,8 @@
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
-use sparql_parser::{ast::*, execute, parse_query, ParserContext, QueryResult};
+use sparql_parser::{
+    ast::*, eval_expression_bool_filter, eval_expression_value, execute, parse_query,
+    ParserContext, QueryResult, SolutionRow,
+};
 use std::collections::HashMap;
 
 #[test]
@@ -248,6 +251,7 @@ fn construct_wildcard_spo_parses() {
     let Query::Construct {
         template,
         where_clause,
+        ..
     } = query
     else {
         panic!("expected Construct query");
@@ -284,6 +288,7 @@ fn construct_full_form_parses() {
     let Query::Construct {
         template,
         where_clause,
+        ..
     } = query
     else {
         panic!("expected Construct query");
@@ -880,5 +885,142 @@ fn test_class_picker_union_query() {
     assert!(
         found.contains(&"http://example.org/OtherClass"),
         "OtherClass via instance"
+    );
+}
+
+/// Bug #67: the frontend's "Load sample data" button inserts a query that begins with
+/// `#` comment lines.  The nom-based parser must treat `# ... \n` as whitespace so the
+/// query parses successfully.
+/// See: https://github.com/daghovland/rdf-datalog/issues/67
+#[test]
+fn sparql_query_with_leading_hash_comments_parses() {
+    let sparql = r#"
+# Find all people and their ages.
+# Try: load the data above, then run this query.
+# Tip: Bob is declared an Employee, not a Person — but after OWL-RL reasoning,
+# Employees are inferred to be People too.
+PREFIX ex: <http://example.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?person ?label ?age WHERE {
+  ?person a ex:Person ;
+          rdfs:label ?label ;
+          ex:age ?age .
+}
+"#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let result = parse_query(sparql, &mut ctx);
+    assert!(
+        result.is_ok(),
+        "Query with leading # comments should parse; got: {result:?}"
+    );
+}
+
+/// SPARQL comments (`# ... \n`) may also appear mid-query, between tokens.
+/// Regression: ensure inline comments don't break parsing.
+/// See: https://github.com/daghovland/rdf-datalog/issues/67
+#[test]
+fn sparql_query_with_inline_comments_parses_and_executes() {
+    let mut ds = Datastore::new(16);
+    let alice = add_iri(&mut ds, "http://example.org/alice");
+    let foaf_name = add_iri(&mut ds, "http://xmlns.com/foaf/0.1/name");
+    let name_val = add_literal(&mut ds, "Alice");
+    ds.add_triple(dag_rdf::Triple {
+        subject: alice,
+        predicate: foaf_name,
+        obj: name_val,
+    });
+
+    let sparql = r#"
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+# Select name bindings
+SELECT ?name # variable
+WHERE { # begin pattern
+  ?s foaf:name ?name . # name triple
+} # end
+"#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) =
+        parse_query(sparql, &mut ctx).expect("Query with inline # comments should parse");
+    let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
+        panic!("expected SELECT result");
+    };
+    assert_eq!(result.rows.len(), 1, "should return Alice's name row");
+    assert!(result.rows[0].contains_key("name"), "row should bind ?name");
+}
+
+/// SPARQL comments (`# ... \n`) between PREFIX declarations and SELECT must be skipped.
+/// Regression for issue #67: the frontend sample query has PREFIX lines, then comments, then SELECT.
+/// See: https://github.com/daghovland/rdf-datalog/issues/67
+#[test]
+fn sparql_query_with_comments_between_prefix_and_select_parses() {
+    let sparql = r#"PREFIX ex:   <http://example.org/family#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+# Find all people and their ages.
+# Try: load the data above, then run this query.
+# Tip: Bob is declared an Employee, not a Person — but after OWL-RL reasoning,
+# Employees are inferred to be People too.
+SELECT ?person ?label ?age WHERE {
+    ?person a ex:Person ;
+            rdfs:label ?label ;
+            ex:age ?age .
+}"#;
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let result = parse_query(sparql, &mut ctx);
+    assert!(
+        result.is_ok(),
+        "comments between PREFIX and SELECT should parse; got: {result:?}"
+    );
+}
+
+// ── E1: eval_expression_value and eval_expression_bool_filter (issue #60) ─────
+
+/// eval_expression_value is now public and callable from outside sparql-parser.
+/// Tests that a simple arithmetic expression evaluates correctly.
+/// See: https://github.com/daghovland/rdf-datalog/issues/60
+#[test]
+fn eval_expression_value_is_pub_and_evaluates_constant() {
+    let ds = Datastore::new(16);
+    let sub: SolutionRow = HashMap::new();
+    let expr = Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+        "hello".to_string(),
+    )));
+    let result = eval_expression_value(&expr, &sub, &ds);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+            "hello".to_string()
+        )))
+    );
+}
+
+/// eval_expression_bool_filter is now public, evaluates expressions against the
+/// default graph using a SolutionRow substitution.
+/// See: https://github.com/daghovland/rdf-datalog/issues/60
+#[test]
+fn eval_expression_bool_filter_is_pub_and_works_with_variable() {
+    let ds = Datastore::new(16);
+    let mut sub: SolutionRow = HashMap::new();
+    sub.insert(
+        "x".to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString("foo".to_string())),
+    );
+    // Expression: ?x = "foo"
+    let expr = Expression::Binary(
+        Box::new(Expression::Variable("x".to_string())),
+        BinaryOp::Eq,
+        Box::new(Expression::Constant(GraphElement::GraphLiteral(
+            RdfLiteral::LiteralString("foo".to_string()),
+        ))),
+    );
+    assert!(
+        eval_expression_bool_filter(&expr, &sub, &ds),
+        "?x = 'foo' should be true when ?x = 'foo'"
     );
 }

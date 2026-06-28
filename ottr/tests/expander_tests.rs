@@ -17,7 +17,6 @@ ottr:Triple(<http://example.com/Alice>, <http://example.com/knows>, <http://exam
 "#;
 
 #[test]
-#[ignore]
 fn direct_ottr_triple_instance_inserts_one_quad() {
     let doc = parse_stottr(DIRECT_TRIPLE).unwrap();
     let mut ds = Datastore::new(100);
@@ -48,7 +47,6 @@ ex:Person(<http://example.com/Alice>) .
 "#;
 
 #[test]
-#[ignore]
 fn user_template_with_single_triple_body_expands_on_one_call() {
     let doc = parse_stottr(SINGLE_TEMPLATE_CALL).unwrap();
     let mut ds = Datastore::new(100);
@@ -82,7 +80,6 @@ ex:Person(<http://example.com/Bob>) .
 "#;
 
 #[test]
-#[ignore]
 fn same_template_called_twice_produces_two_sets_of_quads() {
     let doc = parse_stottr(TWO_TEMPLATE_CALLS).unwrap();
     let mut ds = Datastore::new(100);
@@ -109,7 +106,6 @@ fn same_template_called_twice_produces_two_sets_of_quads() {
 }
 
 #[test]
-#[ignore]
 fn none_argument_in_triple_position_omits_the_triple() {
     let alice = IriReference("http://example.com/Alice".to_string());
     let knows = IriReference("http://example.com/knows".to_string());

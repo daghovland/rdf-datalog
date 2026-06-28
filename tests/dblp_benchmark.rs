@@ -116,7 +116,9 @@ fn run_benchmark_query(datastore: &Datastore, query_str: &str) -> QueryOutcome {
             elapsed_ms: t.elapsed().as_millis(),
             rows: r.rows.len(),
         },
-        Ok(QueryResult::Ask(_) | QueryResult::Construct(_)) => QueryOutcome::ExecFail,
+        Ok(QueryResult::Ask(_) | QueryResult::Construct(_) | QueryResult::Describe(_)) => {
+            QueryOutcome::ExecFail
+        }
         Err(_) => QueryOutcome::ExecFail,
     }
 }

@@ -1,13 +1,9 @@
 # OTTR Template Expansion Plan
 
-> **Status: PLANNED — not started.** Refines and supersedes the sketch in
-> `PIPELINE_BACKLOG.md` item 3, which used an invented Turtle-like template
-> body syntax. The grammar below targets the real stOTTR (Specialised Template
-> Notation) syntax from the spec so that fixtures from the `lutra` test suite
-> can be used directly for TDD. Exact tokens for optional parameters and list
-> expanders are marked **[verify]** below — confirm against
-> <https://spec.ottr.xyz/stOTTR/> and real lutra fixtures during Phase 2/7
-> rather than trusting this document blindly.
+> Tracked under [#13 OTTR template expansion epic](https://github.com/daghovland/rdf-datalog/issues/13).
+> The grammar below targets the real stOTTR (Specialised Template Notation) syntax.
+> Exact tokens for optional parameters and list expanders are marked **[verify]** below — confirm against
+> <https://spec.ottr.xyz/stOTTR/> and real lutra fixtures during further implementation phases.
 
 ## Goal
 

@@ -1,13 +1,8 @@
 # Jupyter Kernel Plan: `dagalog-kernel`
 
-> **Status: MOSTLY COMPLETE** — phases 1–5 implemented and green (protocol
-> skeleton, SPARQL execute, session state, `%%rml`/`%%load`/`%%turtle`
-> magics, `%%reason`/`%%validate`). `%%validate` wires to the `shacl` crate
-> (see `VALIDATE_MAGIC_PLAN.md`). Phase 6 remains:
-> [complete_request](https://github.com/daghovland/rdf-datalog/issues/23),
-> [inspect_request](https://github.com/daghovland/rdf-datalog/issues/24).
-> `%%ottr` magic also pending:
-> [issue #22](https://github.com/daghovland/rdf-datalog/issues/22).
+> Tracked in [epic #28](https://github.com/daghovland/rdf-datalog/issues/28).
+> `%%validate` wiring detail: `VALIDATE_MAGIC_PLAN.md`. `%%ottr` magic
+> depends on [issue #22](https://github.com/daghovland/rdf-datalog/issues/22).
 
 ## Goal
 

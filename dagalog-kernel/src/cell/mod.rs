@@ -17,6 +17,10 @@ pub enum CellType {
     Datalog(String),
     /// `%%turtle\n<triples>` — parse inline Turtle and add to datastore.
     Turtle(String),
+    /// `%%ottr <path>` — load a stOTTR file from disk and expand its instances.
+    OttrFile(PathBuf),
+    /// `%%ottr\n<stottr>` — parse inline stOTTR and expand its instances.
+    OttrInline(String),
 }
 
 /// Parse a cell string into a `CellType` by inspecting the first line for `%%` magics.
@@ -41,6 +45,14 @@ pub fn detect_cell_type(cell: &str) -> CellType {
             }
             "datalog" => CellType::Datalog(remainder.to_string()),
             "turtle" => CellType::Turtle(remainder.to_string()),
+            "ottr" => {
+                let path = parts.next().unwrap_or("").trim();
+                if path.is_empty() {
+                    CellType::OttrInline(remainder.to_string())
+                } else {
+                    CellType::OttrFile(PathBuf::from(path))
+                }
+            }
             _ => CellType::Sparql(cell.to_string()),
         }
     } else {
@@ -49,6 +61,7 @@ pub fn detect_cell_type(cell: &str) -> CellType {
 }
 
 pub mod datalog;
+pub mod ottr;
 pub mod rml;
 pub mod shacl;
 pub mod sparql;
@@ -136,5 +149,29 @@ mod tests {
     fn test_unknown_magic_falls_back_to_sparql() {
         let cell = "%%unknown some args\nstuff";
         assert!(matches!(detect_cell_type(cell), CellType::Sparql(_)));
+    }
+
+    #[test]
+    fn test_ottr_inline_magic() {
+        let cell = "%%ottr\n@prefix ex: <http://example.com/> .\n";
+        assert!(matches!(detect_cell_type(cell), CellType::OttrInline(_)));
+    }
+
+    #[test]
+    fn test_ottr_file_magic() {
+        let cell = "%%ottr path/to/templates.stottr";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::OttrFile(PathBuf::from("path/to/templates.stottr"))
+        );
+    }
+
+    #[test]
+    fn test_ottr_file_magic_with_trailing_newline() {
+        let cell = "%%ottr templates/person.stottr\n";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::OttrFile(PathBuf::from("templates/person.stottr"))
+        );
     }
 }

@@ -10,6 +10,7 @@ use crate::sources::SourceRow;
 ///
 /// References are XPath 1.0 expressions evaluated relative to the root element
 /// of the wrapped XML fragment. The fragment is re-parsed on each `get_str` call.
+#[derive(Debug)]
 pub struct XmlRow(pub String);
 
 impl SourceRow for XmlRow {
@@ -73,6 +74,8 @@ fn deep_copy_element<'s, 'd>(src: dom::Element<'s>, doc: dom::Document<'d>) -> d
 pub struct XmlSource {
     pub path: PathBuf,
     pub iterator: Option<String>,
+    /// Override for the default MAX_SOURCE_BYTES limit (used in tests). See [#86](https://github.com/daghovland/rdf-datalog/issues/86).
+    pub size_limit: Option<u64>,
 }
 
 impl XmlSource {
@@ -80,11 +83,18 @@ impl XmlSource {
         XmlSource {
             path,
             iterator: None,
+            size_limit: None,
         }
     }
 
     pub fn with_iterator(mut self, iterator: String) -> Self {
         self.iterator = Some(iterator);
+        self
+    }
+
+    /// Set a custom byte size limit (overrides [`crate::MAX_SOURCE_BYTES`]).
+    pub fn with_size_limit(mut self, bytes: u64) -> Self {
+        self.size_limit = Some(bytes);
         self
     }
 

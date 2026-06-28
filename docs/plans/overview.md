@@ -4,7 +4,7 @@ This document tracks known limitations, bugs, and planned features that have not
 yet been implemented.  Each item links to a more detailed plan document where one
 exists.
 
-Last updated: 2026-06-19 (second pass).
+Last updated: 2026-06-27.
 
 ---
 
@@ -29,44 +29,26 @@ validation rules for those constraints.  Validation silently under-reports viola
 ## Lacking features
 
 ### Changelog compaction
+**Issue**: [#72 Persistence changelog compaction endpoint](https://github.com/daghovland/rdf-datalog/issues/72)  
 **Plan**: [`docs/plans/changelog-compaction.md`](changelog-compaction.md)  
 **Impact**: The redb changelog grows without bound; startup replay time grows
 linearly with total historical mutations.  A `POST /$/compact` admin endpoint is
 planned to atomically replace the log with a minimal snapshot.
 
-### SPARQL Aggregates (GROUP BY, COUNT, SUM, AVG, …)
-**Status**: ✓ Implemented and W3C conformance tests passing  
-**Tests**: `tests/sparql12_suite.rs` — `spec_s11_*` (9 green); `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_aggregates`, `w3c_sparql11_grouping` (green)
-
-### SPARQL Property Paths (beyond `/`)
-**Status**: ✓ Implemented and W3C conformance tests passing  
-**Tests**: `tests/sparql12_suite.rs` — all 10 `spec_s9_*` green; `tests/w3c_sparql11_suite.rs` — `w3c_sparql11_property_path` (green)
-
-### SPARQL Subqueries
-**Status**: ✓ Implemented — W3C sq01–sq11 and sq13 all green; sq12/sq14 skip (CONSTRUCT TTL result comparison not implemented)  
-**Plan**: [`docs/plans/SUBQUERY_PLAN.md`](SUBQUERY_PLAN.md)
-
-### Additional parser features implemented (2026-06-19)
-- **Multiplicative arithmetic** (`*`, `/` in FILTER/BIND expressions)
-- **`IN` / `NOT IN` expressions** — parsed and evaluated
-- **Prefixed-name local part extensions** — colons, `%HH` percent-encoding, `\CHAR` escapes (all per SPARQL 1.1 PN_LOCAL grammar)
-- **Single-quoted string literals** (`'...'` and `'''...'''`)
-- **Prefixed-name function calls** (`:localfunc(args)` in expressions)
-- **Blank-node property list patterns in subject position** (`[ :p|:q ?X ]`)
-- **`SELECT *` / subquery UNION** (`{SELECT ...} UNION {SELECT ...}`)
-- **ORDER BY** — now fully implemented for outer and inner (subquery) SELECT
-- **W3C SPARQL 1.1 conformance**: all 13 non-Update test categories now active (15 tests pass, 2 Update tests still ignored)
+### SPARQL missing scalar builtins (BNODE, ENCODE_FOR_URI, REPLACE, date/time, hash functions, UUID)
+**Issue**: [#52 SPARQL missing scalar built-in functions](https://github.com/daghovland/rdf-datalog/issues/52)  
+**Plan**: [`docs/plans/SPARQL_MISSING_FEATURES_PLAN.md`](SPARQL_MISSING_FEATURES_PLAN.md)  
+**Impact**: Several SPARQL 1.1 scalar functions are not yet implemented, including
+`BNODE()`, `ENCODE_FOR_URI()`, `REPLACE()`, `RAND()`, `NOW()`, date/time extraction
+functions (`YEAR`, `MONTH`, `DAY`, `HOURS`, `MINUTES`, `SECONDS`, `TZ`), hash
+functions (`MD5`, `SHA1`, `SHA256`, `SHA384`, `SHA512`), and UUID functions.
 
 ### SPARQL SERVICE (federated queries)
+**Issue**: [#51 SPARQL SERVICE / federated queries](https://github.com/daghovland/rdf-datalog/issues/51)  
 **Impact**: `SERVICE <endpoint> { … }` is not parsed.
 
-### SPARQL INSERT/DELETE with WHERE clause (non-DATA forms)
-**Files**: `sparql_endpoint/src/sparql_update.rs`  
-**Impact**: Only `INSERT DATA` and `DELETE DATA` are implemented.  The
-pattern-matching `INSERT { … } WHERE { … }` and `DELETE { … } WHERE { … }`
-forms are not supported.
-
 ### JSON-LD External Context Fetching (`@import`)
+**Issue**: [#82 JSON-LD @import / external context URL fetching](https://github.com/daghovland/rdf-datalog/issues/82)  
 **Files**: `jsonld_parser/src/`  
 **Impact**: `@import` in a JSON-LD context is not implemented.  Contexts that
 reference external URLs via `@import` will fail silently.
@@ -75,10 +57,6 @@ reference external URLs via `@import` will fail silently.
 **Files**: `manchester_parser/src/`  
 **Impact**: The Manchester syntax parser crate is a stub.  No OWL Manchester
 syntax is parsed.
-
-### SPARQL DESCRIBE
-**Files**: `sparql_parser/src/`  
-**Impact**: `DESCRIBE` queries are not parsed.
 
 ### VoID Dataset Description
 **Plan**: [`docs/architecture/PROTOCOLS.md`](../architecture/PROTOCOLS.md)  

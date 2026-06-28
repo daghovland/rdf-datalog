@@ -1,6 +1,6 @@
 # VQS Productive-Extension Index — Implementation Plan
 
-**Status: Phases 0–7 complete.** The `vqs_index` crate implements the navigation graph,
+The `vqs_index` crate implements the navigation graph,
 basic counts, configuration queries/index, reference configurations, cost/precision
 estimators, search methods, and query-log transformation. `sparql_endpoint` exposes
 `GET /vqs/productive-values?class=<IRI>&property=<IRI>`. See the per-phase notes below

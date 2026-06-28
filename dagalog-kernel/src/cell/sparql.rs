@@ -42,6 +42,13 @@ pub fn execute_sparql(ds: &mut Datastore, code: &str) -> Result<Vec<(String, Str
                 .collect();
             Ok(vec![("text/plain".to_string(), text)])
         }
+        QueryResult::Describe(triples) => {
+            let text: String = triples
+                .iter()
+                .map(|t| format!("{} {} {} .\n", t.subject, t.predicate, t.object))
+                .collect();
+            Ok(vec![("text/plain".to_string(), text)])
+        }
     }
 }
 

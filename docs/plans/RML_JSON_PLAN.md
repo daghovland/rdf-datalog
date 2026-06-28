@@ -1,6 +1,6 @@
 # RML JSON Source Plan
 
-> **Status: COMPLETE** — all five phases green as of 2026-06-21.
+> Part of [#25 RML pipeline remaining source/function gaps](https://github.com/daghovland/rdf-datalog/issues/25).
 > `SourceRow` trait, `JsonSource`/`JsonRow`, loader JSONPath recognition,
 > 9 W3C JSON fixture end-to-end tests, and 5 root-crate integration tests
 > (SPARQL, Turtle ontology, OWL-RL reasoning, deep iterator) all pass.

@@ -8,13 +8,7 @@ data-property filters). This document tracks what remains.
 
 ## Implemented (reference)
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Class picker, data-property checkboxes, live SPARQL preview, Run | Done |
-| 2 | Object-property multi-hop, multi-card canvas with arrows, node removal | Done |
-| 3 | Per-property filter input, `FILTER(regex(...))` in generated SPARQL | Done |
-| — | Custom autocomplete class picker (filter by short name or full IRI) | Done |
-| — | "Build query" link from resource-page type badges | Done |
+Phases 1–3 and incremental improvements are complete. Remaining work is tracked in [#41 Frontend remaining improvements epic](https://github.com/daghovland/rdf-datalog/issues/41).
 
 ---
 
