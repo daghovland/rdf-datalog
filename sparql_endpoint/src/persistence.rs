@@ -225,6 +225,66 @@ impl QuadChangelog {
         })
     }
 
+    // ── Compaction ────────────────────────────────────────────────────────────
+
+    /// Atomically rewrite the log to contain only the current live quads.
+    ///
+    /// Returns `(entries_before, entries_after)`.  After compaction the log
+    /// contains exactly one `InsertQuad` entry per currently-live quad in `ds`.
+    pub fn compact(&mut self, ds: &Datastore) -> Result<(u64, u64), String> {
+        let entries_before = {
+            let read_txn = self.db.begin_read().map_err(|e| e.to_string())?;
+            let table = read_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;
+            table.len().map_err(|e| e.to_string())?
+        };
+
+        let new_entries: Vec<LogEntry> = ds
+            .named_graphs
+            .get_all_quads()
+            .map(|quad| {
+                let graph = if quad.triple_id == DEFAULT_GRAPH_ELEMENT_ID {
+                    None
+                } else {
+                    match ds.resources.get_graph_element(quad.triple_id) {
+                        GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => Some(iri.0.clone()),
+                        _ => None,
+                    }
+                };
+                LogEntry::InsertQuad {
+                    graph,
+                    s: to_repr(ds.resources.get_graph_element(quad.subject)),
+                    p: to_repr(ds.resources.get_graph_element(quad.predicate)),
+                    o: to_repr(ds.resources.get_graph_element(quad.obj)),
+                }
+            })
+            .collect();
+
+        let entries_after = new_entries.len() as u64;
+
+        let write_txn = self.db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;
+            let old_keys: Vec<u64> = table
+                .iter()
+                .map_err(|e| e.to_string())?
+                .map(|r| r.map(|(k, _)| k.value()).map_err(|e| e.to_string()))
+                .collect::<Result<_, _>>()?;
+            for key in old_keys {
+                table.remove(key).map_err(|e| e.to_string())?;
+            }
+            for (i, entry) in new_entries.iter().enumerate() {
+                let bytes = serde_json::to_vec(entry).map_err(|e| e.to_string())?;
+                table
+                    .insert(i as u64, bytes.as_slice())
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        self.next_seq = entries_after;
+
+        Ok((entries_before, entries_after))
+    }
+
     // ── Replay ────────────────────────────────────────────────────────────────
 
     /// Replay all log entries into a fresh `Datastore`.
@@ -249,6 +309,27 @@ impl QuadChangelog {
         }
 
         Ok(ds)
+    }
+
+    /// Replay all log entries INTO an existing `Datastore`, layering changelog
+    /// mutations on top of any data already in `ds` (e.g., loaded from files).
+    ///
+    /// This is used at startup when `--data` files are pre-loaded before enabling
+    /// persistence: the changelog records HTTP-driven mutations that happened during
+    /// previous runs and must be applied on top of the file-based base data.
+    /// See: https://github.com/daghovland/rdf-datalog/issues/66
+    pub fn replay_into(&self, ds: &mut Datastore) -> Result<(), String> {
+        let read_txn = self.db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;
+
+        for result in table.iter().map_err(|e| e.to_string())? {
+            let (_, bytes) = result.map_err(|e| e.to_string())?;
+            let entry: LogEntry =
+                serde_json::from_slice(bytes.value()).map_err(|e| e.to_string())?;
+            apply_entry(ds, &entry);
+        }
+
+        Ok(())
     }
 }
 
@@ -499,5 +580,328 @@ mod tests {
         let ds = cl.replay().unwrap();
         let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
         assert_eq!(all.len(), 2);
+    }
+
+    // ── replay_into ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn replay_into_layers_on_existing_datastore() {
+        use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/changelog"),
+                &iri("http://example.org/p"),
+                &lit("from changelog"),
+            )
+            .unwrap();
+        }
+
+        // Build an existing store with a different triple already in it.
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let mut ds = Datastore::new(64);
+        let s_id = ds.add_resource(iri("http://example.org/preloaded"));
+        let p_id = ds.add_resource(iri("http://example.org/p"));
+        let o_id = ds.add_resource(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+            "from preload".to_owned(),
+        )));
+        ds.named_graphs.add_quad(dag_rdf::ingress::Quad {
+            triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+            subject: s_id,
+            predicate: p_id,
+            obj: o_id,
+        });
+
+        cl.replay_into(&mut ds).unwrap();
+
+        // Both the preloaded triple and the changelog triple must be present.
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(all.len(), 2, "preloaded + changelog quad both present");
+
+        let cl_s = ds
+            .resources
+            .resource_map
+            .get(&iri("http://example.org/changelog"))
+            .copied()
+            .expect("changelog subject should be interned");
+        let triples: Vec<_> = ds.get_triples_with_subject(cl_s).collect();
+        assert_eq!(triples.len(), 1, "changelog quad accessible by subject");
+    }
+
+    // ── Named-graph operations ────────────────────────────────────────────────
+
+    #[test]
+    fn named_graph_insert_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+        let graph_iri = "http://example.org/g1";
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(
+                Some(graph_iri),
+                &iri("http://example.org/s"),
+                &iri("http://example.org/p"),
+                &lit("named"),
+            )
+            .unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(all.len(), 1, "one quad in named graph");
+
+        // The graph element must be interned as the named-graph IRI.
+        let g_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(graph_iri.to_owned())));
+        assert!(
+            ds.resources.resource_map.contains_key(&g_el),
+            "named graph IRI should be interned"
+        );
+    }
+
+    #[test]
+    fn named_graph_clear_removes_only_that_graph() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            // Insert one quad in the default graph and one in a named graph.
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/default_s"),
+                &iri("http://example.org/p"),
+                &lit("default"),
+            )
+            .unwrap();
+            cl.log_insert_quad(
+                Some("http://example.org/g1"),
+                &iri("http://example.org/named_s"),
+                &iri("http://example.org/p"),
+                &lit("named"),
+            )
+            .unwrap();
+            // Clear only the named graph.
+            cl.log_clear_graph(Some("http://example.org/g1")).unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "only default-graph quad should remain after clearing named graph"
+        );
+    }
+
+    // ── delete edge cases ─────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_nonexistent_quad_is_noop() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            // Delete a quad that was never inserted — must not panic.
+            cl.log_delete_quad(
+                None,
+                &iri("http://example.org/ghost_s"),
+                &iri("http://example.org/p"),
+                &lit("ghost"),
+            )
+            .unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert!(all.is_empty(), "nothing to delete: store stays empty");
+    }
+
+    #[test]
+    fn delete_quad_in_nonexistent_named_graph_is_noop() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            // Delete from a named graph that was never created.
+            cl.log_delete_quad(
+                Some("http://example.org/no_such_graph"),
+                &iri("http://example.org/s"),
+                &iri("http://example.org/p"),
+                &lit("v"),
+            )
+            .unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert!(all.is_empty(), "delete in missing graph must be a no-op");
+    }
+
+    #[test]
+    fn insert_delete_reinsert_same_quad_is_present() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        let s = iri("http://example.org/s");
+        let p = iri("http://example.org/p");
+        let o = lit("value");
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(None, &s, &p, &o).unwrap();
+            cl.log_delete_quad(None, &s, &p, &o).unwrap();
+            cl.log_insert_quad(None, &s, &p, &o).unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "quad must be present after insert-delete-insert"
+        );
+    }
+
+    // ── element representation round-trips ───────────────────────────────────
+
+    #[test]
+    fn blank_node_repr_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        let blank = GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(42));
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(None, &blank, &iri("http://example.org/p"), &lit("v"))
+                .unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(all.len(), 1, "blank-node quad must survive replay");
+
+        // The blank node must be interned with the same ID.
+        assert!(
+            ds.resources.resource_map.contains_key(&blank),
+            "blank node b42 must be interned"
+        );
+    }
+
+    #[test]
+    fn lang_literal_repr_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        let lang_lit = GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
+            literal: "Bonjour".to_owned(),
+            lang: "fr".to_owned(),
+        });
+
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/s"),
+                &iri("http://example.org/label"),
+                &lang_lit,
+            )
+            .unwrap();
+        }
+
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(all.len(), 1, "lang-literal quad must survive replay");
+        assert!(
+            ds.resources.resource_map.contains_key(&lang_lit),
+            "lang literal 'Bonjour'@fr must be interned after replay"
+        );
+    }
+
+    // ── sequence counter continuity ───────────────────────────────────────────
+
+    #[test]
+    fn sequence_counter_resumes_after_reopen() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        // First session: write 2 entries.
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/a"),
+                &iri("http://example.org/p"),
+                &lit("1"),
+            )
+            .unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/b"),
+                &iri("http://example.org/p"),
+                &lit("2"),
+            )
+            .unwrap();
+        }
+
+        // Second session: write 2 more entries.
+        {
+            let mut cl = QuadChangelog::open(&db_path).unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/c"),
+                &iri("http://example.org/p"),
+                &lit("3"),
+            )
+            .unwrap();
+            cl.log_insert_quad(
+                None,
+                &iri("http://example.org/d"),
+                &iri("http://example.org/p"),
+                &lit("4"),
+            )
+            .unwrap();
+        }
+
+        // All 4 entries must be present (no overwrites from seq-counter restart).
+        let cl = QuadChangelog::open(&db_path).unwrap();
+        let ds = cl.replay().unwrap();
+        let all: Vec<_> = ds.named_graphs.get_all_quads().collect();
+        assert_eq!(
+            all.len(),
+            4,
+            "all 4 quads across two sessions must survive; seq counter must not restart"
+        );
+    }
+
+    // ── empty batch ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_batch_is_ok_and_does_not_advance_sequence() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.redb");
+
+        let mut cl = QuadChangelog::open(&db_path).unwrap();
+        let seq_before = cl.next_seq;
+        cl.append_batch(&[]).unwrap();
+        assert_eq!(
+            cl.next_seq, seq_before,
+            "empty batch must not advance the sequence counter"
+        );
     }
 }

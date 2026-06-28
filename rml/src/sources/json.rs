@@ -11,6 +11,7 @@ use crate::sources::SourceRow;
 /// References are JSONPath expressions evaluated against the wrapped value.
 /// Bare field names without a `$` prefix (e.g. `"name"`) are auto-prefixed
 /// to `"$.name"` before evaluation.
+#[derive(Debug)]
 pub struct JsonRow(pub serde_json::Value);
 
 impl SourceRow for JsonRow {
@@ -46,6 +47,8 @@ pub struct JsonSource {
     pub path: PathBuf,
     pub format: JsonFormat,
     pub iterator: Option<String>,
+    /// Override for the default MAX_SOURCE_BYTES limit (used in tests). See [#86](https://github.com/daghovland/rdf-datalog/issues/86).
+    pub size_limit: Option<u64>,
 }
 
 impl JsonSource {
@@ -62,11 +65,18 @@ impl JsonSource {
             path,
             format,
             iterator: None,
+            size_limit: None,
         }
     }
 
     pub fn with_iterator(mut self, iterator: String) -> Self {
         self.iterator = Some(iterator);
+        self
+    }
+
+    /// Set a custom byte size limit (overrides [`crate::MAX_SOURCE_BYTES`]).
+    pub fn with_size_limit(mut self, bytes: u64) -> Self {
+        self.size_limit = Some(bytes);
         self
     }
 

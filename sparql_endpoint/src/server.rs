@@ -87,6 +87,7 @@ pub fn build_router(state: AppState) -> Router {
             "/$/datasets/{name}",
             get(crate::admin::admin_get_dataset).delete(crate::admin::admin_delete_dataset),
         )
+        .route("/$/compact", post(crate::admin::admin_compact))
         // ── Per-dataset query (`/{name}/sparql`, `/{name}/query`) ────────────
         .route(
             "/{name}/sparql",

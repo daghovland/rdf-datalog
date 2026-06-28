@@ -6,6 +6,10 @@ use crate::RmlError;
 pub struct CsvSource {
     pub path: PathBuf,
     pub delimiter: u8,
+    /// Override for the default MAX_SOURCE_BYTES limit (used in tests). See [#86](https://github.com/daghovland/rdf-datalog/issues/86).
+    pub size_limit: Option<u64>,
+    /// Override for the default MAX_SOURCE_ROWS limit (used in tests). See [#86](https://github.com/daghovland/rdf-datalog/issues/86).
+    pub row_limit: Option<usize>,
 }
 
 impl CsvSource {
@@ -13,11 +17,25 @@ impl CsvSource {
         CsvSource {
             path,
             delimiter: b',',
+            size_limit: None,
+            row_limit: None,
         }
     }
 
     pub fn with_delimiter(mut self, delimiter: u8) -> Self {
         self.delimiter = delimiter;
+        self
+    }
+
+    /// Set a custom byte size limit (overrides [`crate::MAX_SOURCE_BYTES`]).
+    pub fn with_size_limit(mut self, bytes: u64) -> Self {
+        self.size_limit = Some(bytes);
+        self
+    }
+
+    /// Set a custom row count limit (overrides [`crate::MAX_SOURCE_ROWS`]).
+    pub fn with_row_limit(mut self, rows: usize) -> Self {
+        self.row_limit = Some(rows);
         self
     }
 

@@ -40,7 +40,9 @@ fn run_query(ds: &Datastore, query: &str) -> Vec<SolutionRow> {
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     match execute(&parsed, ds).expect("query should execute") {
         QueryResult::Select(r) => r.rows,
-        QueryResult::Ask(_) | QueryResult::Construct(_) => panic!("expected SELECT result"),
+        QueryResult::Ask(_) | QueryResult::Construct(_) | QueryResult::Describe(_) => {
+            panic!("expected SELECT result")
+        }
     }
 }
 

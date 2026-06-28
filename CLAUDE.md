@@ -7,22 +7,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Implementation of new features follow test-driven development and go in these phases
 
 2. First a plan is created in a markdown document
-2. THen tests are created, necessary code for the tests to compile is stubbed, the tests are ignored and no implementation is done
+2. Then tests are created, necessary code for the tests to compile is stubbed, the tests are ignored and no implementation is done
 3. Implementation is done by going through all tests in some order that makes sence, probably from easiest first or after some phase or feature grouping.  For each test, unignore it, make enough code to implement and make it green, finally check for code smells. Only then go on to the next test.
 
-Each agent session only works on 
 Always create tests that cover new functionality before creating the functionality. The tests are initially ignored and tests are usually checked by the user before implementaiton.
 
 ## Github backlog
 
 The backlog and progress overview is in the github project "Dagalog" https://github.com/users/daghovland/projects/11. 
 Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
-in issues under this project in github. The top-level issues under the project are larger "epics". Most concrete work will be on a sub-issue and not on the top-level.
-Include links to relevant epics (or issues) in markdwon documentation, and avoid metnioning work status in repository documentaton, use the issues for this.
+in issues under this project in github. 
+The top-level issues under the project are larger "epics". Most concrete work will be on a sub-issue and not on the top-level.
+
+Include links to relevant epics (or issues) in markdwon documentation, and avoid mentioning work status in repository documentaton, use the issues for this.
 Include links to relevant documentation in the issues and epics. Whenever mentioning documentation in the issue, create actual clickable links. 
 Reference the current working branch of the repository in the issue when working on it. 
 
 When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to the issue or epic that will fix it
+
+When creating an issue mark it as TODO When Working on it mark is as In Progress, use a worktree to create a new branch and when done, create a pull request between that branch and 
+main before closing the worktree. The pull request and issue should be linked so the issue becomes closed when the pull request is merged
 
 ## Commands
 
@@ -112,10 +116,10 @@ Two-stage OWL → datalog translation:
 2. `owl2rl2datalog`: full OWL 2 RL ontology → `Vec<Rule>` via `owl2datalog(resources, ontology)`
 
 ### `jsonld_parser` crate
-JSON-LD 1.1 parser (`parse_jsonld`) and serialiser (`serialize_jsonld`, `serialize_jsonld_expanded`, `serialize_jsonld_flattened`). Uses `serde_json` for JSON handling. The parser populates a `Datastore` directly; the serialiser reads all quads back and emits expanded JSON-LD value objects. Context processing supports: term mappings, prefixes, `@vocab`, `@base`, `@language`, compact IRIs, `@type` coercion, all container types, `@reverse`, `@included`, `@nest`, keyword aliasing, property-scoped and type-scoped contexts. External context URL fetching (`@import`) is not yet implemented.
+JSON-LD 1.1 parser (`parse_jsonld`) and serialiser (`serialize_jsonld`, `serialize_jsonld_expanded`, `serialize_jsonld_flattened`). Uses `serde_json` for JSON handling. The parser populates a `Datastore` directly; the serialiser reads all quads back and emits expanded JSON-LD value objects. Context processing supports: term mappings, prefixes, `@vocab`, `@base`, `@language`, compact IRIs, `@type` coercion, all container types, `@reverse`, `@included`, `@nest`, keyword aliasing, property-scoped and type-scoped contexts. External context URL fetching (`@import`) is tracked in [#82](https://github.com/daghovland/rdf-datalog/issues/82).
 
 ### `sparql_parser` crate
-nom-based SPARQL 1.2 SELECT parser and in-memory executor. Supports: basic graph patterns, `FILTER` (comparison, `regex()`, `lang()`, `bound()`, `EXISTS`/`NOT EXISTS`), `OPTIONAL`, `UNION`, `GRAPH` clause, `BIND`, `VALUES`, `DISTINCT`, `LIMIT`, `OFFSET`, `SELECT *`, sequence property paths (`/`). Aggregates and non-SELECT forms are not yet implemented.
+nom-based SPARQL 1.2 parser and in-memory executor. Supports: `SELECT`, `DESCRIBE`, `ASK`, `CONSTRUCT`; basic graph patterns, `FILTER`, `OPTIONAL`, `UNION`, `GRAPH`, `BIND`, `VALUES`, `DISTINCT`, `LIMIT`, `OFFSET`, `SELECT *`; property paths; aggregates (`GROUP BY`, `HAVING`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`); `FROM`/`FROM NAMED`. Missing features are tracked in [#48](https://github.com/daghovland/rdf-datalog/issues/48).
 
 ### `sparql_endpoint` crate
 `axum`-based HTTP server exposing SPARQL 1.1 Protocol endpoints (`GET /sparql`, `POST /sparql`), Service Description, content negotiation, and CORS. State is an `Arc<RwLock<Datastore>>`.

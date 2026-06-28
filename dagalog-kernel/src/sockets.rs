@@ -3,8 +3,14 @@ use dag_rdf::Datastore;
 use zeromq::{Socket, SocketRecv, SocketSend};
 
 use crate::cell::{
-    CellType, datalog::execute_datalog, detect_cell_type, rml::execute_rml,
-    shacl::execute_validate, sparql::execute_sparql, turtle::execute_turtle,
+    CellType,
+    datalog::execute_datalog,
+    detect_cell_type,
+    ottr::{execute_ottr_file, execute_ottr_inline},
+    rml::execute_rml,
+    shacl::execute_validate,
+    sparql::execute_sparql,
+    turtle::execute_turtle,
 };
 use crate::protocol::{Header, JupyterMessage, encode_message, parse_message, reply_header};
 use crate::session::KernelSession;
@@ -177,7 +183,7 @@ async fn shell_reply(
 enum CellOutput {
     /// Rich multi-mime result (SELECT returns HTML + plain).
     Rich(Vec<(String, String)>),
-    /// Plain status text (%%turtle, %%load, %%rml, %%reason, %%datalog).
+    /// Plain status text (%%turtle, %%load, %%rml, %%reason, %%datalog, %%ottr).
     Stream(String),
 }
 
@@ -224,6 +230,8 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
         }
         CellType::Datalog(src) => execute_datalog(ds, &src).map(CellOutput::Stream),
         CellType::Validate(path) => execute_validate(ds, &path).map(CellOutput::Stream),
+        CellType::OttrInline(src) => execute_ottr_inline(ds, &src).map(CellOutput::Stream),
+        CellType::OttrFile(path) => execute_ottr_file(ds, &path).map(CellOutput::Stream),
     }
 }
 

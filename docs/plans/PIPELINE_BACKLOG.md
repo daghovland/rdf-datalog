@@ -238,12 +238,7 @@ Writes `~/.local/share/jupyter/kernels/dagalog/kernel.json`:
 
 ## 3. OTTR Template Expansion
 
-> **Status: PLANNED.** Detailed plan: `OTTR_PLAN.md`. That plan replaces the
-> Turtle-like template body syntax originally sketched here with the real
-> stOTTR grammar (`::` signature/body separator, `ottr:Triple` base template
-> instances) so the `lutra` test suite fixtures can be used directly for TDD.
-> Tracked as GitHub issues in the "Dagalog Ottr" project (9 phases, AST
-> through CLI/Jupyter integration).
+> Detailed plan: `OTTR_PLAN.md`. Tracked under [#13](https://github.com/daghovland/rdf-datalog/issues/13).
 
 ### Goal
 

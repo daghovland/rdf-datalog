@@ -413,17 +413,14 @@ use the same syntax and same functions as sparql uses. That is, any valid SPARQL
 | 2g | `sh:xone` (counting conforming shapes) | §4.6.4 |
 | 2h | `sh:qualifiedValueShape` + `sh:qualifiedMinCount` | §4.7.3 |
 
-### Phase 3 — HTTP endpoint + report serialisation ✓ Done
+### Phase 3 — HTTP endpoint + report serialisation
 
-| Step | Change | Status |
-|---|---|---|
-| 3a | `report_to_turtle()` in `shacl/src/lib.rs` | ✓ Done |
-| 3b | `sparql_endpoint/src/shacl_endpoint.rs` — `dataset_shacl_post` handler | ✓ Done |
-| 3c | Register route `POST /{name}/shacl` in `server.rs` | ✓ Done |
-| 3d | 4 HTTP tests in `sparql_endpoint/tests/shacl.rs` (conforms, violation, 404, 400) | ✓ Done |
-
-Also added in this session:
-- `STRLEN` and `DATATYPE` functions to `sparql_parser::eval_function_value` (used by Datalog filter tests)
+| Step | Change |
+|---|---|
+| 3a | `report_to_turtle()` in `shacl/src/lib.rs` |
+| 3b | `sparql_endpoint/src/shacl_endpoint.rs` — `dataset_shacl_post` handler |
+| 3c | Register route `POST /{name}/shacl` in `server.rs` |
+| 3d | 4 HTTP tests in `sparql_endpoint/tests/shacl.rs` (conforms, violation, 404, 400) |
 
 ### Phase 4 — SHACL-SPARQL (§5–6 of SHACL-AF)
 
@@ -555,18 +552,9 @@ A `sh:PropertyShape` may declare `sh:path` + constraints directly on the shape n
 instead of inside a `sh:property` block.  Detected in `shapes::parse_one_shape` and
 handled identically to nested property shapes.
 
-## Status
+## Progress tracking
 
-| Step | Status |
-|---|---|
-| `shacl` crate stub + types | ✓ Done |
-| Integration tests for all §1–§4.8 constraints | ✓ Done |
-| README SHACL section | ✓ Done |
-| SHACL→Datalog plan | ✓ Done (this document) |
-| Phase 1a: targets + `sh:minCount 1` + `sh:maxCount` | ✓ Done |
-| Phase 1b: `sh:class`, `sh:hasValue`, `sh:in`, `sh:closed` | ✓ Done |
-| Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
-| Phase 2: `sh:nodeKind`, `sh:datatype`, `sh:xone`, value range, string constraints, property pairs, `sh:node`, `sh:qualifiedValueShape` | ✓ Done |
-| Phase 3: HTTP endpoint + `report_to_turtle` | ✓ Done |
-| Tests for `sh:minExclusive`, `sh:maxExclusive`, `sh:property` IRI ref, `sh:qualifiedMaxCount` | ✓ Done |
-| Phase 4: SHACL-SPARQL (§5–6) | Planned (see Phase 4 section above) |
+Progress is tracked in GitHub issues:
+- Epic: [#65 SHACL epic](https://github.com/daghovland/rdf-datalog/issues/65)
+- Phase 4 (SHACL-SPARQL §5–6): [#54](https://github.com/daghovland/rdf-datalog/issues/54)
+- Phase E4 (SHACL → FilterAtom rules refactor): [#62](https://github.com/daghovland/rdf-datalog/issues/62)

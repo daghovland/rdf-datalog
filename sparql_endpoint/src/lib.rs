@@ -214,13 +214,17 @@ pub async fn serve(store: Arc<RwLock<Datastore>>, config: Config) -> Result<(), 
 ///
 /// `store` is the initial in-memory `Datastore`.  When `config.data_dir` is set,
 /// the changelog is opened and its contents are replayed **into** `store` before
-/// any requests are accepted, replacing whatever was in `store`.
+/// any requests are accepted, layering changelog mutations on top of any data
+/// already present (e.g. pre-loaded from files via `--data`).
 pub async fn serve_on_listener(
     store: Arc<RwLock<Datastore>>,
     config: Config,
     listener: tokio::net::TcpListener,
 ) -> Result<(), std::io::Error> {
-    // Open the changelog (if configured) and replay it to reconstruct the store.
+    // Open the changelog (if configured) and replay it into the existing store.
+    // replay_into() layers changelog mutations ON TOP of any pre-loaded data
+    // (e.g. from --data files), so both sources are visible.
+    // See: https://github.com/daghovland/rdf-datalog/issues/66
     let changelog: Option<Arc<Mutex<QuadChangelog>>> = if let Some(ref dir) = config.data_dir {
         std::fs::create_dir_all(dir).map_err(|e| {
             std::io::Error::new(
@@ -230,8 +234,8 @@ pub async fn serve_on_listener(
         })?;
         let db_path = dir.join("dagalog.redb");
         let cl = QuadChangelog::open(&db_path).map_err(std::io::Error::other)?;
-        let replayed = cl.replay().map_err(std::io::Error::other)?;
-        *store.write().await = replayed;
+        cl.replay_into(&mut *store.write().await)
+            .map_err(std::io::Error::other)?;
         Some(Arc::new(Mutex::new(cl)))
     } else {
         None

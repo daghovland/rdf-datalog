@@ -1,6 +1,6 @@
 # RML SQL Plan: SQL/JDBC sources for `rml`
 
-> **Status: PLANNING ONLY.** Phase 1 of TDD (plan document) per `CLAUDE.md`.
+> Tracked under [#26 RML: SQL/JDBC LogicalSource support](https://github.com/daghovland/rdf-datalog/issues/26).
 > No tests, no stub code, no implementation yet. The next phase is red-phase
 > stub tests (`#[ignore]`d) for user review — do not start that phase without
 > separate sign-off on this design, especially the join-pushdown approach in

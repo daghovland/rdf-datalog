@@ -1,6 +1,6 @@
 # `complete_request`/`inspect_request` for `dagalog-kernel`
 
-> Status: RED PHASE — tests written and ignored, awaiting review before implementation.
+> Tracked under [#28 Jupyter kernel epic](https://github.com/daghovland/rdf-datalog/issues/28).
 
 ## Problem
 

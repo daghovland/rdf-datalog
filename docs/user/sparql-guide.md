@@ -187,8 +187,8 @@ SELECT * WHERE { ?s ?p ?o } LIMIT 5
 | `GROUP BY`, `HAVING`, `ORDER BY` | ✓ |
 | Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`) | ✓ |
 | `CONSTRUCT`, `ASK` | ✓ |
-| `DESCRIBE` | Not yet implemented ([#49](https://github.com/daghovland/rdf-datalog/issues/49)) |
-| `FROM` / `FROM NAMED` dataset clauses | Not yet implemented ([#50](https://github.com/daghovland/rdf-datalog/issues/50)) |
+| `DESCRIBE` | ✓ |
+| `FROM` / `FROM NAMED` dataset clauses | ✓ |
 | `SERVICE` federated queries | Parsed; silently returns empty ([#51](https://github.com/daghovland/rdf-datalog/issues/51)) |
 | Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, date/time, hash…) | Partial ([#52](https://github.com/daghovland/rdf-datalog/issues/52)) |
 | SPARQL Update `INSERT/DELETE WHERE` | Not yet implemented ([#53](https://github.com/daghovland/rdf-datalog/issues/53)) |
