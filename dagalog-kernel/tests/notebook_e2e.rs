@@ -4,6 +4,7 @@
 
 mod support;
 
+use serial_test::serial;
 use support::{KernelHarness, notebook_code_cells};
 
 fn repo_root() -> std::path::PathBuf {
@@ -53,12 +54,14 @@ ORDER BY ?person ?colleague
 "#;
 
 #[tokio::test]
+#[serial]
 async fn test_kernel_info_handshake() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.shutdown().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_turtle_cell_loads_ten_triples() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let outcome = kernel.execute(TURTLE_CELL).await;
@@ -68,6 +71,7 @@ async fn test_turtle_cell_loads_ten_triples() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_sparql_select_cell_returns_two_rows() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.execute(TURTLE_CELL).await;
@@ -89,6 +93,7 @@ async fn test_sparql_select_cell_returns_two_rows() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_rml_cell_loads_six_triples() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.execute(TURTLE_CELL).await;
@@ -99,6 +104,7 @@ async fn test_rml_cell_loads_six_triples() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_reason_cell_adds_zero_triples() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.execute(TURTLE_CELL).await;
@@ -113,6 +119,7 @@ async fn test_reason_cell_adds_zero_triples() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_datalog_bracket_cell_materializes_colleagues() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.execute(TURTLE_CELL).await;
@@ -132,6 +139,7 @@ async fn test_datalog_bracket_cell_materializes_colleagues() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_validate_cell_reports_violations() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel
@@ -146,6 +154,7 @@ async fn test_validate_cell_reports_violations() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_validate_cell_reports_conforms() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel
@@ -160,6 +169,7 @@ async fn test_validate_cell_reports_conforms() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_complete_request_over_zmq() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let reply = kernel
@@ -179,6 +189,7 @@ async fn test_complete_request_over_zmq() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_inspect_request_over_zmq() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let reply = kernel
@@ -220,6 +231,7 @@ ORDER BY ?name
 "#;
 
 #[tokio::test]
+#[serial]
 async fn test_ottr_inline_cell_expands_triples() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     let outcome = kernel.execute(OTTR_INLINE_CELL).await;
@@ -229,6 +241,7 @@ async fn test_ottr_inline_cell_expands_triples() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_ottr_inline_then_sparql_query() {
     let mut kernel = KernelHarness::start(&repo_root()).await;
     kernel.execute(OTTR_INLINE_CELL).await;
@@ -250,6 +263,7 @@ async fn test_ottr_inline_then_sparql_query() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_ottr_file_cell_expands_triples() {
     let root = repo_root();
     let mut kernel = KernelHarness::start(&root).await;
@@ -262,6 +276,7 @@ async fn test_ottr_file_cell_expands_triples() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_full_notebook_replay() {
     let root = repo_root();
     let cells = notebook_code_cells(&root);

@@ -25,8 +25,32 @@ Reference the current working branch of the repository in the issue when working
 
 When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to the issue or epic that will fix it
 
-When creating an issue mark it as TODO When Working on it mark is as In Progress, use a worktree to create a new branch and when done, create a pull request between that branch and 
-main before closing the worktree. The pull request and issue should be linked so the issue becomes closed when the pull request is merged
+When creating an issue mark it as TODO. When working on it mark it as In Progress, use a worktree to create a new branch, and when done create a pull request between that branch and main before removing the worktree. The pull request and issue should be linked so the issue becomes closed when the pull request is merged.
+
+## Implementation workflow
+
+All code changes (bug fixes, features) follow this workflow:
+
+1. **Pick an issue** from the [Dagalog backlog](https://github.com/users/daghovland/projects/11). Mark it In Progress and post the working branch name as a comment.
+2. **Create a worktree** for isolation:
+   ```bash
+   git worktree add .claude/worktrees/<branch-name> -b <branch-name>
+   ```
+3. **Delegate implementation to a sub-agent** (Agent tool with `isolation: "worktree"` or by pointing the agent at the worktree path). The main session orchestrates; the sub-agent does the actual editing, building, and testing. Brief the sub-agent with: the issue description, affected files, the TDD phase required, and where to find the worktree.
+4. **TDD inside the worktree** — sub-agent follows the red→green phases above. For pure refactors with no observable behavior change, one-pass (tests alongside implementation) is acceptable.
+5. **Quality checks** before committing (run in the worktree):
+   ```bash
+   cargo fmt --all -- --check
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace
+   ```
+6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. Do not merge — the user reviews.
+7. **Remove the worktree** after pushing:
+   ```bash
+   git worktree remove .claude/worktrees/<branch-name>
+   ```
+
+Exception: trivial single-file documentation updates (like this one) may be committed directly to main without a worktree or PR.
 
 ## Commands
 
@@ -88,6 +112,9 @@ dagalog (root binary + library)
 ├── sparql_endpoint/     — HTTP SPARQL endpoint (axum + tokio)
 └── manchester_parser/   — OWL Manchester syntax parser   [stub]
 ```
+
+## Architecture decisions
+Update this document if architecture changes. Update relevent elements in README.md. 
 
 ### `ingress` crate
 Core RDF type hierarchy: `IriReference`, `RdfResource`, `RdfLiteral`, `GraphElement`, `PrefixDeclaration`, `OntologyVersion`. Also exports all RDF/RDFS/OWL/XSD namespace constants from `namespaces.rs`.

@@ -790,7 +790,7 @@ pub fn eval_expr_as_filter(
 /// `ActiveGraph` type.  EXISTS / NOT EXISTS expressions use the default graph.
 ///
 /// Returns `false` on evaluation error or when the expression is unbound.
-/// See: https://github.com/daghovland/rdf-datalog/issues/60
+/// See: <https://github.com/daghovland/rdf-datalog/issues/60>
 pub fn eval_expression_bool_filter(
     expr: &Expression,
     sub: &SolutionRow,
@@ -822,7 +822,7 @@ fn eval_filter(
 ///
 /// Returns `None` when the expression is unbound or evaluation fails (e.g.
 /// division by zero, type mismatch).
-/// See: https://github.com/daghovland/rdf-datalog/issues/60
+/// See: <https://github.com/daghovland/rdf-datalog/issues/60>
 pub fn eval_expression_value(
     expr: &Expression,
     sub: &PartialSub,
