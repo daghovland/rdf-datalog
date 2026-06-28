@@ -103,7 +103,7 @@ impl Context {
             }
             Value::Object(map) => self.extend_from_map(map),
             Value::String(_) => {
-                // External context URL — not fetched; ignore and return self.
+                // External context URL — not fetched; see https://github.com/daghovland/rdf-datalog/issues/82
                 Ok(self.clone())
             }
             Value::Null => Ok(Context::default()),

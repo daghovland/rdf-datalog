@@ -5,7 +5,7 @@
 use dag_rdf::ingress::{Quad, Triple};
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use ingress::RDF_TYPE;
-use rml::apply_rml_mapping;
+use rml::{RmlError, apply_rml_mapping};
 use std::path::Path;
 
 fn fixture(case: &str) -> std::path::PathBuf {
@@ -31,7 +31,7 @@ macro_rules! intern {
 // ── RMLTC0001a: simple template IRI subject + reference literal object ─────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0001a_basic_template_iri_and_reference_literal() {
     let dir = fixture("rmltc0001a");
     let mut ds = Datastore::new(100);
@@ -41,11 +41,15 @@ fn rmltc0001a_basic_template_iri_and_reference_literal() {
     let p = intern!(ds, iri_element("http://example.com/name"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("Venus Williams".to_string()));
 
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0001a_produces_exactly_one_triple() {
     let dir = fixture("rmltc0001a");
     let mut ds = Datastore::new(100);
@@ -59,7 +63,7 @@ fn rmltc0001a_produces_exactly_one_triple() {
 // ── RMLTC0002a: multiple predicates, two rows ──────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0002a_all_four_triples_present() {
     let dir = fixture("rmltc0002a");
     let mut ds = Datastore::new(100);
@@ -76,16 +80,32 @@ fn rmltc0002a_all_four_triples_present() {
     let alice_age = ds.add_literal_resource(RdfLiteral::LiteralString("30".to_string()));
     let bob_age = ds.add_literal_resource(RdfLiteral::LiteralString("25".to_string()));
 
-    assert!(ds.contains_triple(&Triple { subject: alice_s, predicate: name_pred, obj: alice_name }));
-    assert!(ds.contains_triple(&Triple { subject: alice_s, predicate: age_pred, obj: alice_age }));
-    assert!(ds.contains_triple(&Triple { subject: bob_s, predicate: name_pred, obj: bob_name }));
-    assert!(ds.contains_triple(&Triple { subject: bob_s, predicate: age_pred, obj: bob_age }));
+    assert!(ds.contains_triple(&Triple {
+        subject: alice_s,
+        predicate: name_pred,
+        obj: alice_name
+    }));
+    assert!(ds.contains_triple(&Triple {
+        subject: alice_s,
+        predicate: age_pred,
+        obj: alice_age
+    }));
+    assert!(ds.contains_triple(&Triple {
+        subject: bob_s,
+        predicate: name_pred,
+        obj: bob_name
+    }));
+    assert!(ds.contains_triple(&Triple {
+        subject: bob_s,
+        predicate: age_pred,
+        obj: bob_age
+    }));
 }
 
 // ── RMLTC0003a: blank node subject ────────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0003a_blank_node_subject_has_correct_object() {
     let dir = fixture("rmltc0003a");
     let mut ds = Datastore::new(100);
@@ -95,12 +115,18 @@ fn rmltc0003a_blank_node_subject_has_correct_object() {
     let usa_obj = ds.add_literal_resource(RdfLiteral::LiteralString("United States".to_string()));
 
     // The subject is a blank node — we verify via object+predicate lookup
-    let triples: Vec<_> = ds.get_triples_with_object_predicate(usa_obj, country_pred).collect();
-    assert_eq!(triples.len(), 1, "expected exactly one triple with object 'United States'");
+    let triples: Vec<_> = ds
+        .get_triples_with_object_predicate(usa_obj, country_pred)
+        .collect();
+    assert_eq!(
+        triples.len(),
+        1,
+        "expected exactly one triple with object 'United States'"
+    );
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0003a_subject_is_blank_node() {
     let dir = fixture("rmltc0003a");
     let mut ds = Datastore::new(100);
@@ -109,7 +135,9 @@ fn rmltc0003a_subject_is_blank_node() {
     let country_pred = intern!(ds, iri_element("http://example.com/country"));
     let usa_obj = ds.add_literal_resource(RdfLiteral::LiteralString("United States".to_string()));
 
-    let triples: Vec<_> = ds.get_triples_with_object_predicate(usa_obj, country_pred).collect();
+    let triples: Vec<_> = ds
+        .get_triples_with_object_predicate(usa_obj, country_pred)
+        .collect();
     let subject_id = triples[0].subject;
     // Blank nodes are stored as AnonymousBlankNode variants
     assert!(
@@ -124,7 +152,7 @@ fn rmltc0003a_subject_is_blank_node() {
 // ── RMLTC0007a: language-tagged literal ───────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0007a_language_tagged_literal() {
     let dir = fixture("rmltc0007a");
     let mut ds = Datastore::new(100);
@@ -137,13 +165,17 @@ fn rmltc0007a_language_tagged_literal() {
         literal: "Alice".to_string(),
     });
 
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── RMLTC0007b: datatype literal ──────────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0007b_datatype_literal_stored_as_typed_literal() {
     let dir = fixture("rmltc0007b");
     let mut ds = Datastore::new(100);
@@ -156,13 +188,17 @@ fn rmltc0007b_datatype_literal_stored_as_typed_literal() {
         literal: "42".to_string(),
     });
 
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── RMLTC0009a: named graph ────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0009a_triple_placed_in_named_graph() {
     let dir = fixture("rmltc0009a");
     let mut ds = Datastore::new(100);
@@ -173,11 +209,16 @@ fn rmltc0009a_triple_placed_in_named_graph() {
     let p = intern!(ds, iri_element("http://example.com/country"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("France".to_string()));
 
-    assert!(ds.contains_quad(&Quad { triple_id: graph_id, subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_quad(&Quad {
+        triple_id: graph_id,
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0009a_triple_not_in_default_graph() {
     let dir = fixture("rmltc0009a");
     let mut ds = Datastore::new(100);
@@ -188,13 +229,17 @@ fn rmltc0009a_triple_not_in_default_graph() {
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("France".to_string()));
 
     // Must NOT be in the default graph
-    assert!(!ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(!ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 // ── RMLTC0010a: rml:class shorthand ───────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0010a_class_shorthand_emits_rdf_type_triple() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -204,11 +249,15 @@ fn rmltc0010a_class_shorthand_emits_rdf_type_triple() {
     let rdf_type = intern!(ds, iri_element(RDF_TYPE));
     let student_class = intern!(ds, iri_element("http://example.com/Student"));
 
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: rdf_type, obj: student_class }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: rdf_type,
+        obj: student_class
+    }));
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0010a_data_triple_also_present() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -218,11 +267,15 @@ fn rmltc0010a_data_triple_also_present() {
     let p = intern!(ds, iri_element("http://example.com/name"));
     let o = ds.add_literal_resource(RdfLiteral::LiteralString("Alice".to_string()));
 
-    assert!(ds.contains_triple(&Triple { subject: s, predicate: p, obj: o }));
+    assert!(ds.contains_triple(&Triple {
+        subject: s,
+        predicate: p,
+        obj: o
+    }));
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn rmltc0010a_produces_exactly_two_triples() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -236,21 +289,24 @@ fn rmltc0010a_produces_exactly_two_triples() {
 // ── IRI percent-encoding in templates ─────────────────────────────────────────
 
 #[test]
-#[ignore]
+//#[ignore]
 fn spaces_in_csv_values_are_percent_encoded_in_iri_subjects() {
     let dir = fixture("encoding");
     let mut ds = Datastore::new(100);
     apply_rml_mapping(&dir.join("mapping.ttl"), &dir, &mut ds).unwrap();
 
     // "Venus Williams" in IRI position → Venus%20Williams
-    let s = intern!(ds, iri_element("http://example.com/Person/Venus%20Williams"));
+    let s = intern!(
+        ds,
+        iri_element("http://example.com/Person/Venus%20Williams")
+    );
     let p = intern!(ds, iri_element("http://example.com/name"));
     let triples: Vec<_> = ds.get_triples_with_subject_predicate(s, p).collect();
     assert_eq!(triples.len(), 1);
 }
 
 #[test]
-#[ignore]
+//#[ignore]
 fn spaces_in_csv_values_are_not_encoded_in_literal_objects() {
     let dir = fixture("encoding");
     let mut ds = Datastore::new(100);
@@ -261,4 +317,74 @@ fn spaces_in_csv_values_are_not_encoded_in_literal_objects() {
     let p = intern!(ds, iri_element("http://example.com/label"));
     let triples: Vec<_> = ds.get_triples_with_object_predicate(o, p).collect();
     assert_eq!(triples.len(), 1);
+}
+
+// ── Security: path traversal via absolute rml:source ──────────────────────────
+
+#[test]
+fn absolute_rml_source_path_is_rejected() {
+    // A mapping that uses an absolute rml:source path must be rejected even if
+    // base_dir.join(absolute) would silently resolve to the absolute path.
+    let tmp = tempfile::tempdir().unwrap();
+    let mapping_ttl = tmp.path().join("mapping.ttl");
+    std::fs::write(
+        &mapping_ttl,
+        r#"@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+ex:TM a rml:TriplesMap ;
+  rml:logicalSource [
+    rml:source "/etc/hostname" ;
+    rml:referenceFormulation rml:CSV
+  ] ;
+  rml:subjectMap  [ rml:template "http://example.com/{col1}" ] ;
+  rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "col1" ]
+  ] .
+"#,
+    )
+    .unwrap();
+    let mut ds = Datastore::new(64);
+    let err = apply_rml_mapping(&mapping_ttl, tmp.path(), &mut ds)
+        .expect_err("absolute rml:source path must be rejected");
+    assert!(
+        matches!(err, RmlError::PathTraversal { .. }),
+        "expected PathTraversal, got: {err}"
+    );
+}
+
+#[test]
+fn dotdot_rml_source_path_is_rejected() {
+    // A mapping that uses a relative path that escapes base_dir via ".." must
+    // also be rejected.
+    let tmp = tempfile::tempdir().unwrap();
+    let subdir = tmp.path().join("sub");
+    std::fs::create_dir(&subdir).unwrap();
+    let mapping_ttl = subdir.join("mapping.ttl");
+    std::fs::write(
+        &mapping_ttl,
+        r#"@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+ex:TM a rml:TriplesMap ;
+  rml:logicalSource [
+    rml:source "../../../etc/hostname" ;
+    rml:referenceFormulation rml:CSV
+  ] ;
+  rml:subjectMap  [ rml:template "http://example.com/{col1}" ] ;
+  rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "col1" ]
+  ] .
+"#,
+    )
+    .unwrap();
+    let mut ds = Datastore::new(64);
+    let err = apply_rml_mapping(&mapping_ttl, &subdir, &mut ds)
+        .expect_err("dot-dot rml:source path must be rejected");
+    assert!(
+        matches!(err, RmlError::PathTraversal { .. }),
+        "expected PathTraversal, got: {err}"
+    );
 }

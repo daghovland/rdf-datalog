@@ -8,13 +8,20 @@ Contact: hovlanddag@gmail.com
 
 use crate::AppState;
 use axum::{
-    Router, middleware,
+    Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
 
 /// Build the axum router with all routes and CORS middleware.
 pub fn build_router(state: AppState) -> Router {
+    // RML mapping routes accept arbitrary source files as multipart parts,
+    // which routinely exceed axum's server-wide 2 MB DefaultBodyLimit.
+    // Override it for just these two routes; every other route keeps 2 MB.
+    let rml_body_limit = DefaultBodyLimit::max(state.config.max_rml_upload_bytes);
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([
@@ -40,6 +47,11 @@ pub fn build_router(state: AppState) -> Router {
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
         .route("/upload", post(crate::upload::upload_turtle))
+        // ── VQS productive-extension index (query-builder support) ──────────
+        .route(
+            "/vqs/productive-values",
+            get(crate::vqs_routes::productive_values),
+        )
         // ── SPARQL Protocol — root endpoint ──────────────────────────────────
         .route("/sparql", get(crate::query::sparql_get))
         .route("/sparql", post(crate::query::sparql_post))
@@ -75,6 +87,7 @@ pub fn build_router(state: AppState) -> Router {
             "/$/datasets/{name}",
             get(crate::admin::admin_get_dataset).delete(crate::admin::admin_delete_dataset),
         )
+        .route("/$/compact", post(crate::admin::admin_compact))
         // ── Per-dataset query (`/{name}/sparql`, `/{name}/query`) ────────────
         .route(
             "/{name}/sparql",
@@ -95,6 +108,16 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/{name}/shacl",
             post(crate::shacl_endpoint::dataset_shacl_post),
+        )
+        // ── Per-dataset RML mapping (`/{name}/rml`) ──────────────────────────
+        .route(
+            "/{name}/rml",
+            post(crate::rml_endpoint::dataset_rml_post).layer(rml_body_limit),
+        )
+        // ── Stateless RML mapping (`/rml/map`) — apply a mapping, return RDF ──
+        .route(
+            "/rml/map",
+            post(crate::rml_endpoint::rml_map_post).layer(rml_body_limit),
         )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(

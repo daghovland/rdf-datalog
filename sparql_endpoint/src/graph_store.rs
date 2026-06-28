@@ -129,7 +129,7 @@ fn resolve_write_target(
 
 // ── RDF content negotiation ───────────────────────────────────────────────────
 
-enum RdfFormat {
+pub(crate) enum RdfFormat {
     Turtle,
     NTriples,
     NQuads,
@@ -137,7 +137,7 @@ enum RdfFormat {
     JsonLd,
 }
 
-fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
+pub(crate) fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
     let accept = match accept {
         None | Some("") => return Some(RdfFormat::Turtle),
         Some(a) => a,
@@ -182,7 +182,7 @@ pub(crate) enum UploadFormat {
 
 // ── Shared graph serialisation ────────────────────────────────────────────────
 
-fn graph_response_parts(
+pub(crate) fn graph_response_parts(
     store: &dag_rdf::Datastore,
     graph_id: GraphElementId,
     accept: Option<&str>,

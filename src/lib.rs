@@ -116,6 +116,37 @@ pub fn apply_ontologies(
     })
 }
 
+/// Run OWL-RL materialisation over the triples already in `datastore`.
+///
+/// Extracts OWL axioms from the current triple set, converts them to Datalog
+/// rules, and runs naive forward-chaining to closure.  Returns the number of
+/// triples added by the reasoning step.
+pub fn run_owlrl_reasoning(datastore: &mut Datastore) -> usize {
+    let before = datastore.named_graphs.quad_count;
+    let ontology_doc = rdf2owl(datastore);
+    let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
+    datalog::evaluate_rules(rules, datastore);
+    datastore.named_graphs.quad_count - before
+}
+
+// ── RML mapping ───────────────────────────────────────────────────────────────
+
+/// Apply one or more RML mapping files to `datastore`.
+///
+/// For each mapping file, the source files referenced inside it are resolved
+/// relative to that mapping file's parent directory. Mappings are applied in
+/// order; triples from all mappings accumulate in the same datastore.
+pub fn apply_rml_mappings(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<(), String> {
+    for path in paths {
+        let base_dir = path
+            .parent()
+            .ok_or_else(|| format!("cannot determine parent directory of {}", path.display()))?;
+        rml::apply_rml_mapping(path, base_dir, datastore)
+            .map_err(|e| format!("RML mapping error in {}: {}", path.display(), e))?;
+    }
+    Ok(())
+}
+
 // ── Datalog rules ─────────────────────────────────────────────────────────────
 
 /// Parse and apply Datalog rules from one or more `.datalog` files.
@@ -149,6 +180,9 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
         }
         QueryResult::Construct(_) => {
             Err("CONSTRUCT queries are not supported via run_sparql_query".to_string())
+        }
+        QueryResult::Describe(_) => {
+            Err("DESCRIBE queries are not supported via run_sparql_query".to_string())
         }
     }
 }

@@ -8,6 +8,8 @@ can satisfy `IRecordBackend.ValidateContentWithShacl` and `IRecordBackend.Valida
 The records library uses SHACL to validate content graphs against domain shapes before
 accepting or publishing a record (e.g., IMF equipment templates, P&ID schemas).
 
+See <https://github.com/daghovland/rdf-datalog/issues/65> for progress
+
 ## Spec references
 
 - SHACL Core — <https://www.w3.org/TR/shacl/>
@@ -17,9 +19,9 @@ accepting or publishing a record (e.g., IMF equipment templates, P&ID schemas).
 
 ---
 
-## How the records library uses SHACL
+## Common usage pattern for SHACL validation
 
-`FusekiRecordBackend` calls:
+HTTP calls:
 
 ```
 POST /{dataset}/shacl?graph=<content-graph-iri>
@@ -28,10 +30,24 @@ Content-Type: text/turtle
 → 200 text/turtle  (SHACL validation report)
 ```
 
-The response is a SHACL validation report graph. `ShaclValidationOutcome` in the records
-library parses `sh:conforms`, `sh:result`, `sh:focusNode`, and `sh:resultMessage`.
+The response is a SHACL validation report graph. The caller parses `sh:conforms`, `sh:result`, `sh:focusNode`, and `sh:resultMessage`.
 
 ---
+
+## SHACL for input validation
+
+A shacl shape can also be registered as input validator for a graph. The calls for this have not been designed,
+but the idea is that something like
+
+```
+POST /{dataset}/shacl-input-validation?graph=<content-graph-iri>
+Content-Type: text/turtle
+[SHACL shapes graph in body]
+→ 200 
+```
+And after this, any rdf input to the graph which does not validate, will result in a 422 unprocessable
+content message with the shacl validation report in the body
+
 
 ## Implementation approach
 
@@ -413,17 +429,14 @@ use the same syntax and same functions as sparql uses. That is, any valid SPARQL
 | 2g | `sh:xone` (counting conforming shapes) | §4.6.4 |
 | 2h | `sh:qualifiedValueShape` + `sh:qualifiedMinCount` | §4.7.3 |
 
-### Phase 3 — HTTP endpoint + report serialisation ✓ Done
+### Phase 3 — HTTP endpoint + report serialisation
 
-| Step | Change | Status |
-|---|---|---|
-| 3a | `report_to_turtle()` in `shacl/src/lib.rs` | ✓ Done |
-| 3b | `sparql_endpoint/src/shacl_endpoint.rs` — `dataset_shacl_post` handler | ✓ Done |
-| 3c | Register route `POST /{name}/shacl` in `server.rs` | ✓ Done |
-| 3d | 4 HTTP tests in `sparql_endpoint/tests/shacl.rs` (conforms, violation, 404, 400) | ✓ Done |
-
-Also added in this session:
-- `STRLEN` and `DATATYPE` functions to `sparql_parser::eval_function_value` (used by Datalog filter tests)
+| Step | Change |
+|---|---|
+| 3a | `report_to_turtle()` in `shacl/src/lib.rs` |
+| 3b | `sparql_endpoint/src/shacl_endpoint.rs` — `dataset_shacl_post` handler |
+| 3c | Register route `POST /{name}/shacl` in `server.rs` |
+| 3d | 4 HTTP tests in `sparql_endpoint/tests/shacl.rs` (conforms, violation, 404, 400) |
 
 ### Phase 4 — SHACL-SPARQL (§5–6 of SHACL-AF)
 
@@ -431,6 +444,12 @@ SHACL-AF §5–6 let shape authors embed SPARQL queries for targets and constrai
 These cannot be translated to Datalog in general: a SPARQL SELECT or ASK query can
 express joins, property paths, filters, and aggregates that have no Datalog equivalent.
 They must be executed directly by the SPARQL engine against the data graph.
+
+### Phase 5 - SHACL for input validation
+
+This is not designed ready, but the work includes finding ok http calls for providing a datastore
+with the shacl validation graph, and whether the output can be given. This might lead to changes in 
+the design of how the shacl translated datalog is materialized
 
 #### Why Datalog translation is not feasible
 
@@ -555,18 +574,9 @@ A `sh:PropertyShape` may declare `sh:path` + constraints directly on the shape n
 instead of inside a `sh:property` block.  Detected in `shapes::parse_one_shape` and
 handled identically to nested property shapes.
 
-## Status
+## Progress tracking
 
-| Step | Status |
-|---|---|
-| `shacl` crate stub + types | ✓ Done |
-| Integration tests for all §1–§4.8 constraints | ✓ Done |
-| README SHACL section | ✓ Done |
-| SHACL→Datalog plan | ✓ Done (this document) |
-| Phase 1a: targets + `sh:minCount 1` + `sh:maxCount` | ✓ Done |
-| Phase 1b: `sh:class`, `sh:hasValue`, `sh:in`, `sh:closed` | ✓ Done |
-| Phase 1c: `sh:not`, `sh:and`, `sh:or` | ✓ Done |
-| Phase 2: `sh:nodeKind`, `sh:datatype`, `sh:xone`, value range, string constraints, property pairs, `sh:node`, `sh:qualifiedValueShape` | ✓ Done |
-| Phase 3: HTTP endpoint + `report_to_turtle` | ✓ Done |
-| Tests for `sh:minExclusive`, `sh:maxExclusive`, `sh:property` IRI ref, `sh:qualifiedMaxCount` | ✓ Done |
-| Phase 4: SHACL-SPARQL (§5–6) | Planned (see Phase 4 section above) |
+Progress is tracked in GitHub issues:
+- Epic: [#65 SHACL epic](https://github.com/daghovland/rdf-datalog/issues/65)
+- Phase 4 (SHACL-SPARQL §5–6): [#54](https://github.com/daghovland/rdf-datalog/issues/54)
+- Phase E4 (SHACL → FilterAtom rules refactor): [#62](https://github.com/daghovland/rdf-datalog/issues/62)

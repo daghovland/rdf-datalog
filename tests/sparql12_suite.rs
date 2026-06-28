@@ -1244,7 +1244,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("5".to_string()),
         "§17.4.5: ABS(-5) = 5, preserving integer type"
     );
 }
@@ -1266,7 +1266,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"4\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("4".to_string()),
         "§17.4.5: CEIL(3.2) = 4"
     );
 }
@@ -1288,7 +1288,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("3".to_string()),
         "§17.4.5: FLOOR(3.8) = 3"
     );
 }
@@ -1310,7 +1310,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("3".to_string()),
         "§17.4.5: ROUND(2.5) = 3 (round half toward positive infinity)"
     );
 }
@@ -1333,7 +1333,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"-2\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("-2".to_string()),
         "§17.4.5: ROUND(-2.5) = -2 per spec (round half toward +infinity), not -3"
     );
 }
@@ -1357,7 +1357,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"2014\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("2014".to_string()),
         "§17.4.6: YEAR of a dateTime literal"
     );
 }
@@ -1379,7 +1379,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"2014\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("2014".to_string()),
         "§17.4.6: YEAR of an xsd:gYear literal"
     );
 }
@@ -1401,7 +1401,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("3".to_string()),
         "§17.4.6: MONTH of a date literal"
     );
 }
@@ -1423,7 +1423,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("5".to_string()),
         "§17.4.6: DAY of a date literal"
     );
 }
@@ -1445,7 +1445,7 @@ SELECT ?b WHERE {
 "#;
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("5".to_string()),
         "§17.4.6: DAY of a dateTime literal"
     );
 }

@@ -1,0 +1,575 @@
+//! Red-phase tests for missing SPARQL 1.1 scalar builtin functions (#52).
+//! All tests are `#[ignore]`'d until implementation is complete.
+//! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md and
+//! https://github.com/daghovland/rdf-datalog/issues/52
+
+use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
+use num_bigint::BigInt;
+use sparql_parser::{execute, parse_query, ParserContext, QueryResult};
+use std::collections::HashMap;
+
+fn ctx() -> ParserContext {
+    ParserContext {
+        prefixes: HashMap::new(),
+    }
+}
+
+/// Execute a SELECT query over an empty datastore and return the first row's
+/// binding for `?result` as a GraphElement.  Queries are expected to use
+/// `BIND(fn(...) AS ?result)` to expose the function output.
+fn eval_function(sparql: &str) -> Option<GraphElement> {
+    let ds = Datastore::new(100);
+    let (_, query) = parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    match execute(&query, &ds).expect("execute should succeed") {
+        QueryResult::Select(r) => r
+            .rows
+            .into_iter()
+            .next()
+            .and_then(|row| row.get("result").cloned()),
+        _ => panic!("expected SELECT"),
+    }
+}
+
+fn str_literal(s: &str) -> GraphElement {
+    GraphElement::GraphLiteral(RdfLiteral::LiteralString(s.to_string()))
+}
+
+fn typed_literal(s: &str, type_iri: &str) -> GraphElement {
+    GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(type_iri.to_string()),
+        literal: s.to_string(),
+    })
+}
+
+fn lang_literal(s: &str, lang: &str) -> GraphElement {
+    GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
+        lang: lang.to_string(),
+        literal: s.to_string(),
+    })
+}
+
+fn iri_node(s: &str) -> GraphElement {
+    GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(s.to_string())))
+}
+
+const XSD_INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+#[allow(dead_code)]
+const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
+#[allow(dead_code)]
+const XSD_BOOLEAN: &str = "http://www.w3.org/2001/XMLSchema#boolean";
+#[allow(dead_code)]
+const XSD_DECIMAL: &str = "http://www.w3.org/2001/XMLSchema#decimal";
+
+// ── String functions ──────────────────────────────────────────────────────────
+
+#[test]
+
+fn test_ucase() {
+    let result = eval_function(r#"SELECT (UCASE("hello") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("HELLO")));
+}
+
+#[test]
+
+fn test_lcase() {
+    let result = eval_function(r#"SELECT (LCASE("HELLO") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("hello")));
+}
+
+#[test]
+
+fn test_concat() {
+    let result = eval_function(r#"SELECT (CONCAT("foo", "bar") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("foobar")));
+}
+
+#[test]
+
+fn test_substr_two_arg() {
+    // SPARQL SUBSTR is 1-indexed; SUBSTR("hello", 2) → "ello"
+    let result = eval_function(r#"SELECT (SUBSTR("hello", 2) AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("ello")));
+}
+
+#[test]
+
+fn test_substr_three_arg() {
+    let result = eval_function(r#"SELECT (SUBSTR("hello", 2, 3) AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("ell")));
+}
+
+#[test]
+
+fn test_strstarts_true() {
+    let result = eval_function(r#"SELECT (STRSTARTS("hello", "he") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+
+fn test_strstarts_false() {
+    let result = eval_function(r#"SELECT (STRSTARTS("hello", "lo") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false
+        )))
+    );
+}
+
+#[test]
+
+fn test_strends_true() {
+    let result = eval_function(r#"SELECT (STRENDS("hello", "lo") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+
+fn test_contains_true() {
+    let result = eval_function(r#"SELECT (CONTAINS("hello", "ell") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+
+fn test_strbefore() {
+    let result = eval_function(r#"SELECT (STRBEFORE("hello world", " ") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("hello")));
+}
+
+#[test]
+
+fn test_strafter() {
+    let result = eval_function(r#"SELECT (STRAFTER("hello world", " ") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("world")));
+}
+
+// ── Type testing ──────────────────────────────────────────────────────────────
+
+#[test]
+
+fn test_isnumeric_integer() {
+    let result = eval_function(r#"SELECT (ISNUMERIC(42) AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+
+fn test_isnumeric_string() {
+    let result = eval_function(r#"SELECT (ISNUMERIC("hello") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false
+        )))
+    );
+}
+
+#[test]
+
+fn test_sameterm_equal() {
+    let result = eval_function(
+        r#"PREFIX ex: <http://example.org/> SELECT (SAMETERM(ex:a, ex:a) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+
+fn test_sameterm_different() {
+    let result = eval_function(
+        r#"PREFIX ex: <http://example.org/> SELECT (SAMETERM(ex:a, ex:b) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false
+        )))
+    );
+}
+
+// ── Term construction ─────────────────────────────────────────────────────────
+
+#[test]
+
+fn test_iri_from_string() {
+    let result = eval_function(r#"SELECT (IRI("http://example.org/foo") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(iri_node("http://example.org/foo")));
+}
+
+#[test]
+
+fn test_strdt() {
+    let result = eval_function(&format!(
+        r#"SELECT (STRDT("42", <{XSD_INTEGER}>) AS ?result) WHERE {{}}"#
+    ));
+    assert_eq!(result, Some(typed_literal("42", XSD_INTEGER)));
+}
+
+#[test]
+
+fn test_strlang() {
+    let result = eval_function(r#"SELECT (STRLANG("hello", "en") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(lang_literal("hello", "en")));
+}
+
+// ── Numeric functions ─────────────────────────────────────────────────────────
+
+#[test]
+
+fn test_abs_negative() {
+    let result = eval_function(r#"SELECT (ABS(-5) AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(5)
+        )))
+    );
+}
+
+#[test]
+
+fn test_round() {
+    // SPARQL ROUND uses half-to-even; 2.5 rounds to 2 or 3 — accept either
+    let result = eval_function(r#"SELECT (ROUND(2.5) AS ?result) WHERE {}"#);
+    if let Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n))) = result {
+        assert!(
+            n == BigInt::from(2) || n == BigInt::from(3),
+            "ROUND(2.5) must be 2 or 3, got {n}"
+        );
+    } else {
+        panic!("expected IntegerLiteral from ROUND");
+    }
+}
+
+#[test]
+
+fn test_ceil() {
+    let result = eval_function(r#"SELECT (CEIL(1.2) AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(2)
+        )))
+    );
+}
+
+#[test]
+
+fn test_floor() {
+    let result = eval_function(r#"SELECT (FLOOR(1.9) AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(1)
+        )))
+    );
+}
+
+// ── Logic / control ───────────────────────────────────────────────────────────
+
+#[test]
+
+fn test_coalesce_returns_first_bound() {
+    // ?x is unbound; COALESCE(?x, "default") should return "default"
+    let result = eval_function(r#"SELECT (COALESCE(?x, "default") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("default")));
+}
+
+#[test]
+
+fn test_if_true_branch() {
+    let result = eval_function(r#"SELECT (IF(true, "yes", "no") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("yes")));
+}
+
+#[test]
+
+fn test_if_false_branch() {
+    let result = eval_function(r#"SELECT (IF(false, "yes", "no") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("no")));
+}
+
+// ── Remaining missing builtins (issue #52) ────────────────────────────────────
+// https://github.com/daghovland/rdf-datalog/issues/52
+
+#[test]
+#[ignore = "BNODE() not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_bnode_no_arg_returns_blank_node() {
+    let result = eval_function(r#"SELECT (BNODE() AS ?result) WHERE {}"#);
+    assert!(
+        matches!(
+            result,
+            Some(GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(_)))
+        ),
+        "BNODE() must return a blank node; got: {result:?}"
+    );
+}
+
+#[test]
+#[ignore = "BNODE(str) not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_bnode_with_arg_returns_blank_node() {
+    let result = eval_function(r#"SELECT (BNODE("x") AS ?result) WHERE {}"#);
+    assert!(
+        matches!(
+            result,
+            Some(GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(_)))
+        ),
+        "BNODE(str) must return a blank node; got: {result:?}"
+    );
+}
+
+#[test]
+#[ignore = "ENCODE_FOR_URI not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_encode_for_uri() {
+    let result = eval_function(r#"SELECT (ENCODE_FOR_URI("Los Angeles") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("Los%20Angeles")));
+}
+
+#[test]
+#[ignore = "REPLACE not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_replace_basic() {
+    let result = eval_function(r#"SELECT (REPLACE("ababab", "b", "Z") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("aZaZaZ")));
+}
+
+#[test]
+#[ignore = "REPLACE with flags not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_replace_with_flag_i() {
+    let result =
+        eval_function(r#"SELECT (REPLACE("Hello World", "hello", "Hi", "i") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("Hi World")));
+}
+
+#[test]
+#[ignore = "RAND not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_rand_returns_double_in_unit_interval() {
+    let result = eval_function(r#"SELECT (RAND() AS ?result) WHERE {}"#);
+    match result {
+        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(v))) => {
+            assert!(
+                v.into_inner() >= 0.0 && v.into_inner() <= 1.0,
+                "RAND() must be in [0,1]; got {v}"
+            );
+        }
+        other => panic!("expected DoubleLiteral in [0,1]; got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "NOW not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_now_returns_datetime() {
+    let result = eval_function(r#"SELECT (NOW() AS ?result) WHERE {}"#);
+    assert!(
+        matches!(
+            result,
+            Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(_)))
+        ),
+        "NOW() must return an xsd:dateTime; got {result:?}"
+    );
+}
+
+#[test]
+#[ignore = "YEAR not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_year_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (YEAR("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(2023)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "MONTH not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_month_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (MONTH("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(1)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "DAY not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_day_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (DAY("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(15)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "HOURS not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_hours_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (HOURS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(10)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "MINUTES not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_minutes_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (MINUTES("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(30)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "SECONDS not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_seconds_from_datetime() {
+    let result = eval_function(
+        r#"SELECT (SECONDS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+            rust_decimal::Decimal::from(45)
+        )))
+    );
+}
+
+#[test]
+#[ignore = "TZ not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_tz_utc() {
+    let result = eval_function(
+        r#"SELECT (TZ("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, Some(str_literal("Z")));
+}
+
+#[test]
+#[ignore = "MD5 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_md5() {
+    // MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
+    let result = eval_function(r#"SELECT (MD5("abc") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(str_literal("900150983cd24fb0d6963f7d28e17f72"))
+    );
+}
+
+#[test]
+#[ignore = "SHA1 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_sha1() {
+    // SHA1("abc") = a9993e364706816aba3e25717850c26c9cd0d89d
+    let result = eval_function(r#"SELECT (SHA1("abc") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(str_literal("a9993e364706816aba3e25717850c26c9cd0d89d"))
+    );
+}
+
+#[test]
+#[ignore = "SHA256 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_sha256() {
+    // SHA256("abc") = ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469001d0087592750325
+    let result = eval_function(r#"SELECT (SHA256("abc") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(str_literal(
+            "ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469001d0087592750325"
+        ))
+    );
+}
+
+#[test]
+#[ignore = "SHA384 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_sha384() {
+    // SHA384("abc") = cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7
+    let result = eval_function(r#"SELECT (SHA384("abc") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(str_literal(
+            "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"
+        ))
+    );
+}
+
+#[test]
+#[ignore = "SHA512 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_sha512() {
+    // SHA512("abc") = ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+    let result = eval_function(r#"SELECT (SHA512("abc") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(str_literal(
+            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+        ))
+    );
+}
+
+#[test]
+#[ignore = "UUID not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_uuid_returns_urn_iri() {
+    let result = eval_function(r#"SELECT (UUID() AS ?result) WHERE {}"#);
+    match result {
+        Some(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri)))) => {
+            assert!(
+                iri.starts_with("urn:uuid:"),
+                "UUID() must return a urn:uuid: IRI; got {iri}"
+            );
+        }
+        other => panic!("expected IRI starting with urn:uuid:; got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "STRUUID not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
+fn test_struuid_returns_uuid_string() {
+    let result = eval_function(r#"SELECT (STRUUID() AS ?result) WHERE {}"#);
+    match result {
+        Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s))) => {
+            // UUID format: 8-4-4-4-12 hex digits
+            assert_eq!(
+                s.len(),
+                36,
+                "STRUUID() string should be 36 chars; got {s:?}"
+            );
+            assert_eq!(&s[8..9], "-", "UUID part 1-2 separator missing");
+            assert_eq!(&s[13..14], "-", "UUID part 2-3 separator missing");
+        }
+        other => panic!("expected plain string; got {other:?}"),
+    }
+}

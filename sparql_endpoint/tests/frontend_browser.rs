@@ -517,6 +517,56 @@ ex:Person  a owl:Class .
 ex:Company a owl:Class .
 "#;
 
+// QB_BLANK_NODE_FIXTURE reproduces the imf.ttl symptom: a named class whose only
+// rdfs:subClassOf edge points to an anonymous OWL restriction, plus a second named
+// class that subclasses the first — real ontologies do this routinely.
+const QB_BLANK_NODE_FIXTURE: &str = r#"
+@prefix ex:   <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+
+ex:Person a owl:Class ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:hasAge ; owl:someValuesFrom ex:Age ] .
+ex:Employee a owl:Class ; rdfs:subClassOf ex:Person .
+"#;
+
+fn looks_like_blank_node_label(label: &str) -> bool {
+    let rest = label.strip_prefix('b').unwrap_or_default();
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
+}
+
+#[tokio::test]
+async fn qb_class_tree_excludes_owl_restriction_blank_nodes() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(QB_BLANK_NODE_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#qb-class-tree .qb-tree-row", 4000).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let labels = driver
+        .find_all(By::Css("#qb-class-tree .qb-tree-label"))
+        .await
+        .unwrap();
+    let mut texts = Vec::new();
+    for l in &labels {
+        texts.push(l.text().await.unwrap());
+    }
+    assert!(
+        texts.iter().any(|t| t.contains("Person")),
+        "Person should still be selectable as a class, got: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| looks_like_blank_node_label(t)),
+        "OWL restriction blank nodes must not appear as selectable classes, got: {texts:?}"
+    );
+    driver.quit().await.unwrap();
+}
+
 // ── QB Layer 3a: JS self-test harness ────────────────────────────────────────
 // Un-ignore after QB Phase 1 implements generateSparql() so QB_SELF_TESTS pass.
 
@@ -931,6 +981,129 @@ async fn qb_filter_text_appears_in_generated_sparql() {
     assert!(
         sparql.contains("FILTER"),
         "#qb-generated should contain FILTER after typing filter value:\n{sparql}"
+    );
+    driver.quit().await.unwrap();
+}
+
+// ── VQS productive-extension index wiring ────────────────────────────────────
+// Unlike QB_FIXTURE, this declares rdfs:domain/rdfs:range for ex:age so the
+// navigation graph is non-empty and /vqs/productive-values reports `covered`.
+// A single data property keeps the "first checkbox" selector unambiguous.
+
+const VQS_FIXTURE: &str = r#"
+@prefix ex:   <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:age rdfs:domain ex:Person ; rdfs:range xsd:integer .
+
+ex:alice a ex:Person ; ex:age 30 .
+ex:bob   a ex:Person ; ex:age 25 .
+
+ex:Person a owl:Class .
+"#;
+
+#[tokio::test]
+async fn qb_checking_covered_data_prop_shows_known_value_count() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(VQS_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_text(&driver, "#data-prop-list .qb-prod-hint", 4000).await,
+        "productive-value hint never populated after checking a covered data prop"
+    );
+    let hint = driver
+        .find(By::Css("#data-prop-list .qb-prod-hint"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        hint.contains("2 known value"),
+        "expected hint to report 2 known values, got:\n{hint}"
+    );
+    let datalist_options = driver
+        .find_all(By::Css("#data-prop-list datalist option"))
+        .await
+        .unwrap();
+    assert_eq!(
+        datalist_options.len(),
+        2,
+        "expected 2 datalist options for the covered property"
+    );
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn qb_typing_unproductive_filter_value_shows_warning() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(VQS_FIXTURE).await;
+    driver
+        .goto(&format!("{}/?view=build", server.base_url))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    driver
+        .find(By::Css("#class-picker"))
+        .await
+        .unwrap()
+        .send_keys("http://example.org/Person\n")
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#data-prop-list input[type=checkbox]", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list input[type=checkbox]"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#data-prop-list .qb-prod-hint", 4000).await);
+    driver
+        .find(By::Css("#data-prop-list .prop-filter-input"))
+        .await
+        .unwrap()
+        .send_keys("99")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let hint = driver
+        .find(By::Css("#data-prop-list .qb-prod-hint"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        hint.contains("no known value matches"),
+        "expected a dead-end warning after typing an unproductive value, got:\n{hint}"
     );
     driver.quit().await.unwrap();
 }

@@ -11,6 +11,15 @@ iri-string = "0.7"
 log = "0.4"
 num-bigint = "0.4.4"
 ordered-float = "4.2"
+chrono = "0.4"
+regex = "1"
+hex = "0.4"
+rand = "0.8"
+sha2 = { version = "0.10", features = ["force-soft"] }
+sha1 = "0.10"
+md5 = "0.7"
+uuid = { version = "1", features = ["v4"] }
+rust_decimal = "1"
 
 [dev-dependencies]
 env_logger = "0.10"

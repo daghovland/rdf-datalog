@@ -1,0 +1,20 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/TriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "person.json" ;
+        rml:referenceFormulation rml:JSONPath
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{$.id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "$.name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:age ;
+        rml:objectMap [ rml:reference "$.age" ]
+    ] .

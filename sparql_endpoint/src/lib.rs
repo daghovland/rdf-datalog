@@ -18,6 +18,7 @@ pub mod persistence;
 pub mod query;
 pub mod query_builder;
 pub mod registry;
+pub mod rml_endpoint;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
@@ -25,6 +26,7 @@ pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod upload;
 pub mod void;
+pub mod vqs_routes;
 
 use dag_rdf::datastore::Datastore;
 use persistence::QuadChangelog;
@@ -156,6 +158,14 @@ pub struct Config {
     /// `Some(path)` → a redb changelog is created at `<path>/dagalog.redb`;
     ///   committed writes survive crash and restart.
     pub data_dir: Option<PathBuf>,
+    /// Maximum request body size for the RML mapping endpoints
+    /// (`POST /{name}/rml`, `POST /rml/map`), in bytes.
+    ///
+    /// These routes accept arbitrary CSV/XML/JSON source files as multipart
+    /// parts, which routinely exceed axum's server-wide 2 MB
+    /// `DefaultBodyLimit`. This field overrides the limit for just those two
+    /// routes; every other route keeps the 2 MB default.
+    pub max_rml_upload_bytes: usize,
 }
 
 impl Default for Config {
@@ -167,6 +177,7 @@ impl Default for Config {
             max_query_timeout_secs: 30,
             auth: AuthConfig::None,
             data_dir: None,
+            max_rml_upload_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -184,6 +195,9 @@ pub struct AppState {
     pub jwks_cache: auth::JwksCache,
     /// Durable changelog.  `None` when the server runs in in-memory mode (no `data_dir`).
     pub changelog: Option<Arc<Mutex<QuadChangelog>>>,
+    /// Cached VQS productive-extension index (navigation graph + Wld configuration
+    /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
+    pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -200,13 +214,17 @@ pub async fn serve(store: Arc<RwLock<Datastore>>, config: Config) -> Result<(), 
 ///
 /// `store` is the initial in-memory `Datastore`.  When `config.data_dir` is set,
 /// the changelog is opened and its contents are replayed **into** `store` before
-/// any requests are accepted, replacing whatever was in `store`.
+/// any requests are accepted, layering changelog mutations on top of any data
+/// already present (e.g. pre-loaded from files via `--data`).
 pub async fn serve_on_listener(
     store: Arc<RwLock<Datastore>>,
     config: Config,
     listener: tokio::net::TcpListener,
 ) -> Result<(), std::io::Error> {
-    // Open the changelog (if configured) and replay it to reconstruct the store.
+    // Open the changelog (if configured) and replay it into the existing store.
+    // replay_into() layers changelog mutations ON TOP of any pre-loaded data
+    // (e.g. from --data files), so both sources are visible.
+    // See: https://github.com/daghovland/rdf-datalog/issues/66
     let changelog: Option<Arc<Mutex<QuadChangelog>>> = if let Some(ref dir) = config.data_dir {
         std::fs::create_dir_all(dir).map_err(|e| {
             std::io::Error::new(
@@ -216,8 +234,8 @@ pub async fn serve_on_listener(
         })?;
         let db_path = dir.join("dagalog.redb");
         let cl = QuadChangelog::open(&db_path).map_err(std::io::Error::other)?;
-        let replayed = cl.replay().map_err(std::io::Error::other)?;
-        *store.write().await = replayed;
+        cl.replay_into(&mut *store.write().await)
+            .map_err(std::io::Error::other)?;
         Some(Arc::new(Mutex::new(cl)))
     } else {
         None
@@ -230,6 +248,7 @@ pub async fn serve_on_listener(
         jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
         changelog,
         config,
+        vqs_cache: Arc::new(RwLock::new(None)),
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

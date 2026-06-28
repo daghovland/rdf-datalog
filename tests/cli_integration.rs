@@ -18,8 +18,8 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::Datastore;
 use dagalog::{
-    OutputFormat, apply_ontologies, format_results, graph_element_display, load_file,
-    run_sparql_query,
+    OutputFormat, apply_ontologies, apply_rml_mappings, format_results, graph_element_display,
+    load_file, run_sparql_query,
 };
 use std::path::Path;
 
@@ -398,4 +398,98 @@ SELECT ?g ?x WHERE {
         graph_subjects.contains(&"<http://example.org/ng#Carol>".to_string()),
         "GRAPH ?g should find Carol in named graph"
     );
+}
+
+// ── RML mapping (CLI --mapping flag) ──────────────────────────────────────────
+
+#[test]
+fn apply_rml_mappings_xml_is_queryable() {
+    let mut ds = Datastore::new(10_000);
+    apply_rml_mappings(&mut ds, &[testdata("rml_xml_persons_mapping.ttl")])
+        .expect("should apply RML mapping");
+
+    let result = run_sparql_query(
+        &ds,
+        "PREFIX ex: <http://example.com/> SELECT ?name WHERE { ?p a ex:Person ; ex:name ?name . }",
+    )
+    .expect("query should succeed");
+
+    let names: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("name"))
+        .map(graph_element_display)
+        .collect();
+    assert!(names.contains(&"\"Alice\"".to_string()));
+    assert!(names.contains(&"\"Bob\"".to_string()));
+}
+
+#[test]
+fn apply_rml_mappings_resolves_sources_relative_to_each_mapping_file() {
+    // rml_xml_persons_mapping.ttl and rml_json_persons_mapping.ttl both live in
+    // tests/testdata/ and reference sources relative to that directory. Both map
+    // the same two person IDs, but only the JSON mapping adds ex:age — so if
+    // both mappings actually resolved and applied, age triples must be present.
+    let mut ds = Datastore::new(10_000);
+    apply_rml_mappings(
+        &mut ds,
+        &[
+            testdata("rml_xml_persons_mapping.ttl"),
+            testdata("rml_json_persons_mapping.ttl"),
+        ],
+    )
+    .expect("should apply both RML mappings");
+
+    let persons = run_sparql_query(
+        &ds,
+        "PREFIX ex: <http://example.com/> SELECT ?p WHERE { ?p a ex:Person . }",
+    )
+    .expect("query should succeed");
+    assert_eq!(
+        persons.rows.len(),
+        2,
+        "same two person IRIs from both sources"
+    );
+
+    let ages = run_sparql_query(
+        &ds,
+        "PREFIX ex: <http://example.com/> SELECT ?age WHERE { ?p ex:age ?age . }",
+    )
+    .expect("query should succeed");
+    assert_eq!(
+        ages.rows.len(),
+        2,
+        "ex:age only comes from the JSON mapping, proving it resolved and applied"
+    );
+}
+
+#[test]
+fn apply_rml_mappings_combines_with_preloaded_data_and_ontology() {
+    let mut ds = Datastore::new(10_000);
+    load_file(&mut ds, &testdata("rml_hierarchy.ttl")).expect("load ontology data");
+    apply_rml_mappings(&mut ds, &[testdata("rml_xml_students_mapping.ttl")])
+        .expect("should apply RML mapping");
+    apply_ontologies(&mut ds, &[]).expect("should apply OWL-RL with no extra files");
+
+    // Student ⊆ Person via rdfs:subClassOf, loaded as data before the mapping ran.
+    let result = run_sparql_query(
+        &ds,
+        "PREFIX ex: <http://example.com/> SELECT ?s WHERE { ?s a ex:Person . }",
+    )
+    .expect("query should succeed");
+    assert_eq!(
+        result.rows.len(),
+        2,
+        "both mapped students should be inferred as Person"
+    );
+}
+
+#[test]
+fn apply_rml_mappings_nonexistent_file_returns_error() {
+    let mut ds = Datastore::new(1000);
+    let result = apply_rml_mappings(
+        &mut ds,
+        &[Path::new("/nonexistent/mapping.ttl").to_path_buf()],
+    );
+    assert!(result.is_err(), "should fail on nonexistent mapping file");
 }

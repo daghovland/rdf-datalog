@@ -270,6 +270,20 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
                 &etag,
             )
         }
+        QueryResult::Describe(triples) => {
+            // Stub: serialise the same way as CONSTRUCT until a proper DESCRIBE
+            // result format is determined (issue #49).
+            let body = serialize_construct_ntriples(&triples);
+            with_etag(
+                (
+                    StatusCode::OK,
+                    [("content-type", "application/n-triples; charset=utf-8")],
+                    body,
+                )
+                    .into_response(),
+                &etag,
+            )
+        }
     }
 }
 

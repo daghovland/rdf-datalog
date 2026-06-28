@@ -1,0 +1,17 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/StudentMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "rml_nested_students.xml" ;
+        rml:referenceFormulation rml:XPath ;
+        rml:iterator "/root/group/student"
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Student/{id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .

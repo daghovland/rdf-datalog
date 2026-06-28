@@ -89,8 +89,8 @@ impl TestServer {
     /// Start a persistent writable server using the given data directory.
     ///
     /// The changelog is stored at `<data_dir>/dagalog.redb`.  On startup the
-    /// changelog is replayed; any pre-loaded `data` Turtle is ignored after the
-    /// first restart (the log takes precedence).
+    /// changelog entries are applied on top of the pre-loaded `data` Turtle,
+    /// so both sources are visible together.
     pub async fn start_writable_persistent(data: &str, data_dir: &Path) -> Self {
         Self::start_inner_with_data_dir(data, false, false, AuthConfig::None, Some(data_dir)).await
     }
@@ -129,6 +129,7 @@ impl TestServer {
             max_query_timeout_secs: 10,
             auth,
             data_dir: data_dir.map(Path::to_path_buf),
+            ..Default::default()
         };
         let handle = tokio::spawn(async move {
             serve_on_listener(store, config, listener)
@@ -220,6 +221,18 @@ impl TestServer {
     pub fn dataset_update_url(&self, dataset: &str) -> String {
         let name = dataset.trim_start_matches('/');
         format!("{}/{name}/update", self.base_url)
+    }
+
+    /// `POST /{name}/rml` — apply an RML mapping (multipart/form-data) to a dataset.
+    pub fn dataset_rml_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/rml", self.base_url)
+    }
+
+    /// `POST /rml/map` — apply an RML mapping and return the generated RDF
+    /// directly, without touching any dataset.
+    pub fn rml_map_url(&self) -> String {
+        format!("{}/rml/map", self.base_url)
     }
 
     /// `GET/PUT/POST/DELETE/HEAD /{name}/data` — Fuseki GSP read-write endpoint.

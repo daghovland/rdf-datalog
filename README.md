@@ -20,6 +20,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 |---|---|
 | Load RDF from Turtle (`.ttl`) and TriG (`.trig`) | ✓ |
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
+| Map CSV / JSON / JSONL / XML to RDF via RML 1.0 (Rust API, CLI, and REST) | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
 | SPARQL 1.2 SELECT queries (in-process) | ✓ |
 | SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
@@ -56,6 +57,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | `eli` | EL profile normalisation and ELI→Datalog translation |
 | `owl2rl2datalog` | OWL 2 RL → Datalog rule translation (W3C §4.3) |
 | `shacl` | SHACL Core → Datalog translation + `ValidationReport` types |
+| `rml` | RML 1.0 mapping engine: CSV, JSON, JSONL, XML → RDF triples |
 | `rdf_owl_translator` | RDF triples → OWL 2 axiom extraction |
 | `turtle_parser` | Turtle/TriG parser (`rio_turtle`); populates a `Datastore` |
 | `jsonld_parser` | JSON-LD 1.1 parser and serialiser (expanded, compacted, flattened) |
@@ -279,15 +281,20 @@ for row in &result.rows {
 | Basic graph patterns — `;` and `,` shorthand | Full |
 | `FILTER` — comparisons, `regex()`, `lang()`, `bound()`, `EXISTS`, `NOT EXISTS` | Full |
 | `OPTIONAL` | Full |
-| `UNION` | Full |
+| `UNION`, `MINUS` | Full |
 | `GRAPH <iri>` and `GRAPH ?var` — named-graph patterns | Full |
-| `BIND` | Full |
+| `BIND`, subqueries | Full |
 | `VALUES` — inline data | Full |
 | `LIMIT`, `OFFSET` | Full |
-| Property paths — `/` (sequence), multi-hop | Full |
-| `GROUP BY`, `HAVING`, `ORDER BY` | Parsed; execution not yet implemented |
-| Aggregates (`COUNT`, `SUM`, `AVG`, …) | Not yet implemented |
-| `CONSTRUCT`, `ASK`, `DESCRIBE` | Not yet implemented |
+| Property paths — `/`, `*`, `+`, `?`, `\|`, `^`, `!` (all forms) | Full |
+| `GROUP BY`, `HAVING`, `ORDER BY` | Full |
+| Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`) | Full |
+| `CONSTRUCT`, `ASK` | Full |
+| `DESCRIBE` | Not yet implemented ([#49](https://github.com/daghovland/rdf-datalog/issues/49)) |
+| `FROM` / `FROM NAMED` dataset clauses | Not yet implemented ([#50](https://github.com/daghovland/rdf-datalog/issues/50)) |
+| `SERVICE` federated queries | Parsed; silently returns empty — not federated ([#51](https://github.com/daghovland/rdf-datalog/issues/51)) |
+| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, date/time, hash…) | Partially implemented ([#52](https://github.com/daghovland/rdf-datalog/issues/52)) |
+| SPARQL Update `INSERT/DELETE WHERE` | Not yet implemented ([#53](https://github.com/daghovland/rdf-datalog/issues/53)) |
 
 ### SPARQL examples
 
@@ -333,6 +340,114 @@ SELECT DISTINCT ?tag WHERE { ?s <http://example.org/tag> ?tag }
 LIMIT 3
 -- test: readme_sparql_distinct_limit
 ```
+
+---
+
+## RML: mapping CSV, JSON, and XML to RDF
+
+The `rml` crate implements [RML 1.0](https://www.w3.org/TR/rml/) mapping documents.
+A mapping file declares how CSV columns, JSON fields, or XML elements become RDF
+subjects, predicates, and objects. The same `Datastore` can hold both the mapped
+triples and any separately loaded Turtle/JSON-LD ontologies — they are immediately
+queryable together with SPARQL.
+
+### CSV example
+
+```turtle
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+<http://example.com/PersonMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "people.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{id}" ;
+        rml:class ex:Person
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .
+```
+
+### JSON example
+
+```turtle
+rml:logicalSource [
+    rml:source "students.json" ;
+    rml:referenceFormulation rml:JSONPath ;
+    rml:iterator "$.students[*]"    # optional: select array from document
+] ;
+rml:subjectMap [
+    rml:template "http://example.com/Student/{$.id}"
+] ;
+rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "$.name" ]
+] .
+```
+
+JSONL files (`.jsonl`, `.ndjson`) are detected by extension and read line by line.
+
+### XML example
+
+```turtle
+rml:logicalSource [
+    rml:source "students.xml" ;
+    rml:referenceFormulation rml:XPath ;
+    rml:iterator "/students/student"    # XPath selecting the repeating nodes
+] ;
+rml:subjectMap [
+    rml:template "http://example.com/Student/{id}"
+] ;
+rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "name" ]
+] .
+```
+
+`rml:reference` and template expressions are XPath 1.0, evaluated relative to
+each node selected by `rml:iterator` — element names (`name`), attributes
+(`@id`), and relative paths (`address/city`) are all supported.
+
+### Rust API
+
+```rust
+use rml::apply_rml_mapping;
+use dag_rdf::Datastore;
+use std::path::Path;
+
+let mut ds = Datastore::new(100_000);
+apply_rml_mapping(
+    Path::new("mapping.ttl"),  // RML mapping file
+    Path::new("."),            // base directory for rml:source paths
+    &mut ds,
+).unwrap();
+```
+
+### What is supported
+
+| Feature | Status |
+|---|---|
+| CSV sources (`rml:CSV`) | ✓ |
+| JSON array sources (`rml:JSONPath`) | ✓ |
+| JSONL sources (auto-detected by extension) | ✓ |
+| XML sources (`rml:XPath`) | ✓ |
+| `rml:iterator` for nested arrays/elements | ✓ |
+| Template IRI subjects | ✓ |
+| Reference literal objects | ✓ |
+| Language-tagged literals (`rml:language`) | ✓ |
+| Typed literals (`rml:datatype`) | ✓ |
+| Named graphs (`rml:graphMap`) | ✓ |
+| Blank node subjects | ✓ |
+| `rml:class` shorthand | ✓ |
+| Join conditions (`rml:JoinCondition`) | planned |
+| SQL/JDBC sources | planned |
+
+See [docs/user/rml-mapping.md](docs/user/rml-mapping.md) for the full reference.
 
 ---
 
@@ -581,6 +696,22 @@ dagalog --data data.ttl --rules rules.datalog \
 
 Multiple `--data`, `--ontology`, and `--rules` flags may be given.
 
+### RML mapping (CSV / JSON / XML → RDF)
+
+```sh
+dagalog --mapping mapping.ttl \
+        --query "SELECT ?name WHERE { ?p <http://example.com/name> ?name }"
+
+dagalog --data ontology.ttl --mapping mapping.ttl --ontology ontology.ttl \
+        --query "SELECT ?x WHERE { ?x a <http://example.com/Person> }"
+```
+
+`--mapping` applies an [RML](#rml-mapping-csv-json-and-xml-to-rdf) mapping file, generating
+triples from the CSV/JSON/XML sources it references (resolved relative to the mapping
+file's own directory). Mappings run after `--data` is loaded and before `--ontology`/
+`--rules`, so mapped triples participate in reasoning. Multiple `--mapping` flags may
+be given; see the [RML mapping guide](docs/user/rml-mapping.md) for the mapping syntax.
+
 ### Output formats
 
 ```sh
@@ -675,7 +806,7 @@ Every request is classified before the auth check:
 | Permission | Operations |
 |------------|-----------|
 | `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, GSP GET, admin reads |
-| `Write` | `POST /{name}/update`, `PUT`/`POST`/`DELETE` on data and GSP endpoints |
+| `Write` | `POST /{name}/update`, `POST /{name}/rml`, `PUT`/`POST`/`DELETE` on data and GSP endpoints |
 | `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop) |
 
 `Write` implies `Read`. `Admin` implies both.
@@ -931,8 +1062,13 @@ The server exposes a `default` dataset at `/ds` (and any datasets created via th
 | `GET /{name}/sparql` or `/{name}/query` | SPARQL SELECT |
 | `POST /{name}/sparql` or `/{name}/query` | SPARQL SELECT (form or direct body) |
 | `POST /{name}/update` | SPARQL Update (INSERT/DELETE/CLEAR/DROP/…) |
+| `POST /{name}/rml` | Apply an RML mapping (`multipart/form-data`), merge into the dataset |
 | `GET|PUT|POST|DELETE|HEAD /{name}/data` | GSP read-write |
 | `GET|HEAD /{name}/get` | GSP read-only |
+
+`POST /rml/map` (root-level, not dataset-scoped) applies an RML mapping and
+returns the generated RDF directly, touching no dataset — see the
+[RML mapping guide](docs/user/rml-mapping.md#applying-mappings-over-http).
 
 ### Admin API (`/$/…`)
 
