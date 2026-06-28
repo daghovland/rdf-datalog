@@ -1,0 +1,42 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex: <http://example.com/> .
+
+<http://example.com/SportMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sport.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/sport/{ID}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate rdfs:label ;
+        rml:objectMap [ rml:reference "Name" ]
+    ] .
+
+<http://example.com/StudentMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "student.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/student/{ID}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate foaf:name ;
+        rml:objectMap [ rml:reference "Name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:practises ;
+        rml:objectMap [
+            rml:parentTriplesMap <http://example.com/SportMap> ;
+            rml:joinCondition [
+                rml:child "Sport" ;
+                rml:parent "ID"
+            ]
+        ]
+    ] .

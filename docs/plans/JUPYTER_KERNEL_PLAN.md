@@ -1,6 +1,8 @@
 # Jupyter Kernel Plan: `dagalog-kernel`
 
-> **Status: RED PHASE** — stubs and ignored tests created; awaiting review before implementation.
+> Tracked in [epic #28](https://github.com/daghovland/rdf-datalog/issues/28).
+> `%%validate` wiring detail: `VALIDATE_MAGIC_PLAN.md`. `%%ottr` magic
+> depends on [issue #22](https://github.com/daghovland/rdf-datalog/issues/22).
 
 ## Goal
 
@@ -154,7 +156,7 @@ a live Jupyter client (see developer setup below).
 3. **Session state** — persistent Datastore, `%%load` and `%%turtle` magics
 4. **RML magic** — `%%rml` (depends on `rml` crate)
 5. **`%%reason`, `%%validate`** — wire OWL-RL and SHACL
-6. **Completion** — keyword completion for SPARQL
+6. **Completion** — keyword completion for SPARQL ([issue #23](https://github.com/daghovland/rdf-datalog/issues/23)), hover docs ([issue #24](https://github.com/daghovland/rdf-datalog/issues/24))
 
 ---
 

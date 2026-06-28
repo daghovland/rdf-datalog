@@ -17,6 +17,7 @@ Contact: hovlanddag@gmail.com
 use dag_rdf::{Datastore, GraphElement, RdfLiteral};
 use dagalog::{apply_rules, graph_element_display, load_file, run_sparql_query};
 use datalog::types::{RuleAtom, RuleHead};
+use ingress::{IriReference, RdfResource};
 use sparql_parser::ast::{BinaryOp, Expression};
 use std::path::Path;
 
@@ -917,6 +918,142 @@ ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 20) .
         !violators.contains(&"<http://example.org/bob>".to_string()),
         "bob (age 25) should NOT violate; got: {:?}",
         violators
+    );
+}
+
+// ── Deletion of facts that infer new facts (issue #79, #83) ──────────────────
+//
+// Tests verify that re-running evaluate_rules after removing a base fact
+// no longer produces the derived fact. See docs/plans/PERSISTENCE_PLAN.md Part 2
+// for the planned Backward/Forward incremental algorithm (issue #83).
+
+/// Deleting a base fact causes a single-step inference to disappear.
+///
+/// Rule:  grandparent(?X,?Z) :- parent(?X,?Y), parent(?Y,?Z).
+/// After removing parent(a,b), grandparent(a,c) must no longer hold.
+///
+/// Currently ignored: naive forward-chaining cannot retract derived facts after
+/// a base fact is deleted. Requires the BF incremental algorithm from issue #83.
+/// See docs/plans/PERSISTENCE_PLAN.md Part 2.
+#[test]
+#[ignore = "naive re-materialisation cannot retract derived facts; see https://github.com/daghovland/rdf-datalog/issues/83"]
+fn delete_base_fact_removes_single_step_inference() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:grandparent[?X, ?Z] :- ex:parent[?X, ?Y], ex:parent[?Y, ?Z] .
+"#;
+    // Set up: a→b, b→c  →  grandparent(a,c)
+    let mut ds = Datastore::new(10_000);
+    let data = r#"
+@prefix ex: <http://example.org/> .
+ex:a ex:parent ex:b .
+ex:b ex:parent ex:c .
+"#;
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    datalog::evaluate_rules(rules.clone(), &mut ds);
+
+    // Verify grandparent(a,c) was derived.
+    let sparql = "SELECT ?o WHERE { <http://example.org/a> <http://example.org/grandparent> ?o }";
+    let before = run_sparql_query(&ds, sparql).unwrap();
+    assert_eq!(
+        before.rows.len(),
+        1,
+        "grandparent(a,c) should be inferred before deletion"
+    );
+
+    // Remove the base fact parent(a,b).
+    let a_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/a".to_owned(),
+    )));
+    let parent_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/parent".to_owned(),
+    )));
+    let b_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/b".to_owned(),
+    )));
+    let a_id = *ds.resources.resource_map.get(&a_el).unwrap();
+    let parent_id = *ds.resources.resource_map.get(&parent_el).unwrap();
+    let b_id = *ds.resources.resource_map.get(&b_el).unwrap();
+    ds.remove_quad(dag_rdf::ingress::Quad {
+        triple_id: dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID,
+        subject: a_id,
+        predicate: parent_id,
+        obj: b_id,
+    });
+
+    // Re-materialise from the remaining base facts.
+    datalog::evaluate_rules(rules, &mut ds);
+
+    // grandparent(a,c) must no longer hold.
+    let after = run_sparql_query(&ds, sparql).unwrap();
+    assert!(
+        after.rows.is_empty(),
+        "grandparent(a,c) must disappear after deleting parent(a,b); got {} rows",
+        after.rows.len()
+    );
+}
+
+/// Deleting a fact propagates through a chain of inferences.
+///
+/// Rules: uncle(?X,?Z) :- sibling(?X,?Y), parent(?Z,?Y).
+/// When sibling(a,b) is removed, uncle(a,c) must no longer hold even though
+/// parent(c,b) remains.
+///
+/// Currently ignored: naive forward-chaining cannot retract derived facts after
+/// a base fact is deleted. Requires the BF incremental algorithm from issue #83.
+/// See docs/plans/PERSISTENCE_PLAN.md Part 2.
+#[test]
+#[ignore = "naive re-materialisation cannot retract derived facts; see https://github.com/daghovland/rdf-datalog/issues/83"]
+fn delete_base_fact_removes_chained_inference() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:uncle[?X, ?Z] :- ex:sibling[?X, ?Y], ex:parent[?Z, ?Y] .
+"#;
+    let mut ds = Datastore::new(10_000);
+    let data = r#"
+@prefix ex: <http://example.org/> .
+ex:a ex:sibling ex:b .
+ex:c ex:parent  ex:b .
+"#;
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    datalog::evaluate_rules(rules.clone(), &mut ds);
+
+    let sparql = "SELECT ?z WHERE { <http://example.org/a> <http://example.org/uncle> ?z }";
+    let before = run_sparql_query(&ds, sparql).unwrap();
+    assert!(
+        !before.rows.is_empty(),
+        "uncle(a,c) should be inferred initially"
+    );
+
+    // Remove sibling(a,b).
+    let a_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/a".to_owned(),
+    )));
+    let sibling_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/sibling".to_owned(),
+    )));
+    let b_el = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        "http://example.org/b".to_owned(),
+    )));
+    let a_id = *ds.resources.resource_map.get(&a_el).unwrap();
+    let sibling_id = *ds.resources.resource_map.get(&sibling_el).unwrap();
+    let b_id = *ds.resources.resource_map.get(&b_el).unwrap();
+    ds.remove_quad(dag_rdf::ingress::Quad {
+        triple_id: dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID,
+        subject: a_id,
+        predicate: sibling_id,
+        obj: b_id,
+    });
+
+    datalog::evaluate_rules(rules, &mut ds);
+
+    let after = run_sparql_query(&ds, sparql).unwrap();
+    assert!(
+        after.rows.is_empty(),
+        "uncle(a,c) must disappear after deleting sibling(a,b); got {} rows",
+        after.rows.len()
     );
 }
 

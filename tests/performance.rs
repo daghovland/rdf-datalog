@@ -169,7 +169,9 @@ fn run_sparql(
         .1;
     match execute(&query, datastore).expect("SPARQL execution must succeed") {
         QueryResult::Select(r) => r.rows,
-        QueryResult::Ask(_) | QueryResult::Construct(_) => panic!("expected SELECT result"),
+        QueryResult::Ask(_) | QueryResult::Construct(_) | QueryResult::Describe(_) => {
+            panic!("expected SELECT result")
+        }
     }
 }
 

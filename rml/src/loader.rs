@@ -6,8 +6,8 @@ use turtle::parse_turtle;
 
 use crate::RmlError;
 use crate::ast::{
-    GraphMap, LogicalSource, LogicalSourceRef, MappingDocument, ObjectMap, PredicateObjectMap,
-    ReferenceFormulation, SubjectMap, TermMap, TermType, TriplesMap,
+    GraphMap, JoinConditionRef, LogicalSource, LogicalSourceRef, MappingDocument, ObjectMap,
+    PredicateObjectMap, ReferenceFormulation, SubjectMap, TermMap, TermType, TriplesMap,
 };
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
@@ -116,6 +116,22 @@ fn extract_graph_maps(ds: &Datastore, node: GraphElementId) -> Vec<GraphMap> {
         .collect()
 }
 
+fn extract_join_conditions(ds: &Datastore, om_id: GraphElementId) -> Vec<JoinConditionRef> {
+    all_objs(ds, om_id, &rml("joinCondition"))
+        .into_iter()
+        .filter_map(|jc_id| {
+            let child =
+                first_obj(ds, jc_id, &rml("child")).and_then(|id| get_literal_string(ds, id))?;
+            let parent =
+                first_obj(ds, jc_id, &rml("parent")).and_then(|id| get_literal_string(ds, id))?;
+            Some(JoinConditionRef {
+                child: child.to_string(),
+                parent: parent.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn extract_logical_source(
     ds: &Datastore,
     tm_id: GraphElementId,
@@ -215,6 +231,7 @@ fn extract_predicate_object_maps(ds: &Datastore, tm_id: GraphElementId) -> Vec<P
                     language: None,
                     datatype: None,
                     parent_triples_map: None,
+                    join_conditions: vec![],
                 });
             }
             for om_id in all_objs(ds, pom_id, &rml("objectMap")) {
@@ -237,6 +254,7 @@ fn extract_predicate_object_maps(ds: &Datastore, tm_id: GraphElementId) -> Vec<P
                 let parent_triples_map = first_obj(ds, om_id, &rml("parentTriplesMap"))
                     .and_then(|id| get_iri(ds, id))
                     .map(|s| IriReference(s.to_string()));
+                let join_conditions = extract_join_conditions(ds, om_id);
 
                 object_maps.push(ObjectMap {
                     term_map,
@@ -244,6 +262,7 @@ fn extract_predicate_object_maps(ds: &Datastore, tm_id: GraphElementId) -> Vec<P
                     language,
                     datatype,
                     parent_triples_map,
+                    join_conditions,
                 });
             }
 

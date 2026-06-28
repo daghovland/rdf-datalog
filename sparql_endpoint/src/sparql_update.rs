@@ -16,14 +16,21 @@ Contact: hovlanddag@gmail.com
 use crate::persistence::{LogEntry, to_repr};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
+use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
+use sparql_parser::{ParserContext, QueryResult, SolutionRow, execute, parse_query};
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 // ── AST ───────────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub enum UpdateOp {
-    InsertData { content: String },
-    DeleteData { content: String },
+    InsertData {
+        content: String,
+    },
+    DeleteData {
+        content: String,
+    },
     ClearDefault,
     ClearNamed,
     ClearAll,
@@ -33,6 +40,31 @@ pub enum UpdateOp {
     DropAll,
     DropGraph(String),
     CreateGraph(String),
+    /// `INSERT { template } WHERE { pattern }`.
+    ///
+    /// Not yet logged for persistence — see
+    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    InsertWhere {
+        template: String,
+        pattern: String,
+    },
+    /// `DELETE { template } WHERE { pattern }`.
+    ///
+    /// Not yet logged for persistence — see
+    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    DeleteWhere {
+        template: String,
+        pattern: String,
+    },
+    /// `DELETE { delete_template } INSERT { insert_template } WHERE { pattern }`.
+    ///
+    /// Not yet logged for persistence — see
+    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    DeleteInsertWhere {
+        delete_template: String,
+        insert_template: String,
+        pattern: String,
+    },
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -111,18 +143,49 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
         return Err("empty input".to_string());
     }
 
-    // INSERT DATA { ... }
+    // INSERT DATA { ... }  |  INSERT { template } WHERE { pattern }
     if let Some(rest) = kw(s, "INSERT") {
-        let rest = kw(rest, "DATA").ok_or("expected DATA after INSERT")?;
-        let (content, rest) = take_braced(rest).ok_or("expected { } after INSERT DATA")?;
-        return Ok((UpdateOp::InsertData { content }, rest));
+        if let Some(data_rest) = kw(rest, "DATA") {
+            let (content, rest) = take_braced(data_rest).ok_or("expected { } after INSERT DATA")?;
+            return Ok((UpdateOp::InsertData { content }, rest));
+        }
+        let (template, rest) = take_braced(rest).ok_or("expected { } after INSERT")?;
+        let rest = kw(rest, "WHERE").ok_or("expected WHERE after INSERT { ... }")?;
+        let (pattern, rest) = take_braced(rest).ok_or("expected { } after WHERE")?;
+        return Ok((UpdateOp::InsertWhere { template, pattern }, rest));
     }
 
-    // DELETE DATA { ... }
+    // DELETE DATA { ... }  |  DELETE { template } WHERE { pattern }
+    //   |  DELETE { d } INSERT { i } WHERE { pattern }
     if let Some(rest) = kw(s, "DELETE") {
-        let rest = kw(rest, "DATA").ok_or("expected DATA after DELETE")?;
-        let (content, rest) = take_braced(rest).ok_or("expected { } after DELETE DATA")?;
-        return Ok((UpdateOp::DeleteData { content }, rest));
+        if let Some(data_rest) = kw(rest, "DATA") {
+            let (content, rest) = take_braced(data_rest).ok_or("expected { } after DELETE DATA")?;
+            return Ok((UpdateOp::DeleteData { content }, rest));
+        }
+        let (delete_template, rest) = take_braced(rest).ok_or("expected { } after DELETE")?;
+        if let Some(insert_rest) = kw(rest, "INSERT") {
+            let (insert_template, rest) =
+                take_braced(insert_rest).ok_or("expected { } after INSERT")?;
+            let rest = kw(rest, "WHERE").ok_or("expected WHERE after INSERT { ... }")?;
+            let (pattern, rest) = take_braced(rest).ok_or("expected { } after WHERE")?;
+            return Ok((
+                UpdateOp::DeleteInsertWhere {
+                    delete_template,
+                    insert_template,
+                    pattern,
+                },
+                rest,
+            ));
+        }
+        let rest = kw(rest, "WHERE").ok_or("expected WHERE after DELETE { ... }")?;
+        let (pattern, rest) = take_braced(rest).ok_or("expected { } after WHERE")?;
+        return Ok((
+            UpdateOp::DeleteWhere {
+                template: delete_template,
+                pattern,
+            },
+            rest,
+        ));
     }
 
     // CLEAR [SILENT] (DEFAULT | NAMED | ALL | GRAPH <iri>)
@@ -223,6 +286,19 @@ pub enum PreparedOp {
     DropAll,
     DropGraph(String),
     CreateGraph(String),
+    /// WHERE-form update, executed against the live store at apply time.
+    ///
+    /// Unlike the other variants, the WHERE clause is evaluated lazily in
+    /// `apply_prepared_update` rather than at `prepare_update` time, because
+    /// solutions depend on the state of the store *after* any preceding ops
+    /// in the same request have already been applied. These updates are not
+    /// yet written to the changelog — see
+    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    PatternUpdate {
+        delete_template: Option<String>,
+        insert_template: Option<String>,
+        pattern: String,
+    },
 }
 
 /// Parse `ops`, build WAL entries, and return prepared ops ready for apply.
@@ -314,6 +390,34 @@ pub fn prepare_update(
                 prepared.push(PreparedOp::CreateGraph(iri));
                 // No quads added; nothing to log.
             }
+            UpdateOp::InsertWhere { template, pattern } => {
+                // Not yet logged for persistence; see issue #53.
+                prepared.push(PreparedOp::PatternUpdate {
+                    delete_template: None,
+                    insert_template: Some(template),
+                    pattern,
+                });
+            }
+            UpdateOp::DeleteWhere { template, pattern } => {
+                // Not yet logged for persistence; see issue #53.
+                prepared.push(PreparedOp::PatternUpdate {
+                    delete_template: Some(template),
+                    insert_template: None,
+                    pattern,
+                });
+            }
+            UpdateOp::DeleteInsertWhere {
+                delete_template,
+                insert_template,
+                pattern,
+            } => {
+                // Not yet logged for persistence; see issue #53.
+                prepared.push(PreparedOp::PatternUpdate {
+                    delete_template: Some(delete_template),
+                    insert_template: Some(insert_template),
+                    pattern,
+                });
+            }
         }
     }
 
@@ -373,8 +477,164 @@ pub fn apply_prepared_update(store: &mut Datastore, ops: Vec<PreparedOp>) -> Res
                 let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri)));
                 store.resources.add_resource(elem);
             }
+            PreparedOp::PatternUpdate {
+                delete_template,
+                insert_template,
+                pattern,
+            } => {
+                apply_pattern_update(
+                    store,
+                    delete_template.as_deref(),
+                    insert_template.as_deref(),
+                    &pattern,
+                )?;
+            }
         }
     }
+    Ok(())
+}
+
+// ── WHERE-form pattern updates ────────────────────────────────────────────────
+//
+// `INSERT { ... } WHERE { ... }`, `DELETE { ... } WHERE { ... }`, and the
+// combined `DELETE { ... } INSERT { ... } WHERE { ... }` form.
+//
+// These are evaluated by wrapping the WHERE clause text in a synthetic
+// `SELECT * WHERE { ... }` query and reusing the `sparql_parser` query
+// executor to obtain solution bindings, then materialising the DELETE/INSERT
+// templates (themselves parsed as a bare BGP) once per solution row.
+//
+// Not yet logged to the changelog for persistence — see
+// <https://github.com/daghovland/rdf-datalog/issues/53>.
+
+/// Parse `pattern` as the WHERE clause of a `SELECT * WHERE { pattern }`
+/// query and execute it against `store`, returning the solution rows.
+fn eval_where_pattern(store: &Datastore, pattern: &str) -> Result<Vec<SolutionRow>, String> {
+    let query_text = format!("SELECT * WHERE {{ {pattern} }}");
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(&query_text, &mut ctx)
+        .map_err(|e| format!("WHERE clause parse error: {e:?}"))?;
+    match execute(&query, store).map_err(|e| format!("WHERE clause execution error: {e}"))? {
+        QueryResult::Select(select_result) => Ok(select_result.rows),
+        other => Err(format!(
+            "WHERE clause did not evaluate to a solution sequence: {:?}",
+            std::mem::discriminant(&other)
+        )),
+    }
+}
+
+/// Parse a DELETE/INSERT template as a bare Basic Graph Pattern and return
+/// its triple patterns, by wrapping it the same way as a WHERE clause.
+fn parse_template(template: &str) -> Result<Vec<TriplePattern>, String> {
+    let query_text = format!("SELECT * WHERE {{ {template} }}");
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) =
+        parse_query(&query_text, &mut ctx).map_err(|e| format!("template parse error: {e:?}"))?;
+    let where_clause = match query {
+        Query::Select { where_clause, .. } => where_clause,
+        _ => return Err("template did not parse as a graph pattern".to_string()),
+    };
+    let mut patterns = Vec::new();
+    for component in where_clause {
+        match component {
+            QueryComponent::BGP(triples) => patterns.extend(triples),
+            other => {
+                return Err(format!(
+                    "unsupported construct in DELETE/INSERT template: {:?}",
+                    std::mem::discriminant(&other)
+                ));
+            }
+        }
+    }
+    Ok(patterns)
+}
+
+/// Resolve a template `Term` against a solution row, returning `None` if the
+/// term is an unbound variable (in which case the ground triple is skipped).
+fn resolve_term(term: &Term, row: &SolutionRow) -> Option<GraphElement> {
+    match term {
+        Term::Constant(elem) => Some(elem.clone()),
+        Term::Variable(name) => row.get(name).cloned(),
+    }
+}
+
+/// Materialise `triples` against every row in `rows`, producing ground
+/// `(subject, predicate, object)` `GraphElement` triples. Rows that leave a
+/// template variable unbound are skipped for that triple pattern.
+fn materialise_template(
+    triples: &[TriplePattern],
+    rows: &[SolutionRow],
+) -> Vec<(GraphElement, GraphElement, GraphElement)> {
+    let mut out = Vec::new();
+    for row in rows {
+        for pattern in triples {
+            let s = resolve_term(&pattern.subject, row);
+            let p = resolve_term(&pattern.predicate, row);
+            let o = resolve_term(&pattern.object, row);
+            if let (Some(s), Some(p), Some(o)) = (s, p, o) {
+                out.push((s, p, o));
+            }
+        }
+    }
+    out
+}
+
+fn ground_quad(
+    store: &mut Datastore,
+    s: GraphElement,
+    p: GraphElement,
+    o: GraphElement,
+) -> ingress::Quad {
+    ingress::Quad {
+        triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+        subject: store.add_resource(s),
+        predicate: store.add_resource(p),
+        obj: store.add_resource(o),
+    }
+}
+
+fn apply_pattern_update(
+    store: &mut Datastore,
+    delete_template: Option<&str>,
+    insert_template: Option<&str>,
+    pattern: &str,
+) -> Result<(), String> {
+    let rows = eval_where_pattern(store, pattern)?;
+
+    // Materialise DELETE first (against the pre-update store), matching the
+    // SPARQL 1.1 Update semantics that DELETE and INSERT templates are both
+    // evaluated against the bindings produced by the single WHERE solution
+    // set, before any of the deletions/insertions are applied.
+    let to_delete = match delete_template {
+        Some(template) => {
+            let triples = parse_template(template)?;
+            materialise_template(&triples, &rows)
+        }
+        None => Vec::new(),
+    };
+    let to_insert = match insert_template {
+        Some(template) => {
+            let triples = parse_template(template)?;
+            materialise_template(&triples, &rows)
+        }
+        None => Vec::new(),
+    };
+
+    for (s, p, o) in to_delete {
+        let quad = ground_quad(store, s, p, o);
+        if store.named_graphs.contains(&quad) {
+            store.remove_quad(quad);
+        }
+    }
+    for (s, p, o) in to_insert {
+        let quad = ground_quad(store, s, p, o);
+        store.add_quad(quad);
+    }
+
     Ok(())
 }
 

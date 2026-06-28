@@ -89,8 +89,8 @@ impl TestServer {
     /// Start a persistent writable server using the given data directory.
     ///
     /// The changelog is stored at `<data_dir>/dagalog.redb`.  On startup the
-    /// changelog is replayed; any pre-loaded `data` Turtle is ignored after the
-    /// first restart (the log takes precedence).
+    /// changelog entries are applied on top of the pre-loaded `data` Turtle,
+    /// so both sources are visible together.
     pub async fn start_writable_persistent(data: &str, data_dir: &Path) -> Self {
         Self::start_inner_with_data_dir(data, false, false, AuthConfig::None, Some(data_dir)).await
     }

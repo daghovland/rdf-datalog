@@ -1,5 +1,11 @@
 # RML XML Source Plan
 
+> Part of [#25 RML pipeline remaining source/function gaps](https://github.com/daghovland/rdf-datalog/issues/25). `XmlSource`/`XmlRow` (`rml/src/sources/xml.rs`),
+> loader recognition of `rml:XPath`/`ql:XPath`, 9 end-to-end fixture tests
+> (`rml/tests/xml_end_to_end.rs`) and 5 root-crate integration tests
+> (`tests/rml_xml_integration.rs`) all green. Documented in
+> `docs/user/rml-mapping.md` and `README.md`.
+
 ## Goal
 
 Extend the `rml` crate to support XML files as `LogicalSource` inputs, using XPath

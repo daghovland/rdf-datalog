@@ -10,7 +10,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Implements the configuration-query index from:
 //! Klungre, Soylu, Giese — "Avoiding unproductive SPARQL queries through optimized
-//! indices", World Wide Web 29:32 (2026). https://doi.org/10.1007/s11280-026-01419-6
+//! indices", World Wide Web 29:32 (2026). <https://doi.org/10.1007/s11280-026-01419-6>
 //!
 //! The index allows an interactive query builder to instantly detect which filter
 //! values would make a partially-formed SPARQL query return no results, without

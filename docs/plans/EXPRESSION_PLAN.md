@@ -11,15 +11,10 @@ guard predicates in Datalog rule bodies, so that:
 3. The Datalog parser (`datalog_parser`) can accept FILTER guards in rule bodies.
 4. Any capabilities beyond SPARQL 1.1 expressions use [RDFox built-in syntax](https://docs.oxfordsemantic.tech/builtins.html).
 
-## Current state
+## Overview
 
-| Component | Status |
-|---|---|
-| `sparql_parser/src/ast.rs` — `Expression` enum | ✓ Full SPARQL 1.1 expression AST |
-| `sparql_parser/src/execute.rs` — `eval_expression_bool`, `eval_expression_value` | ✓ Full SPARQL 1.1 evaluation (private) |
-| `datalog/src/types.rs` — `RuleAtom` | Only `PositivePattern`, `NotPattern`, `NotEqualsAtom` |
-| `datalog/src/datalog.rs` — `evaluate()` | Handles only `NotEqualsAtom` as a built-in |
-| `shacl/src/evaluate.rs` | Hand-coded Rust for nodeKind, datatype, range, string, pairs |
+This plan is tracked under epic [#59](https://github.com/daghovland/rdf-datalog/issues/59).
+Phase E4 (SHACL refactor) is tracked under [#62](https://github.com/daghovland/rdf-datalog/issues/62).
 
 ## Architecture
 
@@ -159,7 +154,7 @@ SHACL tests continue passing throughout.
 
 ---
 
-### Phase E5 — Datalog parser: FILTER in rule bodies ✓ Done
+### Phase E5 — Datalog parser: FILTER in rule bodies
 
 `datalog_parser/src/lib.rs` now parses `FILTER(expr)` in rule bodies, emitting
 `RuleAtom::FilterAtom`.  The expression parser is shared via `sparql_parser::parse_filter_expression`.
@@ -213,12 +208,8 @@ implemented and tested in `shacl/src/evaluate.rs` using hand-coded Rust.
 
 ---
 
-## Status
+## Progress tracking
 
-| Phase | Status |
-|---|---|
-| E1: Expose SPARQL eval functions as pub | ✓ Done |
-| E2: FilterAtom in Datalog RuleAtom + evaluation | ✓ Done |
-| E3: RDFox-style extensions | Not needed yet |
-| E4: SHACL evaluate.rs → FilterAtom rules (refactor) | Deferred — SHACL tests pass via hand-coded Rust; partial migration possible but counting/set constraints (uniqueLang, xone, qualifiedValueShape) require aggregation not yet in engine |
-| E5: FILTER in Datalog parser | ✓ Done |
+Progress on completed and deferred phases is tracked via GitHub issues:
+- Epic: [#59 Shared Expression Layer](https://github.com/daghovland/rdf-datalog/issues/59)
+- E4 SHACL refactor: [#62 Expression layer E3: replace shacl hand-coded Rust constraint evals](https://github.com/daghovland/rdf-datalog/issues/62)

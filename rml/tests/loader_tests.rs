@@ -372,3 +372,110 @@ fn loader_parses_xpath_reference() {
     let obj = &doc.triples_maps[0].predicate_object_maps[0].object_maps[0];
     assert_eq!(obj.term_map, TermMap::Reference("name".to_string()));
 }
+
+// ── rml:joinCondition (red phase; see docs/plans/RML_JOIN_PLAN.md) ───────────
+
+const JOIN_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex: <http://example.com/> .
+
+<http://example.com/SportMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sport.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/sport/{ID}"
+    ] .
+
+<http://example.com/StudentMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "student.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/student/{ID}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:practises ;
+        rml:objectMap [
+            rml:parentTriplesMap <http://example.com/SportMap> ;
+            rml:joinCondition [
+                rml:child "Sport" ;
+                rml:parent "ID"
+            ]
+        ]
+    ] .
+"#;
+
+const MULTI_JOIN_MAPPING: &str = r#"
+@prefix rml: <http://w3id.org/rml/> .
+@prefix ex: <http://example.com/> .
+
+<http://example.com/SportMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sport.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/sport/{ID}"
+    ] .
+
+<http://example.com/StudentMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "student.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/student/{ID}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:practises ;
+        rml:objectMap [
+            rml:parentTriplesMap <http://example.com/SportMap> ;
+            rml:joinCondition [ rml:child "Sport" ; rml:parent "ID" ] ;
+            rml:joinCondition [ rml:child "Year" ; rml:parent "Year" ]
+        ]
+    ] .
+"#;
+
+#[test]
+fn loader_parses_join_condition_child_and_parent() {
+    let doc = load_mapping_from_str(JOIN_MAPPING).unwrap();
+    let student_map = doc
+        .triples_maps
+        .iter()
+        .find(|tm| tm.id.0 == "http://example.com/StudentMap")
+        .unwrap();
+    let obj = &student_map.predicate_object_maps[0].object_maps[0];
+    assert_eq!(
+        obj.parent_triples_map.as_ref().map(|i| i.0.as_str()),
+        Some("http://example.com/SportMap")
+    );
+    assert_eq!(obj.join_conditions.len(), 1);
+    assert_eq!(obj.join_conditions[0].child, "Sport");
+    assert_eq!(obj.join_conditions[0].parent, "ID");
+}
+
+#[test]
+fn loader_parses_multiple_join_conditions_as_and_semantics() {
+    let doc = load_mapping_from_str(MULTI_JOIN_MAPPING).unwrap();
+    let student_map = doc
+        .triples_maps
+        .iter()
+        .find(|tm| tm.id.0 == "http://example.com/StudentMap")
+        .unwrap();
+    let obj = &student_map.predicate_object_maps[0].object_maps[0];
+    assert_eq!(obj.join_conditions.len(), 2);
+}
+
+#[test]
+fn loader_object_map_without_join_condition_has_empty_vec() {
+    let doc = load_mapping_from_str(SIMPLE_MAPPING).unwrap();
+    let obj = &doc.triples_maps[0].predicate_object_maps[0].object_maps[0];
+    assert!(obj.join_conditions.is_empty());
+}

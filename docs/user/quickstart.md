@@ -119,6 +119,8 @@ SELECT ?contact ?name WHERE {
 
 - [SPARQL guide](sparql-guide.md) — more query patterns, OPTIONAL, UNION, GRAPH
 - [Formats](formats.md) — JSON-LD, Turtle, TriG, N-Triples
+- [OTTR templates](ottr-templates.md) — reusable triple-pattern templates (stOTTR)
+- [RML mapping](rml-mapping.md) — load CSV, JSON, or XML data as RDF
 - [Reasoning and rules](reasoning.md) — OWL-RL reasoning, custom Datalog rules
 - [Deployment](deployment.md) — authentication, Docker, environment variables
 - [Full reference in README](../../README.md) — complete feature reference

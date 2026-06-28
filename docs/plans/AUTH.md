@@ -3,12 +3,12 @@
 This document covers access-control for the HTTP server.  Three tiers are
 planned, in order of complexity:
 
-| Tier | Mechanism | Status | When to use |
-|------|-----------|--------|-------------|
-| 0 | None | Default | Local / trusted-network deployments |
-| 1 | Static API key | **Implemented** (library API; CLI flag pending) | Single-tenant, simple deployments |
-| 2 | Generic OIDC (Azure Entra ID, Google, Keycloak, Auth0, …) | Planned | Multi-user, any cloud or on-prem |
-| 3 | Managed Identity | Planned | Service-to-service inside Azure (no credentials) |
+| Tier | Mechanism | When to use |
+|------|-----------|-------------|
+| 0 | None (default) | Local / trusted-network deployments |
+| 1 | Static API key (`--api-key` / `DAGALOG_API_KEY`) | Single-tenant, simple deployments |
+| 2 | Generic OIDC ([#57](https://github.com/daghovland/rdf-datalog/issues/57)) | Multi-user, any cloud or on-prem |
+| 3 | Managed Identity ([#58](https://github.com/daghovland/rdf-datalog/issues/58)) | Service-to-service inside Azure (no credentials) |
 
 ---
 
@@ -34,7 +34,7 @@ auth credentials — no token can unlock mutating endpoints.
 ### Implementation
 
 Implemented in `sparql_endpoint/src/auth.rs`.  Available through the library
-`Config.auth` field; CLI flags are not yet wired (see implementation order).
+`Config.auth` field and `--api-key` / `DAGALOG_API_KEY` CLI flag are wired in `src/main.rs`.
 
 ### Config (`sparql_endpoint/src/lib.rs`)
 
@@ -662,21 +662,9 @@ Then `curl -H "Authorization: Bearer $(gcloud auth print-identity-token ...)"`.
 
 ---
 
-## Implementation order
+## Progress tracking
 
-| Step | Description | Status |
-|------|-------------|--------|
-| A | Add `AuthConfig` enum + `auth` field to `Config` | ✓ Done |
-| A′ | Extend CLI binary with `--api-key` / `DAGALOG_API_KEY` env var | ✓ Done |
-| B | Implement `classify()` + `auth_middleware`; wire globally into `server.rs` | ✓ Done |
-| C | `require_for_reads` flag — protect read endpoints when set | ✓ Done |
-| D | Add API key input to browser UI | ✓ Done |
-| E | Generalise `EntraConfig` → `OidcConfig`; implement OIDC discovery | ✓ Done |
-| F | Implement JWKS cache (`JwksCache`) and `validate_jwt` | ✓ Done |
-| G | Implement `oidc_auth` middleware; inject `Claims` extension | ✓ Done |
-| H | Unit tests for `classify()` (16 tests in `auth.rs`) | ✓ Done |
-| H′ | Integration tests for API key middleware (8 tests in `tests/auth.rs`) | ✓ Done |
-| I | Unit tests for JWT validation (test RSA key pair + `wiremock`) | ✓ Done |
-| J | Integration test suite with embedded OIDC mock | ✓ Done |
-| K | Add MSAL.js sign-in flow to browser UI (Azure / generic OIDC) | ✓ Done |
-| L | Document Managed Identity setup for Azure Container Apps / AKS | ✓ Done (§Tier 3) |
+Tier 0 (none) and Tier 1 (static API key) are fully implemented, including the `--api-key` CLI flag and OIDC middleware. Progress on remaining tiers is tracked in GitHub:
+- Epic: [#55 Authorization: OIDC and Managed Identity tiers](https://github.com/daghovland/rdf-datalog/issues/55)
+- Tier 2 Generic OIDC: [#57](https://github.com/daghovland/rdf-datalog/issues/57)
+- Tier 3 Azure Managed Identity: [#58](https://github.com/daghovland/rdf-datalog/issues/58)

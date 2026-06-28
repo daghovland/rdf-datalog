@@ -1,6 +1,6 @@
 # Plan: Headless Notebook Integration Test + Datalog Cell Fix
 
-> **Status: RED PHASE** — stubs and ignored tests created; awaiting review before implementation.
+> Tracked under [#28 Jupyter kernel epic](https://github.com/daghovland/rdf-datalog/issues/28).
 
 ## Background
 

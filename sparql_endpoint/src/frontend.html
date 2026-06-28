@@ -1396,7 +1396,8 @@
       try {
         const data = await sparqlFetch(
           'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' +
-          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent } LIMIT 3000'
+          'SELECT ?child ?parent WHERE { ?child rdfs:subClassOf ?parent . ' +
+          'FILTER(isIRI(?child) && isIRI(?parent)) } LIMIT 3000'
         );
         const bindings = data.results?.bindings ?? [];
 

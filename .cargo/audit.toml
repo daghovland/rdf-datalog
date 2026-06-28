@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: Marvin Attack timing side-channel in the rsa crate.
+    # rsa is only a dev-dependency, used in tests to generate ephemeral RSA keypairs
+    # for JWT RS256 unit tests. It is never compiled into the production binary.
+    # Production JWT verification uses jsonwebtoken with the aws_lc_rs backend,
+    # which does not use the rsa crate. No patch is available upstream yet.
+    "RUSTSEC-2023-0071",
+]

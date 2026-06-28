@@ -165,3 +165,35 @@ pub async fn admin_delete_dataset(
         (StatusCode::NOT_FOUND, "Dataset not found").into_response()
     }
 }
+
+// ── F: compaction ─────────────────────────────────────────────────────────────
+
+/// `POST /$/compact` — atomically rewrite the changelog as a minimal snapshot.
+///
+/// Replaces the full mutation history with a single batch of `InsertQuad` entries
+/// for each currently-live quad.  Returns JSON `{"entries_before": N, "entries_after": M}`.
+///
+/// Returns 405 when the server is running in in-memory mode (no changelog).
+pub async fn admin_compact(State(state): State<AppState>) -> axum::response::Response {
+    let Some(ref changelog_lock) = state.changelog else {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Server is not in persistent mode — no changelog to compact",
+        )
+            .into_response();
+    };
+
+    let store = state.store.read().await;
+    let mut changelog = changelog_lock.lock().await;
+
+    match changelog.compact(&store) {
+        Ok((before, after)) => {
+            let body = serde_json::json!({
+                "entries_before": before,
+                "entries_after": after,
+            });
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}

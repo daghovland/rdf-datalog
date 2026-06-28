@@ -243,6 +243,37 @@ impl KernelHarness {
         outcome
     }
 
+    /// Send an arbitrary shell message and wait for the matching shell reply
+    /// (by `msg_id`), returning its `content`.
+    pub async fn request(
+        &mut self,
+        msg_type: &str,
+        content: serde_json::Value,
+    ) -> serde_json::Value {
+        let msg = request(msg_type, &self.session, content);
+        let req_msg_id = msg.header.msg_id.clone();
+        let frames = encode_message(&msg, &self.key, &[]).expect("encode request");
+        self.shell
+            .send(frames_to_zmq(frames))
+            .await
+            .expect("send request");
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {msg_type} reply"
+            );
+            if let Ok(Ok(zmq_msg)) =
+                tokio::time::timeout(Duration::from_millis(300), self.shell.recv()).await
+                && let Ok(reply) = parse_message(&zmq_to_frames(zmq_msg), &self.key)
+                && reply.parent_header["msg_id"] == req_msg_id
+            {
+                return reply.content;
+            }
+        }
+    }
+
     /// Request a graceful shutdown.
     pub async fn shutdown(&mut self) {
         let msg = request(

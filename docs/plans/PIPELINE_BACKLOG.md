@@ -8,7 +8,14 @@ first phase.
 
 ## 1. JSON Source for RML
 
-> **Detailed plan**: see `RML_JSON_PLAN.md`.
+> Detailed plan: `RML_JSON_PLAN.md`. XML/XPath sources were also added
+> afterward (not originally scoped here) — see `RML_XML_PLAN.md` — and the
+> mapping engine is now also exposed over HTTP (`POST /{name}/rml`,
+> `POST /rml/map`) — see `RML_REST_ENDPOINT_PLAN.md`. `rml:JoinCondition`
+> (cross-source joins): see `RML_JOIN_PLAN.md`. Tracked in
+> [epic #25](https://github.com/daghovland/rdf-datalog/issues/25):
+> [SQL/JDBC sources](https://github.com/daghovland/rdf-datalog/issues/26),
+> [FunctionMap (FNML)](https://github.com/daghovland/rdf-datalog/issues/27).
 
 ### Goal
 
@@ -61,6 +68,9 @@ W3C RML test cases JSON subset:
 ---
 
 ## 2. Jupyter Kernel
+
+> Detailed plan: `JUPYTER_KERNEL_PLAN.md`. Tracked in
+> [epic #28](https://github.com/daghovland/rdf-datalog/issues/28).
 
 ### Goal
 
@@ -171,8 +181,8 @@ Messages to implement (minimum viable kernel):
 - heartbeat: echo REQ as REP
 
 Nice-to-have (can be added incrementally):
-- `complete_request` → `complete_reply` (SPARQL keyword + prefix completion)
-- `inspect_request` → `inspect_reply` (hover docs for SPARQL functions)
+- `complete_request` → `complete_reply` (SPARQL keyword + prefix completion) — [issue #23](https://github.com/daghovland/rdf-datalog/issues/23)
+- `inspect_request` → `inspect_reply` (hover docs for SPARQL functions) — [issue #24](https://github.com/daghovland/rdf-datalog/issues/24)
 
 ### Output formats
 
@@ -228,6 +238,8 @@ Writes `~/.local/share/jupyter/kernels/dagalog/kernel.json`:
 
 ## 3. OTTR Template Expansion
 
+> Detailed plan: `OTTR_PLAN.md`. Tracked under [#13](https://github.com/daghovland/rdf-datalog/issues/13).
+
 ### Goal
 
 Add an `ottr` crate implementing OTTR (Reasonable Ontology Templates) template
@@ -236,138 +248,26 @@ data rows to flat RDF, OTTR templates define typed, reusable patterns for
 generating well-structured RDF instances.
 
 Pipeline position: data comes in via RML, is optionally reshaped by OTTR
-templates, then reasoning and SHACL validation run on the result.
-
-### Spec reference
-
-- OTTR specification — <https://spec.ottr.xyz/>
-- Stottr syntax — <https://spec.ottr.xyz/stOTTR/>
-- OTTR test suite (lutra) — <https://gitlab.com/ottr/lutra/lutra-test-suite>
-- OTTR vocabularies: `ottr:` = `http://ns.ottr.xyz/0.4/`
-
-### What OTTR adds
-
-Templates are named patterns that expand to sets of triples. A template
-definition:
-
-```
-@prefix ex: <http://example.com/> .
-@prefix ottr: <http://ns.ottr.xyz/0.4/> .
-
-ex:Person[ottr:IRI ?uri, xsd:string ?name, ottr:IRI ?org] :- {
-  ?uri rdf:type ex:Person ;
-       ex:name ?name ;
-       ex:worksFor ?org .
-} .
-```
-
-A template instance file (`.ottr` or `.stottr` instances section):
-
-```
-ex:Person(<http://example.com/Alice>, "Alice", <http://example.com/Acme>) .
-ex:Person(<http://example.com/Bob>,   "Bob",   <http://example.com/Acme>) .
-```
-
-Expansion produces the expected triples for each instance call.
-
-### Crate: `ottr`
-
-```
-ottr/
-├── Cargo.toml
-└── src/
-    ├── lib.rs         — pub API: expand_instances(templates, instances, datastore)
-    ├── ast.rs         — Template, Parameter, TemplateBody, Instance types
-    ├── parser.rs      — Stottr syntax parser (nom-based, like sparql_parser)
-    ├── expander.rs    — substitute arguments into template body → emit quads
-    └── types.rs       — OTTR type system (IRI, Literal, list types, None)
-```
-
-### Stottr grammar (key productions)
-
-```
-template_def := prefix_decl* template_signature ":-" template_body "."
-template_signature := IRI "[" parameter_list "]"
-parameter_list := parameter ("," parameter)*
-parameter := type? "?"? variable
-
-template_body := "{" pattern_list "}"
-pattern_list := pattern ("," pattern)*
-pattern := triple_pattern | template_instance | list_expander
-
-instance := IRI "(" argument_list ")" "."
-argument_list := argument ("," argument)*
-argument := term | "none"
-```
-
-Types: `ottr:IRI`, `ottr:Literal`, `xsd:string`, `xsd:integer`, etc. Type
-checking is permissive at this phase (warn, don't error).
-
-### Expansion algorithm
-
-For each instance call `T(a1, a2, …)`:
-1. Look up template `T` by IRI
-2. Bind parameters: `?p1 = a1`, `?p2 = a2`, …
-3. For each triple in the template body:
-   - Substitute bound values for variables
-   - Emit quad to Datastore (default graph unless graph clause present)
-4. For nested template calls in the body, recurse
-
-`none` arguments: if a parameter receives `none` and is marked optional (`?`),
-all triples in the body that reference that parameter are silently omitted.
-
-### List expanders
-
-OTTR supports `cross` and `zipMin` expanders over list arguments:
-
-```
-cross | ex:T(?x, ++?list)
-```
-
-This expands to one instance call per element of `?list` crossed with `?x`.
-Defer list expanders to a later sub-phase; core template expansion without
-lists is sufficient to demonstrate value.
-
-### Integration
-
-```
-dagalog --load base.ttl --ottr templates.stottr --instances data.stottr --reason
-```
-
-In a Jupyter notebook cell:
-```
-%%ottr path/to/templates.stottr
-ex:Person(<http://example.com/Alice>, "Alice", <http://example.com/Acme>) .
-```
-
-### Phasing
-
-1. AST types + Stottr template definition parser
-2. Instance file parser
-3. Basic expansion (no lists, no nested templates)
-4. Nested template calls
-5. Optional parameters (`none`)
-6. List expanders (`cross`, `zipMin`)
-7. Integration with CLI and Jupyter magic
-
-### Test plan
-
-Use the lutra test suite (CSV-based, each test has a `.stottr` template file,
-an instances file, and expected N-Triples output). Copy fixtures into
-`ottr/tests/fixtures/`.
+templates, then reasoning and SHACL validation run on the result. See
+`OTTR_PLAN.md` for the full crate layout, grammar, expansion algorithm, and
+9-phase TDD test plan.
 
 ---
 
 ## Dependency ordering
 
 ```
-CSV ingestion (rml crate, CSV source)
+CSV ingestion (rml crate, CSV source)                          — done
     ↓
-JSON ingestion (rml crate, JSON source extension)
+JSON ingestion (rml crate, JSON source extension)               — done
     ↓
-OTTR templates (ottr crate — independent of rml, but most useful after mapping)
+XML ingestion (rml crate, XPath source extension)                — done (not originally scoped)
     ↓
-Jupyter kernel (dagalog-kernel crate — depends on all above for full magic coverage)
+REST endpoints (sparql_endpoint crate, POST /{name}/rml, /rml/map) — done (not originally scoped)
+    ↓
+OTTR templates (ottr crate — independent of rml, but most useful after mapping) — planned, see OTTR_PLAN.md
+    ↓
+Jupyter kernel (dagalog-kernel crate — depends on all above for full magic coverage) — mostly done; %%ottr magic still pending the ottr crate, see https://github.com/daghovland/rdf-datalog/issues/22
 ```
 
 OTTR and JSON source can be developed in parallel after the `rml` CSV core is

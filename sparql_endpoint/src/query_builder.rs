@@ -357,6 +357,131 @@ SELECT ?s ?s_label ?n1 ?n1_label WHERE {
         assert!(sparql.contains("?n2 a <http://example.org/Person> ."));
     }
 
+    // ── QB Phase 3: data-property filters (unit) ─────────────────────────────
+    // These test the generate_sparql filter branch directly.
+
+    #[test]
+    fn filtered_data_prop_emits_required_triple_and_filter_clause() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+            var_name: "s_label".to_string(),
+            checked: true,
+            filter: Some("Alice".to_string()),
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            !sparql.contains("OPTIONAL"),
+            "filtered prop must not be OPTIONAL: {sparql}"
+        );
+        assert!(
+            sparql.contains("?s <http://www.w3.org/2000/01/rdf-schema#label> ?s_label ."),
+            "required triple must appear: {sparql}"
+        );
+        assert!(
+            sparql.contains(r#"FILTER(regex(?s_label, "Alice", "i"))"#),
+            "FILTER clause must appear: {sparql}"
+        );
+    }
+
+    #[test]
+    fn filtered_prop_is_projected_in_select() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://example.org/name".to_string(),
+            var_name: "s_name".to_string(),
+            checked: true,
+            filter: Some("Bob".to_string()),
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            sparql.starts_with("SELECT ?s ?s_name WHERE"),
+            "filtered var must appear in SELECT: {sparql}"
+        );
+    }
+
+    #[test]
+    fn whitespace_only_filter_treated_as_no_filter() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+            var_name: "s_label".to_string(),
+            checked: true,
+            filter: Some("   ".to_string()),
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            sparql.contains("OPTIONAL"),
+            "whitespace-only filter must produce OPTIONAL (treated as absent): {sparql}"
+        );
+        assert!(
+            !sparql.contains("FILTER"),
+            "no FILTER for whitespace-only value: {sparql}"
+        );
+    }
+
+    #[test]
+    fn filter_with_double_quote_is_escaped() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://example.org/desc".to_string(),
+            var_name: "s_desc".to_string(),
+            checked: true,
+            filter: Some(r#"say "hello""#.to_string()),
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            sparql.contains(r#"\"hello\""#),
+            "double quotes in filter must be escaped: {sparql}"
+        );
+    }
+
+    #[test]
+    fn filter_with_backslash_is_escaped() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://example.org/path".to_string(),
+            var_name: "s_path".to_string(),
+            checked: true,
+            filter: Some(r"C:\Users".to_string()),
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            sparql.contains(r"C:\\Users"),
+            "backslashes in filter must be escaped: {sparql}"
+        );
+    }
+
+    #[test]
+    fn mixed_filtered_and_optional_data_props_on_same_node() {
+        let mut root = QueryNode::new("s", "http://example.org/Person");
+        root.data_props.push(DataProp {
+            prop_iri: "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+            var_name: "s_label".to_string(),
+            checked: true,
+            filter: Some("Alice".to_string()),
+        });
+        root.data_props.push(DataProp {
+            prop_iri: "http://example.org/age".to_string(),
+            var_name: "s_age".to_string(),
+            checked: true,
+            filter: None,
+        });
+        let sparql = generate_sparql(&root);
+        assert!(
+            sparql.contains("OPTIONAL"),
+            "unconstrained prop must stay OPTIONAL: {sparql}"
+        );
+        assert!(
+            sparql.contains("FILTER"),
+            "filtered prop must add a FILTER: {sparql}"
+        );
+        assert!(
+            !sparql.contains("OPTIONAL { ?s <http://www.w3.org/2000/01/rdf-schema#label>"),
+            "filtered prop must not be wrapped in OPTIONAL: {sparql}"
+        );
+    }
+
     // ── VQS productive-value hint ─────────────────────────────────────────────
     // Mirrored by filterValueIsProductive() / QB_SELF_TESTS in frontend.html.
 

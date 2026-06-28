@@ -19,18 +19,24 @@ datalog-parser = { path = "../datalog_parser" }
 sparql-parser = { path = "../sparql_parser" }
 turtle = { path = "../turtle" }
 rml = { path = "../rml" }
+ottr = { path = "../ottr" }
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
+shacl = { path = "../shacl" }
 
 tokio = { version = "1", features = ["full"] }
 zeromq = "0.6"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
-dirs = "5"
+dirs = "6"
 thiserror = "2"
 log = "0.4"
+
+[dev-dependencies]
+serial_test = "3"
+tokio = { version = "1", features = ["full"] }

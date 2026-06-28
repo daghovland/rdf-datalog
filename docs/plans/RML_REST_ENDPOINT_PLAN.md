@@ -1,5 +1,12 @@
 # RML REST Endpoint Plan
 
+> **Status: COMPLETE** — `dataset_rml_post`/`rml_map_post`
+> (`sparql_endpoint/src/rml_endpoint.rs`), routes wired in `server.rs` with
+> per-route `DefaultBodyLimit`, `auth.rs::classify` updated for `Write`
+> permission, 15 integration tests (`sparql_endpoint/tests/rml.rs`) and 1
+> auth unit test all green. Documented in
+> `docs/user/rml-mapping.md#applying-mappings-over-http` and `README.md`.
+
 ## Goal
 
 Expose `rml::apply_rml_mapping` on the `sparql_endpoint` HTTP server, so RML
@@ -129,7 +136,7 @@ Add one test case (`post_dataset_rml_is_write`) to the classifier test table.
 - `sparql_endpoint/tests/common/mod.rs` — add `dataset_rml_url(&self, dataset: &str) -> String`.
 - `sparql_endpoint/tests/rml.rs` (new) — integration tests, `#[ignore]`d until
   implementation (red phase).
-- `docs/user/rml-mapping.md` — document the new endpoint once green.
+- `docs/user/rml-mapping.md` — documented (see "Applying mappings over HTTP").
 
 ## Test plan (red phase — all `#[ignore]`d initially)
 

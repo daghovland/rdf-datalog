@@ -1,0 +1,11 @@
+[package]
+name = "ottr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ingress = { path = "../ingress" }
+dag-rdf = { path = "../dag_rdf" }
+nom = "7.1"
+thiserror = "2"
+log = "0.4"

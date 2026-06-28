@@ -90,8 +90,12 @@ fn extension_cases_for_query(
     };
     let where_clause = match &query {
         Query::Select { where_clause, .. } => where_clause,
-        Query::Ask { where_clause } => where_clause,
+        Query::Ask {
+            where_clause,
+            dataset: _,
+        } => where_clause,
         Query::Construct { where_clause, .. } => where_clause,
+        Query::Describe { where_clause, .. } => where_clause,
     };
 
     let branches = collect_branches(where_clause);

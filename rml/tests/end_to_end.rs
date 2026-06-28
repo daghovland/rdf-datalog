@@ -5,7 +5,7 @@
 use dag_rdf::ingress::{Quad, Triple};
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use ingress::RDF_TYPE;
-use rml::apply_rml_mapping;
+use rml::{RmlError, apply_rml_mapping};
 use std::path::Path;
 
 fn fixture(case: &str) -> std::path::PathBuf {
@@ -317,4 +317,74 @@ fn spaces_in_csv_values_are_not_encoded_in_literal_objects() {
     let p = intern!(ds, iri_element("http://example.com/label"));
     let triples: Vec<_> = ds.get_triples_with_object_predicate(o, p).collect();
     assert_eq!(triples.len(), 1);
+}
+
+// ── Security: path traversal via absolute rml:source ──────────────────────────
+
+#[test]
+fn absolute_rml_source_path_is_rejected() {
+    // A mapping that uses an absolute rml:source path must be rejected even if
+    // base_dir.join(absolute) would silently resolve to the absolute path.
+    let tmp = tempfile::tempdir().unwrap();
+    let mapping_ttl = tmp.path().join("mapping.ttl");
+    std::fs::write(
+        &mapping_ttl,
+        r#"@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+ex:TM a rml:TriplesMap ;
+  rml:logicalSource [
+    rml:source "/etc/hostname" ;
+    rml:referenceFormulation rml:CSV
+  ] ;
+  rml:subjectMap  [ rml:template "http://example.com/{col1}" ] ;
+  rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "col1" ]
+  ] .
+"#,
+    )
+    .unwrap();
+    let mut ds = Datastore::new(64);
+    let err = apply_rml_mapping(&mapping_ttl, tmp.path(), &mut ds)
+        .expect_err("absolute rml:source path must be rejected");
+    assert!(
+        matches!(err, RmlError::PathTraversal { .. }),
+        "expected PathTraversal, got: {err}"
+    );
+}
+
+#[test]
+fn dotdot_rml_source_path_is_rejected() {
+    // A mapping that uses a relative path that escapes base_dir via ".." must
+    // also be rejected.
+    let tmp = tempfile::tempdir().unwrap();
+    let subdir = tmp.path().join("sub");
+    std::fs::create_dir(&subdir).unwrap();
+    let mapping_ttl = subdir.join("mapping.ttl");
+    std::fs::write(
+        &mapping_ttl,
+        r#"@prefix rml: <http://w3id.org/rml/> .
+@prefix ex:  <http://example.com/> .
+
+ex:TM a rml:TriplesMap ;
+  rml:logicalSource [
+    rml:source "../../../etc/hostname" ;
+    rml:referenceFormulation rml:CSV
+  ] ;
+  rml:subjectMap  [ rml:template "http://example.com/{col1}" ] ;
+  rml:predicateObjectMap [
+    rml:predicate ex:name ;
+    rml:objectMap [ rml:reference "col1" ]
+  ] .
+"#,
+    )
+    .unwrap();
+    let mut ds = Datastore::new(64);
+    let err = apply_rml_mapping(&mapping_ttl, &subdir, &mut ds)
+        .expect_err("dot-dot rml:source path must be rejected");
+    assert!(
+        matches!(err, RmlError::PathTraversal { .. }),
+        "expected PathTraversal, got: {err}"
+    );
 }
