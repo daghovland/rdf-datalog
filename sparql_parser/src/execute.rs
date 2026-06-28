@@ -934,6 +934,30 @@ fn eval_arithmetic(
     }
 }
 
+/// Shared implementation for the boolean-valued string predicates
+/// `STRSTARTS`, `STRENDS`, and `CONTAINS` (SPARQL 1.1 §17.4.3).
+///
+/// Used by both `eval_function_value` (for `BIND`/projection contexts,
+/// wrapped in a `BooleanLiteral`) and `eval_function_bool` (for direct
+/// `FILTER` contexts) so the two dispatch paths cannot diverge.
+fn eval_string_predicate(
+    name: &str,
+    args: &[Expression],
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Option<bool> {
+    let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+    let text = graph_element_to_string(&text_el)?;
+    let arg_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+    let arg = graph_element_to_string(&arg_el)?;
+    match name {
+        "STRSTARTS" => Some(text.starts_with(arg.as_str())),
+        "STRENDS" => Some(text.ends_with(arg.as_str())),
+        "CONTAINS" => Some(text.contains(arg.as_str())),
+        _ => None,
+    }
+}
+
 fn eval_function_value(
     name: &str,
     args: &[Expression],
@@ -942,6 +966,44 @@ fn eval_function_value(
 ) -> Option<GraphElement> {
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
+        "STRSTARTS" | "STRENDS" | "CONTAINS" => {
+            let b = eval_string_predicate(upper.as_str(), args, sub, datastore)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+        }
+        "STRBEFORE" => {
+            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text = graph_element_to_string(&text_el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = if sep.is_empty() {
+                String::new()
+            } else {
+                match text.find(sep.as_str()) {
+                    Some(idx) => text[..idx].to_string(),
+                    None => String::new(),
+                }
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
+        "STRAFTER" => {
+            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text = graph_element_to_string(&text_el)?;
+            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep = graph_element_to_string(&sep_el)?;
+            let result = if sep.is_empty() {
+                text.clone()
+            } else {
+                match text.find(sep.as_str()) {
+                    Some(idx) => text[idx + sep.len()..].to_string(),
+                    None => String::new(),
+                }
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                result,
+            )))
+        }
         "STR" => {
             let el = eval_expression_value(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
@@ -1041,59 +1103,6 @@ fn eval_function_value(
             };
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
                 result,
-            )))
-        }
-        "STRBEFORE" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
-            let sep = graph_element_to_string(&sep_el)?;
-            let result = s
-                .find(sep.as_str())
-                .map(|i| s[..i].to_string())
-                .unwrap_or_default();
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
-        }
-        "STRAFTER" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
-            let sep = graph_element_to_string(&sep_el)?;
-            let result = s
-                .find(sep.as_str())
-                .map(|i| s[i + sep.len()..].to_string())
-                .unwrap_or_default();
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
-        }
-        "STRSTARTS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
-            let pat = graph_element_to_string(&pat_el)?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
-                s.starts_with(pat.as_str()),
-            )))
-        }
-        "STRENDS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
-            let pat = graph_element_to_string(&pat_el)?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
-                s.ends_with(pat.as_str()),
-            )))
-        }
-        "CONTAINS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
-            let pat = graph_element_to_string(&pat_el)?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
-                s.contains(pat.as_str()),
             )))
         }
         // ── Term construction ─────────────────────────────────────────────────
@@ -1200,7 +1209,7 @@ fn eval_function_value(
                 GraphElement::GraphLiteral(lit) => {
                     let f = literal_to_f64(&lit)?;
                     Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        BigInt::from(f.round() as i64),
+                        BigInt::from((f + 0.5).floor() as i64),
                     )))
                 }
                 _ => None,
@@ -1427,15 +1436,28 @@ fn eval_function_value(
     }
 }
 
-/// Parse an XSD dateTime graph element into a `chrono::DateTime<Utc>`.
-/// Handles both `DateTimeLiteral` (already parsed) and `TypedLiteral` strings.
+/// Parse an XSD dateTime (or date/gYear) graph element into a `chrono::DateTime<Utc>`.
+/// Handles `DateTimeLiteral`, RFC 3339 `xsd:dateTime` strings, `xsd:date` (YYYY-MM-DD),
+/// and `xsd:gYear` (YYYY) so that YEAR/MONTH/DAY work on all common date types.
 fn parse_xsd_datetime(el: &GraphElement) -> Option<chrono::DateTime<chrono::Utc>> {
     match el {
         GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => Some(*dt),
         GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
-            chrono::DateTime::parse_from_rfc3339(literal.as_str())
-                .ok()
-                .map(|dt| dt.with_timezone(&chrono::Utc))
+            // Full RFC 3339 dateTime
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(literal.as_str()) {
+                return Some(dt.with_timezone(&chrono::Utc));
+            }
+            // xsd:date (YYYY-MM-DD)
+            if let Ok(d) = chrono::NaiveDate::parse_from_str(literal.as_str(), "%Y-%m-%d") {
+                return d.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc());
+            }
+            // xsd:gYear ("YYYY")
+            if let Ok(y) = literal.parse::<i32>() {
+                return chrono::NaiveDate::from_ymd_opt(y, 1, 1)
+                    .and_then(|d| d.and_hms_opt(0, 0, 0))
+                    .map(|ndt| ndt.and_utc());
+            }
+            None
         }
         _ => None,
     }
@@ -1560,6 +1582,9 @@ fn eval_function_bool(
 ) -> Option<bool> {
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
+        "STRSTARTS" | "STRENDS" | "CONTAINS" => {
+            eval_string_predicate(upper.as_str(), args, sub, datastore)
+        }
         "BOUND" => {
             if let Some(Expression::Variable(v)) = args.first() {
                 Some(sub.contains_key(v))

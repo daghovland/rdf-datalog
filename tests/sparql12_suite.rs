@@ -34,6 +34,12 @@ fn load(file: &str) -> Datastore {
     ds
 }
 
+fn parse_inline_ttl(ttl: &str) -> Datastore {
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).expect("inline Turtle must parse");
+    ds
+}
+
 fn query_rows(ds: &Datastore, sparql: &str) -> usize {
     run_sparql_query(ds, sparql)
         .expect("query should execute")
@@ -1049,5 +1055,397 @@ SELECT ?x ?z WHERE {
         query_rows(&ds, sparql),
         4,
         "§9: ^foaf:knows/foaf:knows — 4 self-pairs via single common parent"
+    );
+}
+
+// ── §17.4.3  String Functions ────────────────────────────────────────────────
+
+/// SPARQL 1.1 §17.4.3: STRSTARTS as a FILTER condition.
+#[test]
+fn spec_s17_strstarts_filter() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?name WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    FILTER STRSTARTS(?name, "Ali")
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§17.4.3: STRSTARTS(\"Alice\", \"Ali\") is true"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRSTARTS as a BIND expression (value path).
+#[test]
+fn spec_s17_strstarts_bind() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRSTARTS(?name, "Ali") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("true".to_string()),
+        "§17.4.3: BIND(STRSTARTS(...)) should yield boolean true"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRENDS as a FILTER condition.
+#[test]
+fn spec_s17_strends_filter() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?name WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    FILTER STRENDS(?name, "ice")
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§17.4.3: STRENDS(\"Alice\", \"ice\") is true"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRENDS as a BIND expression (value path).
+#[test]
+fn spec_s17_strends_bind() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRENDS(?name, "ice") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("true".to_string()),
+        "§17.4.3: BIND(STRENDS(...)) should yield boolean true"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: CONTAINS as a FILTER condition.
+#[test]
+fn spec_s17_contains_filter() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?name WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    FILTER CONTAINS(?name, "lic")
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§17.4.3: CONTAINS(\"Alice\", \"lic\") is true"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: CONTAINS as a BIND expression (value path), negative case.
+#[test]
+fn spec_s17_contains_bind_false() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(CONTAINS(?name, "zzz") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("false".to_string()),
+        "§17.4.3: BIND(CONTAINS(...)) should yield boolean false when not found"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRBEFORE returns the substring before the first occurrence of sep.
+#[test]
+fn spec_s17_strbefore_match() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice-Bob" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRBEFORE(?name, "-") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("\"Alice\"".to_string()),
+        "§17.4.3: STRBEFORE(\"Alice-Bob\", \"-\") = \"Alice\""
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRBEFORE returns "" when sep does not occur.
+#[test]
+fn spec_s17_strbefore_no_match() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRBEFORE(?name, "-") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("\"\"".to_string()),
+        "§17.4.3: STRBEFORE with no match returns empty string"
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRAFTER returns the substring after the first occurrence of sep.
+#[test]
+fn spec_s17_strafter_match() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice-Bob" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRAFTER(?name, "-") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("\"Bob\"".to_string()),
+        "§17.4.3: STRAFTER(\"Alice-Bob\", \"-\") = \"Bob\""
+    );
+}
+
+/// SPARQL 1.1 §17.4.3: STRAFTER returns "" when sep does not occur.
+#[test]
+fn spec_s17_strafter_no_match() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/name> "Alice" ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/name> ?name .
+    BIND(STRAFTER(?name, "-") AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("\"\"".to_string()),
+        "§17.4.3: STRAFTER with no match returns empty string"
+    );
+}
+
+// ── §17.4.5  Numeric Functions ───────────────────────────────────────────────
+
+/// SPARQL 1.1 §17.4.5: ABS on a negative integer literal.
+#[test]
+fn spec_s17_abs_negative_integer() {
+    let ds = parse_inline_ttl(r#"<http://ex/s> <http://ex/delta> -5 ."#);
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/delta> ?delta .
+    BIND(ABS(?delta) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("5".to_string()),
+        "§17.4.5: ABS(-5) = 5, preserving integer type"
+    );
+}
+
+/// SPARQL 1.1 §17.4.5: CEIL on a decimal literal.
+#[test]
+fn spec_s17_ceil_decimal() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/score> "3.2"^^xsd:decimal .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/score> ?score .
+    BIND(CEIL(?score) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("4".to_string()),
+        "§17.4.5: CEIL(3.2) = 4"
+    );
+}
+
+/// SPARQL 1.1 §17.4.5: FLOOR on a decimal literal.
+#[test]
+fn spec_s17_floor_decimal() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/score> "3.8"^^xsd:decimal .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/score> ?score .
+    BIND(FLOOR(?score) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("3".to_string()),
+        "§17.4.5: FLOOR(3.8) = 3"
+    );
+}
+
+/// SPARQL 1.1 §17.4.5: ROUND on a positive decimal, rounding up at .5.
+#[test]
+fn spec_s17_round_half_up() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/score> "2.5"^^xsd:decimal .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/score> ?score .
+    BIND(ROUND(?score) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("3".to_string()),
+        "§17.4.5: ROUND(2.5) = 3 (round half toward positive infinity)"
+    );
+}
+
+/// SPARQL 1.1 §17.4.5: ROUND on a negative decimal at the .5 boundary rounds
+/// toward positive infinity per spec (not away from zero).
+#[test]
+fn spec_s17_round_negative_half_toward_positive_infinity() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/score> "-2.5"^^xsd:decimal .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/score> ?score .
+    BIND(ROUND(?score) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("-2".to_string()),
+        "§17.4.5: ROUND(-2.5) = -2 per spec (round half toward +infinity), not -3"
+    );
+}
+
+// ── §17.4.6  Date/Time Functions ─────────────────────────────────────────────
+
+/// SPARQL 1.1 §17.4.6: YEAR on an xsd:dateTime literal.
+#[test]
+fn spec_s17_year_datetime() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/published> "2014-03-05T10:20:30Z"^^xsd:dateTime .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/published> ?d .
+    BIND(YEAR(?d) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("2014".to_string()),
+        "§17.4.6: YEAR of a dateTime literal"
+    );
+}
+
+/// SPARQL 1.1 §17.4.6: YEAR on an xsd:gYear literal (common in DBLP-style data).
+#[test]
+fn spec_s17_year_gyear() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/published> "2014"^^xsd:gYear .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/published> ?d .
+    BIND(YEAR(?d) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("2014".to_string()),
+        "§17.4.6: YEAR of an xsd:gYear literal"
+    );
+}
+
+/// SPARQL 1.1 §17.4.6: MONTH on an xsd:date literal.
+#[test]
+fn spec_s17_month_date() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/created> "2014-03-05"^^xsd:date .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/created> ?d .
+    BIND(MONTH(?d) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("3".to_string()),
+        "§17.4.6: MONTH of a date literal"
+    );
+}
+
+/// SPARQL 1.1 §17.4.6: DAY on an xsd:date literal.
+#[test]
+fn spec_s17_day_date() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/created> "2014-03-05"^^xsd:date .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/created> ?d .
+    BIND(DAY(?d) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("5".to_string()),
+        "§17.4.6: DAY of a date literal"
+    );
+}
+
+/// SPARQL 1.1 §17.4.6: DAY on an xsd:dateTime literal (date functions operate on dateTime too).
+#[test]
+fn spec_s17_day_datetime() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+<http://ex/s> <http://ex/published> "2014-03-05T10:20:30Z"^^xsd:dateTime .
+"#,
+    );
+    let sparql = r#"
+SELECT ?b WHERE {
+    <http://ex/s> <http://ex/published> ?d .
+    BIND(DAY(?d) AS ?b)
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "b"),
+        Some("5".to_string()),
+        "§17.4.6: DAY of a dateTime literal"
     );
 }
