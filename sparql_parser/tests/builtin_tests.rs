@@ -1,5 +1,4 @@
-//! Red-phase tests for missing SPARQL 1.1 scalar builtin functions (#52).
-//! All tests are `#[ignore]`'d until implementation is complete.
+//! Tests for SPARQL 1.1 scalar builtin functions (#52).
 //! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md and
 //! https://github.com/daghovland/rdf-datalog/issues/52
 
@@ -311,7 +310,6 @@ fn test_if_false_branch() {
 // https://github.com/daghovland/rdf-datalog/issues/52
 
 #[test]
-#[ignore = "BNODE() not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_bnode_no_arg_returns_blank_node() {
     let result = eval_function(r#"SELECT (BNODE() AS ?result) WHERE {}"#);
     assert!(
@@ -324,7 +322,6 @@ fn test_bnode_no_arg_returns_blank_node() {
 }
 
 #[test]
-#[ignore = "BNODE(str) not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_bnode_with_arg_returns_blank_node() {
     let result = eval_function(r#"SELECT (BNODE("x") AS ?result) WHERE {}"#);
     assert!(
@@ -337,21 +334,18 @@ fn test_bnode_with_arg_returns_blank_node() {
 }
 
 #[test]
-#[ignore = "ENCODE_FOR_URI not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_encode_for_uri() {
     let result = eval_function(r#"SELECT (ENCODE_FOR_URI("Los Angeles") AS ?result) WHERE {}"#);
     assert_eq!(result, Some(str_literal("Los%20Angeles")));
 }
 
 #[test]
-#[ignore = "REPLACE not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_replace_basic() {
     let result = eval_function(r#"SELECT (REPLACE("ababab", "b", "Z") AS ?result) WHERE {}"#);
     assert_eq!(result, Some(str_literal("aZaZaZ")));
 }
 
 #[test]
-#[ignore = "REPLACE with flags not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_replace_with_flag_i() {
     let result =
         eval_function(r#"SELECT (REPLACE("Hello World", "hello", "Hi", "i") AS ?result) WHERE {}"#);
@@ -359,7 +353,6 @@ fn test_replace_with_flag_i() {
 }
 
 #[test]
-#[ignore = "RAND not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_rand_returns_double_in_unit_interval() {
     let result = eval_function(r#"SELECT (RAND() AS ?result) WHERE {}"#);
     match result {
@@ -374,7 +367,6 @@ fn test_rand_returns_double_in_unit_interval() {
 }
 
 #[test]
-#[ignore = "NOW not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_now_returns_datetime() {
     let result = eval_function(r#"SELECT (NOW() AS ?result) WHERE {}"#);
     assert!(
@@ -387,7 +379,6 @@ fn test_now_returns_datetime() {
 }
 
 #[test]
-#[ignore = "YEAR not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_year_from_datetime() {
     let result = eval_function(
         r#"SELECT (YEAR("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -401,7 +392,6 @@ fn test_year_from_datetime() {
 }
 
 #[test]
-#[ignore = "MONTH not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_month_from_datetime() {
     let result = eval_function(
         r#"SELECT (MONTH("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -415,7 +405,6 @@ fn test_month_from_datetime() {
 }
 
 #[test]
-#[ignore = "DAY not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_day_from_datetime() {
     let result = eval_function(
         r#"SELECT (DAY("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -429,7 +418,6 @@ fn test_day_from_datetime() {
 }
 
 #[test]
-#[ignore = "HOURS not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_hours_from_datetime() {
     let result = eval_function(
         r#"SELECT (HOURS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -443,7 +431,6 @@ fn test_hours_from_datetime() {
 }
 
 #[test]
-#[ignore = "MINUTES not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_minutes_from_datetime() {
     let result = eval_function(
         r#"SELECT (MINUTES("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -457,7 +444,6 @@ fn test_minutes_from_datetime() {
 }
 
 #[test]
-#[ignore = "SECONDS not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_seconds_from_datetime() {
     let result = eval_function(
         r#"SELECT (SECONDS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -471,7 +457,6 @@ fn test_seconds_from_datetime() {
 }
 
 #[test]
-#[ignore = "TZ not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_tz_utc() {
     let result = eval_function(
         r#"SELECT (TZ("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
@@ -480,7 +465,6 @@ fn test_tz_utc() {
 }
 
 #[test]
-#[ignore = "MD5 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_md5() {
     // MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
     let result = eval_function(r#"SELECT (MD5("abc") AS ?result) WHERE {}"#);
@@ -491,7 +475,6 @@ fn test_md5() {
 }
 
 #[test]
-#[ignore = "SHA1 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_sha1() {
     // SHA1("abc") = a9993e364706816aba3e25717850c26c9cd0d89d
     let result = eval_function(r#"SELECT (SHA1("abc") AS ?result) WHERE {}"#);
@@ -502,20 +485,18 @@ fn test_sha1() {
 }
 
 #[test]
-#[ignore = "SHA256 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_sha256() {
-    // SHA256("abc") = ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469001d0087592750325
+    // SHA256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
     let result = eval_function(r#"SELECT (SHA256("abc") AS ?result) WHERE {}"#);
     assert_eq!(
         result,
         Some(str_literal(
-            "ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469001d0087592750325"
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         ))
     );
 }
 
 #[test]
-#[ignore = "SHA384 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_sha384() {
     // SHA384("abc") = cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7
     let result = eval_function(r#"SELECT (SHA384("abc") AS ?result) WHERE {}"#);
@@ -528,7 +509,6 @@ fn test_sha384() {
 }
 
 #[test]
-#[ignore = "SHA512 not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_sha512() {
     // SHA512("abc") = ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
     let result = eval_function(r#"SELECT (SHA512("abc") AS ?result) WHERE {}"#);
@@ -541,7 +521,6 @@ fn test_sha512() {
 }
 
 #[test]
-#[ignore = "UUID not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_uuid_returns_urn_iri() {
     let result = eval_function(r#"SELECT (UUID() AS ?result) WHERE {}"#);
     match result {
@@ -556,7 +535,6 @@ fn test_uuid_returns_urn_iri() {
 }
 
 #[test]
-#[ignore = "STRUUID not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/52"]
 fn test_struuid_returns_uuid_string() {
     let result = eval_function(r#"SELECT (STRUUID() AS ?result) WHERE {}"#);
     match result {
