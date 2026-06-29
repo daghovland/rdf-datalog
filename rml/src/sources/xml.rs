@@ -7,6 +7,31 @@ use sxd_xpath::{Context, Factory, Value};
 use crate::RmlError;
 use crate::sources::SourceRow;
 
+/// Returns `true` if `xpath` contains nested predicate brackets, i.e. a `[`
+/// that appears while already inside a `[…]` block.
+///
+/// Such expressions (e.g. `//a[//a[//a]]`) can cause exponential evaluation
+/// complexity and are rejected as unsafe.
+/// See [#88](https://github.com/daghovland/rdf-datalog/issues/88).
+fn has_nested_predicates(xpath: &str) -> bool {
+    let mut depth: u32 = 0;
+    for ch in xpath.chars() {
+        match ch {
+            '[' => {
+                if depth > 0 {
+                    return true;
+                }
+                depth += 1;
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// XML row — holds a pre-parsed `Package` containing one selected element.
 ///
 /// References are XPath 1.0 expressions evaluated relative to the root element.
@@ -120,6 +145,16 @@ impl XmlSource {
     }
 
     fn collect_rows(&self) -> Result<Vec<XmlRow>, RmlError> {
+        // Enforce file-size limit before reading any content.
+        let size_limit = self.size_limit.unwrap_or(crate::MAX_SOURCE_BYTES);
+        let file_size = std::fs::metadata(&self.path)?.len();
+        if file_size > size_limit {
+            return Err(RmlError::SourceTooLarge {
+                limit: size_limit,
+                actual: file_size,
+            });
+        }
+
         let content = std::fs::read_to_string(&self.path)?;
         let package = sxd_document::parser::parse(&content).map_err(|e| RmlError::Xml {
             file: self.path.clone(),
@@ -131,6 +166,15 @@ impl XmlSource {
         let context = Context::new();
 
         let iter_expr = self.iterator.as_deref().unwrap_or("/*");
+
+        // Reject XPath expressions with nested predicates — they can cause
+        // exponential node-set evaluation. See [#88](https://github.com/daghovland/rdf-datalog/issues/88).
+        if has_nested_predicates(iter_expr) {
+            return Err(RmlError::UnsafeExpression(format!(
+                "XPath iterator '{iter_expr}' contains nested predicates, which are not allowed"
+            )));
+        }
+
         let xpath = factory
             .build(iter_expr)
             .map_err(|e| {

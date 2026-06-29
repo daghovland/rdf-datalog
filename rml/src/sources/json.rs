@@ -88,6 +88,26 @@ impl JsonSource {
     }
 
     fn collect_rows(&self) -> Result<Vec<JsonRow>, RmlError> {
+        // Enforce file-size limit before reading any content.
+        let size_limit = self.size_limit.unwrap_or(crate::MAX_SOURCE_BYTES);
+        let file_size = std::fs::metadata(&self.path)?.len();
+        if file_size > size_limit {
+            return Err(RmlError::SourceTooLarge {
+                limit: size_limit,
+                actual: file_size,
+            });
+        }
+
+        // Reject recursive-descent JSONPath iterators (`..`) — they can be
+        // O(n²) on deeply nested input. See [#88](https://github.com/daghovland/rdf-datalog/issues/88).
+        if let Some(iter) = &self.iterator
+            && iter.contains("..")
+        {
+            return Err(RmlError::UnsafeExpression(format!(
+                "recursive-descent operator '..' in JSONPath iterator '{iter}' is not allowed"
+            )));
+        }
+
         match self.format {
             JsonFormat::Json => self.collect_json_rows(),
             JsonFormat::Jsonl => self.collect_jsonl_rows(),

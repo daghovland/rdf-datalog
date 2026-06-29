@@ -23,7 +23,6 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
 // ── #84 / #85: confine_path unit tests ───────────────────────────────────────
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn confine_path_allows_direct_child() {
     let base = temp_dir("confine_child");
     let file = base.join("data.csv");
@@ -37,7 +36,6 @@ fn confine_path_allows_direct_child() {
 }
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn confine_path_allows_nested_child() {
     let base = temp_dir("confine_nested");
     std::fs::create_dir_all(base.join("subdir")).unwrap();
@@ -52,7 +50,6 @@ fn confine_path_allows_nested_child() {
 }
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn confine_path_rejects_absolute_path() {
     let base = temp_dir("confine_absolute");
 
@@ -65,7 +62,6 @@ fn confine_path_rejects_absolute_path() {
 }
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn confine_path_rejects_dotdot_escape() {
     let base = temp_dir("confine_dotdot");
 
@@ -78,7 +74,6 @@ fn confine_path_rejects_dotdot_escape() {
 }
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn confine_path_rejects_dotdot_via_subdir() {
     let base = temp_dir("confine_via_subdir");
     std::fs::create_dir_all(base.join("sub")).unwrap();
@@ -95,7 +90,6 @@ fn confine_path_rejects_dotdot_via_subdir() {
 // ── #84: apply_rml_mapping rejects absolute rml:source ───────────────────────
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn rml_source_absolute_path_is_rejected() {
     let base = temp_dir("rml_abs_source");
 
@@ -122,7 +116,6 @@ fn rml_source_absolute_path_is_rejected() {
 }
 
 #[test]
-#[ignore] // #84 https://github.com/daghovland/rdf-datalog/issues/84
 fn rml_source_dotdot_path_is_rejected() {
     let base = temp_dir("rml_dotdot_source");
 
@@ -150,7 +143,6 @@ fn rml_source_dotdot_path_is_rejected() {
 // ── #86: file size limits ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 fn csv_source_oversized_is_rejected() {
     let dir = temp_dir("csv_size_limit");
     let path = dir.join("big.csv");
@@ -170,7 +162,6 @@ fn csv_source_oversized_is_rejected() {
 }
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 fn csv_source_within_limit_succeeds() {
     let dir = temp_dir("csv_size_ok");
     let path = dir.join("small.csv");
@@ -183,7 +174,6 @@ fn csv_source_within_limit_succeeds() {
 }
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 fn csv_source_row_limit_is_enforced() {
     let dir = temp_dir("csv_row_limit");
     let path = dir.join("many.csv");
@@ -203,7 +193,6 @@ fn csv_source_row_limit_is_enforced() {
 }
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 fn json_source_oversized_is_rejected() {
     let dir = temp_dir("json_size_limit");
     let path = dir.join("big.json");
@@ -227,7 +216,6 @@ fn json_source_oversized_is_rejected() {
 }
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 fn xml_source_oversized_is_rejected() {
     let dir = temp_dir("xml_size_limit");
     let path = dir.join("big.xml");
@@ -248,7 +236,6 @@ fn xml_source_oversized_is_rejected() {
 // ── #86: row count limit via MAX_SOURCE_ROWS constant ─────────────────────────
 
 #[test]
-#[ignore] // #86 https://github.com/daghovland/rdf-datalog/issues/86
 #[allow(clippy::assertions_on_constants)]
 fn max_source_rows_constant_is_sane() {
     // MAX_SOURCE_ROWS must be positive and ≤ 10 million
@@ -259,7 +246,6 @@ fn max_source_rows_constant_is_sane() {
 // ── #88: XPath expression complexity validation ───────────────────────────────
 
 #[test]
-#[ignore] // #88 https://github.com/daghovland/rdf-datalog/issues/88
 fn xml_iterator_with_nested_predicate_is_rejected() {
     let dir = temp_dir("xpath_nested_predicate");
     let path = dir.join("data.xml");
@@ -277,7 +263,6 @@ fn xml_iterator_with_nested_predicate_is_rejected() {
 }
 
 #[test]
-#[ignore] // #88 https://github.com/daghovland/rdf-datalog/issues/88
 fn xml_iterator_simple_path_is_accepted() {
     let dir = temp_dir("xpath_simple_ok");
     let path = dir.join("data.xml");
@@ -290,7 +275,6 @@ fn xml_iterator_simple_path_is_accepted() {
 }
 
 #[test]
-#[ignore] // #88 https://github.com/daghovland/rdf-datalog/issues/88
 fn xml_iterator_descendant_without_nested_predicate_is_accepted() {
     let dir = temp_dir("xpath_descendant_ok");
     let path = dir.join("data.xml");
@@ -304,7 +288,6 @@ fn xml_iterator_descendant_without_nested_predicate_is_accepted() {
 }
 
 #[test]
-#[ignore] // #88 https://github.com/daghovland/rdf-datalog/issues/88
 fn json_iterator_recursive_descent_is_rejected() {
     let dir = temp_dir("jsonpath_recursive");
     let path = dir.join("data.json");
@@ -321,7 +304,6 @@ fn json_iterator_recursive_descent_is_rejected() {
 }
 
 #[test]
-#[ignore] // #88 https://github.com/daghovland/rdf-datalog/issues/88
 fn json_iterator_simple_path_is_accepted() {
     let dir = temp_dir("jsonpath_simple_ok");
     let path = dir.join("data.json");

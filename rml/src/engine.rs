@@ -10,6 +10,7 @@ use crate::plan::{
     FormatFunction, GenerationLogic, LogicalJoin, LogicalPlan, LogicalProjection, LogicalScan,
     OutputAttr, TermPattern,
 };
+use crate::sandbox::confine_path;
 use crate::sources::SourceRow;
 use crate::sources::csv::CsvSource;
 use crate::sources::json::JsonSource;
@@ -46,36 +47,19 @@ fn execute_plan(plan: &LogicalPlan, base_dir: &Path, ds: &mut Datastore) -> Resu
 fn scan_rows(scan: &LogicalScan, base_dir: &Path) -> Result<Vec<Box<dyn SourceRow>>, RmlError> {
     let crate::ast::LogicalSourceRef::File(rel_path) = &scan.source;
     let rel_path = std::path::Path::new(rel_path);
-    // Reject absolute paths before joining — Path::join(absolute) silently
-    // discards the base, so we must check before any filesystem access.
-    let canonical_base = base_dir.canonicalize()?;
-    if rel_path.is_absolute() {
-        return Err(RmlError::PathTraversal {
-            path: rel_path.to_path_buf(),
-            base: canonical_base,
-        });
-    }
-    let path = base_dir.join(rel_path);
-    // Canonicalize resolves symlinks and '..' components; if the result is not
-    // under canonical_base the source is escaping the sandbox.
-    let canonical_path = path.canonicalize()?;
-    if !canonical_path.starts_with(&canonical_base) {
-        return Err(RmlError::PathTraversal {
-            path: canonical_path,
-            base: canonical_base,
-        });
-    }
+    // Reject absolute paths and '..' escapes via the sandbox.
+    let canonical_path = confine_path(base_dir, rel_path)?;
 
     let rows = match scan.reference_formulation {
         ReferenceFormulation::Csv => {
-            let source = CsvSource::new(path);
+            let source = CsvSource::new(canonical_path.clone());
             source
                 .rows()
                 .map(|r| r.map(|raw| Box::new(crate::sources::CsvRow(raw)) as Box<dyn SourceRow>))
                 .collect::<Result<Vec<_>, _>>()?
         }
         ReferenceFormulation::JsonPath => {
-            let mut source = JsonSource::new(path);
+            let mut source = JsonSource::new(canonical_path.clone());
             if let Some(iter) = &scan.iterator {
                 source = source.with_iterator(iter.clone());
             }
@@ -85,7 +69,7 @@ fn scan_rows(scan: &LogicalScan, base_dir: &Path) -> Result<Vec<Box<dyn SourceRo
                 .collect::<Result<Vec<_>, _>>()?
         }
         ReferenceFormulation::XPath => {
-            let mut source = XmlSource::new(path);
+            let mut source = XmlSource::new(canonical_path.clone());
             if let Some(iter) = &scan.iterator {
                 source = source.with_iterator(iter.clone());
             }

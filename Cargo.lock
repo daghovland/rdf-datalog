@@ -771,6 +771,7 @@ dependencies = [
  "sha2 0.11.0",
  "shacl",
  "sparql-parser",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
  "turtle",

@@ -32,6 +32,33 @@ pub fn parse_turtle<R: Read>(datastore: &mut Datastore, reader: R) -> Result<(),
     Ok(())
 }
 
+/// Like [`parse_turtle`] but resolves relative IRIs (e.g. `<#tm>`) against `base_iri`.
+///
+/// Used by the RML loader so that mapping files can use fragment-IRI subjects
+/// such as `<#TriplesMap1>`.
+pub fn parse_turtle_with_base<R: Read>(
+    datastore: &mut Datastore,
+    reader: R,
+    base_iri: &str,
+) -> Result<(), TurtleParseError> {
+    let parser = TurtleParser::new()
+        .with_base_iri(base_iri)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
+    for result in parser.for_reader(reader) {
+        let triple = result?;
+        let subject = intern_subject(datastore, triple.subject);
+        let predicate = intern_named_node(datastore, triple.predicate.into_string());
+        if let Some(obj) = intern_term(datastore, triple.object) {
+            datastore.add_triple(Triple {
+                subject,
+                predicate,
+                obj,
+            });
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_trig<R: Read>(datastore: &mut Datastore, reader: R) -> Result<(), TurtleParseError> {
     for result in TriGParser::new().for_reader(reader) {
         let quad = result?;

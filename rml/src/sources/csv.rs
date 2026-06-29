@@ -47,6 +47,16 @@ impl CsvSource {
     }
 
     fn collect_rows(&self) -> Result<Vec<RawRow>, RmlError> {
+        // Enforce file-size limit before reading any content.
+        let size_limit = self.size_limit.unwrap_or(crate::MAX_SOURCE_BYTES);
+        let file_size = std::fs::metadata(&self.path)?.len();
+        if file_size > size_limit {
+            return Err(RmlError::SourceTooLarge {
+                limit: size_limit,
+                actual: file_size,
+            });
+        }
+
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(self.delimiter)
             .from_path(&self.path)
@@ -65,8 +75,15 @@ impl CsvSource {
             .map(|s| s.to_string())
             .collect();
 
+        let row_limit = self.row_limit.unwrap_or(crate::MAX_SOURCE_ROWS);
         let mut rows = Vec::new();
         for record in reader.records() {
+            if rows.len() >= row_limit {
+                return Err(RmlError::SourceTooLarge {
+                    limit: row_limit as u64,
+                    actual: rows.len() as u64 + 1,
+                });
+            }
             let record = record.map_err(|e| RmlError::Csv {
                 file: self.path.clone(),
                 source: e,

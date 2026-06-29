@@ -63,7 +63,27 @@ pub fn apply_rml_mapping(
     datastore: &mut Datastore,
 ) -> Result<(), RmlError> {
     let mapping = loader::load_mapping(mapping_path)?;
+    // Validate all logical source paths upfront — even mappings with no
+    // predicate-object maps (which generate no execution plans) must have
+    // their sources confined to base_dir.
+    // See [#84](https://github.com/daghovland/rdf-datalog/issues/84).
+    validate_mapping_sources(&mapping, base_dir)?;
     let plans = translate::translate(&mapping);
     let plans = optimizer::constant_fold(plans);
     engine::execute(&plans, base_dir, datastore)
+}
+
+/// Validate that every logical source path in `mapping` is confined to `base_dir`.
+fn validate_mapping_sources(
+    mapping: &ast::MappingDocument,
+    base_dir: &Path,
+) -> Result<(), RmlError> {
+    use crate::ast::LogicalSourceRef;
+    use crate::sandbox::confine_path;
+
+    for tm in &mapping.triples_maps {
+        let LogicalSourceRef::File(rel_path) = &tm.logical_source.source;
+        confine_path(base_dir, rel_path)?;
+    }
+    Ok(())
 }
