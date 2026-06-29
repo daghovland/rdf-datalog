@@ -3,7 +3,7 @@ use dag_rdf::Datastore;
 use zeromq::{Socket, SocketRecv, SocketSend};
 
 use crate::cell::{
-    CellType,
+    CellType, check_path_safe,
     datalog::execute_datalog,
     detect_cell_type,
     ottr::{execute_ottr_file, execute_ottr_inline},
@@ -192,6 +192,9 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
         CellType::Sparql(code) => execute_sparql(ds, &code).map(CellOutput::Rich),
         CellType::Turtle(src) => execute_turtle(ds, &src).map(CellOutput::Stream),
         CellType::Load(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
             let before = ds.named_graphs.quad_count;
             let file = std::fs::File::open(&path)
                 .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
@@ -215,7 +218,12 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
                 if added == 1 { "" } else { "s" }
             )))
         }
-        CellType::Rml(path) => execute_rml(ds, &path).map(CellOutput::Stream),
+        CellType::Rml(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
+            execute_rml(ds, &path).map(CellOutput::Stream)
+        }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
             let ontology_doc = rdf_owl_translator::rdf2owl(ds);
@@ -229,9 +237,19 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             )))
         }
         CellType::Datalog(src) => execute_datalog(ds, &src).map(CellOutput::Stream),
-        CellType::Validate(path) => execute_validate(ds, &path).map(CellOutput::Stream),
+        CellType::Validate(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
+            execute_validate(ds, &path).map(CellOutput::Stream)
+        }
         CellType::OttrInline(src) => execute_ottr_inline(ds, &src).map(CellOutput::Stream),
-        CellType::OttrFile(path) => execute_ottr_file(ds, &path).map(CellOutput::Stream),
+        CellType::OttrFile(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
+            execute_ottr_file(ds, &path).map(CellOutput::Stream)
+        }
     }
 }
 

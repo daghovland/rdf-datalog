@@ -245,6 +245,7 @@ impl KernelHarness {
 
     /// Send an arbitrary shell message and wait for the matching shell reply
     /// (by `msg_id`), returning its `content`.
+    #[allow(dead_code)]
     pub async fn request(
         &mut self,
         msg_type: &str,
@@ -306,6 +307,7 @@ impl Drop for KernelHarness {
 
 /// Read `notebooks/dagalog_intro.ipynb` and return the source of every code
 /// cell, in document order.
+#[allow(dead_code)]
 pub fn notebook_code_cells(repo_root: &Path) -> Vec<String> {
     let path = repo_root.join("notebooks/dagalog_intro.ipynb");
     let text = std::fs::read_to_string(&path)
