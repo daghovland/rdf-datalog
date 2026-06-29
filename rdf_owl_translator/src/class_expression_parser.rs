@@ -60,9 +60,10 @@ impl OntologyDeclarations {
             annotations,
         };
 
-        // Parse anonymous class expressions and restrictions in topological order.
-        parse_anonymous_class_expressions(datastore, ids, &mut decls);
-        parse_anonymous_restrictions(datastore, ids, &mut decls);
+        // Parse anonymous class expressions and restrictions in a single unified
+        // topological sort so cross-type dependencies (e.g. an owl:Class node whose
+        // member list contains owl:Restriction blank nodes) are resolved correctly.
+        parse_anonymous_exprs(datastore, ids, &mut decls);
 
         decls
     }
@@ -414,7 +415,7 @@ fn create_annotation_value(
     }
 }
 
-// ── Anonymous class expressions (Table 13 in the spec) ─────────────────────
+// ── Anonymous class expressions and restrictions (Table 13 in the spec) ────
 
 fn is_owl_axiom_predicate(pred_id: GraphElementId, ids: &WellKnownIds) -> bool {
     pred_id == ids.owl_intersection_of_id
@@ -428,12 +429,30 @@ fn is_owl_axiom_predicate(pred_id: GraphElementId, ids: &WellKnownIds) -> bool {
 type ClassExprBuilder =
     Box<dyn Fn(&OntologyDeclarations, &dag_rdf::GraphElementManager) -> ClassExpression>;
 
-fn parse_anonymous_class_expressions(
-    datastore: &Datastore,
-    ids: &WellKnownIds,
-    decls: &mut OntologyDeclarations,
-) {
-    // Collect all anonymous nodes typed as owl:Class
+/// A lazily-built anonymous node (either an `owl:Class` or `owl:Restriction`
+/// blank node) with its dependency set.  All nodes are collected into one list
+/// and sorted together so cross-type dependencies (e.g. an `owl:Class`
+/// intersection whose member list contains `owl:Restriction` blank nodes) are
+/// resolved in the right order.
+struct AnonExpr {
+    id: GraphElementId,
+    predecessors: Vec<GraphElementId>,
+    builder: ClassExprBuilder,
+}
+
+fn is_anon_blank_node(datastore: &Datastore, id: GraphElementId) -> bool {
+    matches!(
+        datastore.resources.get_resource(id),
+        Some(RdfResource::AnonymousBlankNode(_))
+    )
+}
+
+/// Collect builders for anonymous `owl:Class` nodes (intersectionOf, unionOf,
+/// complementOf, oneOf).  Dependencies include **all** anonymous blank-node
+/// list members, regardless of whether they appear in `class_expressions`
+/// yet — the unified topological sort handles ordering across both class
+/// expressions and restrictions.
+fn collect_anon_class_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<AnonExpr> {
     let anon_class_subjects: Vec<GraphElementId> = datastore
         .get_triples_with_object_predicate(ids.owl_class_id, ids.rdf_type_id)
         .filter_map(|tr| match datastore.resources.get_resource(tr.subject) {
@@ -442,15 +461,7 @@ fn parse_anonymous_class_expressions(
         })
         .collect();
 
-    // For each anonymous class, find the defining predicate
-    // (intersectionOf / unionOf / complementOf / oneOf)
-    struct AnonymousClassExpr {
-        id: GraphElementId,
-        predecessors: Vec<GraphElementId>,
-        builder: ClassExprBuilder,
-    }
-
-    let mut exprs: Vec<AnonymousClassExpr> = Vec::new();
+    let mut exprs: Vec<AnonExpr> = Vec::new();
 
     for subj in anon_class_subjects {
         let triples: Vec<Triple> = datastore.get_triples_with_subject(subj).collect();
@@ -484,14 +495,18 @@ fn parse_anonymous_class_expressions(
             == ids.owl_complement_of_id
         {
             let dep = obj_id;
+            let preds = if is_anon_blank_node(datastore, dep) {
+                vec![dep]
+            } else {
+                vec![]
+            };
             (
-                vec![dep],
+                preds,
                 Box::new(move |decls: &OntologyDeclarations, res| {
                     ClassExpression::ObjectComplementOf(Box::new(decls.class_expression(dep, res)))
                 }),
             )
         } else if pred_id == ids.owl_one_of_id {
-            // owl:oneOf list → ObjectOneOf
             let list_items = get_rdf_list_elements(
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
@@ -514,17 +529,14 @@ fn parse_anonymous_class_expressions(
                 ids,
                 obj_id,
             );
-            let deps = list_items
+            // Include ALL anonymous blank-node list members as predecessors.
+            // Named resources and already-declared class expressions are not
+            // in the node set so topological_sort will ignore them safely.
+            let deps: Vec<GraphElementId> = list_items
                 .iter()
-                .filter(|&&dep| {
-                    !decls.class_expressions.contains_key(&dep)
-                        && matches!(
-                            datastore.resources.get_resource(dep),
-                            Some(RdfResource::AnonymousBlankNode(_))
-                        )
-                })
+                .filter(|&&dep| is_anon_blank_node(datastore, dep))
                 .copied()
-                .collect::<Vec<_>>();
+                .collect();
 
             if pred_id == ids.owl_intersection_of_id {
                 (
@@ -554,45 +566,18 @@ fn parse_anonymous_class_expressions(
             }
         };
 
-        exprs.push(AnonymousClassExpr {
+        exprs.push(AnonExpr {
             id: subj,
             predecessors,
             builder,
         });
     }
 
-    // Topological sort
-    let ids_vec: Vec<GraphElementId> = exprs.iter().map(|e| e.id).collect();
-    let pred_map: HashMap<GraphElementId, Vec<GraphElementId>> = exprs
-        .iter()
-        .map(|e| (e.id, e.predecessors.clone()))
-        .collect();
-    let builder_map: HashMap<GraphElementId, usize> =
-        exprs.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
-
-    let sorted = topological_sort(&ids_vec, &pred_map);
-
-    for id in sorted {
-        if let Some(&idx) = builder_map.get(&id) {
-            let expr = (exprs[idx].builder)(decls, &datastore.resources);
-            decls.class_expressions.insert(id, expr);
-        }
-    }
+    exprs
 }
 
-// ── Anonymous restrictions (Table 13 in the spec) ──────────────────────────
-
-struct Restriction {
-    id: GraphElementId,
-    predecessors: Vec<GraphElementId>,
-    builder: ClassExprBuilder,
-}
-
-fn parse_anonymous_restrictions(
-    datastore: &Datastore,
-    ids: &WellKnownIds,
-    decls: &mut OntologyDeclarations,
-) {
+/// Collect builders for anonymous `owl:Restriction` nodes.
+fn collect_anon_restriction_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<AnonExpr> {
     let restriction_subjects: Vec<GraphElementId> = datastore
         .get_triples_with_object_predicate(ids.owl_restriction_id, ids.rdf_type_id)
         .filter_map(|tr| match datastore.resources.get_resource(tr.subject) {
@@ -607,57 +592,62 @@ fn parse_anonymous_restrictions(
         })
         .collect();
 
-    let mut restrictions: Vec<Restriction> = Vec::new();
+    restriction_subjects
+        .into_iter()
+        .filter_map(|subj| {
+            let triples: Vec<Triple> = datastore
+                .get_triples_with_subject(subj)
+                .filter(|tr| tr.predicate != ids.rdf_type_id)
+                .collect();
 
-    for subj in restriction_subjects {
-        let triples: Vec<Triple> = datastore
-            .get_triples_with_subject(subj)
-            .filter(|tr| tr.predicate != ids.rdf_type_id)
-            .collect();
+            let pred_iris: Vec<String> = triples
+                .iter()
+                .filter_map(|tr| {
+                    datastore
+                        .resources
+                        .get_named_resource(tr.predicate)
+                        .map(|iri| iri.0.clone())
+                })
+                .collect();
 
-        let pred_iris: Vec<String> = triples
-            .iter()
-            .filter_map(|tr| {
-                datastore
-                    .resources
-                    .get_named_resource(tr.predicate)
-                    .map(|iri| iri.0.clone())
-            })
-            .collect();
+            build_restriction(datastore, ids, subj, &triples, &pred_iris)
+        })
+        .collect()
+}
 
-        if let Some(restriction) = build_restriction(datastore, ids, subj, &triples, &pred_iris) {
-            restrictions.push(restriction);
-        }
+/// Parse all anonymous class expressions and restrictions in one unified
+/// topological sort.  This correctly handles cross-type dependencies such as
+/// an `owl:Class` intersection whose member list contains `owl:Restriction`
+/// blank nodes (and vice-versa).
+fn parse_anonymous_exprs(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+    decls: &mut OntologyDeclarations,
+) {
+    let mut all: Vec<AnonExpr> = collect_anon_class_exprs(datastore, ids);
+    all.extend(collect_anon_restriction_exprs(datastore, ids));
+
+    // Deduplicate: a node that is both owl:Class and owl:Restriction typed
+    // (unusual but defensive) should only appear once.
+    {
+        let mut seen = std::collections::HashSet::new();
+        all.retain(|e| seen.insert(e.id));
     }
 
-    // Topological sort
-    let ids_vec: Vec<GraphElementId> = restrictions.iter().map(|r| r.id).collect();
-    let pred_map: HashMap<GraphElementId, Vec<GraphElementId>> = restrictions
-        .iter()
-        .map(|r| (r.id, r.predecessors.clone()))
-        .collect();
-    let builder_map: HashMap<GraphElementId, usize> = restrictions
-        .iter()
-        .enumerate()
-        .map(|(i, r)| (r.id, i))
-        .collect();
+    let ids_vec: Vec<GraphElementId> = all.iter().map(|e| e.id).collect();
+    let pred_map: HashMap<GraphElementId, Vec<GraphElementId>> =
+        all.iter().map(|e| (e.id, e.predecessors.clone())).collect();
+    let builder_map: HashMap<GraphElementId, usize> =
+        all.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
 
     let sorted = topological_sort(&ids_vec, &pred_map);
 
     for id in sorted {
         if let Some(&idx) = builder_map.get(&id) {
-            let expr = (restrictions[idx].builder)(decls, &datastore.resources);
+            let expr = (all[idx].builder)(decls, &datastore.resources);
             decls.class_expressions.insert(id, expr);
         }
     }
-}
-
-fn is_anon_dep(datastore: &Datastore, decls: &OntologyDeclarations, id: GraphElementId) -> bool {
-    !decls.class_expressions.contains_key(&id)
-        && matches!(
-            datastore.resources.get_resource(id),
-            Some(RdfResource::AnonymousBlankNode(_))
-        )
 }
 
 fn find_triple_obj(triples: &[Triple], predicate_id: GraphElementId) -> Option<GraphElementId> {
@@ -702,7 +692,7 @@ fn build_restriction(
     subj: GraphElementId,
     triples: &[Triple],
     pred_iris: &[String],
-) -> Option<Restriction> {
+) -> Option<AnonExpr> {
     // Determine which kind of restriction this is based on predicates present
     let has = |iri: &str| pred_iris.iter().any(|s| s == iri);
 
@@ -724,7 +714,7 @@ fn build_restriction(
             return None;
         };
         let use_all = has(OWL_ALL_VALUES_FROM);
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -743,12 +733,12 @@ fn build_restriction(
     } else if has(OWL_SOME_VALUES_FROM) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_some_values_from_id, "owl:someValuesFrom")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+        let deps = if is_anon_blank_node(datastore, z) {
             vec![z]
         } else {
             vec![]
         };
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: deps,
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -768,12 +758,12 @@ fn build_restriction(
     } else if has(OWL_ALL_VALUES_FROM) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_all_values_from_id, "owl:allValuesFrom")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+        let deps = if is_anon_blank_node(datastore, z) {
             vec![z]
         } else {
             vec![]
         };
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: deps,
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -794,7 +784,7 @@ fn build_restriction(
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z_id = require_triple_obj(triples, ids.owl_has_value_id, "owl:hasValue")?;
         let z_gel = datastore.resources.get_graph_element(z_id).clone();
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -809,7 +799,7 @@ fn build_restriction(
     } else if has(OWL_HAS_SELF) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let self_id = require_triple_obj(triples, ids.owl_has_self_id, "owl:hasSelf")?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -839,7 +829,7 @@ fn build_restriction(
         // Qualified cardinality on object property
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_on_class_id, "owl:onClass")?;
-        let deps = if is_anon_dep(datastore, &OntologyDeclarations::empty(), z) {
+        let deps = if is_anon_blank_node(datastore, z) {
             vec![z]
         } else {
             vec![]
@@ -855,7 +845,7 @@ fn build_restriction(
             return None;
         };
         let n = require_cardinality(triples, card_id, &datastore.resources)?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: deps,
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -883,7 +873,7 @@ fn build_restriction(
             return None;
         };
         let n = require_cardinality(triples, card_id, &datastore.resources)?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -899,7 +889,7 @@ fn build_restriction(
     } else if has(OWL_MIN_CARDINALITY) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let n = require_cardinality(triples, ids.owl_min_cardinality_id, &datastore.resources)?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -910,7 +900,7 @@ fn build_restriction(
     } else if has(OWL_MAX_CARDINALITY) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let n = require_cardinality(triples, ids.owl_max_cardinality_id, &datastore.resources)?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -921,7 +911,7 @@ fn build_restriction(
     } else if has(OWL_CARDINALITY) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let n = require_cardinality(triples, ids.owl_cardinality_id, &datastore.resources)?;
-        Some(Restriction {
+        Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -941,20 +931,5 @@ fn build_restriction(
             subj
         );
         None
-    }
-}
-
-// Provide a dummy empty OntologyDeclarations for dependency checking during parse
-impl OntologyDeclarations {
-    fn empty() -> Self {
-        OntologyDeclarations {
-            class_expressions: HashMap::new(),
-            data_ranges: HashMap::new(),
-            object_property_expressions: HashMap::new(),
-            data_property_expressions: HashMap::new(),
-            annotation_properties: HashMap::new(),
-            individuals: HashMap::new(),
-            annotations: HashMap::new(),
-        }
     }
 }
