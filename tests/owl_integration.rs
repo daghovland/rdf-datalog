@@ -205,7 +205,6 @@ fn assert_reasoning_example(name: &str) {
 }
 
 #[test]
-#[ignore = "owl2rl2datalog: owl:minQualifiedCardinality with owl:onClass owl:unionOf not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/81"]
 fn reasoning_example_min_qualified_union() {
     assert_reasoning_example("minQualifiedUnion.ttl");
 }
@@ -221,7 +220,6 @@ fn reasoning_example_intersection_of_classes() {
 }
 
 #[test]
-#[ignore = "owl2rl2datalog: owl:intersectionOf with mixed restrictions not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/81"]
 fn reasoning_example_intersection_of_restrictions() {
     assert_reasoning_example("intersectionOfRestrictionsWorks.ttl");
 }
@@ -237,7 +235,6 @@ fn reasoning_example_min_qualified() {
 }
 
 #[test]
-#[ignore = "owl2rl2datalog: owl:minQualifiedCardinality with owl:onClass owl:unionOf not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/81"]
 fn reasoning_example_min_qualified_simple_union() {
     assert_reasoning_example("minQualifiedSimpleUnion.ttl");
 }
@@ -248,13 +245,11 @@ fn reasoning_example_simple_union() {
 }
 
 #[test]
-#[ignore = "owl2rl2datalog: complex nested class expressions (minQualifiedCardinality + intersection + inverseOf + someValuesFrom) not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/81"]
 fn reasoning_example_darling() {
     assert_reasoning_example("darlingExample.ttl");
 }
 
 #[test]
-#[ignore = "owl2rl2datalog: qualified cardinality with nested intersection not yet implemented; see https://github.com/daghovland/rdf-datalog/issues/81"]
 fn reasoning_example_qualified_cardinality_intersection() {
     assert_reasoning_example("qualifiedCardinalityIntersection.ttl");
 }

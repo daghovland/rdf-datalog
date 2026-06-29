@@ -44,10 +44,55 @@ fn eli_class_extractor(expr: &ClassExpression) -> Option<ComplexConcept> {
 }
 
 /// Extract ELI sub-concepts from a union (may produce multiple items).
+///
+/// In addition to distributing a top-level union into separate inclusions, this
+/// function also distributes a quantifier over a union nested inside it:
+///
+/// - `∃role.(C₁ ⊔ C₂)` → `∃role.C₁ ⊔ ∃role.C₂`
+/// - `≥1 role.(C₁ ⊔ C₂)` → `∃role.C₁ ⊔ ∃role.C₂`
+///
+/// This is semantically valid because, in sub-class position, satisfying the LHS
+/// for any disjunct is sufficient to trigger the rule for the super-class.
 fn eli_sub_class_extractor(expr: &ClassExpression) -> Vec<Option<ComplexConcept>> {
     match expr {
         ClassExpression::ObjectUnionOf(exprs) => {
             exprs.iter().flat_map(eli_sub_class_extractor).collect()
+        }
+        ClassExpression::ObjectSomeValuesFrom(role, inner) => {
+            match inner.as_ref() {
+                ClassExpression::ObjectUnionOf(union_exprs) => {
+                    // ∃role.(C₁ ⊔ C₂ ⊔ …) ≡ ∃role.C₁ ⊔ ∃role.C₂ ⊔ … in sub-concept position
+                    union_exprs
+                        .iter()
+                        .flat_map(|e| {
+                            eli_sub_class_extractor(&ClassExpression::ObjectSomeValuesFrom(
+                                role.clone(),
+                                Box::new(e.clone()),
+                            ))
+                        })
+                        .collect()
+                }
+                _ => vec![eli_class_extractor(expr)],
+            }
+        }
+        ClassExpression::ObjectMinQualifiedCardinality(card, role, inner)
+            if *card == 1u32.into() =>
+        {
+            match inner.as_ref() {
+                ClassExpression::ObjectUnionOf(union_exprs) => {
+                    // ≥1 role.(C₁ ⊔ C₂ ⊔ …) ≡ ∃role.C₁ ⊔ ∃role.C₂ ⊔ … in sub-concept position
+                    union_exprs
+                        .iter()
+                        .flat_map(|e| {
+                            eli_sub_class_extractor(&ClassExpression::ObjectSomeValuesFrom(
+                                role.clone(),
+                                Box::new(e.clone()),
+                            ))
+                        })
+                        .collect()
+                }
+                _ => vec![eli_class_extractor(expr)],
+            }
         }
         e => vec![eli_class_extractor(e)],
     }
