@@ -1,4 +1,36 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Verify that `untrusted` is a safe, confined relative path.
+///
+/// Rejects:
+/// - absolute paths (e.g. `/etc/passwd`)
+/// - paths containing `..` components (e.g. `../../.ssh/id_rsa`)
+///
+/// A path that passes this check is still relative and may or may not exist on
+/// disk — the caller is responsible for opening it. The check is purely
+/// structural and does **not** require the file to exist.
+///
+/// The error message intentionally omits both the input path and the process
+/// working directory so that callers cannot use it as an information oracle.
+/// See [#85](https://github.com/daghovland/rdf-datalog/issues/85) and
+/// [#90](https://github.com/daghovland/rdf-datalog/issues/90).
+pub fn check_path_safe(untrusted: &Path) -> Result<(), String> {
+    if untrusted.is_absolute() {
+        return Err(
+            "absolute paths are not allowed in cell magic arguments; use a relative path"
+                .to_string(),
+        );
+    }
+    for component in untrusted.components() {
+        if component == std::path::Component::ParentDir {
+            return Err(
+                "path traversal sequences ('..') are not allowed in cell magic arguments"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
 
 /// The kind of operation a notebook cell requests.
 #[derive(Debug, Clone, PartialEq)]
