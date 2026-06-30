@@ -24,6 +24,34 @@ pub fn expand_template(template: &str, row: &dyn SourceRow, encode: bool) -> Opt
     Some(result)
 }
 
+/// Return true if `s` begins with a valid absolute IRI scheme as defined by
+/// RFC 3986 §3.1: `[a-zA-Z][a-zA-Z0-9+\-.]*:` followed by at least one
+/// additional character.  Returns false for empty strings, strings with no
+/// colon, or strings where no valid scheme prefix exists.
+pub fn is_valid_iri_scheme(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    // First char must be ASCII alpha
+    if !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let mut i = 1;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b':' {
+            // Scheme separator found; require at least one char after it
+            return i + 1 < bytes.len();
+        }
+        if !matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'-' | b'.') {
+            return false;
+        }
+        i += 1;
+    }
+    false // No ':' found
+}
+
 /// Percent-encode a string for use inside an IRI per RFC 3986 §2.1.
 /// Unreserved characters (A-Za-z0-9 - . _ ~) pass through unchanged;
 /// everything else is encoded as %XX.
