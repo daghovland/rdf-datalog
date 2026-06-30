@@ -196,8 +196,14 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
             let before = ds.named_graphs.quad_count;
-            let file = std::fs::File::open(&path)
-                .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
+            let file = std::fs::File::open(&path).map_err(|e| {
+                log::error!("cannot open {}: {}", path.display(), e);
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<file>");
+                format!("cannot open file '{name}'")
+            })?;
             let reader = std::io::BufReader::new(file);
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             match ext {

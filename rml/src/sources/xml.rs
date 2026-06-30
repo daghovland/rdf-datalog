@@ -156,9 +156,12 @@ impl XmlSource {
         }
 
         let content = std::fs::read_to_string(&self.path)?;
-        let package = sxd_document::parser::parse(&content).map_err(|e| RmlError::Xml {
-            file: self.path.clone(),
-            source: e,
+        let package = sxd_document::parser::parse(&content).map_err(|e| {
+            log::error!("XML parse error in {}: {e}", self.path.display());
+            RmlError::Xml {
+                file: self.path.clone(),
+                source: e,
+            }
         })?;
         let doc = package.as_document();
 
