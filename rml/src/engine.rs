@@ -15,7 +15,7 @@ use crate::sources::SourceRow;
 use crate::sources::csv::CsvSource;
 use crate::sources::json::JsonSource;
 use crate::sources::xml::XmlSource;
-use crate::template::expand_template;
+use crate::template::{expand_template, is_valid_iri_scheme};
 
 pub fn execute(
     plans: &[LogicalPlan],
@@ -245,6 +245,9 @@ fn eval_format_function(
 
     let id = match ff.term_type {
         TermType::Iri => {
+            if !is_valid_iri_scheme(&lexical) {
+                return None;
+            }
             let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(lexical)));
             ds.add_resource(elem)
         }
