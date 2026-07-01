@@ -2532,6 +2532,7 @@ dependencies = [
  "csv",
  "dag-rdf",
  "ingress",
+ "log",
  "serde_json",
  "serde_json_path",
  "sxd-document",

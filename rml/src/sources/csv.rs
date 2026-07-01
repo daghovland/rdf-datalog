@@ -60,16 +60,22 @@ impl CsvSource {
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(self.delimiter)
             .from_path(&self.path)
-            .map_err(|e| RmlError::Csv {
-                file: self.path.clone(),
-                source: e,
+            .map_err(|e| {
+                log::error!("CSV error in {}: {}", self.path.display(), e);
+                RmlError::Csv {
+                    file: self.path.clone(),
+                    source: e,
+                }
             })?;
 
         let headers: Vec<String> = reader
             .headers()
-            .map_err(|e| RmlError::Csv {
-                file: self.path.clone(),
-                source: e,
+            .map_err(|e| {
+                log::error!("CSV error in {}: {}", self.path.display(), e);
+                RmlError::Csv {
+                    file: self.path.clone(),
+                    source: e,
+                }
             })?
             .iter()
             .map(|s| s.to_string())
@@ -84,9 +90,12 @@ impl CsvSource {
                     actual: rows.len() as u64 + 1,
                 });
             }
-            let record = record.map_err(|e| RmlError::Csv {
-                file: self.path.clone(),
-                source: e,
+            let record = record.map_err(|e| {
+                log::error!("CSV error in {}: {}", self.path.display(), e);
+                RmlError::Csv {
+                    file: self.path.clone(),
+                    source: e,
+                }
             })?;
             let mut row = RawRow::new();
             for (header, value) in headers.iter().zip(record.iter()) {

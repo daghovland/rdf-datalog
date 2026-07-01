@@ -116,11 +116,13 @@ impl JsonSource {
 
     fn collect_json_rows(&self) -> Result<Vec<JsonRow>, RmlError> {
         let content = std::fs::read_to_string(&self.path)?;
-        let doc: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| RmlError::Json {
+        let doc: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            log::error!("JSON parse error in {}: {}", self.path.display(), e);
+            RmlError::Json {
                 file: self.path.clone(),
                 source: e,
-            })?;
+            }
+        })?;
 
         if let Some(iter_path) = &self.iterator {
             let path = JsonPath::parse(iter_path).map_err(|e| {
@@ -150,11 +152,13 @@ impl JsonSource {
             if trimmed.is_empty() {
                 continue;
             }
-            let value: serde_json::Value =
-                serde_json::from_str(trimmed).map_err(|e| RmlError::Json {
+            let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+                log::error!("JSON parse error in {}: {}", self.path.display(), e);
+                RmlError::Json {
                     file: self.path.clone(),
                     source: e,
-                })?;
+                }
+            })?;
 
             if let Some(iter_path) = &self.iterator {
                 let path = JsonPath::parse(iter_path).map_err(|e| {
