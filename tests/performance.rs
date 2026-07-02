@@ -729,7 +729,7 @@ fn gene_ontology_materialise_progress() {
     let stratifier = RulePartitioner::new(rules);
     let stratification = stratifier.order_rules();
 
-    let programs: Vec<DatalogProgram> = stratification
+    let mut programs: Vec<DatalogProgram> = stratification
         .into_iter()
         .map(DatalogProgram::new)
         .collect();
@@ -753,7 +753,7 @@ fn gene_ontology_materialise_progress() {
     let mut total_inferred: usize = 0;
 
     // We only have one stratum (pure-positive GO), so use programs[0].
-    let program = match programs.first() {
+    let program = match programs.first_mut() {
         Some(p) => p,
         None => {
             println!("  (no rules — nothing to materialise)");

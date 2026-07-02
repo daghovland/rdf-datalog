@@ -7,6 +7,7 @@ Contact: hovlanddag@gmail.com
 */
 
 pub mod datalog;
+pub mod incremental;
 pub mod reasoner;
 pub mod stratifier;
 pub mod types;
@@ -17,6 +18,7 @@ pub use datalog::{
     evaluate, evaluate_pattern, evaluate_positive, get_matches_for_rule, get_partial_matches,
     get_substitutions, is_fact, is_safe_rule, merge_partial_match_maps, wildcard_quad_pattern,
 };
+pub use incremental::IncrementalReasoner;
 pub use reasoner::{DatalogProgram, evaluate_rules};
 pub use stratifier::RulePartitioner;
 pub use types::*;
