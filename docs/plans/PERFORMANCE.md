@@ -504,6 +504,154 @@ Chunk the input file at newline boundaries, parse each chunk in a rayon thread, 
 
 ---
 
+## BF Incremental Datalog: memory and performance analysis
+
+This section documents the cost model for the Backward/Forward incremental maintenance
+algorithm ([#83](https://github.com/daghovland/rdf-datalog/issues/83)) so that design
+decisions can be made with concrete numbers in mind. The measurement plan (D7) is in
+[#111](https://github.com/daghovland/rdf-datalog/issues/111).
+
+### Baseline: current QuadTable memory cost per quad
+
+A raw `Quad` is 4 × `u32` = **16 bytes**. The `QuadTable` stores each quad in six structures:
+
+| Structure | Bytes per quad | Notes |
+|---|---|---|
+| `quad_list: Vec<Quad>` | 16 | Raw storage in insertion order |
+| `four_keys_index: HashSet<Quad>` | ~56 | 16-byte key + HashSet load-factor overhead (≈50-75%) |
+| `predicate_index` | ~12 | 4-byte `u32` index + amortized `Vec` and `HashMap` entry overhead |
+| `triple_id_index` | ~12 | Same |
+| `subject_predicate_index` | ~32 | Nested `HashMap<S, HashMap<P, Vec<idx>>>`: outer + inner entry overhead per (S,P) pair |
+| `object_predicate_index` | ~32 | Same |
+| **Total** | **~160** | **10× raw data** |
+
+Gene Ontology (1.7 M triples): QuadTable alone ≈ **270 MB**, consistent with the +530 MB RSS
+observed during Turtle parse (the remainder is the `GraphElementManager` string intern pool and
+OS allocator overhead).
+
+The nested `HashMap<S, HashMap<P, Vec<idx>>>` (B6 in planned work) accounts for roughly 40
+bytes of the 64-byte SP/OP overhead. Flattening to `HashMap<(S,P), Vec<idx>>` is the
+highest-leverage remaining structural improvement before the BF work.
+
+### D1: `derived_quads: HashSet<Quad>` overhead
+
+D1 adds a `HashSet<Quad>` that tracks which quads were inferred by the reasoner (as opposed to
+asserted as base facts). The overhead is:
+
+- **~56 bytes per *derived* quad** (same as `four_keys_index`).
+- Zero overhead on base facts (only derived quads are members).
+- For a pure-TBox workload like Gene Ontology (0 ABox individuals → 0 inferences):
+  **zero additional memory**.
+- For an ABox-heavy workload like LUBM with 5× expansion:
+  5 M derived quads × 56 bytes ≈ **280 MB additional**.
+
+D1 adds no overhead to the `add_quad` hot path (the `HashSet::insert` call in
+`add_derived_quad` is the same cost as the existing `four_keys_index` insert).
+
+### D2: DerivedFrom index overhead
+
+D2 is the most memory-intensive addition. For each derived quad it stores a
+`Vec<Derivation>`, where each `Derivation` holds the rule ID and the body quads (witnesses)
+that were unified to produce the head:
+
+```rust
+struct Derivation {
+    rule_id: usize,           // 8 bytes
+    body_witnesses: Vec<Quad>, // 24-byte Vec header + 16 bytes × body_arity
+}
+// HashMap<Quad, Vec<Derivation>>: ~56 bytes outer entry + derivation storage
+```
+
+For a rule with 2 body atoms and 1 derivation path per derived fact:
+
+```
+56 (HashMap entry) + 24 (Vec<Derivation> header) + 8 (rule_id) + 24 (Vec<Quad>) + 32 (2 × 16)
+≈ 144 bytes per derived quad (minimum, 1 derivation path)
+```
+
+OWL-RL rules vary from 1 to 4 body atoms. Facts derivable via multiple rules (common in
+transitive closures and subclass chains) accumulate multiple `Derivation` entries.
+
+**LUBM estimate** (1 M base ABox facts, 5× OWL-RL expansion, avg 1.5 derivation paths):
+- Derived quads: 5 M
+- DerivedFrom index: 5 M × 144 bytes × 1.5 paths ≈ **1.1 GB additional**
+- Total store: baseline ~800 MB + D1 ~280 MB + D2 ~1.1 GB ≈ **2.2 GB**
+
+This is a significant cost. Mitigations are described below.
+
+### Performance model: when BF wins vs. full re-materialisation
+
+The BF algorithm saves work when the set of possibly-deleted derived facts (PD) is small.
+PD depends on what was deleted and how deep the derivation chain is.
+
+| Scenario | BF cost | Full re-mat cost | Winner |
+|---|---|---|---|
+| Delete 1 ABox assertion, shallow chain (depth 1–2) | O(PD) ≪ O(D) | O(D) | **BF** |
+| Delete 1 ABox assertion, deep transitive chain | O(D) | O(D) | Tie |
+| Delete a TBox class or property | O(D) — cascades everywhere | O(D) | Tie or full re-mat |
+| Delete many facts (batch update) | O(D) | O(D) | **Full re-mat** |
+| Insert-only updates | Semi-naive; BF not needed | Semi-naive (already done) | N/A |
+
+**Practical tipping point:** when |PD| > ~15–20% of all derived facts, full re-materialisation
+is likely cheaper (the forward phase alone costs as much as a fresh run, but BF also paid for
+the backward phase). For OWL-RL TBox updates this threshold is almost always exceeded.
+
+**Recommendation for D4 implementation:** check |PD| after the backward phase; fall back to
+full re-materialisation automatically if |PD| / |derived| exceeds a configurable threshold
+(suggested default: 25%).
+
+### Mitigations
+
+| Mitigation | Memory saving | Complexity |
+|---|---|---|
+| **Lazy DerivedFrom index** — only build when incremental mode is explicitly enabled; batch-load + full re-mat path pays zero | Eliminates D2 cost for non-incremental use | Low |
+| **Compact witness storage** — store `QuadListIndex` (`u32`) in body_witnesses instead of full `Quad` structs | 16 bytes → 4 bytes per witness; D2 overhead drops ~60% | Low |
+| **Single-derivation cap** — store only one derivation path per derived fact (arbitrary choice); accept that PD may be slightly over-approximated | Eliminates the multi-path factor | Low; may miss some valid re-derivations (correct but conservative) |
+| **Depth cap** — beyond derivation depth k (e.g., k=10), mark facts as "unconditionally derived" and fall back to full re-mat on deletion | Bounds index depth | Medium |
+| **Flat SP/OP indexes (B6)** — reduces baseline QuadTable cost by ~40 bytes/quad before BF adds anything | ~68 MB on LUBM | Medium |
+
+The **lazy DerivedFrom** approach is the most important: for the common case (bulk load of a
+static ontology, query-only thereafter), building the DerivedFrom index is pure waste. It
+should be opt-in, either via a flag on `DatalogProgram` or by constructing an
+`IncrementalReasoner` only when incremental updates are expected.
+
+### D7 measurement plan
+
+See [#111](https://github.com/daghovland/rdf-datalog/issues/111) for the tracking issue.
+
+The benchmark must answer three questions:
+
+1. **Memory overhead**: how much does the DerivedFrom index actually consume at LUBM scale
+   (scale 1, 5, 10)?
+2. **Update latency**: for a single-fact deletion, how does BF latency compare to full
+   re-materialization as a function of ontology size and derivation depth?
+3. **Tipping point**: at what |Δ⁻| / |base| ratio does full re-materialisation become cheaper?
+
+**Concrete benchmark plan:**
+
+```
+corpus:  LUBM scale 1  (~100k triples, ~5 universities)
+         LUBM scale 5  (~500k triples)
+         LUBM scale 10 (~1M triples)
+
+metrics (measured separately for each scale):
+  a. Memory: RSS before and after materialisation; DerivedFrom index size
+  b. Baseline: time for full re-materialisation from scratch
+  c. BF single delete: delete 1 random ABox triple, measure BF update time
+  d. BF batch delete: delete 1%, 5%, 10%, 20% of ABox triples, measure BF vs. full re-mat
+  e. Insert-only: add 1% new ABox triples, measure semi-naive update time
+
+implementation:
+  - Add `bench_bf_vs_full_remat` to benches/gene_ontology.rs (or a new benches/lubm.rs)
+  - Use criterion's `BenchmarkGroup` with `BenchmarkId` parameterised by scale and |Δ⁻|
+  - Measure memory via /proc/self/status VmRSS before and after each phase
+```
+
+LUBM data can be generated with the standard LUBM data generator (UBA) or downloaded from
+public mirrors. Add the download step to `scripts/download_test_ontologies.sh`.
+
+---
+
 ## How to run the performance tests
 
 ```bash

@@ -382,15 +382,33 @@ Stratified negation is already handled by `RulePartitioner`. With BF:
 
 ### Implementation phases
 
-| Phase | Description |
-|---|---|
-| D1 | Separate base facts from derived facts in `QuadTable` (tag or separate table). |
-| D2 | Build `DerivedFrom` index during `evaluate_rules`; store rule id + body witness for each derived fact. |
-| D3 | Implement semi-naive forward evaluation for insertions only. |
-| D4 | Implement BF backward phase: given Δ⁻, compute `PD` by backward traversal of `DerivedFrom`. |
-| D5 | Implement BF forward phase: re-derive from surviving base facts; prune unre-derivable facts from `PD`. |
-| D6 | Integrate with SPARQL Update / GSP handlers: after committing the transaction, call `IncrementalReasoner::apply_update`. |
-| D7 | Benchmark against full re-materialisation on large ontologies (LUBM, Bio2RDF) to confirm improvement. |
+| Phase | Issue | Description |
+|---|---|---|
+| D1 | [#107](https://github.com/daghovland/rdf-datalog/issues/107) | Separate base facts from derived facts in `QuadTable`: add `derived_quads: HashSet<Quad>`, `add_derived_quad`, `is_base`, `base_quads`. |
+| D2 | [#108](https://github.com/daghovland/rdf-datalog/issues/108) | Build `DerivedFrom` index during materialisation; store rule id + body witnesses per derived fact. |
+| D3 | — | Semi-naive forward evaluation for insertions. **Already implemented** as `DatalogProgram::materialise_seminaive` in `datalog/src/reasoner.rs`. |
+| D4 | [#109](https://github.com/daghovland/rdf-datalog/issues/109) | BF backward phase: given Δ⁻, compute `PD` by backward traversal of `DerivedFrom`. |
+| D5 | [#109](https://github.com/daghovland/rdf-datalog/issues/109) | BF forward phase: re-derive from surviving base facts; prune unre-derivable facts from `PD`. |
+| D6 | [#110](https://github.com/daghovland/rdf-datalog/issues/110) | Integrate with SPARQL Update / GSP handlers: call `IncrementalReasoner::apply_update` after each mutation. |
+| D7 | [#111](https://github.com/daghovland/rdf-datalog/issues/111) | Benchmark BF vs. full re-materialisation on LUBM scale 1/5/10; measure DerivedFrom index memory overhead and tipping point. |
+
+### Memory and performance cost model
+
+The DerivedFrom index (D2) is the most memory-intensive addition. See
+[`docs/plans/PERFORMANCE.md`](PERFORMANCE.md) §"BF Incremental Datalog: memory and
+performance analysis" for a full breakdown including:
+
+- Baseline QuadTable cost: ~160 bytes per quad (10× raw data)
+- D1 `derived_quads` cost: ~56 bytes per *derived* quad only (zero for pure-TBox workloads)
+- D2 DerivedFrom cost: ~144 bytes per derived quad minimum; ~1.1 GB for LUBM scale 10 at 5×
+  OWL-RL expansion
+- Mitigations: lazy DerivedFrom (opt-in), compact witness storage (`QuadListIndex` vs `Quad`),
+  single-derivation cap, depth cap, automatic fallback to full re-mat when |PD| > 25%
+- Empirical tipping point: BF wins for |Δ⁻| / |base| ≲ 15–20%; full re-mat wins above
+
+**Key design decision for D2:** the DerivedFrom index must be **opt-in** (only built when
+`IncrementalReasoner` is explicitly constructed). The static batch-load + query-only path must
+pay zero incremental maintenance cost.
 
 ### References
 
