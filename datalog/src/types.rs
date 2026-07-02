@@ -124,6 +124,8 @@ pub type Substitution = HashMap<String, GraphElementId>;
 pub struct PartialRule {
     pub rule: Rule,
     pub match_pattern: QuadPattern,
+    /// Index of this rule in the owning `DatalogProgram::rules` vector.
+    pub rule_id: usize,
 }
 
 /// A partial match: a rule + the triggering pattern + current substitution.
@@ -131,4 +133,63 @@ pub struct PartialRule {
 pub struct PartialRuleMatch {
     pub partial_rule: PartialRule,
     pub substitution: Substitution,
+}
+
+// ── DerivedFrom index ─────────────────────────────────────────────────────────
+
+/// Records one way a derived quad was produced: which rule and which body quads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derivation {
+    /// Index into `DatalogProgram::rules` of the rule that produced this fact.
+    pub rule_id: usize,
+    /// The concrete quads that matched the rule's positive body atoms (in body order).
+    pub body_witnesses: Vec<dag_rdf::Quad>,
+}
+
+/// Maps each derived quad to all the ways it can be derived.
+///
+/// A single quad may appear in multiple entries when it is derivable via more
+/// than one rule or via the same rule with different body witnesses.  The BF
+/// backward phase uses this to decide whether a derived fact can survive after
+/// some base facts are deleted.
+#[derive(Debug, Clone, Default)]
+pub struct DerivedFromIndex {
+    index: std::collections::HashMap<dag_rdf::Quad, Vec<Derivation>>,
+}
+
+impl DerivedFromIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that `derived_quad` was produced by `derivation`.
+    ///
+    /// Duplicate derivations (same rule_id and body_witnesses) are silently ignored
+    /// so that semi-naive iteration does not double-count witnesses for the same quad.
+    pub fn record(&mut self, derived_quad: dag_rdf::Quad, derivation: Derivation) {
+        let entries = self.index.entry(derived_quad).or_default();
+        if !entries.contains(&derivation) {
+            entries.push(derivation);
+        }
+    }
+
+    /// Return all derivations for `quad`, or an empty slice if it has none.
+    pub fn derivations_for(&self, quad: &dag_rdf::Quad) -> &[Derivation] {
+        self.index.get(quad).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// True iff `quad` has at least one recorded derivation.
+    pub fn has_derivation(&self, quad: &dag_rdf::Quad) -> bool {
+        self.index.contains_key(quad)
+    }
+
+    /// Remove all derivations for `quad` (e.g. when the quad is retracted).
+    pub fn remove(&mut self, quad: &dag_rdf::Quad) {
+        self.index.remove(quad);
+    }
+
+    /// Iterate over all (derived_quad, derivations) pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&dag_rdf::Quad, &Vec<Derivation>)> {
+        self.index.iter()
+    }
 }

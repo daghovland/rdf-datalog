@@ -397,6 +397,9 @@ pub fn get_partial_matches(rule: &Rule) -> HashMap<QuadWildcard, Vec<PartialRule
         map.entry(wc).or_default().push(PartialRule {
             rule: rule.clone(),
             match_pattern: pattern.clone(),
+            // rule_id is not tracked in this standalone helper; callers that need
+            // derivation tracking should use DatalogProgram which assigns IDs.
+            rule_id: 0,
         });
     }
     map
