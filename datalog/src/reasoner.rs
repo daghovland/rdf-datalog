@@ -20,7 +20,7 @@ use std::collections::HashMap;
 // ── DatalogProgram ────────────────────────────────────────────────────────────
 
 pub struct DatalogProgram {
-    rules: Vec<Rule>,
+    pub rules: Vec<Rule>,
     rule_map: HashMap<QuadWildcard, Vec<PartialRule>>,
     /// Records for each derived quad how it was produced (rule + body witnesses).
     pub derived_from: DerivedFromIndex,
