@@ -288,6 +288,38 @@ fn copy_dataset_to(src: &dag_rdf::Datastore, dst: &mut dag_rdf::Datastore) {
     }
 }
 
+/// Translate quads from the default graph of `src` into `dst` IDs, using
+/// `target_graph_id` as the graph slot.  Resources are interned into `dst`
+/// if not already present.  Quads are NOT added to `dst`.
+fn translate_default_graph_quads(
+    src: &dag_rdf::Datastore,
+    dst: &mut dag_rdf::Datastore,
+    target_graph_id: GraphElementId,
+) -> Vec<dag_rdf::ingress::Quad> {
+    src.named_graphs
+        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+        .map(|q| {
+            let s = dst.add_resource(src.resources.get_graph_element(q.subject).clone());
+            let p = dst.add_resource(src.resources.get_graph_element(q.predicate).clone());
+            let o = dst.add_resource(src.resources.get_graph_element(q.obj).clone());
+            dag_rdf::ingress::Quad {
+                triple_id: target_graph_id,
+                subject: s,
+                predicate: p,
+                obj: o,
+            }
+        })
+        .collect()
+}
+
+/// Collect all quads in `graph_id` from `store` (already in main-store IDs).
+fn collect_graph_quads(
+    store: &dag_rdf::Datastore,
+    graph_id: GraphElementId,
+) -> Vec<dag_rdf::ingress::Quad> {
+    store.named_graphs.get_graph(graph_id).collect()
+}
+
 fn graph_iri_for(tmp: &dag_rdf::Datastore, graph_id: GraphElementId) -> Option<String> {
     if graph_id == DEFAULT_GRAPH_ELEMENT_ID {
         return None;
@@ -492,8 +524,20 @@ pub async fn gsp_put_inner(
         }
     }
 
-    store.remove_graph(graph_id);
-    copy_default_graph_to(&tmp, &mut store, graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let old_quads = collect_graph_quads(&store, graph_id);
+        let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
+        let mut reasoner = reasoner_arc.lock().await;
+        let existing_old: Vec<_> = old_quads
+            .into_iter()
+            .filter(|q| store.named_graphs.contains(q))
+            .collect();
+        reasoner.apply_deletions(&mut store, &existing_old);
+        reasoner.apply_insertions(&mut store, &new_quads);
+    } else {
+        store.remove_graph(graph_id);
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+    }
 
     if is_new {
         StatusCode::CREATED.into_response()
@@ -556,7 +600,17 @@ pub async fn gsp_delete_inner(
         }
     }
 
-    store.remove_graph(graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let old_quads = collect_graph_quads(&store, graph_id);
+        let existing: Vec<_> = old_quads
+            .into_iter()
+            .filter(|q| store.named_graphs.contains(q))
+            .collect();
+        let mut reasoner = reasoner_arc.lock().await;
+        reasoner.apply_deletions(&mut store, &existing);
+    } else {
+        store.remove_graph(graph_id);
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -633,7 +687,14 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
+        if let Some(ref reasoner_arc) = state.reasoner {
+            let new_quads =
+                translate_default_graph_quads(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
+            let mut reasoner = reasoner_arc.lock().await;
+            reasoner.apply_insertions(&mut store, &new_quads);
+        } else {
+            copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
+        }
         return StatusCode::NO_CONTENT.into_response();
     }
 
@@ -675,7 +736,13 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        copy_default_graph_to(&tmp, &mut store, graph_id);
+        if let Some(ref reasoner_arc) = state.reasoner {
+            let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
+            let mut reasoner = reasoner_arc.lock().await;
+            reasoner.apply_insertions(&mut store, &new_quads);
+        } else {
+            copy_default_graph_to(&tmp, &mut store, graph_id);
+        }
         return if created {
             StatusCode::CREATED.into_response()
         } else {
@@ -708,7 +775,33 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        copy_dataset_to(&tmp, &mut store);
+        if let Some(ref reasoner_arc) = state.reasoner {
+            // Translate all quads across all graphs, then feed to reasoner.
+            let new_quads: Vec<_> = tmp
+                .named_graphs
+                .quad_list
+                .iter()
+                .copied()
+                .map(|q| {
+                    let g =
+                        store.add_resource(tmp.resources.get_graph_element(q.triple_id).clone());
+                    let s = store.add_resource(tmp.resources.get_graph_element(q.subject).clone());
+                    let p =
+                        store.add_resource(tmp.resources.get_graph_element(q.predicate).clone());
+                    let o = store.add_resource(tmp.resources.get_graph_element(q.obj).clone());
+                    dag_rdf::ingress::Quad {
+                        triple_id: g,
+                        subject: s,
+                        predicate: p,
+                        obj: o,
+                    }
+                })
+                .collect();
+            let mut reasoner = reasoner_arc.lock().await;
+            reasoner.apply_insertions(&mut store, &new_quads);
+        } else {
+            copy_dataset_to(&tmp, &mut store);
+        }
         return StatusCode::NO_CONTENT.into_response();
     }
 
@@ -743,7 +836,13 @@ pub async fn gsp_post_inner(
     }
     let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(new_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
-    copy_default_graph_to(&tmp, &mut store, graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
+        let mut reasoner = reasoner_arc.lock().await;
+        reasoner.apply_insertions(&mut store, &new_quads);
+    } else {
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+    }
     let location = format!(
         "{}/rdf-graph-store?graph={}",
         state.config.base_iri,
@@ -840,8 +939,20 @@ pub async fn direct_gsp_put(
         }
     }
 
-    store.remove_graph(graph_id);
-    copy_default_graph_to(&tmp, &mut store, graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let old_quads = collect_graph_quads(&store, graph_id);
+        let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
+        let existing_old: Vec<_> = old_quads
+            .into_iter()
+            .filter(|q| store.named_graphs.contains(q))
+            .collect();
+        let mut reasoner = reasoner_arc.lock().await;
+        reasoner.apply_deletions(&mut store, &existing_old);
+        reasoner.apply_insertions(&mut store, &new_quads);
+    } else {
+        store.remove_graph(graph_id);
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+    }
     if is_new {
         StatusCode::CREATED.into_response()
     } else {
@@ -877,7 +988,17 @@ pub async fn direct_gsp_delete(
         }
     }
 
-    store.remove_graph(graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let old_quads = collect_graph_quads(&store, graph_id);
+        let existing: Vec<_> = old_quads
+            .into_iter()
+            .filter(|q| store.named_graphs.contains(q))
+            .collect();
+        let mut reasoner = reasoner_arc.lock().await;
+        reasoner.apply_deletions(&mut store, &existing);
+    } else {
+        store.remove_graph(graph_id);
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -958,7 +1079,13 @@ pub async fn direct_gsp_post(
         }
     }
 
-    copy_default_graph_to(&tmp, &mut store, graph_id);
+    if let Some(ref reasoner_arc) = state.reasoner {
+        let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
+        let mut reasoner = reasoner_arc.lock().await;
+        reasoner.apply_insertions(&mut store, &new_quads);
+    } else {
+        copy_default_graph_to(&tmp, &mut store, graph_id);
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 

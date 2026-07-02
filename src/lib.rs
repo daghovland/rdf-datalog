@@ -164,6 +164,26 @@ pub fn apply_rules(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<usize
     Ok(rule_count)
 }
 
+/// Parse Datalog rules from one or more `.datalog` files WITHOUT applying them.
+///
+/// IRIs are interned into `datastore` so resource IDs in the returned rules are
+/// valid in that store.  The caller is responsible for materialisation (e.g.
+/// by passing the rules to [`sparql_endpoint::Config::initial_rules`] for
+/// incremental reasoning via the HTTP endpoint).
+///
+/// For one-shot (non-serve) use, prefer [`apply_rules`] which also evaluates.
+pub fn parse_rules(
+    datastore: &mut Datastore,
+    paths: &[PathBuf],
+) -> Result<Vec<datalog::Rule>, String> {
+    let mut all_rules = Vec::new();
+    for path in paths {
+        let mut rules = datalog_parser::parse_file(path, datastore)?;
+        all_rules.append(&mut rules);
+    }
+    Ok(all_rules)
+}
+
 // ── SPARQL ────────────────────────────────────────────────────────────────────
 
 /// Execute a SPARQL SELECT query string against `datastore`.

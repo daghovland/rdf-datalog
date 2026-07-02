@@ -29,6 +29,7 @@ pub mod void;
 pub mod vqs_routes;
 
 use dag_rdf::datastore::Datastore;
+use datalog::{IncrementalReasoner, Rule};
 use persistence::QuadChangelog;
 use registry::DatasetRegistry;
 use std::net::SocketAddr;
@@ -166,6 +167,18 @@ pub struct Config {
     /// `DefaultBodyLimit`. This field overrides the limit for just those two
     /// routes; every other route keeps the 2 MB default.
     pub max_rml_upload_bytes: usize,
+    /// Datalog rules for incremental reasoning.
+    ///
+    /// When non-empty, an [`IncrementalReasoner`] is created from these rules
+    /// during server startup (running full initial materialisation once).
+    /// Subsequent INSERT DATA / DELETE DATA / GSP mutations then trigger
+    /// semi-naive incremental re-materialisation instead of no inference at all.
+    ///
+    /// When empty (the default), no reasoner is created and SPARQL Update
+    /// mutations affect only the explicitly stated triples.
+    ///
+    /// Related: [#110](https://github.com/daghovland/rdf-datalog/issues/110)
+    pub initial_rules: Vec<Rule>,
 }
 
 impl Default for Config {
@@ -178,6 +191,7 @@ impl Default for Config {
             auth: AuthConfig::None,
             data_dir: None,
             max_rml_upload_bytes: 64 * 1024 * 1024,
+            initial_rules: Vec::new(),
         }
     }
 }
@@ -198,6 +212,15 @@ pub struct AppState {
     /// Cached VQS productive-extension index (navigation graph + Wld configuration
     /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
     pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
+    /// Incremental Datalog reasoner.  `Some` when `Config::initial_rules` is non-empty;
+    /// `None` when no rules are configured (the default).
+    ///
+    /// Handlers that mutate the store lock this mutex and call
+    /// [`IncrementalReasoner::apply_insertions`] / [`IncrementalReasoner::apply_deletions`]
+    /// so that inferred triples are updated after every write.
+    ///
+    /// Related: [#110](https://github.com/daghovland/rdf-datalog/issues/110)
+    pub reasoner: Option<Arc<Mutex<IncrementalReasoner>>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -241,6 +264,17 @@ pub async fn serve_on_listener(
         None
     };
 
+    // Build the incremental reasoner (if rules are configured) BEFORE handing
+    // the store to axum.  `IncrementalReasoner::new` runs full initial
+    // materialisation, so the store is fully derived before the first request.
+    let reasoner: Option<Arc<Mutex<IncrementalReasoner>>> = if config.initial_rules.is_empty() {
+        None
+    } else {
+        let rules = config.initial_rules.clone();
+        let reasoner = IncrementalReasoner::new(rules, &mut *store.write().await);
+        Some(Arc::new(Mutex::new(reasoner)))
+    };
+
     let registry = DatasetRegistry::new_with_default(store.clone());
     let state = AppState {
         store,
@@ -249,6 +283,7 @@ pub async fn serve_on_listener(
         changelog,
         config,
         vqs_cache: Arc::new(RwLock::new(None)),
+        reasoner,
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await
