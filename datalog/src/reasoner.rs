@@ -129,13 +129,13 @@ impl DatalogProgram {
                     RuleHead::NormalHead(h) => h.clone(),
                 };
                 // evaluate() borrows datastore immutably and returns an owned Vec,
-                // so the borrow is released before add_derived_quad() is called.
+                // so the borrow is released before add_intensional_quad() is called.
                 let rule = &rule_match.partial_rule.rule;
                 let rule_id = rule_match.partial_rule.rule_id;
                 let subs = evaluate(datastore, &rule_match);
                 for sub in subs {
                     let derived = apply_substitution_quad(&sub, &head_pattern);
-                    datastore.named_graphs.add_derived_quad(derived);
+                    datastore.named_graphs.add_intensional_quad(derived);
                     // Always record this derivation path.  The BF backward phase
                     // needs all witnesses, not just the first one that created the
                     // fact.  Duplicate (rule_id, witnesses) pairs are suppressed.
@@ -329,17 +329,17 @@ mod tests {
             "transitively inferred quad (a, p, c) should be present"
         );
         assert!(
-            !ds.named_graphs.is_base(&derived_ac),
+            !ds.named_graphs.is_extensional(&derived_ac),
             "inferred quad (a, p, c) should be marked derived, not base"
         );
 
         // Original base facts should still be base
         assert!(
-            ds.named_graphs.is_base(&fact_ab),
+            ds.named_graphs.is_extensional(&fact_ab),
             "original fact (a, p, b) should remain base"
         );
         assert!(
-            ds.named_graphs.is_base(&fact_bc),
+            ds.named_graphs.is_extensional(&fact_bc),
             "original fact (b, p, c) should remain base"
         );
     }

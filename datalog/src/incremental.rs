@@ -95,7 +95,7 @@ impl IncrementalReasoner {
             base.named_graphs.add_quad(*q);
         }
         // Re-run semi-naive; already-present derived facts are skipped by the dedup
-        // check in `add_derived_quad`, so only genuinely new inferences are added.
+        // check in `add_intensional_quad`, so only genuinely new inferences are added.
         for program in &mut self.programs {
             program.materialise_seminaive(base);
         }
@@ -150,7 +150,7 @@ impl IncrementalReasoner {
         }
         // Re-derive: semi-naive will re-add any PD fact that is still provable from the
         // surviving base facts.  Facts that were in PD but are re-derived will be
-        // re-inserted by `add_derived_quad` (dedup ensures no double-counting).
+        // re-inserted by `add_intensional_quad` (dedup ensures no double-counting).
         for program in &mut self.programs {
             program.materialise_seminaive(base);
         }
@@ -167,7 +167,7 @@ impl IncrementalReasoner {
             base.named_graphs.remove_quad(*q);
         }
         // Snapshot only the base (non-derived) facts that survived.
-        let base_facts: Vec<Quad> = base.named_graphs.base_quads().collect();
+        let base_facts: Vec<Quad> = base.named_graphs.extensional_quads().collect();
         let hint = base_facts.len() as u32;
 
         // Clear the entire store and reset derivation indexes.
