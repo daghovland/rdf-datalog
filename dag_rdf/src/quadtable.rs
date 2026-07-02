@@ -20,6 +20,8 @@ pub struct QuadTable {
         HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
     pub object_predicate_index:
         HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
+    /// Quads produced by the reasoner (derived). Quads not in this set are base facts.
+    pub derived_quads: HashSet<Quad>,
 }
 
 impl QuadTable {
@@ -33,6 +35,7 @@ impl QuadTable {
             predicate_index: HashMap::new(),
             subject_predicate_index: HashMap::new(),
             object_predicate_index: HashMap::new(),
+            derived_quads: HashSet::with_capacity(init_triples),
         }
     }
 
@@ -111,11 +114,18 @@ impl QuadTable {
             .copied()
             .filter(|q| *q != target)
             .collect();
+        // Preserve which of the kept quads were derived before we reset.
+        let kept_derived: HashSet<Quad> = kept
+            .iter()
+            .copied()
+            .filter(|q| self.derived_quads.contains(q))
+            .collect();
         let hint = kept.len() as u32;
         *self = QuadTable::new(hint);
         for q in kept {
             self.add_quad(q);
         }
+        self.derived_quads = kept_derived;
     }
 
     pub fn get_quads_with_subject(
@@ -269,15 +279,109 @@ impl QuadTable {
             .copied()
             .filter(|q| q.triple_id != graph_id)
             .collect();
+        // Preserve derived flags for kept quads.
+        let kept_derived: HashSet<Quad> = kept
+            .iter()
+            .copied()
+            .filter(|q| self.derived_quads.contains(q))
+            .collect();
         let hint = kept.len() as u32;
         *self = QuadTable::new(hint);
         for quad in kept {
             self.add_quad(quad);
         }
+        self.derived_quads = kept_derived;
     }
 
     /// Iterate over all quads in insertion order.
     pub fn get_all_quads(&self) -> impl Iterator<Item = Quad> + '_ {
         self.quad_list.iter().copied()
+    }
+
+    /// Mark this quad as derived (reasoner-produced). Must be called after `add_quad`.
+    pub fn mark_derived(&mut self, quad: Quad) {
+        self.derived_quads.insert(quad);
+    }
+
+    /// Add a quad and immediately mark it as derived. Used by the reasoner.
+    pub fn add_derived_quad(&mut self, quad: Quad) {
+        self.add_quad(quad);
+        self.derived_quads.insert(quad);
+    }
+
+    /// True iff the quad is present and is NOT derived (i.e. it is a base fact).
+    pub fn is_base(&self, q: &Quad) -> bool {
+        self.contains(q) && !self.derived_quads.contains(q)
+    }
+
+    /// Iterate over all base (non-derived) quads.
+    pub fn base_quads(&self) -> impl Iterator<Item = Quad> + '_ {
+        self.quad_list
+            .iter()
+            .copied()
+            .filter(|q| !self.derived_quads.contains(q))
+    }
+
+    /// Iterate over all derived quads.
+    pub fn derived_quads_iter(&self) -> impl Iterator<Item = Quad> + '_ {
+        self.quad_list
+            .iter()
+            .copied()
+            .filter(|q| self.derived_quads.contains(q))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_quad(g: u32, s: u32, p: u32, o: u32) -> Quad {
+        Quad {
+            triple_id: g,
+            subject: s,
+            predicate: p,
+            obj: o,
+        }
+    }
+
+    #[test]
+    fn test_base_quad_not_derived() {
+        let mut table = QuadTable::new(10);
+        let q = make_quad(0, 1, 2, 3);
+        table.add_quad(q);
+        assert!(table.is_base(&q), "quad added with add_quad should be base");
+        assert_eq!(
+            table.derived_quads_iter().count(),
+            0,
+            "derived_quads_iter should be empty for base quad"
+        );
+    }
+
+    #[test]
+    fn test_derived_quad_not_base() {
+        let mut table = QuadTable::new(10);
+        let q = make_quad(0, 1, 2, 3);
+        table.add_derived_quad(q);
+        assert!(
+            !table.is_base(&q),
+            "quad added with add_derived_quad should not be base"
+        );
+        let derived: Vec<Quad> = table.derived_quads_iter().collect();
+        assert_eq!(derived, vec![q], "derived_quads_iter should yield the quad");
+    }
+
+    #[test]
+    fn test_remove_quad_clears_derived_flag() {
+        let mut table = QuadTable::new(10);
+        let q = make_quad(0, 1, 2, 3);
+        table.add_derived_quad(q);
+        assert!(table.contains(&q));
+        table.remove_quad(q);
+        assert!(!table.contains(&q), "quad should be gone after remove");
+        assert_eq!(
+            table.derived_quads_iter().count(),
+            0,
+            "derived set should be empty after remove"
+        );
     }
 }

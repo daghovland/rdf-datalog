@@ -118,12 +118,12 @@ impl DatalogProgram {
                     RuleHead::NormalHead(h) => h.clone(),
                 };
                 // evaluate() borrows datastore immutably and returns an owned Vec,
-                // so the borrow is released before add_quad() is called.
+                // so the borrow is released before add_derived_quad() is called.
                 let subs = evaluate(datastore, &rule_match);
                 for sub in subs {
                     datastore
                         .named_graphs
-                        .add_quad(apply_substitution_quad(&sub, &head_pattern));
+                        .add_derived_quad(apply_substitution_quad(&sub, &head_pattern));
                 }
             }
         }
@@ -200,5 +200,116 @@ pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) {
     for partition in stratification {
         let program = DatalogProgram::new(partition);
         program.materialise_seminaive(datastore);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{RuleAtom, RuleHead};
+    use dag_rdf::{
+        DEFAULT_GRAPH_ELEMENT_ID, Datastore, IriReference, Quad, QuadPattern, RdfResource, Term,
+    };
+
+    /// Build a simple transitivity scenario:
+    ///   Base facts: (g, a, p, b), (g, b, p, c)
+    ///   Rule:       { ?x p ?y, ?y p ?z } => { ?x p ?z }
+    /// After materialisation, (g, a, p, c) should be derived, and the base
+    /// facts should remain base.
+    #[test]
+    fn test_reasoner_marks_inferred_as_derived() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        // Intern resources: a, p, b, c
+        let a = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/a".to_string(),
+            )));
+        let p = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p".to_string(),
+            )));
+        let b = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/b".to_string(),
+            )));
+        let c = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/c".to_string(),
+            )));
+
+        // Insert base facts directly (not via reasoner)
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        // Transitivity rule: [?x, p, ?y], [?y, p, ?z] => [?x, p, ?z]
+        let rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("y".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("z".to_string()),
+                }),
+            ],
+        };
+
+        let program = DatalogProgram::new(vec![rule]);
+        program.materialise_seminaive(&mut ds);
+
+        // The derived quad (a, p, c) should exist
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "transitively inferred quad (a, p, c) should be present"
+        );
+        assert!(
+            !ds.named_graphs.is_base(&derived_ac),
+            "inferred quad (a, p, c) should be marked derived, not base"
+        );
+
+        // Original base facts should still be base
+        assert!(
+            ds.named_graphs.is_base(&fact_ab),
+            "original fact (a, p, b) should remain base"
+        );
+        assert!(
+            ds.named_graphs.is_base(&fact_bc),
+            "original fact (b, p, c) should remain base"
+        );
     }
 }
