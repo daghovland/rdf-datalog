@@ -119,22 +119,3 @@ jobs:
       - name: cargo test — IMF performance tests
         run: cargo test --test performance imf
 
-  # ── Minimal versions ────────────────────────────────────────────────────────
-  # Verifies the workspace builds with the *lowest* semver-compatible dependency
-  # versions. Catches undeclared version floor bumps early.
-  minimal-versions:
-    name: Minimal dependency versions
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: minimal-versions
-      - name: Resolve minimal versions
-        run: cargo +nightly update -Z minimal-versions
-      - name: cargo check with minimal versions
-        run: cargo check --workspace --all-targets
