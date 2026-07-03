@@ -3061,6 +3061,8 @@ dependencies = [
  "axum",
  "base64 0.21.7",
  "dag-rdf",
+ "datalog",
+ "datalog-parser",
  "ingress",
  "jsonld-parser",
  "jsonwebtoken",

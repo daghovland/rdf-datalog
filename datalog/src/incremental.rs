@@ -34,7 +34,7 @@ const FALLBACK_THRESHOLD: f64 = 0.25;
 /// Datalog closure under base-fact insertions and deletions.
 ///
 /// The reasoner is initialised by materialising from scratch (with derivation tracking).
-/// Subsequent updates are applied via [`apply_deletions`] and [`apply_insertions`].
+/// Subsequent updates are applied via [`Self::apply_deletions`] and [`Self::apply_insertions`].
 pub struct IncrementalReasoner {
     /// One `DatalogProgram` per stratum, in topological stratum order.
     programs: Vec<DatalogProgram>,

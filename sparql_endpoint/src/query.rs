@@ -168,7 +168,13 @@ async fn run_update(update_str: &str, state: &AppState) -> Response {
                 .into_response();
         }
     }
-    match apply_prepared_update(&mut store, prepared) {
+    let result = if let Some(ref reasoner_arc) = state.reasoner {
+        let mut reasoner = reasoner_arc.lock().await;
+        apply_prepared_update(&mut store, prepared, Some(&mut *reasoner))
+    } else {
+        apply_prepared_update(&mut store, prepared, None)
+    };
+    match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
