@@ -33,3 +33,7 @@ shacl = { path = "shacl" }
 [[bench]]
 name = "gene_ontology"
 harness = false
+
+[[bench]]
+name = "lubm"
+harness = false
