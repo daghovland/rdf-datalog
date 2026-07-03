@@ -137,6 +137,24 @@ else
     echo "dblp-sample.nt written (${ACTUAL_LINES} lines)."
 fi
 
+# ── LUBM (Lehigh University Benchmark) ───────────────────────────────────────
+# LUBM data is generated synthetically by the Rust benchmark itself.
+# No download is required. Run the LUBM benchmarks with:
+#
+#   cargo bench --bench lubm
+#
+# To compare BF vs. full re-materialisation across scales:
+#
+#   cargo bench --bench lubm -- bf_vs_full_remat
+#
+# For memory overhead numbers:
+#
+#   cargo bench --bench lubm -- memory_overhead
+#
+# To verify the benchmark compiles and runs without panicking (no data needed):
+#
+#   cargo bench --bench lubm -- --test
+
 echo "Done."
 echo ""
 echo "Run IMF tests (no --ignored needed):"
@@ -153,6 +171,11 @@ echo "  cargo test --test dblp_benchmark -- --ignored --nocapture"
 echo ""
 echo "Run Gene Ontology benchmarks:"
 echo "  cargo bench --bench gene_ontology"
+echo ""
+echo "Run LUBM benchmarks (data is generated synthetically — no download needed):"
+echo "  cargo bench --bench lubm"
+echo "  cargo bench --bench lubm -- bf_vs_full_remat"
+echo "  cargo bench --bench lubm -- memory_overhead"
 echo ""
 echo "Compare bench against a saved baseline:"
 echo "  cargo bench --bench gene_ontology -- --save-baseline before"

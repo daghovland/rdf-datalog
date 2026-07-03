@@ -81,9 +81,6 @@ cargo test --workspace --release
 cargo check --workspace --all-targets
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo audit
-# Note: the CI minimal-versions job requires nightly and mutates Cargo.lock;
-# run it manually only when adding/removing dependencies:
-#   cargo +nightly update -Z minimal-versions && cargo check --workspace --all-targets
 
 ```
 

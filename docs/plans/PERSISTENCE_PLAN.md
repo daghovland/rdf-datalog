@@ -334,7 +334,7 @@ When a SPARQL Update or GSP request contains both insertions and deletions
 1. Apply deletions with BF (backward + forward phases).
 2. Apply insertions with semi-naive evaluation.
 3. The order matters when inserted and deleted facts overlap — handle via
-   transaction-level staging.
+   transaction-level staging (see [#114](https://github.com/daghovland/rdf-datalog/issues/114)).
 
 ### Data structures
 
@@ -390,6 +390,7 @@ Stratified negation is already handled by `RulePartitioner`. With BF:
 | D4 | [#109](https://github.com/daghovland/rdf-datalog/issues/109) | BF backward phase: given Δ⁻, compute `PD` by backward traversal of `DerivedFrom`. |
 | D5 | [#109](https://github.com/daghovland/rdf-datalog/issues/109) | BF forward phase: re-derive from surviving base facts; prune unre-derivable facts from `PD`. |
 | D6 | [#110](https://github.com/daghovland/rdf-datalog/issues/110) | Integrate with SPARQL Update / GSP handlers: call `IncrementalReasoner::apply_update` after each mutation. |
+| D6a | [#114](https://github.com/daghovland/rdf-datalog/issues/114) | Batch all quad inserts/deletes from one SPARQL Update request before calling the reasoner (transaction atomicity). Currently the reasoner is called once per statement; intermediate states can produce transient wrong inferences. |
 | D7 | [#111](https://github.com/daghovland/rdf-datalog/issues/111) | Benchmark BF vs. full re-materialisation on LUBM scale 1/5/10; measure DerivedFrom index memory overhead and tipping point. |
 
 ### Memory and performance cost model
