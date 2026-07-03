@@ -41,26 +41,31 @@ pub enum UpdateOp {
     DropAll,
     DropGraph(String),
     CreateGraph(String),
+    /// `LOAD [SILENT] <url> [INTO GRAPH <graph>]`.
+    ///
+    /// Parsed for syntax conformance; execution (actual HTTP fetch) is not
+    /// implemented.
+    LoadGraph {
+        source: String,
+        into: Option<String>,
+    },
     /// `INSERT { template } WHERE { pattern }`.
     ///
-    /// Not yet logged for persistence — see
-    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    /// Not yet logged for persistence.
     InsertWhere {
         template: String,
         pattern: String,
     },
     /// `DELETE { template } WHERE { pattern }`.
     ///
-    /// Not yet logged for persistence — see
-    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    /// Not yet logged for persistence.
     DeleteWhere {
         template: String,
         pattern: String,
     },
     /// `DELETE { delete_template } INSERT { insert_template } WHERE { pattern }`.
     ///
-    /// Not yet logged for persistence — see
-    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    /// Not yet logged for persistence.
     DeleteInsertWhere {
         delete_template: String,
         insert_template: String,
@@ -71,7 +76,174 @@ pub enum UpdateOp {
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 fn skip_ws(s: &str) -> &str {
-    s.trim_start()
+    let mut s = s.trim_start();
+    // Also skip `# comment` lines (SPARQL Update comment syntax)
+    while let Some(rest) = s.strip_prefix('#') {
+        let nl = rest.find('\n').map(|i| i + 1).unwrap_or(rest.len());
+        s = rest[nl..].trim_start();
+    }
+    s
+}
+
+/// Skip SPARQL Update prologue declarations (BASE and PREFIX) that may appear
+/// before the first operation or between `;`-separated operations.
+fn skip_prologue(s: &str) -> &str {
+    let mut rest = skip_ws(s);
+    loop {
+        if let Some(r) = kw(rest, "PREFIX") {
+            // Skip: PREFIX prefix: <iri>
+            let r = skip_ws(r);
+            if let Some(gt) = r.find('>') {
+                rest = skip_ws(&r[gt + 1..]);
+            } else {
+                break;
+            }
+        } else if let Some(r) = kw(rest, "BASE") {
+            // Skip: BASE <iri>
+            let r = skip_ws(r);
+            if let Some(gt) = r.find('>') {
+                rest = skip_ws(&r[gt + 1..]);
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    rest
+}
+
+/// Parse a graph reference: either `<iri>` or a prefixed name (`prefix:local`).
+///
+/// Returns `(graph_ref_string, remainder)`.
+fn take_iri_or_prefixed(s: &str) -> Option<(String, &str)> {
+    let s = skip_ws(s);
+    if s.starts_with('<') {
+        return take_iri(s);
+    }
+    // Prefixed name: scan to first whitespace or structural char
+    let end = s
+        .find(|c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | '(' | ')' | ',' | '.'))
+        .unwrap_or(s.len());
+    if end > 0 && s[..end].contains(':') {
+        Some((s[..end].to_string(), &s[end..]))
+    } else {
+        None
+    }
+}
+
+/// Returns `true` if `s` contains a SPARQL variable marker (`?` or `$` followed
+/// by a letter or `_`) outside of quoted string literals.
+///
+/// Used to reject variables inside INSERT DATA / DELETE DATA blocks.
+fn content_has_variable(s: &str) -> bool {
+    let mut in_str = false;
+    let mut str_ch = '"';
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        if in_str {
+            if c == str_ch && (i == 0 || chars[i - 1] != '\\') {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '#' => {
+                    // Skip rest of line
+                    while i < n && chars[i] != '\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                '"' | '\'' => {
+                    in_str = true;
+                    str_ch = c;
+                }
+                '?' | '$' if i + 1 < n && (chars[i + 1].is_alphabetic() || chars[i + 1] == '_') => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Returns `true` if `s` contains a blank node label (`_:name`) outside of
+/// quoted string literals.
+///
+/// Used to detect blank nodes in DELETE DATA, DELETE WHERE, and DELETE templates.
+fn content_has_bnode_label(s: &str) -> bool {
+    let mut in_str = false;
+    let mut str_ch = '"';
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        if in_str {
+            if c == str_ch && (i == 0 || chars[i - 1] != '\\') {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '#' => {
+                    while i < n && chars[i] != '\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                '"' | '\'' => {
+                    in_str = true;
+                    str_ch = c;
+                }
+                '_' if i + 1 < n && chars[i + 1] == ':' => return true,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Returns `true` if `s` contains an anonymous blank node (`[`) outside of
+/// quoted string literals.
+///
+/// Used to reject anonymous blank nodes in DELETE templates.
+fn content_has_anon_bnode(s: &str) -> bool {
+    let mut in_str = false;
+    let mut str_ch = '"';
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        if in_str {
+            if c == str_ch && (i == 0 || chars[i - 1] != '\\') {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '#' => {
+                    while i < n && chars[i] != '\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                '"' | '\'' => {
+                    in_str = true;
+                    str_ch = c;
+                }
+                '[' => return true,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Try to consume a case-insensitive keyword at the start of `s`.
@@ -144,10 +316,27 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
         return Err("empty input".to_string());
     }
 
+    // LOAD [SILENT] <url> [INTO GRAPH <graph>]
+    if let Some(rest) = kw(s, "LOAD") {
+        let rest = kw(rest, "SILENT").unwrap_or(rest);
+        let (source, rest) = take_iri(rest).ok_or("expected IRI after LOAD")?;
+        let (into, rest) = if let Some(into_rest) = kw(rest, "INTO") {
+            let into_rest = kw(into_rest, "GRAPH").ok_or("expected GRAPH after INTO")?;
+            let (iri, rest) = take_iri(into_rest).ok_or("expected IRI after INTO GRAPH")?;
+            (Some(iri), rest)
+        } else {
+            (None, rest)
+        };
+        return Ok((UpdateOp::LoadGraph { source, into }, rest));
+    }
+
     // INSERT DATA { ... }  |  INSERT { template } WHERE { pattern }
     if let Some(rest) = kw(s, "INSERT") {
         if let Some(data_rest) = kw(rest, "DATA") {
             let (content, rest) = take_braced(data_rest).ok_or("expected { } after INSERT DATA")?;
+            if content_has_variable(&content) {
+                return Err("variables are not allowed in INSERT DATA".to_string());
+            }
             return Ok((UpdateOp::InsertData { content }, rest));
         }
         let (template, rest) = take_braced(rest).ok_or("expected { } after INSERT")?;
@@ -156,14 +345,39 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
         return Ok((UpdateOp::InsertWhere { template, pattern }, rest));
     }
 
-    // DELETE DATA { ... }  |  DELETE { template } WHERE { pattern }
+    // DELETE DATA { ... }  |  DELETE WHERE { pattern }  (short form)
+    //   |  DELETE { template } WHERE { pattern }
     //   |  DELETE { d } INSERT { i } WHERE { pattern }
     if let Some(rest) = kw(s, "DELETE") {
         if let Some(data_rest) = kw(rest, "DATA") {
             let (content, rest) = take_braced(data_rest).ok_or("expected { } after DELETE DATA")?;
+            if content_has_variable(&content) {
+                return Err("variables are not allowed in DELETE DATA".to_string());
+            }
+            if content_has_bnode_label(&content) {
+                return Err("blank nodes are not allowed in DELETE DATA".to_string());
+            }
             return Ok((UpdateOp::DeleteData { content }, rest));
         }
+        // DELETE WHERE { ... } — short form with no explicit template
+        if let Some(where_rest) = kw(rest, "WHERE") {
+            let (pattern, rest) =
+                take_braced(where_rest).ok_or("expected { } after DELETE WHERE")?;
+            if content_has_bnode_label(&pattern) {
+                return Err("blank nodes are not allowed in DELETE WHERE pattern".to_string());
+            }
+            return Ok((
+                UpdateOp::DeleteWhere {
+                    template: pattern.clone(),
+                    pattern,
+                },
+                rest,
+            ));
+        }
         let (delete_template, rest) = take_braced(rest).ok_or("expected { } after DELETE")?;
+        if content_has_bnode_label(&delete_template) || content_has_anon_bnode(&delete_template) {
+            return Err("blank nodes are not allowed in DELETE template".to_string());
+        }
         if let Some(insert_rest) = kw(rest, "INSERT") {
             let (insert_template, rest) =
                 take_braced(insert_rest).ok_or("expected { } after INSERT")?;
@@ -187,6 +401,59 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
             },
             rest,
         ));
+    }
+
+    // WITH <graph> (DELETE { ... })? (INSERT { ... })? (USING ...)* WHERE { ... }
+    //
+    // The WITH clause specifies the default graph context for the update.
+    // The graph IRI is parsed but currently ignored during execution.
+    if let Some(rest) = kw(s, "WITH") {
+        let (_graph_iri, rest) = take_iri_or_prefixed(rest).ok_or("expected IRI after WITH")?;
+        // Optional DELETE clause
+        let (delete_template, rest) = if let Some(r) = kw(rest, "DELETE") {
+            let (t, r) = take_braced(r).ok_or("expected { } after DELETE")?;
+            if content_has_bnode_label(&t) || content_has_anon_bnode(&t) {
+                return Err("blank nodes are not allowed in DELETE template".to_string());
+            }
+            (Some(t), r)
+        } else {
+            (None, rest)
+        };
+        // Optional INSERT clause
+        let (insert_template, rest) = if let Some(r) = kw(rest, "INSERT") {
+            let (t, r) = take_braced(r).ok_or("expected { } after INSERT")?;
+            (Some(t), r)
+        } else {
+            (None, rest)
+        };
+        // Zero or more USING clauses
+        let mut rest = rest;
+        while let Some(r) = kw(rest, "USING") {
+            let r = kw(r, "NAMED").unwrap_or(r);
+            let (_, r) = take_iri_or_prefixed(r).ok_or("expected IRI after USING [NAMED]")?;
+            rest = r;
+        }
+        let rest = kw(rest, "WHERE").ok_or("expected WHERE in WITH...DELETE/INSERT")?;
+        let (pattern, rest) = take_braced(rest).ok_or("expected { } after WHERE")?;
+        let op = match (delete_template, insert_template) {
+            (Some(d), Some(i)) => UpdateOp::DeleteInsertWhere {
+                delete_template: d,
+                insert_template: i,
+                pattern,
+            },
+            (Some(d), None) => UpdateOp::DeleteWhere {
+                template: d,
+                pattern,
+            },
+            (None, Some(i)) => UpdateOp::InsertWhere {
+                template: i,
+                pattern,
+            },
+            (None, None) => {
+                return Err("expected DELETE or INSERT clause after WITH <iri>".to_string());
+            }
+        };
+        return Ok((op, rest));
     }
 
     // CLEAR [SILENT] (DEFAULT | NAMED | ALL | GRAPH <iri>)
@@ -243,9 +510,9 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
 
 pub fn parse_update(input: &str) -> Result<Vec<UpdateOp>, String> {
     let mut ops = Vec::new();
-    let mut rest = input;
+    // Skip optional prologue (PREFIX / BASE declarations) before first operation.
+    let mut rest = skip_prologue(input);
     loop {
-        rest = skip_ws(rest);
         if rest.is_empty() {
             break;
         }
@@ -253,7 +520,11 @@ pub fn parse_update(input: &str) -> Result<Vec<UpdateOp>, String> {
         ops.push(op);
         rest = skip_ws(tail);
         if let Some(tail) = rest.strip_prefix(';') {
-            rest = tail;
+            // After `;`, skip any prologue before the next operation (or trailing `;`).
+            rest = skip_prologue(tail);
+            if rest.is_empty() {
+                break;
+            }
         } else if rest.is_empty() {
             break;
         } else {
@@ -293,8 +564,7 @@ pub enum PreparedOp {
     /// `apply_prepared_update` rather than at `prepare_update` time, because
     /// solutions depend on the state of the store *after* any preceding ops
     /// in the same request have already been applied. These updates are not
-    /// yet written to the changelog — see
-    /// <https://github.com/daghovland/rdf-datalog/issues/53>.
+    /// yet written to the changelog.
     PatternUpdate {
         delete_template: Option<String>,
         insert_template: Option<String>,
@@ -391,8 +661,12 @@ pub fn prepare_update(
                 prepared.push(PreparedOp::CreateGraph(iri));
                 // No quads added; nothing to log.
             }
+            UpdateOp::LoadGraph { .. } => {
+                // LOAD requires fetching a remote URL; not implemented for in-memory execution.
+                // Parsed for syntax conformance only.
+            }
             UpdateOp::InsertWhere { template, pattern } => {
-                // Not yet logged for persistence; see issue #53.
+                // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: None,
                     insert_template: Some(template),
@@ -400,7 +674,7 @@ pub fn prepare_update(
                 });
             }
             UpdateOp::DeleteWhere { template, pattern } => {
-                // Not yet logged for persistence; see issue #53.
+                // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: Some(template),
                     insert_template: None,
@@ -412,7 +686,7 @@ pub fn prepare_update(
                 insert_template,
                 pattern,
             } => {
-                // Not yet logged for persistence; see issue #53.
+                // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: Some(delete_template),
                     insert_template: Some(insert_template),
@@ -561,8 +835,7 @@ pub fn apply_prepared_update(
 // executor to obtain solution bindings, then materialising the DELETE/INSERT
 // templates (themselves parsed as a bare BGP) once per solution row.
 //
-// Not yet logged to the changelog for persistence — see
-// <https://github.com/daghovland/rdf-datalog/issues/53>.
+// Not yet logged to the changelog for persistence.
 
 /// Parse `pattern` as the WHERE clause of a `SELECT * WHERE { pattern }`
 /// query and execute it against `store`, returning the solution rows.
