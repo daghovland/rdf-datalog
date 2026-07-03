@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! Shared helpers for sparql_endpoint integration tests.
 
 use dag_rdf::datastore::Datastore;
+use datalog::Rule;
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::path::Path;
 use std::sync::Arc;
@@ -93,6 +94,46 @@ impl TestServer {
     /// so both sources are visible together.
     pub async fn start_writable_persistent(data: &str, data_dir: &Path) -> Self {
         Self::start_inner_with_data_dir(data, false, false, AuthConfig::None, Some(data_dir)).await
+    }
+
+    /// Start a writable server with an already-built store and incremental rules.
+    ///
+    /// The `store` must be the same `Datastore` that was used to intern the IRI
+    /// resources referenced by `rules` (IDs must match).
+    /// `IncrementalReasoner::new` will run initial materialisation inside
+    /// `serve_on_listener`.
+    #[allow(dead_code)]
+    pub async fn start_with_store_and_rules(
+        store: Arc<RwLock<Datastore>>,
+        rules: Vec<Rule>,
+        read_only: bool,
+    ) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only,
+            max_query_timeout_secs: 10,
+            auth: AuthConfig::None,
+            data_dir: None,
+            initial_rules: rules,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
     }
 
     async fn start_inner(data: &str, use_trig: bool, read_only: bool, auth: AuthConfig) -> Self {

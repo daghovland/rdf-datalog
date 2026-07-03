@@ -16,6 +16,7 @@ Contact: hovlanddag@gmail.com
 use crate::persistence::{LogEntry, to_repr};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
+use datalog::IncrementalReasoner;
 use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
 use sparql_parser::{ParserContext, QueryResult, SolutionRow, execute, parse_query};
 use std::collections::HashMap;
@@ -441,12 +442,68 @@ fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
     }
 }
 
+/// Translate quads from a temporary datastore's default graph into the IDs of
+/// the main `store`, interning any new resources.  The quads are NOT inserted
+/// into `store` — the caller decides what to do with them.
+fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress::Quad> {
+    tmp.named_graphs
+        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+        .map(|q| {
+            let s = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.subject).clone());
+            let p = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.predicate).clone());
+            let o = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.obj).clone());
+            ingress::Quad {
+                triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+                subject: s,
+                predicate: p,
+                obj: o,
+            }
+        })
+        .collect()
+}
+
 /// Apply pre-parsed ops to the store.  No Turtle re-parsing.
-pub fn apply_prepared_update(store: &mut Datastore, ops: Vec<PreparedOp>) -> Result<(), String> {
+///
+/// When `reasoner` is `Some`, INSERT DATA and DELETE DATA route through the
+/// incremental reasoner so that derived triples are updated after each mutation.
+/// Other operation types (CLEAR, DROP, etc.) bypass the reasoner for now —
+/// a full re-materialisation would be needed for those, which is tracked in
+/// [#110](https://github.com/daghovland/rdf-datalog/issues/110).
+pub fn apply_prepared_update(
+    store: &mut Datastore,
+    ops: Vec<PreparedOp>,
+    mut reasoner: Option<&mut IncrementalReasoner>,
+) -> Result<(), String> {
     for op in ops {
         match op {
-            PreparedOp::InsertData(tmp) => apply_insert(store, tmp),
-            PreparedOp::DeleteData(tmp) => apply_delete(store, tmp),
+            PreparedOp::InsertData(tmp) => {
+                if let Some(r) = reasoner.as_deref_mut() {
+                    let quads = translate_to_main_ids(store, &tmp);
+                    r.apply_insertions(store, &quads);
+                } else {
+                    apply_insert(store, tmp);
+                }
+            }
+            PreparedOp::DeleteData(tmp) => {
+                if let Some(r) = reasoner.as_deref_mut() {
+                    let quads = translate_to_main_ids(store, &tmp);
+                    // Keep only quads that actually exist in the store so we
+                    // don't ask the reasoner to retract phantom quads.
+                    let existing: Vec<_> = quads
+                        .into_iter()
+                        .filter(|q| store.named_graphs.contains(q))
+                        .collect();
+                    r.apply_deletions(store, &existing);
+                } else {
+                    apply_delete(store, tmp);
+                }
+            }
             PreparedOp::ClearDefault | PreparedOp::DropDefault => {
                 store.remove_graph(DEFAULT_GRAPH_ELEMENT_ID);
             }
@@ -639,10 +696,10 @@ fn apply_pattern_update(
 }
 
 /// Convenience wrapper: parse, discard log entries, apply.
-/// Use only when persistence is not configured.
+/// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
     let (prepared, _) = prepare_update(store, ops)?;
-    apply_prepared_update(store, prepared)
+    apply_prepared_update(store, prepared, None)
 }
 
 fn ensure_trailing_dot(content: &str) -> String {
@@ -773,7 +830,7 @@ mod tests {
 
         assert_eq!(log_entries.len(), 1, "one triple → one log entry");
 
-        apply_prepared_update(&mut store, prepared).unwrap();
+        apply_prepared_update(&mut store, prepared, None).unwrap();
 
         // The single quad in the store must match the single log entry.
         let quads: Vec<_> = store
@@ -803,7 +860,7 @@ mod tests {
         let mut store = Datastore::new(64);
         let insert_ops = parse_update(&format!("INSERT DATA {{ {content} }}")).unwrap();
         let (prepared, _) = prepare_update(&store, insert_ops).unwrap();
-        apply_prepared_update(&mut store, prepared).unwrap();
+        apply_prepared_update(&mut store, prepared, None).unwrap();
         assert_eq!(
             store
                 .named_graphs
@@ -821,7 +878,7 @@ mod tests {
             "log entry should be DeleteQuad"
         );
 
-        apply_prepared_update(&mut store, prepared).unwrap();
+        apply_prepared_update(&mut store, prepared, None).unwrap();
         assert_eq!(
             store
                 .named_graphs

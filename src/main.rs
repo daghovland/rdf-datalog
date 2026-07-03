@@ -32,7 +32,7 @@ use clap::Parser;
 use dag_rdf::Datastore;
 use dagalog::{
     OutputFormat, apply_ontologies, apply_rml_mappings, apply_rules, format_results, load_file,
-    run_sparql_query,
+    parse_rules, run_sparql_query,
 };
 use sparql_endpoint::{AuthConfig, OidcConfig};
 use std::path::PathBuf;
@@ -284,26 +284,36 @@ fn run(cli: Cli) -> Result<(), String> {
         }
     }
 
-    if !cli.rules.is_empty() {
+    // When serving, collect rules for IncrementalReasoner (initial materialisation
+    // happens inside serve_on_listener).  For one-shot queries, apply rules eagerly.
+    let serve_rules: Vec<_> = if !cli.rules.is_empty() {
         if cli.verbose {
             for p in &cli.rules {
                 eprintln!("loading rules: {}", p.display());
             }
         }
-        let triples_before = datastore.named_graphs.quad_count;
-        let rule_count = apply_rules(&mut datastore, &cli.rules)?;
-        if cli.verbose {
-            eprintln!("Datalog rules applied: {}", rule_count);
-            eprintln!(
-                "Triples after Datalog materialisation: {} (+{})",
-                datastore.named_graphs.quad_count,
-                datastore
-                    .named_graphs
-                    .quad_count
-                    .saturating_sub(triples_before)
-            );
+        if cli.serve {
+            // Defer materialisation to IncrementalReasoner::new inside the server.
+            parse_rules(&mut datastore, &cli.rules)?
+        } else {
+            let triples_before = datastore.named_graphs.quad_count;
+            let rule_count = apply_rules(&mut datastore, &cli.rules)?;
+            if cli.verbose {
+                eprintln!("Datalog rules applied: {}", rule_count);
+                eprintln!(
+                    "Triples after Datalog materialisation: {} (+{})",
+                    datastore.named_graphs.quad_count,
+                    datastore
+                        .named_graphs
+                        .quad_count
+                        .saturating_sub(triples_before)
+                );
+            }
+            Vec::new() // rules already applied; no need to pass to Config
         }
-    }
+    } else {
+        Vec::new()
+    };
 
     if cli.verbose {
         eprintln!("total triples: {}", datastore.named_graphs.quad_count);
@@ -334,6 +344,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_query_timeout_secs: cli.query_timeout,
             auth,
             data_dir,
+            initial_rules: serve_rules,
             ..Default::default()
         };
         let store = Arc::new(RwLock::new(datastore));

@@ -39,6 +39,9 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         changelog: state.changelog.clone(),
         // Each dataset has its own store, hence its own VQS index cache.
         vqs_cache: Arc::new(RwLock::new(None)),
+        // Per-dataset incremental reasoning is not yet supported (D6 scope).
+        // See: https://github.com/daghovland/rdf-datalog/issues/110
+        reasoner: None,
     }
 }
 
@@ -218,7 +221,8 @@ pub async fn dataset_update_post(
         }
     }
 
-    match sparql_update::apply_prepared_update(&mut store, prepared) {
+    // Per-dataset incremental reasoning is not yet supported; see issue #110.
+    match sparql_update::apply_prepared_update(&mut store, prepared, None) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
