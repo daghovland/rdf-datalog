@@ -42,6 +42,7 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         // Per-dataset incremental reasoning is not yet supported (D6 scope).
         // See: https://github.com/daghovland/rdf-datalog/issues/110
         reasoner: None,
+        network_policy: state.network_policy,
     }
 }
 
@@ -222,7 +223,7 @@ pub async fn dataset_update_post(
     }
 
     // Per-dataset incremental reasoning is not yet supported; see issue #110.
-    match sparql_update::apply_prepared_update(&mut store, prepared, None) {
+    match sparql_update::apply_prepared_update(&mut store, prepared, None, state.network_policy) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -170,9 +170,14 @@ async fn run_update(update_str: &str, state: &AppState) -> Response {
     }
     let result = if let Some(ref reasoner_arc) = state.reasoner {
         let mut reasoner = reasoner_arc.lock().await;
-        apply_prepared_update(&mut store, prepared, Some(&mut *reasoner))
+        apply_prepared_update(
+            &mut store,
+            prepared,
+            Some(&mut *reasoner),
+            state.network_policy,
+        )
     } else {
-        apply_prepared_update(&mut store, prepared, None)
+        apply_prepared_update(&mut store, prepared, None, state.network_policy)
     };
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -197,7 +202,7 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
 
     let store = state.store.read().await;
     let etag = format!("\"{}\"", store.generation);
-    let result = match execute(&query, &store) {
+    let result = match execute(&query, &store, state.network_policy) {
         Ok(r) => r,
         Err(e) => {
             return (

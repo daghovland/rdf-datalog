@@ -34,6 +34,7 @@ use dagalog::{
     OutputFormat, apply_ontologies, apply_rml_mappings, apply_rules, format_results, load_file,
     parse_rules, run_sparql_query,
 };
+use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, OidcConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -196,6 +197,19 @@ struct Cli {
     /// Force in-memory mode even if DAGALOG_DATA_DIR is set
     #[arg(long = "no-persist", env = "DAGALOG_NO_PERSIST")]
     no_persist: bool,
+
+    /// Remote network access policy: deny (default), ignore, or allow
+    ///
+    /// deny:   return an error for LOAD, @context URLs, SERVICE (safe default)
+    /// ignore: silently skip all remote fetch operations
+    /// allow:  perform HTTP fetches [planned; not yet implemented]
+    #[arg(
+        long = "network",
+        value_name = "POLICY",
+        default_value = "deny",
+        env = "DAGALOG_NETWORK"
+    )]
+    network: String,
 }
 
 fn main() {
@@ -206,11 +220,25 @@ fn main() {
     }
 }
 
+fn parse_network_policy(s: &str) -> Result<NetworkPolicy, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "deny" => Ok(NetworkPolicy::Deny),
+        "ignore" => Ok(NetworkPolicy::Ignore),
+        "allow" => Ok(NetworkPolicy::Allow),
+        other => Err(format!(
+            "unknown network policy '{other}'; expected one of: deny, ignore, allow"
+        )),
+    }
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     let format: OutputFormat = cli
         .format
         .parse()
         .map_err(|e: String| format!("--format: {}", e))?;
+
+    let network_policy =
+        parse_network_policy(&cli.network).map_err(|e| format!("--network: {}", e))?;
 
     // Resolve SPARQL query string: --query-file wins; --query auto-detects file paths.
     let sparql = match (&cli.query_file, &cli.query) {
@@ -345,6 +373,7 @@ fn run(cli: Cli) -> Result<(), String> {
             auth,
             data_dir,
             initial_rules: serve_rules,
+            network_policy,
             ..Default::default()
         };
         let store = Arc::new(RwLock::new(datastore));

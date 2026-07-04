@@ -23,6 +23,9 @@ impl fmt::Display for IriReference {
 mod namespaces;
 pub use namespaces::*;
 
+mod network_policy;
+pub use network_policy::NetworkPolicy;
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RdfResource {
     Iri(IriReference),

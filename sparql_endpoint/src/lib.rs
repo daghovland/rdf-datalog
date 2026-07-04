@@ -30,6 +30,7 @@ pub mod vqs_routes;
 
 use dag_rdf::datastore::Datastore;
 use datalog::{IncrementalReasoner, Rule};
+use ingress::NetworkPolicy;
 use persistence::QuadChangelog;
 use registry::DatasetRegistry;
 use std::net::SocketAddr;
@@ -179,6 +180,13 @@ pub struct Config {
     ///
     /// Related: [#110](https://github.com/daghovland/rdf-datalog/issues/110)
     pub initial_rules: Vec<Rule>,
+    /// Network access policy for SPARQL `LOAD`, `SERVICE`, and JSON-LD external `@context` URLs.
+    ///
+    /// Default: [`NetworkPolicy::Deny`] — remote fetches return an error pointing
+    /// the user to `--network=allow`.
+    ///
+    /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
+    pub network_policy: NetworkPolicy,
 }
 
 impl Default for Config {
@@ -192,6 +200,7 @@ impl Default for Config {
             data_dir: None,
             max_rml_upload_bytes: 64 * 1024 * 1024,
             initial_rules: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
         }
     }
 }
@@ -221,6 +230,10 @@ pub struct AppState {
     ///
     /// Related: [#110](https://github.com/daghovland/rdf-datalog/issues/110)
     pub reasoner: Option<Arc<Mutex<IncrementalReasoner>>>,
+    /// Network access policy for SPARQL `LOAD`, `SERVICE`, and JSON-LD external `@context` URLs.
+    ///
+    /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
+    pub network_policy: NetworkPolicy,
 }
 
 /// Start the SPARQL endpoint server.
@@ -275,6 +288,7 @@ pub async fn serve_on_listener(
         Some(Arc::new(Mutex::new(reasoner)))
     };
 
+    let network_policy = config.network_policy;
     let registry = DatasetRegistry::new_with_default(store.clone());
     let state = AppState {
         store,
@@ -284,6 +298,7 @@ pub async fn serve_on_listener(
         config,
         vqs_cache: Arc::new(RwLock::new(None)),
         reasoner,
+        network_policy,
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

@@ -1,7 +1,7 @@
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use sparql_parser::{
     ast::*, eval_expression_bool_filter, eval_expression_value, execute, parse_query,
-    ParserContext, QueryResult, SolutionRow,
+    NetworkPolicy, ParserContext, QueryResult, SolutionRow,
 };
 use std::collections::HashMap;
 
@@ -381,7 +381,9 @@ fn construct_iri_template_produces_correct_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -446,7 +448,9 @@ fn construct_blank_node_template_fresh_per_solution() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -493,7 +497,9 @@ fn construct_short_form_returns_all_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -515,7 +521,9 @@ fn construct_no_solutions_produces_empty_result() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
     assert!(triples.is_empty());
@@ -542,7 +550,9 @@ fn construct_unbound_template_variable_is_skipped() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
     assert!(
@@ -576,7 +586,9 @@ fn construct_graph_clause_returns_named_graph_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -611,7 +623,9 @@ fn construct_literal_in_subject_is_skipped() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
     assert!(
@@ -649,7 +663,9 @@ fn construct_where_with_optional_includes_optional_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -699,7 +715,9 @@ fn construct_where_with_union_includes_all_branches() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -738,7 +756,9 @@ fn construct_where_with_graph_includes_named_graph_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
 
@@ -782,7 +802,9 @@ fn construct_deduplicates_output_triples() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Construct(triples) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Construct(triples) =
+        execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected Construct result");
     };
     assert_eq!(
@@ -816,7 +838,8 @@ fn test_empty_blank_node_subject_finds_classes() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Select(result) = execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected SELECT result");
     };
     assert_eq!(result.rows.len(), 1);
@@ -862,7 +885,8 @@ fn test_class_picker_union_query() {
         prefixes: HashMap::new(),
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
-    let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Select(result) = execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected SELECT result");
     };
 
@@ -945,7 +969,8 @@ WHERE { # begin pattern
     };
     let (_, query) =
         parse_query(sparql, &mut ctx).expect("Query with inline # comments should parse");
-    let QueryResult::Select(result) = execute(&query, &ds).expect("execute") else {
+    let QueryResult::Select(result) = execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
+    else {
         panic!("expected SELECT result");
     };
     assert_eq!(result.rows.len(), 1, "should return Alice's name row");

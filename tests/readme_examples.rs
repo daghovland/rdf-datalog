@@ -13,6 +13,7 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::Datastore;
 use dagalog::{apply_rules, graph_element_display, run_sparql_query};
+use ingress::NetworkPolicy;
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -35,7 +36,8 @@ fn readme_jsonld_parse_inline() {
     }"#;
 
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes()).expect("parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("parse must succeed");
 
     let result = run_sparql_query(
         &ds,
@@ -60,7 +62,8 @@ fn readme_jsonld_type_triple() {
     }"#;
 
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes()).expect("parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("parse must succeed");
 
     let types = run_sparql_query(
         &ds,
@@ -92,7 +95,8 @@ fn readme_jsonld_literals() {
     }"#;
 
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes()).expect("parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("parse must succeed");
 
     // Both language variants of dc:title are stored
     let titles = run_sparql_query(
@@ -133,7 +137,8 @@ fn readme_jsonld_named_graph() {
     }"#;
 
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes()).expect("parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("parse must succeed");
 
     // Triples live in the named graph, not the default graph
     let in_named = run_sparql_query(
@@ -187,7 +192,8 @@ fn readme_jsonld_serialize_roundtrip() {
 
     // Re-parse: triple count must be preserved
     let mut ds2 = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds2, jsonld.as_bytes()).expect("re-parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds2, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("re-parse must succeed");
 
     let count1 = run_sparql_query(&ds1, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
         .unwrap()
@@ -210,7 +216,8 @@ fn readme_jsonld_serialize_expanded() {
     }"#;
 
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld_in.as_bytes()).expect("parse must succeed");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld_in.as_bytes(), NetworkPolicy::Deny)
+        .expect("parse must succeed");
 
     let expanded = jsonld_parser::serialize_jsonld_expanded(&ds);
 

@@ -26,6 +26,7 @@ pub use execute::{
     eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute, QueryResult,
     ResolvedTriple, SelectResult, SolutionRow,
 };
+pub use ingress::NetworkPolicy;
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};

@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
+ingress = { path = "../ingress" }
 serde_json = "1"
 log = "0.4"
