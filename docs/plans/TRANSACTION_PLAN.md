@@ -6,6 +6,7 @@ multi-request HTTP transaction API.
 Tracked in epic [#122](https://github.com/daghovland/rdf-datalog/issues/122).
 
 Sub-issues:
+- [#126](https://github.com/daghovland/rdf-datalog/issues/126) — Phase 0: Fix atomicity (rollback on failure) **correctness bug**
 - [#123](https://github.com/daghovland/rdf-datalog/issues/123) — Phase 1: Isolation and intra-request visibility tests
 - [#124](https://github.com/daghovland/rdf-datalog/issues/124) — Phase 2: ETag / `If-Match` optimistic concurrency
 - [#125](https://github.com/daghovland/rdf-datalog/issues/125) — Phase 3: Multi-request transaction HTTP API
@@ -43,6 +44,27 @@ there are no explicit tests for it.  Missing test coverage tracked in
    matches triples inserted by an earlier statement in the same request must
    find them.
 
+### Atomicity gap — no rollback on failure
+
+RDFox guarantees: *"if an operation inside a transaction starts changing the
+store but then fails in the middle, the transaction will be rolled back."*
+
+Dagalog's `apply_prepared_update` (since [#114](https://github.com/daghovland/rdf-datalog/issues/114)) pre-applies raw quad
+mutations to the **live store** during iteration, then calls the reasoner once
+at the end.  If a later operation fails (e.g. `INSERT DATA { … } ; LOAD <url>`
+where LOAD is rejected by `NetworkPolicy::Deny`, or a reasoner panic due to
+OOM), the already-applied mutations are **not rolled back**.  The HTTP response
+is a 500/403 but the store is left in a partially-modified state.
+
+This is a real Atomicity violation.  Tracked in
+[#126](https://github.com/daghovland/rdf-datalog/issues/126).
+
+**Fix approach**: buffer all deltas without touching the live store during
+iteration (except for evaluating `PatternUpdate` WHERE clauses, which need a
+delta-overlay view).  Only commit the batched delta to the live store after
+every operation succeeds.  If any operation fails, return `Err` with zero
+store mutations.
+
 ### ETags
 
 SELECT responses carry an `ETag` header based on `Datastore::generation` (a
@@ -71,6 +93,23 @@ For HTTP-accessible triple stores the common patterns are:
 ---
 
 ## Roadmap
+
+### Phase 0 — Fix atomicity (rollback on failure) ([#126](https://github.com/daghovland/rdf-datalog/issues/126))
+
+This is a correctness bug, not a missing feature, and should be fixed before
+the multi-request transaction work.
+
+Change `apply_prepared_update` so that it:
+
+1. Evaluates all operations and collects `batch_inserts` / `batch_deletes`
+   **without touching the live store**.  `PatternUpdate` WHERE clauses are
+   evaluated against a temporary "delta-overlay" view (a thin wrapper that
+   presents pending inserts as present and pending deletes as absent).
+2. If any operation returns `Err`, the function returns that `Err` immediately
+   with zero mutations to the live store.
+3. Only after all operations succeed, apply the batched delta atomically:
+   call `store.named_graphs.add_quad` / `remove_quad` for every collected
+   quad, then call the reasoner once.
 
 ### Phase 1 — Test the existing guarantees ([#123](https://github.com/daghovland/rdf-datalog/issues/123))
 
