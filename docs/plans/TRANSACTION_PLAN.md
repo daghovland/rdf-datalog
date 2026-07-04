@@ -9,6 +9,7 @@ Sub-issues:
 - [#126](https://github.com/daghovland/rdf-datalog/issues/126) — Phase 0: Fix atomicity (rollback on failure) **correctness bug**
 - [#123](https://github.com/daghovland/rdf-datalog/issues/123) — Phase 1: Isolation and intra-request visibility tests
 - [#124](https://github.com/daghovland/rdf-datalog/issues/124) — Phase 2: ETag / `If-Match` optimistic concurrency
+- [#127](https://github.com/daghovland/rdf-datalog/issues/127) — Phase 2.5: Constraint violation class (`dagalog:ConstraintViolation`)
 - [#125](https://github.com/daghovland/rdf-datalog/issues/125) — Phase 3: Multi-request transaction HTTP API
 
 ---
@@ -137,6 +138,98 @@ Enforce `If-Match` on SPARQL Update POST requests:
   `POST /sparql` with `If-Match: <etag>`.
 
 This is a small change in `run_update` in `sparql_endpoint/src/query.rs`.
+
+### Phase 2.5 — Constraint violation class ([#127](https://github.com/daghovland/rdf-datalog/issues/127))
+
+A datalog rule can derive instances of `dagalog:ConstraintViolation`.  Any
+transaction that would cause such an instance to exist in the default graph
+after reasoning is rejected with HTTP 409 Conflict and the changes are rolled
+back.  This enables schema-style constraints expressed entirely in datalog.
+
+#### Vocabulary IRI
+
+No `dagalog:` namespace exists yet.  The proposed namespace is:
+
+```
+https://daghovland.github.io/rdf-datalog/vocabulary#
+```
+
+This is resolvable via GitHub Pages without a custom domain.  **Decide and
+commit the IRI before any release**, as changing it afterwards breaks all user
+rule files.
+
+Two constants are needed in `ingress/src/namespaces.rs`:
+
+```rust
+pub const DAGALOG: &str = "https://daghovland.github.io/rdf-datalog/vocabulary#";
+pub const DAGALOG_CONSTRAINT_VIOLATION: &str =
+    "https://daghovland.github.io/rdf-datalog/vocabulary#ConstraintViolation";
+```
+
+#### Execution order
+
+Constraint checking is the last step of every read/write transaction:
+
+1. All update operations execute and the delta is collected (Phase 0).
+2. The delta is applied atomically to the live store.
+3. The incremental reasoner runs once with the full delta.
+4. The default graph is queried for `?v a dagalog:ConstraintViolation`.
+5. **If violations exist**: undo the delta (reverse `apply_deletions` /
+   `apply_insertions`), return **HTTP 409 Conflict** with violation details.
+6. **If no violations**: return HTTP 204 No Content.
+
+Step 5 requires Phase 0's rollback mechanism.  The undo is:
+- `reasoner.apply_deletions(store, &applied_inserts)` — retract derived facts
+  that depended on the inserted quads.
+- `reasoner.apply_insertions(store, &applied_deletes)` — re-derive facts from
+  quads that were deleted (reverting the deletion).
+- `store.named_graphs.remove_quad` for each applied insert.
+- `store.named_graphs.add_quad` for each applied delete.
+
+This is equivalent to applying the inverse delta.
+
+#### Error response
+
+HTTP 409 body (plain text, or structured JSON):
+
+```
+Transaction rejected: constraint violation(s) detected.
+
+Violation 1: <http://example.org/alice>
+  rdf:type <https://daghovland.github.io/rdf-datalog/vocabulary#ConstraintViolation>
+  ex:missingProperty ex:mbox
+  ex:violationDescription "Every foaf:Person must have at least one foaf:mbox."
+
+(showing 1 of 1 violation)
+```
+
+Show up to 10 violations, up to 10 properties per violation.
+
+#### Example constraint rule
+
+```turtle
+# Every foaf:Person must have a foaf:mbox
+[ ?v a dagalog:ConstraintViolation ;
+     ex:missingMbox ?person ] :-
+  [ ?person a foaf:Person ],
+  NOT EXISTS ?mbox IN [ ?person foaf:mbox ?mbox ] ,
+  SKOLEM("MissingMbox", ?person, ?v) .
+```
+
+Note: `SKOLEM` support in the datalog parser is a separate dependency.  The
+simpler form — using the person IRI directly as the violation node — works
+without `SKOLEM`.
+
+#### Implementation locations
+
+- `ingress/src/namespaces.rs` — add `DAGALOG` and `DAGALOG_CONSTRAINT_VIOLATION` constants
+- `sparql_endpoint/src/query.rs::run_update` — call `check_constraint_violations` after `apply_prepared_update` returns `Ok`
+- `sparql_endpoint/src/constraints.rs` (new) — `check_constraint_violations(store: &Datastore) -> Vec<ViolationInfo>` using the SPARQL executor
+- `sparql_endpoint/tests/constraints.rs` (new) — integration tests
+
+#### Dependency
+
+Requires Phase 0 ([#126](https://github.com/daghovland/rdf-datalog/issues/126)) for correct rollback on violation.
 
 ### Phase 3 — Multi-request transaction API ([#125](https://github.com/daghovland/rdf-datalog/issues/125))
 
