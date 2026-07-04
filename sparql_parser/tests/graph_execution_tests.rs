@@ -1,5 +1,5 @@
 use dag_rdf::{Datastore, GraphElement, IriReference, Quad, RdfResource};
-use sparql_parser::{execute, parse_query, ParserContext, QueryResult};
+use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
 
 fn iri_node(iri: &str) -> GraphElement {
@@ -24,7 +24,7 @@ fn run_query(ds: &Datastore, query: &str) -> sparql_parser::SelectResult {
         prefixes: HashMap::new(),
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
-    match execute(&parsed, ds).expect("query should execute") {
+    match execute(&parsed, ds, NetworkPolicy::Deny).expect("query should execute") {
         QueryResult::Select(r) => r,
         QueryResult::Ask(_) | QueryResult::Construct(_) | QueryResult::Describe(_) => {
             panic!("expected SELECT result")
@@ -198,7 +198,7 @@ fn construct_wildcard_returns_default_graph_triples() {
         prefixes: HashMap::new(),
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("should parse");
-    let result = execute(&parsed, &ds).expect("should execute");
+    let result = execute(&parsed, &ds, NetworkPolicy::Deny).expect("should execute");
     let QueryResult::Construct(triples) = result else {
         panic!("expected Construct result");
     };
@@ -226,11 +226,12 @@ fn service_non_silent_returns_error() {
         } LIMIT 5
     "#;
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
-    let err = execute(&parsed, &ds)
-        .err()
-        .expect("non-SILENT SERVICE must return an error");
+    let err = match execute(&parsed, &ds, NetworkPolicy::Deny) {
+        Err(e) => e,
+        Ok(_) => panic!("non-SILENT SERVICE must return an error"),
+    };
     assert!(
-        err.contains("SERVICE federation is not yet implemented"),
+        err.contains("was rejected") || err.contains("SERVICE"),
         "unexpected error message: {err}"
     );
 }
@@ -247,7 +248,7 @@ fn service_silent_returns_empty() {
         }
     "#;
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
-    let result = execute(&parsed, &ds).expect("SILENT SERVICE must not error");
+    let result = execute(&parsed, &ds, NetworkPolicy::Deny).expect("SILENT SERVICE must not error");
     let rows = match result {
         QueryResult::Select(r) => r.rows,
         _ => panic!("expected SELECT result"),

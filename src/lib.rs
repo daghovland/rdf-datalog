@@ -14,7 +14,9 @@ Contact: hovlanddag@gmail.com
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
-use sparql_parser::{ParserContext, QueryResult, SelectResult, execute, parse_query};
+use sparql_parser::{
+    NetworkPolicy, ParserContext, QueryResult, SelectResult, execute, parse_query,
+};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -193,7 +195,7 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
     };
     let (_, query) =
         parse_query(sparql, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;
-    match execute(&query, datastore)? {
+    match execute(&query, datastore, NetworkPolicy::Deny)? {
         QueryResult::Select(r) => Ok(r),
         QueryResult::Ask(_) => {
             Err("ASK queries are not supported via run_sparql_query".to_string())

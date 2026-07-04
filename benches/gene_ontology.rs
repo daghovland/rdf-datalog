@@ -33,7 +33,7 @@ use criterion::{
 use dag_rdf::Datastore;
 use owl2rl2datalog::owl2datalog;
 use rdf_owl_translator::rdf2owl;
-use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -78,7 +78,7 @@ fn run_sparql_query(ds: &Datastore, query_str: &str) -> usize {
     let query = parse_query(query_str, &mut ctx)
         .expect("query must parse")
         .1;
-    match execute(&query, ds).expect("query must execute") {
+    match execute(&query, ds, NetworkPolicy::Deny).expect("query must execute") {
         QueryResult::Select(r) => r.rows.len(),
         _ => panic!("expected SELECT result"),
     }

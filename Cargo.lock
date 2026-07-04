@@ -1609,6 +1609,7 @@ name = "jsonld-parser"
 version = "0.1.0"
 dependencies = [
  "dag-rdf",
+ "ingress",
  "log",
  "serde_json",
 ]

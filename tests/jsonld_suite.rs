@@ -20,6 +20,7 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
 use dagalog::run_sparql_query;
+use ingress::NetworkPolicy;
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -34,14 +35,15 @@ fn parse_file(name: &str) -> Datastore {
     let path = testdata(name);
     let reader = std::fs::File::open(&path)
         .unwrap_or_else(|e| panic!("could not open {}: {}", path.display(), e));
-    jsonld_parser::parse_jsonld(&mut ds, reader)
+    jsonld_parser::parse_jsonld(&mut ds, reader, NetworkPolicy::Deny)
         .unwrap_or_else(|e| panic!("parse error in {}: {}", name, e));
     ds
 }
 
 fn parse_str(jsonld: &str) -> Datastore {
     let mut ds = Datastore::new(10_000);
-    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes()).expect("inline JSON-LD must parse");
+    jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), NetworkPolicy::Deny)
+        .expect("inline JSON-LD must parse");
     ds
 }
 

@@ -18,7 +18,7 @@ use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
 use datalog::IncrementalReasoner;
 use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
-use sparql_parser::{ParserContext, QueryResult, SolutionRow, execute, parse_query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, SolutionRow, execute, parse_query};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -48,6 +48,8 @@ pub enum UpdateOp {
     LoadGraph {
         source: String,
         into: Option<String>,
+        /// Whether `LOAD SILENT` was specified (errors are suppressed when true).
+        silent: bool,
     },
     /// `INSERT { template } WHERE { pattern }`.
     ///
@@ -318,7 +320,11 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
 
     // LOAD [SILENT] <url> [INTO GRAPH <graph>]
     if let Some(rest) = kw(s, "LOAD") {
-        let rest = kw(rest, "SILENT").unwrap_or(rest);
+        let (rest, silent) = if let Some(r) = kw(rest, "SILENT") {
+            (r, true)
+        } else {
+            (rest, false)
+        };
         let (source, rest) = take_iri(rest).ok_or("expected IRI after LOAD")?;
         let (into, rest) = if let Some(into_rest) = kw(rest, "INTO") {
             let into_rest = kw(into_rest, "GRAPH").ok_or("expected GRAPH after INTO")?;
@@ -327,7 +333,14 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
         } else {
             (None, rest)
         };
-        return Ok((UpdateOp::LoadGraph { source, into }, rest));
+        return Ok((
+            UpdateOp::LoadGraph {
+                source,
+                into,
+                silent,
+            },
+            rest,
+        ));
     }
 
     // INSERT DATA { ... }  |  INSERT { template } WHERE { pattern }
@@ -570,6 +583,17 @@ pub enum PreparedOp {
         insert_template: Option<String>,
         pattern: String,
     },
+    /// `LOAD [SILENT] <url> [INTO GRAPH <graph>]` — remote fetch required.
+    ///
+    /// Whether it's an error, a no-op, or a live HTTP fetch depends on the
+    /// [`NetworkPolicy`] passed to `apply_prepared_update`.
+    ///
+    /// Related: [#119](https://github.com/daghovland/rdf-datalog/issues/119)
+    LoadGraph {
+        source: String,
+        into: Option<String>,
+        silent: bool,
+    },
 }
 
 /// Parse `ops`, build WAL entries, and return prepared ops ready for apply.
@@ -661,9 +685,18 @@ pub fn prepare_update(
                 prepared.push(PreparedOp::CreateGraph(iri));
                 // No quads added; nothing to log.
             }
-            UpdateOp::LoadGraph { .. } => {
-                // LOAD requires fetching a remote URL; not implemented for in-memory execution.
-                // Parsed for syntax conformance only.
+            UpdateOp::LoadGraph {
+                source,
+                into,
+                silent,
+            } => {
+                // Defer network-policy enforcement to apply_prepared_update so the
+                // policy is evaluated at execution time rather than parse time.
+                prepared.push(PreparedOp::LoadGraph {
+                    source,
+                    into,
+                    silent,
+                });
             }
             UpdateOp::InsertWhere { template, pattern } => {
                 // Not yet logged for persistence.
@@ -749,10 +782,13 @@ fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress:
 /// Other operation types (CLEAR, DROP, etc.) bypass the reasoner for now —
 /// a full re-materialisation would be needed for those, which is tracked in
 /// [#110](https://github.com/daghovland/rdf-datalog/issues/110).
+///
+/// `network` controls how `LOAD` operations are handled.
 pub fn apply_prepared_update(
     store: &mut Datastore,
     ops: Vec<PreparedOp>,
     mut reasoner: Option<&mut IncrementalReasoner>,
+    network: NetworkPolicy,
 ) -> Result<(), String> {
     for op in ops {
         match op {
@@ -820,6 +856,27 @@ pub fn apply_prepared_update(
                     &pattern,
                 )?;
             }
+            PreparedOp::LoadGraph { source, silent, .. } => match network {
+                NetworkPolicy::Deny => {
+                    if !silent {
+                        return Err(format!(
+                            "LOAD <{source}> was rejected: remote network access is disabled. \
+                             Start the server with --network=allow to enable remote loading. \
+                             See https://github.com/daghovland/rdf-datalog/issues/119"
+                        ));
+                    }
+                    // LOAD SILENT: fail silently per the SPARQL Update spec.
+                }
+                NetworkPolicy::Ignore => {
+                    // Silent no-op regardless of SILENT flag.
+                }
+                NetworkPolicy::Allow => {
+                    return Err(format!(
+                        "LOAD <{source}>: NetworkPolicy::Allow is not yet implemented. \
+                         Track progress at https://github.com/daghovland/rdf-datalog/issues/119"
+                    ));
+                }
+            },
         }
     }
     Ok(())
@@ -846,7 +903,9 @@ fn eval_where_pattern(store: &Datastore, pattern: &str) -> Result<Vec<SolutionRo
     };
     let (_, query) = parse_query(&query_text, &mut ctx)
         .map_err(|e| format!("WHERE clause parse error: {e:?}"))?;
-    match execute(&query, store).map_err(|e| format!("WHERE clause execution error: {e}"))? {
+    match execute(&query, store, NetworkPolicy::Deny)
+        .map_err(|e| format!("WHERE clause execution error: {e}"))?
+    {
         QueryResult::Select(select_result) => Ok(select_result.rows),
         other => Err(format!(
             "WHERE clause did not evaluate to a solution sequence: {:?}",
@@ -972,7 +1031,7 @@ fn apply_pattern_update(
 /// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
     let (prepared, _) = prepare_update(store, ops)?;
-    apply_prepared_update(store, prepared, None)
+    apply_prepared_update(store, prepared, None, NetworkPolicy::Deny)
 }
 
 fn ensure_trailing_dot(content: &str) -> String {
@@ -1103,7 +1162,7 @@ mod tests {
 
         assert_eq!(log_entries.len(), 1, "one triple → one log entry");
 
-        apply_prepared_update(&mut store, prepared, None).unwrap();
+        apply_prepared_update(&mut store, prepared, None, NetworkPolicy::Deny).unwrap();
 
         // The single quad in the store must match the single log entry.
         let quads: Vec<_> = store
@@ -1133,7 +1192,7 @@ mod tests {
         let mut store = Datastore::new(64);
         let insert_ops = parse_update(&format!("INSERT DATA {{ {content} }}")).unwrap();
         let (prepared, _) = prepare_update(&store, insert_ops).unwrap();
-        apply_prepared_update(&mut store, prepared, None).unwrap();
+        apply_prepared_update(&mut store, prepared, None, NetworkPolicy::Deny).unwrap();
         assert_eq!(
             store
                 .named_graphs
@@ -1151,7 +1210,7 @@ mod tests {
             "log entry should be DeleteQuad"
         );
 
-        apply_prepared_update(&mut store, prepared, None).unwrap();
+        apply_prepared_update(&mut store, prepared, None, NetworkPolicy::Deny).unwrap();
         assert_eq!(
             store
                 .named_graphs

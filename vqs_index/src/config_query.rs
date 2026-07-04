@@ -275,7 +275,7 @@ impl IndexTable {
 /// Literal → `IndexCell::Value(GraphElement::GraphLiteral(...))`.
 /// IRI/blank → `IndexCell::Value(GraphElement::NodeOrEdge(...))`.
 fn execute_optional_sparql(sparql: &str, ds: &Datastore, n: usize) -> Vec<IndexRow> {
-    use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
+    use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
     use std::collections::HashMap as HM;
 
     let mut ctx = ParserContext {
@@ -285,7 +285,7 @@ fn execute_optional_sparql(sparql: &str, ds: &Datastore, n: usize) -> Vec<IndexR
         Ok(q) => q,
         Err(_) => return vec![],
     };
-    let select = match execute(&query, ds) {
+    let select = match execute(&query, ds, NetworkPolicy::Deny) {
         Ok(QueryResult::Select(r)) => r,
         _ => return vec![],
     };

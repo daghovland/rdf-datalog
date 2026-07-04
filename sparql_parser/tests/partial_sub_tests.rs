@@ -28,7 +28,7 @@ Contact: hovlanddag@gmail.com
 //!   GraphElementId>` without unnecessary clones.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, Quad, RdfLiteral, RdfResource};
-use sparql_parser::{execute, parse_query, ParserContext, QueryResult, SolutionRow};
+use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult, SolutionRow};
 use std::collections::HashMap;
 
 fn iri_node(iri: &str) -> GraphElement {
@@ -56,7 +56,7 @@ fn run_query(ds: &Datastore, sparql: &str) -> Vec<SolutionRow> {
         prefixes: HashMap::new(),
     };
     let (_, parsed) = parse_query(sparql, &mut ctx).expect("query should parse");
-    match execute(&parsed, ds).expect("query should execute") {
+    match execute(&parsed, ds, NetworkPolicy::Deny).expect("query should execute") {
         QueryResult::Select(r) => r.rows,
         _ => panic!("expected SELECT result"),
     }
