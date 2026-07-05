@@ -34,6 +34,7 @@ use axum::{
 use dag_rdf::{
     GraphElement, GraphElementId, IriReference, RdfResource, ingress::DEFAULT_GRAPH_ELEMENT_ID,
 };
+use ingress::NetworkPolicy;
 use std::{collections::HashMap, io::Cursor};
 
 // ── Graph identification helpers ─────────────────────────────────────────────
@@ -331,10 +332,13 @@ fn graph_iri_for(tmp: &dag_rdf::Datastore, graph_id: GraphElementId) -> Option<S
 }
 
 /// Parse `body` using the format indicated by `fmt` into a temporary `Datastore`.
+///
+/// `network` controls how JSON-LD external `@context` URLs are handled when `fmt` is JSON-LD.
 #[allow(clippy::result_large_err)]
 pub(crate) fn parse_rdf_body(
     body: &[u8],
     fmt: UploadFormat,
+    network: NetworkPolicy,
 ) -> Result<dag_rdf::Datastore, axum::response::Response> {
     let mut tmp = dag_rdf::Datastore::new(256);
     let result: Result<(), String> = match fmt {
@@ -347,9 +351,8 @@ pub(crate) fn parse_rdf_body(
         UploadFormat::TriG => {
             turtle::parse_trig(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
         }
-        UploadFormat::JsonLd => {
-            jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
-        }
+        UploadFormat::JsonLd => jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body), network)
+            .map_err(|e| e.to_string()),
     };
     result
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
@@ -485,7 +488,7 @@ pub async fn gsp_put_inner(
         }
     };
 
-    let tmp = match parse_rdf_body(&body, fmt) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -658,7 +661,7 @@ pub async fn gsp_post_inner(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    let tmp = match parse_rdf_body(&body, fmt) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -906,7 +909,7 @@ pub async fn direct_gsp_put(
                 .into_response();
         }
     };
-    let tmp = match parse_rdf_body(&body, fmt) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -1047,7 +1050,7 @@ pub async fn direct_gsp_post(
                 .into_response();
         }
     };
-    let tmp = match parse_rdf_body(&body, fmt) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
         Ok(t) => t,
         Err(r) => return r,
     };

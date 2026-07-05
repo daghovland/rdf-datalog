@@ -4,7 +4,7 @@
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use num_bigint::BigInt;
-use sparql_parser::{execute, parse_query, ParserContext, QueryResult};
+use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
 
 fn ctx() -> ParserContext {
@@ -20,7 +20,7 @@ fn eval_function(sparql: &str) -> Option<GraphElement> {
     let ds = Datastore::new(100);
     let (_, query) = parse_query(sparql, &mut ctx())
         .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
-    match execute(&query, &ds).expect("execute should succeed") {
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
         QueryResult::Select(r) => r
             .rows
             .into_iter()

@@ -39,7 +39,7 @@ Contact: hovlanddag@gmail.com
 //! regression), plus loose headroom on the overall OK count.
 
 use dag_rdf::Datastore;
-use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -101,7 +101,7 @@ fn run_benchmark_query(datastore: &Datastore, query_str: &str) -> QueryOutcome {
         Err(_) => return QueryOutcome::ParseFail,
     };
     let t = Instant::now();
-    match execute(&query, datastore) {
+    match execute(&query, datastore, NetworkPolicy::Deny) {
         Ok(QueryResult::Select(r)) => QueryOutcome::Ok {
             elapsed_ms: t.elapsed().as_millis(),
             rows: r.rows.len(),

@@ -1,5 +1,5 @@
 use dag_rdf::Datastore;
-use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 
 /// Execute a SPARQL cell against the session datastore.
@@ -12,7 +12,7 @@ pub fn execute_sparql(ds: &mut Datastore, code: &str) -> Result<Vec<(String, Str
     let (_, query) =
         parse_query(code, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;
 
-    match execute(&query, ds)? {
+    match execute(&query, ds, NetworkPolicy::Deny)? {
         QueryResult::Select(result) => {
             let cols: Vec<&str> = result.variables.iter().map(String::as_str).collect();
             let rows: Vec<Vec<String>> = result

@@ -11,6 +11,7 @@ Contact: hovlanddag@gmail.com
 mod serialize;
 
 use dag_rdf::{Datastore, GraphElementId, IriReference, RdfLiteral, RdfResource, Triple};
+use ingress::NetworkPolicy;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
@@ -50,6 +51,11 @@ struct Context {
     vocab: Option<String>,
     /// @language (default language tag)
     language: Option<String>,
+    /// Network access policy — controls what happens when an external @context URL is encountered.
+    ///
+    /// Default: [`NetworkPolicy::Deny`] (the safe default).
+    /// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+    network: NetworkPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -102,10 +108,21 @@ impl Context {
                 Ok(ctx)
             }
             Value::Object(map) => self.extend_from_map(map),
-            Value::String(_) => {
-                // External context URL — not fetched; see https://github.com/daghovland/rdf-datalog/issues/82
-                Ok(self.clone())
-            }
+            Value::String(url) => match self.network {
+                NetworkPolicy::Deny => Err(err(format!(
+                    "External @context URL \"{url}\" was not fetched: remote network access is \
+                     disabled. Configure with --network=allow to enable external context loading. \
+                     See https://github.com/daghovland/rdf-datalog/issues/82"
+                ))),
+                NetworkPolicy::Ignore => {
+                    // Silently skip the external context — preserve current behaviour.
+                    Ok(self.clone())
+                }
+                NetworkPolicy::Allow => Err(err(format!(
+                    "External @context URL \"{url}\": NetworkPolicy::Allow is not yet implemented. \
+                     Track progress at https://github.com/daghovland/rdf-datalog/issues/82"
+                ))),
+            },
             Value::Null => Ok(Context::default()),
             other => Err(err(format!("invalid @context value: {other}"))),
         }
@@ -331,13 +348,29 @@ fn is_absolute_iri(s: &str) -> bool {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-pub fn parse_jsonld<R: Read>(datastore: &mut Datastore, mut reader: R) -> Result<(), JsonLdError> {
+/// Parse JSON-LD data from `reader` into `datastore`.
+///
+/// `network` controls how external `@context` URLs are handled:
+/// - [`NetworkPolicy::Deny`] — return an error when an external URL is encountered (default).
+/// - [`NetworkPolicy::Ignore`] — silently skip external contexts (previous behaviour).
+/// - [`NetworkPolicy::Allow`] — not yet implemented; returns an error.
+///
+/// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+pub fn parse_jsonld<R: Read>(
+    datastore: &mut Datastore,
+    reader: R,
+    network: NetworkPolicy,
+) -> Result<(), JsonLdError> {
     let mut buf = String::new();
+    let mut reader = reader;
     reader
         .read_to_string(&mut buf)
         .map_err(|e| err(format!("IO: {e}")))?;
     let value: Value = serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))?;
-    let ctx = Context::default();
+    let ctx = Context {
+        network,
+        ..Context::default()
+    };
     process_document(datastore, &value, &ctx, None)
 }
 

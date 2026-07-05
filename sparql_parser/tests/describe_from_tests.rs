@@ -3,7 +3,7 @@
 //! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, Quad, RdfResource};
-use sparql_parser::{ast::*, execute, parse_query, ParserContext, QueryResult};
+use sparql_parser::{ast::*, execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ fn test_describe_iri_returns_subject_triples() {
     let (_, query) =
         parse_query("DESCRIBE <http://example.org/Alice>", &mut ctx()).expect("should parse");
 
-    match execute(&query, &ds).expect("should execute") {
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("should execute") {
         QueryResult::Describe(triples) => {
             assert_eq!(
                 triples.len(),
@@ -164,7 +164,7 @@ fn test_describe_var_resolves_to_subjects() {
                   DESCRIBE ?s WHERE { ?s rdf:type ex:Person }";
     let (_, query) = parse_query(sparql, &mut ctx()).expect("should parse");
 
-    match execute(&query, &ds).expect("should execute") {
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("should execute") {
         QueryResult::Describe(triples) => {
             // WHERE matches Alice and Bob; describe returns triples where they are subjects
             assert!(
@@ -227,7 +227,7 @@ fn test_from_restricts_to_named_graph() {
     // FROM g1 should only see Alice's triple
     let sparql = "SELECT ?s FROM <http://example.org/g1> WHERE { ?s ?p ?o }";
     let (_, query) = parse_query(sparql, &mut ctx()).expect("should parse");
-    match execute(&query, &ds).expect("should execute") {
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("should execute") {
         QueryResult::Select(r) => {
             assert_eq!(
                 r.rows.len(),

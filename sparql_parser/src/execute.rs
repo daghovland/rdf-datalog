@@ -20,7 +20,8 @@ use dag_rdf::{
     Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
 };
 use ingress::{
-    IriReference, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER, XSD_STRING,
+    IriReference, NetworkPolicy, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER,
+    XSD_STRING,
 };
 use num_bigint::BigInt;
 use std::collections::HashMap;
@@ -55,23 +56,48 @@ pub enum QueryResult {
 }
 
 /// Execute a parsed SPARQL query against `datastore`.
-pub fn execute(query: &Query, datastore: &Datastore) -> Result<QueryResult, String> {
-    // Reject non-SILENT SERVICE before executing — the executor does not implement
-    // federation and silently returning empty results would be a correctness footgun.
-    // SILENT SERVICE (which the spec says must return empty on error) is still allowed
-    // and continues to return empty results.
+///
+/// `network` controls how `SERVICE` federation clauses are handled:
+/// - [`NetworkPolicy::Deny`] — non-SILENT SERVICE returns an error (default, safe).
+/// - [`NetworkPolicy::Ignore`] — all SERVICE clauses return empty results silently.
+/// - [`NetworkPolicy::Allow`] — not yet implemented; returns a "not yet implemented" error.
+pub fn execute(
+    query: &Query,
+    datastore: &Datastore,
+    network: NetworkPolicy,
+) -> Result<QueryResult, String> {
     let where_clause = match query {
         Query::Select { where_clause, .. } => where_clause.as_slice(),
         Query::Ask { where_clause, .. } => where_clause.as_slice(),
         Query::Construct { where_clause, .. } => where_clause.as_slice(),
         Query::Describe { where_clause, .. } => where_clause.as_slice(),
     };
-    if let Some(endpoint) = first_non_silent_service(where_clause) {
-        return Err(format!(
-            "SERVICE federation is not yet implemented (endpoint: {endpoint:?}). \
-             Use SERVICE SILENT to suppress this error and return empty results instead. \
-             See https://github.com/daghovland/rdf-datalog/issues/51"
-        ));
+
+    // Apply network policy to SERVICE clauses.
+    match network {
+        NetworkPolicy::Deny => {
+            if let Some(endpoint) = first_non_silent_service(where_clause) {
+                return Err(format!(
+                    "SERVICE <{endpoint:?}> was rejected: remote network access is disabled. \
+                     Start the server with --network=allow to enable federated queries. \
+                     See https://github.com/daghovland/rdf-datalog/issues/51"
+                ));
+            }
+            // SILENT SERVICE still returns empty — the SPARQL spec mandates this.
+        }
+        NetworkPolicy::Ignore => {
+            // All SERVICE calls return empty results (handled in the QueryComponent::Service
+            // match arm below).
+        }
+        NetworkPolicy::Allow => {
+            if first_non_silent_service(where_clause).is_some() {
+                return Err(
+                    "SERVICE federation is not yet implemented even with --network=allow. \
+                     Track progress at https://github.com/daghovland/rdf-datalog/issues/51"
+                        .to_string(),
+                );
+            }
+        }
     }
 
     match query {
