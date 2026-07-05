@@ -777,31 +777,53 @@ fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress:
 
 /// Apply pre-parsed ops to the store.  No Turtle re-parsing.
 ///
-/// When `reasoner` is `Some`, INSERT DATA and DELETE DATA route through the
-/// incremental reasoner so that derived triples are updated after each mutation.
+/// When `reasoner` is `Some`, INSERT DATA and DELETE DATA mutations are
+/// accumulated across the entire request and the reasoner is called **once**
+/// at the end with the full delta.  This prevents transient wrong inferences
+/// that would arise if reasoning ran after each individual statement in a
+/// `;`-separated sequence.
+///
+/// Raw quad changes are pre-applied to the store as each op is processed so
+/// that `PatternUpdate` (WHERE-form) ops always see the up-to-date base
+/// state.  `QuadTable::add_quad` and `QuadTable::remove_quad` are both
+/// idempotent, so the reasoner's internal re-add / re-remove calls at the end
+/// are safe no-ops.
+///
 /// Other operation types (CLEAR, DROP, etc.) bypass the reasoner for now —
 /// a full re-materialisation would be needed for those, which is tracked in
 /// [#110](https://github.com/daghovland/rdf-datalog/issues/110).
+///
+/// Fixes: [#114](https://github.com/daghovland/rdf-datalog/issues/114)
 ///
 /// `network` controls how `LOAD` operations are handled.
 pub fn apply_prepared_update(
     store: &mut Datastore,
     ops: Vec<PreparedOp>,
-    mut reasoner: Option<&mut IncrementalReasoner>,
+    reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
 ) -> Result<(), String> {
+    // Accumulated raw changes when a reasoner is present.  Collected across all
+    // INSERT DATA / DELETE DATA ops so reasoning runs once at the end.
+    let mut batch_inserts: Vec<ingress::Quad> = Vec::new();
+    let mut batch_deletes: Vec<ingress::Quad> = Vec::new();
+
     for op in ops {
         match op {
             PreparedOp::InsertData(tmp) => {
-                if let Some(r) = reasoner.as_deref_mut() {
+                if reasoner.is_some() {
                     let quads = translate_to_main_ids(store, &tmp);
-                    r.apply_insertions(store, &quads);
+                    // Pre-apply raw inserts so subsequent PatternUpdate ops see them.
+                    // add_quad is idempotent; the reasoner's re-add at the end is a no-op.
+                    for &q in &quads {
+                        store.named_graphs.add_quad(q);
+                    }
+                    batch_inserts.extend(quads);
                 } else {
                     apply_insert(store, tmp);
                 }
             }
             PreparedOp::DeleteData(tmp) => {
-                if let Some(r) = reasoner.as_deref_mut() {
+                if reasoner.is_some() {
                     let quads = translate_to_main_ids(store, &tmp);
                     // Keep only quads that actually exist in the store so we
                     // don't ask the reasoner to retract phantom quads.
@@ -809,7 +831,12 @@ pub fn apply_prepared_update(
                         .into_iter()
                         .filter(|q| store.named_graphs.contains(q))
                         .collect();
-                    r.apply_deletions(store, &existing);
+                    // Pre-apply raw deletes so subsequent PatternUpdate ops see them.
+                    // remove_quad is idempotent; the reasoner's re-remove at the end is a no-op.
+                    for &q in &existing {
+                        store.named_graphs.remove_quad(q);
+                    }
+                    batch_deletes.extend(existing);
                 } else {
                     apply_delete(store, tmp);
                 }
@@ -879,6 +906,24 @@ pub fn apply_prepared_update(
             },
         }
     }
+
+    // Reason once over the full delta accumulated across the entire request.
+    // Deletions are processed before insertions so the forward re-derivation
+    // step in apply_deletions already sees the inserted base facts and can
+    // correctly re-derive facts supported by both old and new triples.
+    //
+    // apply_deletions / apply_insertions are idempotent w.r.t. store mutations
+    // (add_quad / remove_quad are no-ops when the quad is already
+    // present / absent), so the pre-applied raw changes do not interfere.
+    if let Some(r) = reasoner {
+        if !batch_deletes.is_empty() {
+            r.apply_deletions(store, &batch_deletes);
+        }
+        if !batch_inserts.is_empty() {
+            r.apply_insertions(store, &batch_inserts);
+        }
+    }
+
     Ok(())
 }
 
