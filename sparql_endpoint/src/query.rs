@@ -15,6 +15,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::{
     AppState,
+    constraints::{check_owl_nothing, format_409_body},
     negotiate::{SelectFormat, negotiate_select_format},
     serialize::{
         serialize_construct_ntriples,
@@ -193,14 +194,49 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
     } else {
         apply_prepared_update(&mut store, prepared, None, state.network_policy)
     };
-    match result {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Update error: {e}"),
-        )
-            .into_response(),
+    let (net_inserts, net_deletes) = match result {
+        Ok(delta) => delta,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Update error: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Constraint check: if a reasoner is active, reject and roll back any
+    // transaction that produces owl:Nothing instances in the default graph.
+    // Without a reasoner there are no derived facts, so direct insertions of
+    // owl:Nothing are not treated as constraint violations.
+    // Related: https://github.com/daghovland/rdf-datalog/issues/127
+    if state.reasoner.is_some() {
+        let violations = check_owl_nothing(&store, 10, 10);
+        if !violations.is_empty() {
+            // Roll back: remove what was inserted, restore what was deleted.
+            for &q in &net_inserts {
+                store.remove_quad(q);
+            }
+            for &q in &net_deletes {
+                store.add_quad(q);
+            }
+            // Update the reasoner with the inverse delta so derived facts
+            // reflect the reverted state.
+            if let Some(ref reasoner_arc) = state.reasoner {
+                let mut reasoner = reasoner_arc.lock().await;
+                if !net_inserts.is_empty() {
+                    reasoner.apply_deletions(&mut store, &net_inserts);
+                }
+                if !net_deletes.is_empty() {
+                    reasoner.apply_insertions(&mut store, &net_deletes);
+                }
+            }
+            let body = format_409_body(&violations);
+            return (StatusCode::CONFLICT, body).into_response();
+        }
     }
+
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState) -> Response {

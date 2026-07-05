@@ -803,12 +803,19 @@ fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress:
 ///        [#126](https://github.com/daghovland/rdf-datalog/issues/126)
 ///
 /// `network` controls how `LOAD` operations are handled.
+///
+/// Returns the net delta `(net_inserts, net_deletes)` actually applied to
+/// the live store.  Callers such as [`crate::query`] use this to roll back
+/// the transaction if a constraint check (e.g. `owl:Nothing` instances) fails
+/// after reasoning.
+///
+/// Related: [#127](https://github.com/daghovland/rdf-datalog/issues/127)
 pub fn apply_prepared_update(
     store: &mut Datastore,
     ops: Vec<PreparedOp>,
     reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
-) -> Result<(), String> {
+) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), String> {
     // Pending delta: buffered across all INSERT DATA / DELETE DATA /
     // PatternUpdate ops.  Nothing touches the live store for these
     // operations until all ops succeed, ensuring that a later failure
@@ -974,7 +981,7 @@ pub fn apply_prepared_update(
         }
     }
 
-    Ok(())
+    Ok((net_inserts, net_deletes))
 }
 
 // ── WHERE-form pattern updates ────────────────────────────────────────────────
@@ -1085,7 +1092,7 @@ fn ground_quad(
 /// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
     let (prepared, _) = prepare_update(store, ops)?;
-    apply_prepared_update(store, prepared, None, NetworkPolicy::Deny)
+    apply_prepared_update(store, prepared, None, NetworkPolicy::Deny).map(|_| ())
 }
 
 fn ensure_trailing_dot(content: &str) -> String {

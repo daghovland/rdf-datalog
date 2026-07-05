@@ -14,7 +14,7 @@ Contact: hovlanddag@gmail.com
 //! Groups A, B, F (Fuseki compatibility).
 //! Spec: <https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html>
 
-use crate::{AppState, graph_store, query, sparql_update};
+use crate::{AppState, constraints, graph_store, query, sparql_update};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -238,8 +238,29 @@ pub async fn dataset_update_post(
     }
 
     // Per-dataset incremental reasoning is not yet supported; see issue #110.
+    // Constraint checking (owl:Nothing) is also skipped here since dataset
+    // stores have no reasoner.  See query.rs for the main-store implementation.
     match sparql_update::apply_prepared_update(&mut store, prepared, None, state.network_policy) {
-        Ok(()) => StatusCode::OK.into_response(),
+        Ok((net_inserts, net_deletes)) => {
+            // Check for owl:Nothing violations.  The dataset AppState always has
+            // reasoner=None (see dataset_state()), but we call check_owl_nothing
+            // anyway in case per-dataset reasoning is added in the future.
+            // Related: https://github.com/daghovland/rdf-datalog/issues/127
+            if state.reasoner.is_some() {
+                let violations = constraints::check_owl_nothing(&store, 10, 10);
+                if !violations.is_empty() {
+                    for &q in &net_inserts {
+                        store.remove_quad(q);
+                    }
+                    for &q in &net_deletes {
+                        store.add_quad(q);
+                    }
+                    let body = constraints::format_409_body(&violations);
+                    return (StatusCode::CONFLICT, body).into_response();
+                }
+            }
+            StatusCode::OK.into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Update execution error: {e}"),
