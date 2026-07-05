@@ -777,23 +777,30 @@ fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress:
 
 /// Apply pre-parsed ops to the store.  No Turtle re-parsing.
 ///
-/// When `reasoner` is `Some`, INSERT DATA and DELETE DATA mutations are
-/// accumulated across the entire request and the reasoner is called **once**
-/// at the end with the full delta.  This prevents transient wrong inferences
-/// that would arise if reasoning ran after each individual statement in a
-/// `;`-separated sequence.
+/// Uses a **collect-then-apply** strategy for atomicity: `InsertData`,
+/// `DeleteData`, and `PatternUpdate` mutations are buffered into
+/// `pending_inserts` / `pending_deletes` and never touch the live store
+/// until every operation in the sequence has been validated.  If any
+/// operation returns an error (e.g. a rejected `LOAD`), the function returns
+/// immediately and the live store is unmodified — the earlier inserts are
+/// effectively rolled back.
 ///
-/// Raw quad changes are pre-applied to the store as each op is processed so
-/// that `PatternUpdate` (WHERE-form) ops always see the up-to-date base
-/// state.  `QuadTable::add_quad` and `QuadTable::remove_quad` are both
-/// idempotent, so the reasoner's internal re-add / re-remove calls at the end
-/// are safe no-ops.
+/// `PatternUpdate` WHERE clauses evaluate against a clone of the live store
+/// with the pending delta applied so they see inserts/deletes from earlier
+/// ops in the same request (SPARQL 1.1 Update §3.1.3).
+///
+/// `CLEAR`, `DROP`, and `CREATE` are applied eagerly because they cannot
+/// fail, so they never compromise the atomicity guarantee.
+///
+/// When `reasoner` is `Some`, the reasoner is called **once** at the end
+/// with the net delta to prevent transient wrong inferences.
 ///
 /// Other operation types (CLEAR, DROP, etc.) bypass the reasoner for now —
 /// a full re-materialisation would be needed for those, which is tracked in
 /// [#110](https://github.com/daghovland/rdf-datalog/issues/110).
 ///
-/// Fixes: [#114](https://github.com/daghovland/rdf-datalog/issues/114)
+/// Fixes: [#114](https://github.com/daghovland/rdf-datalog/issues/114),
+///        [#126](https://github.com/daghovland/rdf-datalog/issues/126)
 ///
 /// `network` controls how `LOAD` operations are handled.
 pub fn apply_prepared_update(
@@ -802,46 +809,34 @@ pub fn apply_prepared_update(
     reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
 ) -> Result<(), String> {
-    // Accumulated raw changes when a reasoner is present.  Collected across all
-    // INSERT DATA / DELETE DATA ops so reasoning runs once at the end.
-    let mut batch_inserts: Vec<ingress::Quad> = Vec::new();
-    let mut batch_deletes: Vec<ingress::Quad> = Vec::new();
+    // Pending delta: buffered across all INSERT DATA / DELETE DATA /
+    // PatternUpdate ops.  Nothing touches the live store for these
+    // operations until all ops succeed, ensuring that a later failure
+    // (e.g. a rejected LOAD) leaves the live store unmodified.
+    let mut pending_inserts: Vec<ingress::Quad> = Vec::new();
+    let mut pending_deletes: Vec<ingress::Quad> = Vec::new();
 
     for op in ops {
         match op {
             PreparedOp::InsertData(tmp) => {
-                if reasoner.is_some() {
-                    let quads = translate_to_main_ids(store, &tmp);
-                    // Pre-apply raw inserts so subsequent PatternUpdate ops see them.
-                    // add_quad is idempotent; the reasoner's re-add at the end is a no-op.
-                    for &q in &quads {
-                        store.named_graphs.add_quad(q);
-                    }
-                    batch_inserts.extend(quads);
-                } else {
-                    apply_insert(store, tmp);
-                }
+                // Intern resources into live store (so IDs are valid there)
+                // but buffer the quads rather than writing to named_graphs.
+                let quads = translate_to_main_ids(store, &tmp);
+                pending_inserts.extend(quads);
             }
             PreparedOp::DeleteData(tmp) => {
-                if reasoner.is_some() {
-                    let quads = translate_to_main_ids(store, &tmp);
-                    // Keep only quads that actually exist in the store so we
-                    // don't ask the reasoner to retract phantom quads.
-                    let existing: Vec<_> = quads
-                        .into_iter()
-                        .filter(|q| store.named_graphs.contains(q))
-                        .collect();
-                    // Pre-apply raw deletes so subsequent PatternUpdate ops see them.
-                    // remove_quad is idempotent; the reasoner's re-remove at the end is a no-op.
-                    for &q in &existing {
-                        store.named_graphs.remove_quad(q);
-                    }
-                    batch_deletes.extend(existing);
-                } else {
-                    apply_delete(store, tmp);
-                }
+                let quads = translate_to_main_ids(store, &tmp);
+                // Keep only quads that exist in the live store OR are already
+                // in pending_inserts so that an insert-then-delete in the same
+                // request works correctly.
+                let existing: Vec<_> = quads
+                    .into_iter()
+                    .filter(|q| store.named_graphs.contains(q) || pending_inserts.contains(q))
+                    .collect();
+                pending_deletes.extend(existing);
             }
             PreparedOp::ClearDefault | PreparedOp::DropDefault => {
+                // CLEAR/DROP cannot fail — apply eagerly.
                 store.remove_graph(DEFAULT_GRAPH_ELEMENT_ID);
             }
             PreparedOp::ClearAll | PreparedOp::DropAll => {
@@ -876,16 +871,52 @@ pub fn apply_prepared_update(
                 insert_template,
                 pattern,
             } => {
-                apply_pattern_update(
-                    store,
-                    delete_template.as_deref(),
-                    insert_template.as_deref(),
-                    &pattern,
-                )?;
+                // Build a view of the store with the pending delta applied so
+                // that the WHERE clause sees inserts/deletes from earlier ops
+                // in this request (SPARQL 1.1 Update §3.1.3).
+                let mut view = store.clone();
+                for &q in &pending_inserts {
+                    view.named_graphs.add_quad(q);
+                }
+                for &q in &pending_deletes {
+                    view.named_graphs.remove_quad(q);
+                }
+
+                // Evaluate WHERE against the view to get solution bindings.
+                let rows = eval_where_pattern(&view, &pattern)?;
+
+                // Materialise DELETE and INSERT templates from the bindings.
+                let to_delete = match delete_template.as_deref() {
+                    Some(template) => {
+                        let triples = parse_template(template)?;
+                        materialise_template(&triples, &rows)
+                    }
+                    None => Vec::new(),
+                };
+                let to_insert = match insert_template.as_deref() {
+                    Some(template) => {
+                        let triples = parse_template(template)?;
+                        materialise_template(&triples, &rows)
+                    }
+                    None => Vec::new(),
+                };
+
+                // Intern resources into the live store (not the view) so that
+                // the returned IDs are valid in the live store, then buffer.
+                for (s, p, o) in to_delete {
+                    let quad = ground_quad(store, s, p, o);
+                    pending_deletes.push(quad);
+                }
+                for (s, p, o) in to_insert {
+                    let quad = ground_quad(store, s, p, o);
+                    pending_inserts.push(quad);
+                }
             }
             PreparedOp::LoadGraph { source, silent, .. } => match network {
                 NetworkPolicy::Deny => {
                     if !silent {
+                        // Since inserts/deletes are buffered, returning Err here
+                        // leaves the live store unmodified.
                         return Err(format!(
                             "LOAD <{source}> was rejected: remote network access is disabled. \
                              Start the server with --network=allow to enable remote loading. \
@@ -907,20 +938,39 @@ pub fn apply_prepared_update(
         }
     }
 
-    // Reason once over the full delta accumulated across the entire request.
-    // Deletions are processed before insertions so the forward re-derivation
-    // step in apply_deletions already sees the inserted base facts and can
-    // correctly re-derive facts supported by both old and new triples.
-    //
-    // apply_deletions / apply_insertions are idempotent w.r.t. store mutations
-    // (add_quad / remove_quad are no-ops when the quad is already
-    // present / absent), so the pre-applied raw changes do not interfere.
+    // Apply the pending delta atomically to the live store using set semantics:
+    // a quad that is both inserted and deleted in the same request is a net
+    // no-op.  Deletions are applied before insertions so that the reasoner's
+    // re-derivation step in apply_deletions sees the correct base state.
+    let delete_set: HashSet<ingress::Quad> = pending_deletes.iter().copied().collect();
+
+    // Only delete quads that actually exist in the live store.
+    let net_deletes: Vec<_> = delete_set
+        .iter()
+        .copied()
+        .filter(|q| store.named_graphs.contains(q))
+        .collect();
+    for &q in &net_deletes {
+        store.remove_quad(q);
+    }
+
+    // Only insert quads not cancelled by a matching delete.
+    let net_inserts: Vec<_> = pending_inserts
+        .iter()
+        .copied()
+        .filter(|q| !delete_set.contains(q))
+        .collect();
+    for &q in &net_inserts {
+        store.add_quad(q);
+    }
+
+    // Reason once over the net delta accumulated across the entire request.
     if let Some(r) = reasoner {
-        if !batch_deletes.is_empty() {
-            r.apply_deletions(store, &batch_deletes);
+        if !net_deletes.is_empty() {
+            r.apply_deletions(store, &net_deletes);
         }
-        if !batch_inserts.is_empty() {
-            r.apply_insertions(store, &batch_inserts);
+        if !net_inserts.is_empty() {
+            r.apply_insertions(store, &net_inserts);
         }
     }
 
@@ -1031,47 +1081,6 @@ fn ground_quad(
     }
 }
 
-fn apply_pattern_update(
-    store: &mut Datastore,
-    delete_template: Option<&str>,
-    insert_template: Option<&str>,
-    pattern: &str,
-) -> Result<(), String> {
-    let rows = eval_where_pattern(store, pattern)?;
-
-    // Materialise DELETE first (against the pre-update store), matching the
-    // SPARQL 1.1 Update semantics that DELETE and INSERT templates are both
-    // evaluated against the bindings produced by the single WHERE solution
-    // set, before any of the deletions/insertions are applied.
-    let to_delete = match delete_template {
-        Some(template) => {
-            let triples = parse_template(template)?;
-            materialise_template(&triples, &rows)
-        }
-        None => Vec::new(),
-    };
-    let to_insert = match insert_template {
-        Some(template) => {
-            let triples = parse_template(template)?;
-            materialise_template(&triples, &rows)
-        }
-        None => Vec::new(),
-    };
-
-    for (s, p, o) in to_delete {
-        let quad = ground_quad(store, s, p, o);
-        if store.named_graphs.contains(&quad) {
-            store.remove_quad(quad);
-        }
-    }
-    for (s, p, o) in to_insert {
-        let quad = ground_quad(store, s, p, o);
-        store.add_quad(quad);
-    }
-
-    Ok(())
-}
-
 /// Convenience wrapper: parse, discard log entries, apply.
 /// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
@@ -1094,62 +1103,6 @@ fn parse_turtle_content(content: &str) -> Result<Datastore, String> {
     turtle::parse_turtle(&mut tmp, body.as_bytes())
         .map(|_| tmp)
         .map_err(|e| format!("parse error: {e}"))
-}
-
-fn apply_insert(store: &mut Datastore, tmp: Datastore) {
-    let quads: Vec<_> = tmp
-        .named_graphs
-        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .collect();
-    for q in quads {
-        let s = store
-            .resources
-            .add_resource(tmp.resources.get_graph_element(q.subject).clone());
-        let p = store
-            .resources
-            .add_resource(tmp.resources.get_graph_element(q.predicate).clone());
-        let o = store
-            .resources
-            .add_resource(tmp.resources.get_graph_element(q.obj).clone());
-        store.add_quad(ingress::Quad {
-            triple_id: DEFAULT_GRAPH_ELEMENT_ID,
-            subject: s,
-            predicate: p,
-            obj: o,
-        });
-    }
-}
-
-fn apply_delete(store: &mut Datastore, tmp: Datastore) {
-    // Build the set of quads to remove using IDs from the MAIN store.
-    // add_resource de-duplicates, so existing elements return their stored ID;
-    // new elements (not in main store) get a fresh ID that matches no quad.
-    let to_remove: HashSet<ingress::Quad> = tmp
-        .named_graphs
-        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .filter_map(|q| {
-            let s = store
-                .resources
-                .add_resource(tmp.resources.get_graph_element(q.subject).clone());
-            let p = store
-                .resources
-                .add_resource(tmp.resources.get_graph_element(q.predicate).clone());
-            let o = store
-                .resources
-                .add_resource(tmp.resources.get_graph_element(q.obj).clone());
-            let quad = ingress::Quad {
-                triple_id: DEFAULT_GRAPH_ELEMENT_ID,
-                subject: s,
-                predicate: p,
-                obj: o,
-            };
-            store.named_graphs.contains(&quad).then_some(quad)
-        })
-        .collect();
-
-    for quad in to_remove {
-        store.remove_quad(quad);
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
