@@ -198,6 +198,21 @@ pub async fn dataset_update_post(
     // section so commit-order == apply-order under concurrent writers.
     let mut store = ds.write().await;
 
+    // Optimistic concurrency control: if the client supplied an If-Match header,
+    // its value must match the current store generation ETag.
+    // See: https://github.com/daghovland/rdf-datalog/issues/124
+    if let Some(if_match) = headers.get("if-match").and_then(|v| v.to_str().ok()) {
+        let requested = if_match.trim().trim_matches('"');
+        let current = format!("{}", store.generation);
+        if requested != current {
+            return (
+                StatusCode::PRECONDITION_FAILED,
+                "Precondition Failed: ETag mismatch",
+            )
+                .into_response();
+        }
+    }
+
     // Parse Turtle content once; build WAL entries and prepared apply in one pass.
     let (prepared, log_entries) = match sparql_update::prepare_update(&store, ops) {
         Ok(pair) => pair,

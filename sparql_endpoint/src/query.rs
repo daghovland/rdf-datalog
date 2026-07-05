@@ -98,7 +98,7 @@ pub async fn sparql_post_with_state(
                 return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in update body").into_response();
             }
         };
-        return run_update(&update_str, &state).await;
+        return run_update(&update_str, &state, &headers).await;
     }
 
     let query_str: String = if content_type.contains("application/sparql-query") {
@@ -118,7 +118,7 @@ pub async fn sparql_post_with_state(
             let (k, v) = part.split_once('=')?;
             (k == "update").then(|| urlencoding_decode(&v.replace('+', " ")))
         }) {
-            return run_update(&update_val, &state).await;
+            return run_update(&update_val, &state, &headers).await;
         }
         let query_val = body_str.split('&').find_map(|part| {
             let (k, v) = part.split_once('=')?;
@@ -137,7 +137,7 @@ pub async fn sparql_post_with_state(
     run_select_query(&query_str, &headers, &state).await
 }
 
-async fn run_update(update_str: &str, state: &AppState) -> Response {
+async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> Response {
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
     }
@@ -148,6 +148,20 @@ async fn run_update(update_str: &str, state: &AppState) -> Response {
         }
     };
     let mut store = state.store.write().await;
+    // Optimistic concurrency control: if the client supplied an If-Match header,
+    // its value must match the current store generation ETag.
+    // See: https://github.com/daghovland/rdf-datalog/issues/124
+    if let Some(if_match) = headers.get("if-match").and_then(|v| v.to_str().ok()) {
+        let requested = if_match.trim().trim_matches('"');
+        let current = format!("{}", store.generation);
+        if requested != current {
+            return (
+                StatusCode::PRECONDITION_FAILED,
+                "Precondition Failed: ETag mismatch",
+            )
+                .into_response();
+        }
+    }
     let (prepared, log_entries) = match prepare_update(&store, ops) {
         Ok(pair) => pair,
         Err(e) => {
