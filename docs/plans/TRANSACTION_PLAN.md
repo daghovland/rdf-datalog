@@ -139,32 +139,22 @@ Enforce `If-Match` on SPARQL Update POST requests:
 
 This is a small change in `run_update` in `sparql_endpoint/src/query.rs`.
 
-### Phase 2.5 — Constraint violation class ([#127](https://github.com/daghovland/rdf-datalog/issues/127))
+### Phase 2.5 — `owl:Nothing` constraint check ([#127](https://github.com/daghovland/rdf-datalog/issues/127))
 
-A datalog rule can derive instances of `dagalog:ConstraintViolation`.  Any
-transaction that would cause such an instance to exist in the default graph
-after reasoning is rejected with HTTP 409 Conflict and the changes are rolled
-back.  This enables schema-style constraints expressed entirely in datalog.
+Any transaction that causes an instance of `owl:Nothing` to exist in the
+default graph after reasoning is rejected with HTTP 409 Conflict and rolled
+back.  Users express constraints as datalog rules whose head derives
+`?v a owl:Nothing`; if any such triple is materialized, the commit fails.
 
-#### Vocabulary IRI
+Using `owl:Nothing` rather than a custom class:
+- Reuses a standard, well-understood IRI — no new vocabulary namespace needed.
+- OWL-RL already derives `owl:Nothing` for disjointness violations, so those
+  automatically become blocking constraints.
+- Semantically accurate: `owl:Nothing` having an instance means the data is
+  inconsistent, which is exactly what a constraint violation represents.
 
-No `dagalog:` namespace exists yet.  The proposed namespace is:
-
-```
-https://daghovland.github.io/rdf-datalog/vocabulary#
-```
-
-This is resolvable via GitHub Pages without a custom domain.  **Decide and
-commit the IRI before any release**, as changing it afterwards breaks all user
-rule files.
-
-Two constants are needed in `ingress/src/namespaces.rs`:
-
-```rust
-pub const DAGALOG: &str = "https://daghovland.github.io/rdf-datalog/vocabulary#";
-pub const DAGALOG_CONSTRAINT_VIOLATION: &str =
-    "https://daghovland.github.io/rdf-datalog/vocabulary#ConstraintViolation";
-```
+The `OWL_NOTHING` constant is already available in `ingress/src/namespaces.rs`
+(or is trivially added if absent).
 
 #### Execution order
 
@@ -173,10 +163,10 @@ Constraint checking is the last step of every read/write transaction:
 1. All update operations execute and the delta is collected (Phase 0).
 2. The delta is applied atomically to the live store.
 3. The incremental reasoner runs once with the full delta.
-4. The default graph is queried for `?v a dagalog:ConstraintViolation`.
-5. **If violations exist**: undo the delta (reverse `apply_deletions` /
-   `apply_insertions`), return **HTTP 409 Conflict** with violation details.
-6. **If no violations**: return HTTP 204 No Content.
+4. The default graph is queried: `ASK { ?v a owl:Nothing }`.
+5. **If any instance exists**: undo the delta (reverse `apply_deletions` /
+   `apply_insertions`), return **HTTP 409 Conflict** with details.
+6. **If no instances**: return HTTP 204 No Content.
 
 Step 5 requires Phase 0's rollback mechanism.  The undo is:
 - `reasoner.apply_deletions(store, &applied_inserts)` — retract derived facts
@@ -186,45 +176,37 @@ Step 5 requires Phase 0's rollback mechanism.  The undo is:
 - `store.named_graphs.remove_quad` for each applied insert.
 - `store.named_graphs.add_quad` for each applied delete.
 
-This is equivalent to applying the inverse delta.
-
 #### Error response
 
-HTTP 409 body (plain text, or structured JSON):
+HTTP 409 body (plain text):
 
 ```
-Transaction rejected: constraint violation(s) detected.
+Transaction rejected: owl:Nothing has instances after reasoning.
 
-Violation 1: <http://example.org/alice>
-  rdf:type <https://daghovland.github.io/rdf-datalog/vocabulary#ConstraintViolation>
+Instance 1: <http://example.org/alice>
   ex:missingProperty ex:mbox
   ex:violationDescription "Every foaf:Person must have at least one foaf:mbox."
 
-(showing 1 of 1 violation)
+(showing 1 of 1 instance)
 ```
 
-Show up to 10 violations, up to 10 properties per violation.
+Show up to 10 instances, up to 10 properties each.
 
 #### Example constraint rule
 
 ```turtle
-# Every foaf:Person must have a foaf:mbox
-[ ?v a dagalog:ConstraintViolation ;
-     ex:missingMbox ?person ] :-
+# Every foaf:Person must have a foaf:mbox.
+[ ?person a owl:Nothing ;
+          ex:description "Missing foaf:mbox" ] :-
   [ ?person a foaf:Person ],
-  NOT EXISTS ?mbox IN [ ?person foaf:mbox ?mbox ] ,
-  SKOLEM("MissingMbox", ?person, ?v) .
+  NOT EXISTS ?mbox IN [ ?person foaf:mbox ?mbox ] .
 ```
-
-Note: `SKOLEM` support in the datalog parser is a separate dependency.  The
-simpler form — using the person IRI directly as the violation node — works
-without `SKOLEM`.
 
 #### Implementation locations
 
-- `ingress/src/namespaces.rs` — add `DAGALOG` and `DAGALOG_CONSTRAINT_VIOLATION` constants
-- `sparql_endpoint/src/query.rs::run_update` — call `check_constraint_violations` after `apply_prepared_update` returns `Ok`
-- `sparql_endpoint/src/constraints.rs` (new) — `check_constraint_violations(store: &Datastore) -> Vec<ViolationInfo>` using the SPARQL executor
+- `ingress/src/namespaces.rs` — ensure `OWL_NOTHING` constant exists
+- `sparql_endpoint/src/query.rs::run_update` — call `check_owl_nothing` after `apply_prepared_update` returns `Ok`
+- `sparql_endpoint/src/constraints.rs` (new) — `check_owl_nothing(store: &Datastore) -> Vec<InstanceInfo>`
 - `sparql_endpoint/tests/constraints.rs` (new) — integration tests
 
 #### Dependency
