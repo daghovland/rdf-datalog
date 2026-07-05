@@ -3083,6 +3083,7 @@ dependencies = [
  "tower-http 0.7.0",
  "turtle",
  "urlencoding",
+ "uuid",
  "vqs-index",
  "wiremock",
 ]

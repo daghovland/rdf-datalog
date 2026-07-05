@@ -52,6 +52,19 @@ pub fn build_router(state: AppState) -> Router {
             "/vqs/productive-values",
             get(crate::vqs_routes::productive_values),
         )
+        // ── Transaction API (proprietary BEGIN / COMMIT / ROLLBACK) ─────────
+        .route(
+            "/transaction/begin",
+            post(crate::transaction_routes::transaction_begin),
+        )
+        .route(
+            "/transaction/{txId}/commit",
+            post(crate::transaction_routes::transaction_commit),
+        )
+        .route(
+            "/transaction/{txId}/rollback",
+            post(crate::transaction_routes::transaction_rollback),
+        )
         // ── SPARQL Protocol — root endpoint ──────────────────────────────────
         .route("/sparql", get(crate::query::sparql_get))
         .route("/sparql", post(crate::query::sparql_post))
