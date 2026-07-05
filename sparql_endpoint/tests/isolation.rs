@@ -235,7 +235,6 @@ async fn test_intra_request_delete_hides_triple_from_where() {
 /// Related: [#123](https://github.com/daghovland/rdf-datalog/issues/123),
 ///          [#126](https://github.com/daghovland/rdf-datalog/issues/126)
 #[tokio::test]
-#[ignore = "requires #126 rollback fix"]
 async fn test_failed_update_leaves_store_unchanged() {
     let server = common::TestServer::start_writable("").await;
 
