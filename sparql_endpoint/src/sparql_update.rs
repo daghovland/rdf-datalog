@@ -919,7 +919,11 @@ pub fn apply_prepared_update(
                     pending_inserts.push(quad);
                 }
             }
-            PreparedOp::LoadGraph { source, into, silent } => match network {
+            PreparedOp::LoadGraph {
+                source,
+                into,
+                silent,
+            } => match network {
                 NetworkPolicy::Deny => {
                     if !silent {
                         // Since inserts/deletes are buffered, returning Err here
@@ -948,8 +952,13 @@ pub fn apply_prepared_update(
                             // LOAD SILENT: suppress network errors per SPARQL 1.1 Update spec.
                         }
                         Ok((bytes, content_type)) => {
-                            let parse_result =
-                                load_fetched(store, &bytes, &content_type, into.as_deref(), &source);
+                            let parse_result = load_fetched(
+                                store,
+                                &bytes,
+                                &content_type,
+                                into.as_deref(),
+                                &source,
+                            );
                             if let Err(e) = parse_result
                                 && !silent
                             {
@@ -1219,9 +1228,7 @@ fn load_fetched(
         _ => {
             // Unknown content type: attempt Turtle as the most common RDF format.
             turtle::parse_turtle_with_base(&mut tmp, bytes, source_url).map_err(|e| {
-                format!(
-                    "failed to parse <{source_url}> as Turtle (content-type: {ct}): {e}"
-                )
+                format!("failed to parse <{source_url}> as Turtle (content-type: {ct}): {e}")
             })?;
         }
     }
