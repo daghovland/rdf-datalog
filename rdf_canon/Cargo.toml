@@ -1,0 +1,11 @@
+[package]
+name = "rdf-canonicalization"
+version = "0.1.0"
+edition = "2024"
+description = "RDF Dataset Canonicalization (RDFC-1.0/URDNA2015) over Dagalog's Datastore"
+
+[dependencies]
+dag-rdf = { path = "../dag_rdf" }
+ingress = { path = "../ingress" }
+oxrdf = "0.2"
+rdf-canon-upstream = { package = "rdf-canon", version = "0.15" }
