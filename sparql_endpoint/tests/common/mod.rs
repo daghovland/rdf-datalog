@@ -10,6 +10,7 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::datastore::Datastore;
 use datalog::Rule;
+use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::path::Path;
 use std::sync::Arc;
@@ -52,6 +53,51 @@ impl TestServer {
     /// `<graph-iri> { ... }` blocks.
     pub async fn start_writable_trig(trig: &str) -> Self {
         Self::start_inner(trig, true, false, AuthConfig::None).await
+    }
+
+    /// Start a writable server with the given network policy.
+    ///
+    /// Use this to test `NetworkPolicy::Allow` (SPARQL LOAD from remote URLs).
+    /// Tests using this method must run with a multi-thread Tokio runtime
+    /// (`#[tokio::test(flavor = "multi_thread")]`) because `block_in_place`
+    /// is used internally when fetching remote content.
+    #[allow(dead_code)]
+    pub async fn start_writable_with_network_policy(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+    ) -> Self {
+        let mut ds = Datastore::new(1024);
+        if !turtle.is_empty() {
+            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
+                .expect("test fixture turtle must parse");
+        }
+        let store = Arc::new(RwLock::new(ds));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only: false,
+            max_query_timeout_secs: 10,
+            auth: AuthConfig::None,
+            data_dir: None,
+            network_policy,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
     }
 
     /// Start a writable server protected by a static API key (reads are open).

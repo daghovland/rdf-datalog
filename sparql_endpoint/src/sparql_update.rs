@@ -919,7 +919,11 @@ pub fn apply_prepared_update(
                     pending_inserts.push(quad);
                 }
             }
-            PreparedOp::LoadGraph { source, silent, .. } => match network {
+            PreparedOp::LoadGraph {
+                source,
+                into,
+                silent,
+            } => match network {
                 NetworkPolicy::Deny => {
                     if !silent {
                         // Since inserts/deletes are buffered, returning Err here
@@ -936,10 +940,32 @@ pub fn apply_prepared_update(
                     // Silent no-op regardless of SILENT flag.
                 }
                 NetworkPolicy::Allow => {
-                    return Err(format!(
-                        "LOAD <{source}>: NetworkPolicy::Allow is not yet implemented. \
-                         Track progress at https://github.com/daghovland/rdf-datalog/issues/119"
-                    ));
+                    // SSRF warning: `source` originates from the SPARQL LOAD statement.
+                    // Only enable NetworkPolicy::Allow in environments where all SPARQL
+                    // clients are trusted to prevent Server-Side Request Forgery (SSRF).
+                    let fetch_result = maybe_block_in_place(|| fetch_rdf(&source));
+                    match fetch_result {
+                        Err(e) => {
+                            if !silent {
+                                return Err(format!("LOAD <{source}> failed: {e}"));
+                            }
+                            // LOAD SILENT: suppress network errors per SPARQL 1.1 Update spec.
+                        }
+                        Ok((bytes, content_type)) => {
+                            let parse_result = load_fetched(
+                                store,
+                                &bytes,
+                                &content_type,
+                                into.as_deref(),
+                                &source,
+                            );
+                            if let Err(e) = parse_result
+                                && !silent
+                            {
+                                return Err(e);
+                            }
+                        }
+                    }
                 }
             },
         }
@@ -1086,6 +1112,162 @@ fn ground_quad(
         predicate: store.add_resource(p),
         obj: store.add_resource(o),
     }
+}
+
+// ── LOAD helpers ─────────────────────────────────────────────────────────────
+
+/// Run `f` on the current thread in a way that is safe whether or not we are
+/// inside a Tokio async context.
+///
+/// - Inside a **multi-thread** Tokio runtime: uses `tokio::task::block_in_place`
+///   so the thread is removed from the async scheduler before the blocking call.
+/// - Outside any Tokio runtime (e.g. synchronous unit tests): calls `f` directly.
+///
+/// Note: calling this from inside a **current-thread** (`LocalSet`) runtime is
+/// not supported and will panic in `block_in_place`.  Tests that exercise
+/// `NetworkPolicy::Allow` through the full HTTP stack must use
+/// `#[tokio::test(flavor = "multi_thread")]`.
+fn maybe_block_in_place<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(f)
+    } else {
+        f()
+    }
+}
+
+/// Fetch an RDF document at `url` using a blocking HTTP client.
+///
+/// Returns `(body_bytes, content_type)` on success or an error string on failure.
+///
+/// # SSRF Warning
+///
+/// This function makes an outbound HTTP request to an arbitrary URL that was
+/// provided in a SPARQL LOAD statement.  Only call it when
+/// `NetworkPolicy::Allow` is active — and only enable that policy in
+/// environments where all SPARQL clients are trusted, to prevent
+/// Server-Side Request Forgery (SSRF) attacks.
+fn fetch_rdf(url: &str) -> Result<(Vec<u8>, String), String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    let resp = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/turtle, application/n-triples;q=0.9, \
+             application/ld+json;q=0.8, application/trig;q=0.7, */*;q=0.5",
+        )
+        .send()
+        .map_err(|e| format!("HTTP request failed for <{url}>: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status} when fetching <{url}>"));
+    }
+
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let bytes = resp
+        .bytes()
+        .map_err(|e| format!("failed to read response body from <{url}>: {e}"))?
+        .to_vec();
+
+    Ok((bytes, content_type))
+}
+
+/// Parse `bytes` as RDF and insert all triples into `store`.
+///
+/// The format is inferred from `content_type`.  Triples go into `into_graph`
+/// (a named graph IRI) or the default graph when `into_graph` is `None`.
+/// `source_url` is used as the Turtle base IRI for resolving relative IRIs.
+fn load_fetched(
+    store: &mut Datastore,
+    bytes: &[u8],
+    content_type: &str,
+    into_graph: Option<&str>,
+    source_url: &str,
+) -> Result<(), String> {
+    // Strip content-type parameters (e.g. `text/turtle; charset=utf-8`).
+    let ct = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    let mut tmp = Datastore::new(64);
+    match ct.as_str() {
+        "text/turtle"
+        | "text/n3"
+        | "application/n-triples"
+        | "application/x-turtle"
+        | "application/trig" => {
+            turtle::parse_turtle_with_base(&mut tmp, bytes, source_url)
+                .map_err(|e| format!("Turtle parse error in <{source_url}>: {e}"))?;
+        }
+        "application/ld+json" => {
+            // Use Deny for nested network requests to prevent SSRF chaining.
+            jsonld_parser::parse_jsonld(&mut tmp, bytes, NetworkPolicy::Deny)
+                .map_err(|e| format!("JSON-LD parse error in <{source_url}>: {e:?}"))?;
+        }
+        "application/rdf+xml" => {
+            return Err(format!(
+                "LOAD <{source_url}>: RDF/XML is not yet supported as a remote format"
+            ));
+        }
+        _ => {
+            // Unknown content type: attempt Turtle as the most common RDF format.
+            turtle::parse_turtle_with_base(&mut tmp, bytes, source_url).map_err(|e| {
+                format!("failed to parse <{source_url}> as Turtle (content-type: {ct}): {e}")
+            })?;
+        }
+    }
+
+    // Determine the target graph ID in the main store.
+    let target_graph_id = match into_graph {
+        None => DEFAULT_GRAPH_ELEMENT_ID,
+        Some(iri) => {
+            let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.to_string())));
+            store.resources.add_resource(elem)
+        }
+    };
+
+    // Copy all triples from the temp store's default graph into the target graph.
+    let quads: Vec<ingress::Quad> = tmp
+        .named_graphs
+        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
+        .map(|q| {
+            let s = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.subject).clone());
+            let p = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.predicate).clone());
+            let o = store
+                .resources
+                .add_resource(tmp.resources.get_graph_element(q.obj).clone());
+            ingress::Quad {
+                triple_id: target_graph_id,
+                subject: s,
+                predicate: p,
+                obj: o,
+            }
+        })
+        .collect();
+    for q in quads {
+        store.add_quad(q);
+    }
+    Ok(())
 }
 
 /// Convenience wrapper: parse, discard log entries, apply.
