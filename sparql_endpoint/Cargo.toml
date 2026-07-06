@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 urlencoding = "2"
 subtle = "2"
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "blocking"] }
 redb = "4"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }

@@ -192,17 +192,43 @@ fn load_ignore_returns_ok() {
     assert_eq!(ds.named_graphs.quad_count, 0);
 }
 
+/// Regression: `NetworkPolicy::Allow` no longer returns a "not implemented"
+/// error — it now actually attempts the network fetch.
+///
+/// This test verifies that calling LOAD with Allow mode produces a network
+/// error (connection refused or similar), not the old "not yet implemented"
+/// placeholder message.
+///
+/// The full "it actually loads" behaviour is tested at the HTTP level in
+/// `sparql_endpoint/tests/load_network.rs`.
+///
+/// Related: <https://github.com/daghovland/rdf-datalog/issues/119>
 #[test]
-fn load_allow_returns_not_implemented_error() {
+fn load_allow_no_longer_not_implemented() {
     let mut ds = empty_store();
-    let err = run_load(
+    // Port 1 is virtually never listening; we expect a connection-refused
+    // network error rather than a "not yet implemented" message.
+    let result = run_load(
         &mut ds,
-        "LOAD <https://example.org/data.ttl>",
+        "LOAD <http://127.0.0.1:1/data.ttl>",
         NetworkPolicy::Allow,
-    )
-    .expect_err("Allow mode must return not-implemented error for LOAD");
-    assert!(
-        err.contains("not yet implemented") || err.contains("not implemented"),
-        "unexpected error message: {err}"
     );
+    match result {
+        Err(e) => {
+            assert!(
+                !e.contains("not yet implemented") && !e.contains("not implemented"),
+                "Allow mode must no longer return a not-implemented placeholder error; got: {e}"
+            );
+            // The error should describe an actual network failure.
+            assert!(
+                e.contains("HTTP") || e.contains("request") || e.contains("connect")
+                    || e.contains("failed") || e.contains("LOAD"),
+                "error should describe a network or parse failure: {e}"
+            );
+        }
+        Ok(()) => {
+            // Extremely unlikely, but if something is listening on port 1 and
+            // serves valid Turtle, that's also an acceptable (passing) outcome.
+        }
+    }
 }
