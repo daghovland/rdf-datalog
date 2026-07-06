@@ -80,9 +80,7 @@ async fn test_load_allow_turtle() {
     let status = sparql_update(&server, &format!("LOAD <{url}>")).await;
     assert_eq!(status, 200, "LOAD must return 200 OK");
 
-    let ask = format!(
-        "ASK {{ <{SAMPLE_SUBJECT}> <{SAMPLE_PREDICATE}> <{SAMPLE_OBJECT}> }}"
-    );
+    let ask = format!("ASK {{ <{SAMPLE_SUBJECT}> <{SAMPLE_PREDICATE}> <{SAMPLE_OBJECT}> }}");
     assert!(
         sparql_ask(&server, &ask).await,
         "loaded triple must be visible via SELECT"
@@ -175,9 +173,7 @@ async fn test_load_allow_network_error_silent() {
     );
 
     // Store must still be empty.
-    let ask = format!(
-        "ASK {{ <{SAMPLE_SUBJECT}> <{SAMPLE_PREDICATE}> <{SAMPLE_OBJECT}> }}"
-    );
+    let ask = format!("ASK {{ <{SAMPLE_SUBJECT}> <{SAMPLE_PREDICATE}> <{SAMPLE_OBJECT}> }}");
     assert!(
         !sparql_ask(&server, &ask).await,
         "store must be unchanged after LOAD SILENT failure"
@@ -191,13 +187,6 @@ async fn test_load_deny_still_rejected() {
     // Use the default Deny policy.
     let server = common::TestServer::start_writable("").await;
 
-    let status = sparql_update(
-        &server,
-        "LOAD <http://example.org/some-data.ttl>",
-    )
-    .await;
-    assert_eq!(
-        status, 500,
-        "LOAD under Deny policy must return 500"
-    );
+    let status = sparql_update(&server, "LOAD <http://example.org/some-data.ttl>").await;
+    assert_eq!(status, 500, "LOAD under Deny policy must return 500");
 }

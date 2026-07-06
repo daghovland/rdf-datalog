@@ -62,7 +62,10 @@ impl TestServer {
     /// (`#[tokio::test(flavor = "multi_thread")]`) because `block_in_place`
     /// is used internally when fetching remote content.
     #[allow(dead_code)]
-    pub async fn start_writable_with_network_policy(turtle: &str, network_policy: NetworkPolicy) -> Self {
+    pub async fn start_writable_with_network_policy(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+    ) -> Self {
         let mut ds = Datastore::new(1024);
         if !turtle.is_empty() {
             parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))

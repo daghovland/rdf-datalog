@@ -221,8 +221,11 @@ fn load_allow_no_longer_not_implemented() {
             );
             // The error should describe an actual network failure.
             assert!(
-                e.contains("HTTP") || e.contains("request") || e.contains("connect")
-                    || e.contains("failed") || e.contains("LOAD"),
+                e.contains("HTTP")
+                    || e.contains("request")
+                    || e.contains("connect")
+                    || e.contains("failed")
+                    || e.contains("LOAD"),
                 "error should describe a network or parse failure: {e}"
             );
         }
