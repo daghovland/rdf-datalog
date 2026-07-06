@@ -752,7 +752,7 @@ fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
 /// Translate quads from a temporary datastore's default graph into the IDs of
 /// the main `store`, interning any new resources.  The quads are NOT inserted
 /// into `store` — the caller decides what to do with them.
-fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress::Quad> {
+pub(crate) fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress::Quad> {
     tmp.named_graphs
         .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
         .map(|q| {

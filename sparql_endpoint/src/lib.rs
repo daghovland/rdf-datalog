@@ -25,6 +25,8 @@ pub mod server;
 pub mod service_desc;
 pub mod shacl_endpoint;
 pub mod sparql_update;
+pub mod transaction_routes;
+pub mod transactions;
 pub mod upload;
 pub mod void;
 pub mod vqs_routes;
@@ -38,6 +40,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use transactions::TransactionRegistry;
 
 /// Authentication/authorization mode for the HTTP server.
 #[derive(Clone, Debug, Default)]
@@ -235,6 +238,10 @@ pub struct AppState {
     ///
     /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
     pub network_policy: NetworkPolicy,
+    /// Open transaction registry for the proprietary BEGIN / COMMIT / ROLLBACK API.
+    ///
+    /// Related: [#125](https://github.com/daghovland/rdf-datalog/issues/125)
+    pub transactions: Arc<Mutex<TransactionRegistry>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -300,6 +307,7 @@ pub async fn serve_on_listener(
         vqs_cache: Arc::new(RwLock::new(None)),
         reasoner,
         network_policy,
+        transactions: Arc::new(Mutex::new(TransactionRegistry::new())),
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

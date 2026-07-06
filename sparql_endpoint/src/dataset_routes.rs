@@ -43,6 +43,9 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         // See: https://github.com/daghovland/rdf-datalog/issues/110
         reasoner: None,
         network_policy: state.network_policy,
+        // Transactions are server-wide; per-dataset transactions are not yet supported.
+        // See: https://github.com/daghovland/rdf-datalog/issues/125
+        transactions: state.transactions.clone(),
     }
 }
 
@@ -63,13 +66,14 @@ pub async fn dataset_sparql_get(
 pub async fn dataset_sparql_post(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    params: Query<HashMap<String, String>>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
     let Some(ds) = get_dataset_store(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    query::sparql_post_with_state(dataset_state(&state, ds), headers, body).await
+    query::sparql_post_with_state(dataset_state(&state, ds), params, headers, body).await
 }
 
 // ── B: per-dataset GSP (`/{name}/data`, `/{name}/get`) ───────────────────────
