@@ -20,9 +20,19 @@ pub enum NetworkPolicy {
     ///
     /// Preserves the previous behaviour where network operations were ignored.
     Ignore,
-    /// Remote fetches are performed via HTTP. Not yet implemented — see
-    /// [#119](https://github.com/daghovland/rdf-datalog/issues/119),
-    /// [#82](https://github.com/daghovland/rdf-datalog/issues/82),
-    /// [#51](https://github.com/daghovland/rdf-datalog/issues/51).
+    /// Remote fetches are performed via HTTP.
+    ///
+    /// # Security
+    ///
+    /// Only enable this in environments where **all** SPARQL clients are trusted.
+    /// Any client that can send a `LOAD <url>` query can make the server issue
+    /// outbound HTTP requests — a Server-Side Request Forgery (SSRF) risk.
+    ///
+    /// Planned hardening (private-IP blocking, redirect policy, body cap): [#135](https://github.com/daghovland/rdf-datalog/issues/135).
+    /// A URL prefix allowlist variant (`AllowList`) is planned in [#136](https://github.com/daghovland/rdf-datalog/issues/136).
+    ///
+    /// Applies to: SPARQL `LOAD` ([#119](https://github.com/daghovland/rdf-datalog/issues/119)),
+    /// JSON-LD `@context` URLs ([#82](https://github.com/daghovland/rdf-datalog/issues/82)),
+    /// SPARQL `SERVICE` ([#51](https://github.com/daghovland/rdf-datalog/issues/51)).
     Allow,
 }
