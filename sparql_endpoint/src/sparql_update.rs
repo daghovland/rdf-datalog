@@ -1172,12 +1172,12 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 fn fetch_rdf(url: &str, policy: &NetworkPolicy) -> Result<(Vec<u8>, String), String> {
     // 0. AllowList prefix check: reject URLs not matching any configured prefix.
     //    This runs before the SSRF preflight so the error is unambiguous.
-    if let NetworkPolicy::AllowList(prefixes) = policy {
-        if !prefixes.iter().any(|p| url.starts_with(p.as_str())) {
-            return Err(format!(
-                "LOAD <{url}>: URL is not in the configured allow-list"
-            ));
-        }
+    if let NetworkPolicy::AllowList(prefixes) = policy
+        && !prefixes.iter().any(|p| url.starts_with(p.as_str()))
+    {
+        return Err(format!(
+            "LOAD <{url}>: URL is not in the configured allow-list"
+        ));
     }
 
     // 1. SSRF preflight: block private/reserved IPs and unsupported schemes.
