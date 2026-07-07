@@ -1138,20 +1138,56 @@ where
     }
 }
 
+/// Maximum response body size for `LOAD` requests (64 MiB).
+///
+/// Prevents memory exhaustion from oversized or streaming responses.
+/// Related: <https://github.com/daghovland/rdf-datalog/issues/135>
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+
 /// Fetch an RDF document at `url` using a blocking HTTP client.
 ///
 /// Returns `(body_bytes, content_type)` on success or an error string on failure.
 ///
-/// # SSRF Warning
+/// # SSRF Hardening
 ///
-/// This function makes an outbound HTTP request to an arbitrary URL that was
-/// provided in a SPARQL LOAD statement.  Only call it when
-/// `NetworkPolicy::Allow` is active — and only enable that policy in
-/// environments where all SPARQL clients are trusted, to prevent
-/// Server-Side Request Forgery (SSRF) attacks.
+/// This function applies three layers of SSRF protection (issue #135):
+///
+/// 1. **`ssrf_preflight`**: Resolves the hostname and rejects requests that
+///    would reach private/link-local/reserved IP ranges or use a non-HTTP scheme.
+/// 2. **Cross-host redirect blocking**: The HTTP client refuses to follow
+///    redirects that change the target host (e.g. open redirects to internal
+///    services).
+/// 3. **64 MiB response cap**: Aborts reading after `MAX_BODY_BYTES` to prevent
+///    memory exhaustion from streaming or oversized responses.
+///
+/// IPv4 loopback (127.0.0.0/8) is intentionally **not** blocked so that
+/// wiremock integration tests bound to 127.0.0.1 continue to work.
+/// See: <https://github.com/daghovland/rdf-datalog/issues/135>
+///
+/// Only call this function when `NetworkPolicy::Allow` is active — and only
+/// enable that policy in environments where all SPARQL clients are trusted.
 fn fetch_rdf(url: &str) -> Result<(Vec<u8>, String), String> {
+    // 1. SSRF preflight: block private/reserved IPs and unsupported schemes.
+    ssrf_preflight(url)?;
+
+    // 2. Build client with cross-host redirect blocking.
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let same_host = attempt
+                .previous()
+                .last()
+                .and_then(|u| u.host_str())
+                .zip(attempt.url().host_str())
+                .is_some_and(|(prev, next)| prev == next);
+            if !same_host {
+                attempt.error("cross-host redirect blocked for SSRF safety")
+            } else if attempt.previous().len() >= 5 {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
@@ -1177,12 +1213,27 @@ fn fetch_rdf(url: &str) -> Result<(Vec<u8>, String), String> {
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    let bytes = resp
-        .bytes()
-        .map_err(|e| format!("failed to read response body from <{url}>: {e}"))?
-        .to_vec();
+    // 3. Response body cap: check Content-Length first for a fast path,
+    //    then enforce cap while streaming.
+    if let Some(len) = resp.content_length()
+        && len > MAX_BODY_BYTES as u64
+    {
+        return Err(format!(
+            "LOAD <{url}>: response too large ({len} bytes; limit is {MAX_BODY_BYTES})"
+        ));
+    }
+    use std::io::Read;
+    let mut buf = Vec::new();
+    resp.take((MAX_BODY_BYTES + 1) as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("failed to read response body from <{url}>: {e}"))?;
+    if buf.len() > MAX_BODY_BYTES {
+        return Err(format!(
+            "LOAD <{url}>: response too large (limit is 64 MiB)"
+        ));
+    }
 
-    Ok((bytes, content_type))
+    Ok((buf, content_type))
 }
 
 /// Parse `bytes` as RDF and insert all triples into `store`.
@@ -1294,11 +1345,167 @@ fn parse_turtle_content(content: &str) -> Result<Datastore, String> {
         .map_err(|e| format!("parse error: {e}"))
 }
 
+// ── SSRF helpers ─────────────────────────────────────────────────────────────
+
+/// Returns `true` if `ip` should be blocked to prevent SSRF attacks.
+///
+/// Blocked ranges:
+/// - RFC 1918 private addresses (`Ipv4Addr::is_private`): 10/8, 172.16/12, 192.168/16
+/// - Link-local / cloud metadata (`Ipv4Addr::is_link_local`): 169.254/16
+/// - Unspecified (`Ipv4Addr::is_unspecified`): 0.0.0.0
+/// - IPv6 loopback (`Ipv6Addr::is_loopback`): ::1
+///
+/// **Not** blocked:
+/// - IPv4 loopback (127.0.0.0/8) — intentionally left open so that wiremock
+///   integration tests bound to 127.0.0.1 continue to work.
+///   See: <https://github.com/daghovland/rdf-datalog/issues/135>
+fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            // IPv4 loopback (127.0.0.0/8) is intentionally NOT blocked here.
+            // wiremock integration tests bind to 127.0.0.1, and blocking it
+            // would break those tests. See: https://github.com/daghovland/rdf-datalog/issues/135
+        }
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
+/// Validate `url` against SSRF-dangerous targets before making any network request.
+///
+/// Checks performed:
+/// 1. URL must parse successfully.
+/// 2. Scheme must be `http` or `https`.
+/// 3. Hostname must resolve to at least one IP address, none of which may be
+///    in a blocked range (see [`is_blocked_ip`]).
+///
+/// Returns `Ok(())` when all checks pass, or an error string describing the
+/// rejection reason.
+fn ssrf_preflight(url: &str) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "LOAD <{url}>: only http/https allowed, got {scheme}"
+            ));
+        }
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("LOAD <{url}>: missing host"))?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addrs = format!("{host}:{port}")
+        .to_socket_addrs()
+        .map_err(|e| format!("LOAD <{url}>: DNS resolution failed: {e}"))?;
+    for addr in addrs {
+        if is_blocked_ip(addr.ip()) {
+            return Err(format!(
+                "LOAD <{url}>: blocked — resolves to private/reserved IP {}",
+                addr.ip()
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SSRF unit tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_blocked_private_10() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(is_blocked_ip(ip), "10.0.0.1 must be blocked (RFC 1918)");
+    }
+
+    #[test]
+    fn test_is_blocked_private_172() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "172.16.0.1".parse().unwrap();
+        assert!(is_blocked_ip(ip), "172.16.0.1 must be blocked (RFC 1918)");
+    }
+
+    #[test]
+    fn test_is_blocked_private_192168() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(is_blocked_ip(ip), "192.168.1.1 must be blocked (RFC 1918)");
+    }
+
+    #[test]
+    fn test_is_blocked_link_local() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "169.254.169.254".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip),
+            "169.254.169.254 must be blocked (link-local / AWS metadata)"
+        );
+    }
+
+    #[test]
+    fn test_is_blocked_ipv6_loopback() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(is_blocked_ip(ip), "::1 must be blocked (IPv6 loopback)");
+    }
+
+    #[test]
+    fn test_is_not_blocked_loopback_v4() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(
+            !is_blocked_ip(ip),
+            "127.0.0.1 must NOT be blocked (design decision: wiremock uses it)"
+        );
+    }
+
+    #[test]
+    fn test_is_not_blocked_public_ip() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "93.184.216.34".parse().unwrap();
+        assert!(
+            !is_blocked_ip(ip),
+            "93.184.216.34 (example.com) must NOT be blocked"
+        );
+    }
+
+    // ── ssrf_preflight unit tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_ssrf_preflight_blocks_unsupported_scheme() {
+        let result = ssrf_preflight("ftp://example.org/data.ttl");
+        assert!(result.is_err(), "ftp:// must be rejected");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("only http/https allowed"),
+            "error message must mention scheme: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_ssrf_preflight_blocks_private_ip() {
+        let result = ssrf_preflight("http://10.0.0.1/data.ttl");
+        assert!(result.is_err(), "10.0.0.1 must be rejected by preflight");
+    }
+
+    #[test]
+    fn test_ssrf_preflight_blocks_link_local_ip() {
+        let result = ssrf_preflight("http://169.254.169.254/");
+        assert!(
+            result.is_err(),
+            "169.254.169.254 must be rejected by preflight"
+        );
+    }
+
+    // ── existing parse tests ──────────────────────────────────────────────────
 
     #[test]
     fn parse_insert_data() {
