@@ -8,13 +8,17 @@ Contact: hovlanddag@gmail.com
 
 //! JSON-LD 1.1 parser and serialiser.
 
+mod loader;
 mod serialize;
+
+pub use loader::{DocumentLoader, StaticDocumentLoader};
 
 use dag_rdf::{Datastore, GraphElementId, IriReference, RdfLiteral, RdfResource, Triple};
 use ingress::NetworkPolicy;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
 
 // ── RDF IRI constants ─────────────────────────────────────────────────────────
 
@@ -41,7 +45,7 @@ fn err(msg: impl Into<String>) -> JsonLdError {
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct Context {
     /// term name → term definition
     terms: HashMap<String, TermDef>,
@@ -56,6 +60,27 @@ struct Context {
     /// Default: [`NetworkPolicy::Deny`] (the safe default).
     /// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
     network: NetworkPolicy,
+    /// Optional document loader used when [`NetworkPolicy::Allow`] is in effect.
+    ///
+    /// When `Some`, external `@context` URL strings are resolved via this loader.
+    /// When `None` and `network == Allow`, an error is returned.
+    ///
+    /// Use [`crate::parse_jsonld_with_loader`] to supply a loader.
+    /// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+    loader: Option<Arc<dyn DocumentLoader>>,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("terms", &self.terms)
+            .field("base", &self.base)
+            .field("vocab", &self.vocab)
+            .field("language", &self.language)
+            .field("network", &self.network)
+            .field("loader", &self.loader.as_ref().map(|_| "<DocumentLoader>"))
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -118,10 +143,28 @@ impl Context {
                     // Silently skip the external context — preserve current behaviour.
                     Ok(self.clone())
                 }
-                NetworkPolicy::Allow => Err(err(format!(
-                    "External @context URL \"{url}\": NetworkPolicy::Allow is not yet implemented. \
-                     Track progress at https://github.com/daghovland/rdf-datalog/issues/82"
-                ))),
+                NetworkPolicy::Allow => match &self.loader {
+                    Some(loader) => {
+                        let ctx_doc = loader.load(url).map_err(|e| {
+                            err(format!("Failed to load @context URL \"{url}\": {e}"))
+                        })?;
+                        // The fetched document may wrap the context under a top-level `@context`
+                        // key (standard JSON-LD context document format), or it may already be
+                        // the raw context object/array.  Handle both.
+                        let ctx_val = match &ctx_doc {
+                            Value::Object(map) if map.contains_key("@context") => {
+                                map["@context"].clone()
+                            }
+                            other => other.clone(),
+                        };
+                        self.extend(&ctx_val)
+                    }
+                    None => Err(err(format!(
+                        "External @context URL \"{url}\": NetworkPolicy::Allow requires a \
+                         DocumentLoader. Use parse_jsonld_with_loader() to supply one. \
+                         See https://github.com/daghovland/rdf-datalog/issues/82"
+                    ))),
+                },
             },
             Value::Null => Ok(Context::default()),
             other => Err(err(format!("invalid @context value: {other}"))),
@@ -369,6 +412,44 @@ pub fn parse_jsonld<R: Read>(
     let value: Value = serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))?;
     let ctx = Context {
         network,
+        ..Context::default()
+    };
+    process_document(datastore, &value, &ctx, None)
+}
+
+/// Parse JSON-LD data from `reader` into `datastore`, using `loader` to
+/// resolve any external `@context` URL strings encountered during parsing.
+///
+/// External URLs are fetched via `loader.load(url)`.  The network policy is
+/// implicitly [`NetworkPolicy::Allow`] when a loader is supplied.
+///
+/// # Example
+/// ```
+/// use dag_rdf::Datastore;
+/// use jsonld_parser::{StaticDocumentLoader, parse_jsonld_with_loader};
+/// use std::sync::Arc;
+///
+/// let mut ds = Datastore::new(1_000);
+/// let loader = Arc::new(StaticDocumentLoader::with_schema_org());
+/// let json = r#"{"@context": "https://schema.org/", "@id": "https://example.org/x", "name": "X"}"#;
+/// parse_jsonld_with_loader(&mut ds, json.as_bytes(), loader).unwrap();
+/// ```
+///
+/// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+pub fn parse_jsonld_with_loader<R: Read>(
+    datastore: &mut Datastore,
+    reader: R,
+    loader: Arc<dyn DocumentLoader>,
+) -> Result<(), JsonLdError> {
+    let mut buf = String::new();
+    let mut reader = reader;
+    reader
+        .read_to_string(&mut buf)
+        .map_err(|e| err(format!("IO: {e}")))?;
+    let value: Value = serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))?;
+    let ctx = Context {
+        network: NetworkPolicy::Allow,
+        loader: Some(loader),
         ..Context::default()
     };
     process_document(datastore, &value, &ctx, None)
