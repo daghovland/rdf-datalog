@@ -22,7 +22,7 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | Load RDF from JSON-LD 1.1 (`.jsonld`) | ✓ |
 | Map CSV / JSON / JSONL / XML to RDF via RML 1.0 (Rust API, CLI, and REST) | ✓ |
 | Serialise to JSON-LD (expanded, compacted, flattened) | ✓ |
-| SPARQL 1.2 SELECT queries (in-process) | ✓ |
+| SPARQL 1.1 SELECT queries (in-process) | ✓ |
 | SPARQL 1.1 HTTP endpoint (SELECT/ASK/CONSTRUCT, SPARQL XML and CSV output) | ✓ |
 | SPARQL 1.1 Graph Store Protocol (GET/PUT/POST/DELETE/HEAD; JSON-LD output) | ✓ |
 | SPARQL 1.1 Update (`POST /sparql`, form body, and per-dataset `/update`) | ✓ |
@@ -34,11 +34,11 @@ Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
 | OWL 2 RL reasoning via Datalog materialisation | ✓ |
 | Custom Datalog rules with stratified negation and SPARQL FILTER guards | ✓ |
 | Named graphs (load, query, reason over) | ✓ |
-| SHACL Core validation via Datalog translation | ✓ complete |
-| SHACL-AF SPARQL-based constraints (§5–6) | planned |
-| OWL Manchester Syntax parser | planned |
-| Durable transactional persistence (`redb`-backed WAL) | planned |
-| Incremental Datalog materialisation (Backward/Forward algorithm) | planned |
+| SHACL Core validation via Datalog translation | ✓ |
+| SHACL-AF SPARQL-based constraints (§5–6) | [#54](https://github.com/daghovland/rdf-datalog/issues/54) |
+| OWL Manchester Syntax parser | [#139](https://github.com/daghovland/rdf-datalog/issues/139) |
+| Durable transactional persistence (`redb`-backed WAL) | [#34](https://github.com/daghovland/rdf-datalog/issues/34) |
+| Incremental Datalog materialisation (Backward/Forward algorithm) | [#83](https://github.com/daghovland/rdf-datalog/issues/83) |
 
 > Every code example in this file is also an integration test in
 > [`tests/readme_examples.rs`](tests/readme_examples.rs).
@@ -273,7 +273,7 @@ for row in &result.rows {
 }
 ```
 
-### Supported SPARQL 1.2 features
+### Supported SPARQL 1.1 features
 
 | Feature | Notes |
 |---|---|
@@ -289,12 +289,11 @@ for row in &result.rows {
 | Property paths — `/`, `*`, `+`, `?`, `\|`, `^`, `!` (all forms) | Full |
 | `GROUP BY`, `HAVING`, `ORDER BY` | Full |
 | Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`) | Full |
-| `CONSTRUCT`, `ASK` | Full |
-| `DESCRIBE` | Not yet implemented ([#49](https://github.com/daghovland/rdf-datalog/issues/49)) |
-| `FROM` / `FROM NAMED` dataset clauses | Not yet implemented ([#50](https://github.com/daghovland/rdf-datalog/issues/50)) |
-| `SERVICE` federated queries | Parsed; silently returns empty — not federated ([#51](https://github.com/daghovland/rdf-datalog/issues/51)) |
-| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, date/time, hash…) | Partially implemented ([#52](https://github.com/daghovland/rdf-datalog/issues/52)) |
-| SPARQL Update `INSERT/DELETE WHERE` | Not yet implemented ([#53](https://github.com/daghovland/rdf-datalog/issues/53)) |
+| `CONSTRUCT`, `ASK`, `DESCRIBE` | Full |
+| `FROM` / `FROM NAMED` dataset clauses | Full |
+| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, `LCASE`, `SUBSTR`, date/time, hash…) | Full |
+| SPARQL Update `INSERT/DELETE WHERE`, `DELETE WHERE` | Full |
+| `SERVICE` federated queries | Non-SILENT returns error; SILENT returns empty — federation not implemented |
 
 ### SPARQL examples
 
@@ -444,8 +443,8 @@ apply_rml_mapping(
 | Named graphs (`rml:graphMap`) | ✓ |
 | Blank node subjects | ✓ |
 | `rml:class` shorthand | ✓ |
-| Join conditions (`rml:JoinCondition`) | planned |
-| SQL/JDBC sources | planned |
+| Join conditions (`rml:JoinCondition`) | [#140](https://github.com/daghovland/rdf-datalog/issues/140) |
+| SQL/JDBC sources | [#26](https://github.com/daghovland/rdf-datalog/issues/26) |
 
 See [docs/user/rml-mapping.md](docs/user/rml-mapping.md) for the full reference.
 
@@ -494,7 +493,7 @@ graph. SHACL-AF §5–6 SPARQL-based constraints are executed directly by the bu
 SPARQL engine. No external processes or dependencies are required.
 
 SHACL Core (§1–§4.8) is fully implemented. SHACL-AF §5–6 (SPARQL-based targets
-and constraints) is planned — see [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) Phase 4.
+and constraints) are tracked in [#54](https://github.com/daghovland/rdf-datalog/issues/54) — see [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) Phase 4 for the implementation plan.
 
 ### API
 
@@ -601,8 +600,7 @@ All tests are in [`tests/shacl_suite.rs`](tests/shacl_suite.rs). Test data lives
 | §4.8.2 | `sh:hasValue` | `spec_s4_8_2_has_value` |
 | §4.8.3 | `sh:in` | `spec_s4_8_3_in` |
 
-> Not yet covered: §5–6 SPARQL-based constraints (SHACL-AF).
-> See [`docs/plans/SHACL_PLAN.md`](docs/plans/SHACL_PLAN.md) Phase 4 for the implementation plan.
+> §5–6 SPARQL-based constraints (SHACL-AF) are tracked in [#54](https://github.com/daghovland/rdf-datalog/issues/54).
 
 ---
 
