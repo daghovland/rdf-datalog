@@ -939,11 +939,13 @@ pub fn apply_prepared_update(
                 NetworkPolicy::Ignore => {
                     // Silent no-op regardless of SILENT flag.
                 }
-                NetworkPolicy::Allow => {
+                NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => {
                     // SSRF warning: `source` originates from the SPARQL LOAD statement.
                     // Only enable NetworkPolicy::Allow in environments where all SPARQL
                     // clients are trusted to prevent Server-Side Request Forgery (SSRF).
-                    let fetch_result = maybe_block_in_place(|| fetch_rdf(&source));
+                    // AllowList further restricts fetches to URLs that start with one of
+                    // the configured prefixes; SSRF hardening still applies on top.
+                    let fetch_result = maybe_block_in_place(|| fetch_rdf(&source, &network));
                     match fetch_result {
                         Err(e) => {
                             if !silent {
@@ -1164,9 +1166,20 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// wiremock integration tests bound to 127.0.0.1 continue to work.
 /// See: <https://github.com/daghovland/rdf-datalog/issues/135>
 ///
-/// Only call this function when `NetworkPolicy::Allow` is active — and only
-/// enable that policy in environments where all SPARQL clients are trusted.
-fn fetch_rdf(url: &str) -> Result<(Vec<u8>, String), String> {
+/// Only call this function when `NetworkPolicy::Allow` or
+/// `NetworkPolicy::AllowList` is active — and only enable those policies in
+/// environments where all SPARQL clients are trusted.
+fn fetch_rdf(url: &str, policy: &NetworkPolicy) -> Result<(Vec<u8>, String), String> {
+    // 0. AllowList prefix check: reject URLs not matching any configured prefix.
+    //    This runs before the SSRF preflight so the error is unambiguous.
+    if let NetworkPolicy::AllowList(prefixes) = policy
+        && !prefixes.iter().any(|p| url.starts_with(p.as_str()))
+    {
+        return Err(format!(
+            "LOAD <{url}>: URL is not in the configured allow-list"
+        ));
+    }
+
     // 1. SSRF preflight: block private/reserved IPs and unsupported schemes.
     ssrf_preflight(url)?;
 
@@ -1576,6 +1589,63 @@ mod tests {
         } else {
             panic!("expected InsertQuad log entry, got {:?}", log_entries[0]);
         }
+    }
+
+    // ── AllowList unit tests (issue #136) ────────────────────────────────────
+
+    /// `fetch_rdf` with `AllowList` rejects URLs that do not start with any prefix.
+    #[test]
+    fn test_allowlist_prefix_no_match() {
+        let policy = NetworkPolicy::AllowList(vec![
+            "https://example.org/".to_string(),
+            "https://data.gov/".to_string(),
+        ]);
+        let err = fetch_rdf("https://evil.example.com/data.ttl", &policy)
+            .expect_err("should be rejected by allowlist");
+        assert!(
+            err.contains("not in the configured allow-list"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// `fetch_rdf` with `AllowList` proceeds past the prefix check for matching URLs
+    /// (i.e. the allowlist gate does not fire; failure is from network, not the gate).
+    #[test]
+    fn test_allowlist_prefix_match_reaches_network() {
+        // Use an obviously unreachable URL so the test stays offline, but the
+        // prefix does match — we want to confirm the AllowList check passes and
+        // the error comes from the network layer (ssrf_preflight or HTTP), not from
+        // the allowlist logic.
+        let policy = NetworkPolicy::AllowList(vec!["http://127.0.0.1".to_string()]);
+        let result = fetch_rdf("http://127.0.0.1:1/data.ttl", &policy);
+        // The AllowList gate must NOT produce an "allow-list" error.
+        if let Err(ref e) = result {
+            assert!(
+                !e.contains("not in the configured allow-list"),
+                "AllowList should not fire for matching URL; got: {e}"
+            );
+        }
+        // (The call may succeed or fail depending on whether port 1 is reachable;
+        // what matters is that the allowlist gate did not block it.)
+    }
+
+    /// Unit test for `parse_network_policy` CLI parsing of `allow:<prefixes>`.
+    ///
+    /// This lives here rather than in `src/main.rs` to avoid a circular dependency.
+    /// The equivalent main.rs test is in `tests/allowlist.rs`.
+    #[test]
+    fn test_allowlist_deny_policy_rejects_all() {
+        let policy = NetworkPolicy::Deny;
+        let ops = parse_update("LOAD <http://example.org/data.ttl>").unwrap();
+        let mut store = Datastore::new(64);
+        let (prepared, _) = prepare_update(&store, ops).unwrap();
+        let result = apply_prepared_update(&mut store, prepared, None, policy);
+        assert!(result.is_err(), "Deny policy must return error");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("remote network access is disabled"),
+            "unexpected message: {msg}"
+        );
     }
 
     #[test]

@@ -198,11 +198,14 @@ struct Cli {
     #[arg(long = "no-persist", env = "DAGALOG_NO_PERSIST")]
     no_persist: bool,
 
-    /// Remote network access policy: deny (default), ignore, or allow
+    /// Remote network access policy: deny (default), ignore, allow, or allow:<prefixes>
     ///
-    /// deny:   return an error for LOAD, @context URLs, SERVICE (safe default)
-    /// ignore: silently skip all remote fetch operations
-    /// allow:  perform HTTP fetches [planned; not yet implemented]
+    /// deny:               return an error for LOAD, @context URLs, SERVICE (safe default)
+    /// ignore:             silently skip all remote fetch operations
+    /// allow:              perform HTTP fetches (SSRF hardening active)
+    /// allow:<p1>[,<p2>]:  only fetch URLs whose string starts with one of the listed prefixes
+    ///
+    /// Example: --network allow:https://example.org/,https://data.gov/
     #[arg(
         long = "network",
         value_name = "POLICY",
@@ -225,8 +228,17 @@ fn parse_network_policy(s: &str) -> Result<NetworkPolicy, String> {
         "deny" => Ok(NetworkPolicy::Deny),
         "ignore" => Ok(NetworkPolicy::Ignore),
         "allow" => Ok(NetworkPolicy::Allow),
+        other if other.starts_with("allow:") => {
+            let prefixes = other["allow:".len()..]
+                .split(',')
+                .filter(|p| !p.is_empty())
+                .map(|p| p.to_string())
+                .collect();
+            Ok(NetworkPolicy::AllowList(prefixes))
+        }
         other => Err(format!(
-            "unknown network policy '{other}'; expected one of: deny, ignore, allow"
+            "unknown network policy '{other}'; expected one of: \
+             deny, ignore, allow, allow:<prefix>[,<prefix>…]"
         )),
     }
 }

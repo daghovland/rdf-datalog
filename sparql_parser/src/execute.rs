@@ -89,7 +89,7 @@ pub fn execute(
             // All SERVICE calls return empty results (handled in the QueryComponent::Service
             // match arm below).
         }
-        NetworkPolicy::Allow => {
+        NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => {
             if first_non_silent_service(where_clause).is_some() {
                 return Err(
                     "SERVICE federation is not yet implemented even with --network=allow. \

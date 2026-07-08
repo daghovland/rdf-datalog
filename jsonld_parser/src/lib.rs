@@ -118,9 +118,10 @@ impl Context {
                     // Silently skip the external context — preserve current behaviour.
                     Ok(self.clone())
                 }
-                NetworkPolicy::Allow => Err(err(format!(
-                    "External @context URL \"{url}\": NetworkPolicy::Allow is not yet implemented. \
-                     Track progress at https://github.com/daghovland/rdf-datalog/issues/82"
+                NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => Err(err(format!(
+                    "External @context URL \"{url}\": fetching external @context URLs is not yet \
+                     implemented. Track progress at \
+                     https://github.com/daghovland/rdf-datalog/issues/82"
                 ))),
             },
             Value::Null => Ok(Context::default()),

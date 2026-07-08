@@ -488,7 +488,7 @@ pub async fn gsp_put_inner(
         }
     };
 
-    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy.clone()) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -661,7 +661,7 @@ pub async fn gsp_post_inner(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy.clone()) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -909,7 +909,7 @@ pub async fn direct_gsp_put(
                 .into_response();
         }
     };
-    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy.clone()) {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -1050,7 +1050,7 @@ pub async fn direct_gsp_post(
                 .into_response();
         }
     };
-    let tmp = match parse_rdf_body(&body, fmt, state.network_policy) {
+    let tmp = match parse_rdf_body(&body, fmt, state.network_policy.clone()) {
         Ok(t) => t,
         Err(r) => return r,
     };
