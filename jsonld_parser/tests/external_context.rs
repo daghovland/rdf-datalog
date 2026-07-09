@@ -150,3 +150,74 @@ fn test_external_context_mock_loader() {
         "ex:label value should be 'My Mock Thing'; got: {label_str}"
     );
 }
+
+// ── Test 4: null in @context array preserves loader ───────────────────────────
+
+/// A `null` entry in a `@context` array resets terms/prefixes but must preserve
+/// the active document loader and network policy.  If it drops the loader, any
+/// subsequent URL string in the same array will fail with "requires a
+/// DocumentLoader" instead of being resolved.
+///
+/// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+#[test]
+fn test_null_in_context_array_preserves_loader() {
+    // The context array is [null, "https://example.org/vocab/context"].
+    // null should reset any previously accumulated terms, but the loader must
+    // survive so the subsequent URL can be resolved.
+    let context_json = r#"{
+        "@context": {
+            "ex":    "https://example.org/",
+            "label": { "@id": "ex:label" }
+        }
+    }"#;
+    let loader = StaticDocumentLoader::new([(
+        "https://example.org/vocab/context".to_string(),
+        context_json.to_string(),
+    )]);
+
+    let mut ds = Datastore::new(1_000);
+    let json = r#"{
+        "@context": [null, "https://example.org/vocab/context"],
+        "@id": "https://example.org/thing",
+        "label": "Preserved"
+    }"#;
+    parse_jsonld_with_loader(&mut ds, json.as_bytes(), Arc::new(loader))
+        .expect("null in @context array must not drop the loader");
+
+    let label_val = first_literal(
+        &ds,
+        "https://example.org/thing",
+        "https://example.org/label",
+    );
+    assert!(
+        label_val.is_some(),
+        "ex:label triple must be present after [null, url] context array"
+    );
+}
+
+// ── Test 5: cycle detection does not stack-overflow ───────────────────────────
+
+/// When two context URLs each reference the other (A → B → A …), the parser
+/// must detect the cycle and return a result rather than stack-overflowing.
+///
+/// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+#[test]
+fn test_cycle_detection_does_not_stack_overflow() {
+    // ctx_a references ctx_b and ctx_b references ctx_a.
+    let ctx_a = r#"{"@context": ["https://example.org/ctx_b", {"ex": "https://example.org/"}]}"#;
+    let ctx_b = r#"{"@context": "https://example.org/ctx_a"}"#;
+
+    let loader = StaticDocumentLoader::new([
+        ("https://example.org/ctx_a".to_string(), ctx_a.to_string()),
+        ("https://example.org/ctx_b".to_string(), ctx_b.to_string()),
+    ]);
+
+    let mut ds = Datastore::new(1_000);
+    let json = r#"{
+        "@context": "https://example.org/ctx_a",
+        "@id": "https://example.org/thing",
+        "ex:name": "Cycle Test"
+    }"#;
+    // Must not panic/overflow. May succeed or return an error, but not hang.
+    let _ = parse_jsonld_with_loader(&mut ds, json.as_bytes(), Arc::new(loader));
+}

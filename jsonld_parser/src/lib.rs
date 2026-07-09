@@ -16,7 +16,7 @@ pub use loader::{DocumentLoader, StaticDocumentLoader};
 use dag_rdf::{Datastore, GraphElementId, IriReference, RdfLiteral, RdfResource, Triple};
 use ingress::NetworkPolicy;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::Arc;
 
@@ -68,6 +68,8 @@ struct Context {
     /// Use [`crate::parse_jsonld_with_loader`] to supply a loader.
     /// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
     loader: Option<Arc<dyn DocumentLoader>>,
+    /// URLs currently being loaded; used for cycle detection.
+    visited_urls: HashSet<String>,
 }
 
 impl std::fmt::Debug for Context {
@@ -79,6 +81,7 @@ impl std::fmt::Debug for Context {
             .field("language", &self.language)
             .field("network", &self.network)
             .field("loader", &self.loader.as_ref().map(|_| "<DocumentLoader>"))
+            .field("visited_urls", &self.visited_urls)
             .finish()
     }
 }
@@ -145,6 +148,10 @@ impl Context {
                 }
                 NetworkPolicy::Allow => match &self.loader {
                     Some(loader) => {
+                        // Cycle detection: skip a URL we are already in the process of loading.
+                        if self.visited_urls.contains(url.as_str()) {
+                            return Ok(self.clone());
+                        }
                         let ctx_doc = loader.load(url).map_err(|e| {
                             err(format!("Failed to load @context URL \"{url}\": {e}"))
                         })?;
@@ -157,7 +164,10 @@ impl Context {
                             }
                             other => other.clone(),
                         };
-                        self.extend(&ctx_val)
+                        // Mark this URL visited before recursing so chains don't loop.
+                        let mut loading_ctx = self.clone();
+                        loading_ctx.visited_urls.insert(url.clone());
+                        loading_ctx.extend(&ctx_val)
                     }
                     None => Err(err(format!(
                         "External @context URL \"{url}\": NetworkPolicy::Allow requires a \
@@ -166,7 +176,14 @@ impl Context {
                     ))),
                 },
             },
-            Value::Null => Ok(Context::default()),
+            // null resets the active context but preserves the loader and network policy so
+            // subsequent URL strings in the same array can still be resolved.
+            Value::Null => Ok(Context {
+                network: self.network,
+                loader: self.loader.clone(),
+                visited_urls: self.visited_urls.clone(),
+                ..Context::default()
+            }),
             other => Err(err(format!("invalid @context value: {other}"))),
         }
     }
@@ -391,12 +408,21 @@ fn is_absolute_iri(s: &str) -> bool {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+fn read_to_json(mut reader: impl Read) -> Result<Value, JsonLdError> {
+    let mut buf = String::new();
+    reader
+        .read_to_string(&mut buf)
+        .map_err(|e| err(format!("IO: {e}")))?;
+    serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))
+}
+
 /// Parse JSON-LD data from `reader` into `datastore`.
 ///
 /// `network` controls how external `@context` URLs are handled:
 /// - [`NetworkPolicy::Deny`] — return an error when an external URL is encountered (default).
 /// - [`NetworkPolicy::Ignore`] — silently skip external contexts (previous behaviour).
-/// - [`NetworkPolicy::Allow`] — not yet implemented; returns an error.
+/// - [`NetworkPolicy::Allow`] — loads external contexts using the built-in static loader.
+///   For custom loaders, use [`parse_jsonld_with_loader`].
 ///
 /// Related: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
 pub fn parse_jsonld<R: Read>(
@@ -404,12 +430,7 @@ pub fn parse_jsonld<R: Read>(
     reader: R,
     network: NetworkPolicy,
 ) -> Result<(), JsonLdError> {
-    let mut buf = String::new();
-    let mut reader = reader;
-    reader
-        .read_to_string(&mut buf)
-        .map_err(|e| err(format!("IO: {e}")))?;
-    let value: Value = serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))?;
+    let value = read_to_json(reader)?;
     let ctx = Context {
         network,
         ..Context::default()
@@ -441,12 +462,7 @@ pub fn parse_jsonld_with_loader<R: Read>(
     reader: R,
     loader: Arc<dyn DocumentLoader>,
 ) -> Result<(), JsonLdError> {
-    let mut buf = String::new();
-    let mut reader = reader;
-    reader
-        .read_to_string(&mut buf)
-        .map_err(|e| err(format!("IO: {e}")))?;
-    let value: Value = serde_json::from_str(&buf).map_err(|e| err(format!("JSON: {e}")))?;
+    let value = read_to_json(reader)?;
     let ctx = Context {
         network: NetworkPolicy::Allow,
         loader: Some(loader),
@@ -561,10 +577,7 @@ fn process_node(
                 if let Some(def) = ctx.term_def(&type_str)
                     && let Some(sc_val) = &def.scoped_context
                 {
-                    merged = merged.extend(sc_val).unwrap_or_else(|e| {
-                        log::warn!("ignoring invalid type-scoped context: {e}");
-                        merged.clone()
-                    });
+                    merged = merged.extend(sc_val)?;
                     changed = true;
                 }
             }
@@ -717,10 +730,7 @@ fn process_property(
     // Apply property-scoped context for processing this property's values.
     let scoped_ctx_owned;
     let ctx = if let Some(sc_val) = def.and_then(|d| d.scoped_context.as_ref()) {
-        scoped_ctx_owned = ctx.extend(sc_val).unwrap_or_else(|e| {
-            log::warn!("ignoring invalid property-scoped context: {e}");
-            ctx.clone()
-        });
+        scoped_ctx_owned = ctx.extend(sc_val)?;
         &scoped_ctx_owned
     } else {
         ctx

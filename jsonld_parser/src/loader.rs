@@ -50,7 +50,10 @@ pub trait DocumentLoader: Send + Sync {
 
 // ── StaticDocumentLoader ──────────────────────────────────────────────────────
 
-/// A [`DocumentLoader`] backed by an in-memory map of URL → JSON string.
+/// A [`DocumentLoader`] backed by an in-memory map of URL → pre-parsed JSON value.
+///
+/// JSON strings are parsed once at construction time; subsequent `load()` calls
+/// clone the pre-parsed [`Value`], avoiding repeated JSON parsing.
 ///
 /// Useful for:
 /// - Unit tests that need a deterministic, offline context.
@@ -58,15 +61,24 @@ pub trait DocumentLoader: Send + Sync {
 ///   Call [`StaticDocumentLoader::with_schema_org`] to get a loader that
 ///   pre-populates a minimal schema.org context stub.
 pub struct StaticDocumentLoader {
-    entries: HashMap<String, String>,
+    entries: HashMap<String, Value>,
 }
 
 impl StaticDocumentLoader {
     /// Create a loader from an iterable of `(url, json_string)` pairs.
+    ///
+    /// Panics if any JSON string is invalid (acceptable for static, compile-time entries).
     pub fn new(entries: impl IntoIterator<Item = (String, String)>) -> Self {
-        Self {
-            entries: entries.into_iter().collect(),
-        }
+        let entries = entries
+            .into_iter()
+            .map(|(url, json)| {
+                let value = serde_json::from_str(&json).unwrap_or_else(|e| {
+                    panic!("StaticDocumentLoader: invalid JSON for \"{url}\": {e}")
+                });
+                (url, value)
+            })
+            .collect();
+        Self { entries }
     }
 
     /// Create a loader pre-populated with a minimal schema.org context stub.
@@ -75,28 +87,29 @@ impl StaticDocumentLoader {
     /// the full schema.org vocabulary.  Extend with [`StaticDocumentLoader::new`]
     /// if you need additional terms.
     ///
-    /// Both `https://schema.org/` and `http://schema.org/` resolve to the
-    /// same stub.
+    /// All four common schema.org URL forms resolve to the same stub:
+    /// `https://schema.org/`, `http://schema.org/`, `https://schema.org`, `http://schema.org`.
     pub fn with_schema_org() -> Self {
+        let stub: Value = serde_json::from_str(SCHEMA_ORG_CONTEXT_STUB)
+            .expect("SCHEMA_ORG_CONTEXT_STUB is valid JSON");
         let mut entries = HashMap::new();
-        let stub = SCHEMA_ORG_CONTEXT_STUB.to_string();
         entries.insert("https://schema.org/".to_string(), stub.clone());
-        entries.insert("http://schema.org/".to_string(), stub);
+        entries.insert("http://schema.org/".to_string(), stub.clone());
+        entries.insert("https://schema.org".to_string(), stub.clone());
+        entries.insert("http://schema.org".to_string(), stub);
         Self { entries }
     }
 }
 
 impl DocumentLoader for StaticDocumentLoader {
     fn load(&self, url: &str) -> Result<Value, String> {
-        let raw = self.entries.get(url).ok_or_else(|| {
+        self.entries.get(url).cloned().ok_or_else(|| {
             format!(
                 "StaticDocumentLoader: no entry for URL \"{url}\". \
                  Add it with StaticDocumentLoader::new([(\"{url}\".to_string(), json_str)]). \
                  See https://github.com/daghovland/rdf-datalog/issues/82"
             )
-        })?;
-        serde_json::from_str(raw)
-            .map_err(|e| format!("StaticDocumentLoader: could not parse JSON for \"{url}\": {e}"))
+        })
     }
 }
 
@@ -109,59 +122,27 @@ impl DocumentLoader for StaticDocumentLoader {
 /// binary that links `jsonld-parser`.
 ///
 /// Tracks: [#82](https://github.com/daghovland/rdf-datalog/issues/82)
+// Terms covered by @vocab alone (bare name expands to https://schema.org/<name>) are omitted.
+// Only entries that add @type coercion (IRI or datatype) are listed explicitly.
 const SCHEMA_ORG_CONTEXT_STUB: &str = r#"{
   "@context": {
     "@vocab": "https://schema.org/",
     "schema": "https://schema.org/",
 
-    "name":              { "@id": "schema:name" },
-    "description":       { "@id": "schema:description" },
-    "url":               { "@id": "schema:url",         "@type": "@id" },
-    "image":             { "@id": "schema:image",       "@type": "@id" },
-    "identifier":        { "@id": "schema:identifier" },
-    "sameAs":            { "@id": "schema:sameAs",      "@type": "@id" },
+    "url":          { "@id": "schema:url",          "@type": "@id" },
+    "image":        { "@id": "schema:image",         "@type": "@id" },
+    "sameAs":       { "@id": "schema:sameAs",        "@type": "@id" },
+    "author":       { "@id": "schema:author",        "@type": "@id" },
+    "member":       { "@id": "schema:member",        "@type": "@id" },
+    "memberOf":     { "@id": "schema:memberOf",      "@type": "@id" },
+    "employee":     { "@id": "schema:employee",      "@type": "@id" },
+    "founder":      { "@id": "schema:founder",       "@type": "@id" },
+    "knows":        { "@id": "schema:knows",         "@type": "@id" },
+    "location":     { "@id": "schema:location",      "@type": "@id" },
 
-    "Person":            { "@id": "schema:Person" },
-    "Organization":      { "@id": "schema:Organization" },
-    "Place":             { "@id": "schema:Place" },
-    "Product":           { "@id": "schema:Product" },
-    "Event":             { "@id": "schema:Event" },
-    "CreativeWork":      { "@id": "schema:CreativeWork" },
-    "Article":           { "@id": "schema:Article" },
-    "WebPage":           { "@id": "schema:WebPage" },
-    "WebSite":           { "@id": "schema:WebSite" },
-
-    "givenName":         { "@id": "schema:givenName" },
-    "familyName":        { "@id": "schema:familyName" },
-    "email":             { "@id": "schema:email" },
-    "telephone":         { "@id": "schema:telephone" },
-    "jobTitle":          { "@id": "schema:jobTitle" },
-    "birthDate":         { "@id": "schema:birthDate",   "@type": "http://www.w3.org/2001/XMLSchema#date" },
-
-    "addressLocality":   { "@id": "schema:addressLocality" },
-    "addressRegion":     { "@id": "schema:addressRegion" },
-    "addressCountry":    { "@id": "schema:addressCountry" },
-    "postalCode":        { "@id": "schema:postalCode" },
-    "streetAddress":     { "@id": "schema:streetAddress" },
-    "address":           { "@id": "schema:address" },
-
-    "author":            { "@id": "schema:author",      "@type": "@id" },
-    "datePublished":     { "@id": "schema:datePublished" },
-    "headline":          { "@id": "schema:headline" },
-    "text":              { "@id": "schema:text" },
-
-    "member":            { "@id": "schema:member",      "@type": "@id" },
-    "memberOf":          { "@id": "schema:memberOf",    "@type": "@id" },
-    "employee":          { "@id": "schema:employee",    "@type": "@id" },
-    "founder":           { "@id": "schema:founder",     "@type": "@id" },
-
-    "knows":             { "@id": "schema:knows",       "@type": "@id" },
-    "location":          { "@id": "schema:location",    "@type": "@id" },
-
-    "startDate":         { "@id": "schema:startDate" },
-    "endDate":           { "@id": "schema:endDate" },
-
-    "price":             { "@id": "schema:price" },
-    "priceCurrency":     { "@id": "schema:priceCurrency" }
+    "birthDate":    { "@id": "schema:birthDate",     "@type": "http://www.w3.org/2001/XMLSchema#date" },
+    "startDate":    { "@id": "schema:startDate",     "@type": "http://www.w3.org/2001/XMLSchema#date" },
+    "endDate":      { "@id": "schema:endDate",       "@type": "http://www.w3.org/2001/XMLSchema#date" },
+    "datePublished":{ "@id": "schema:datePublished", "@type": "http://www.w3.org/2001/XMLSchema#date" }
   }
 }"#;
