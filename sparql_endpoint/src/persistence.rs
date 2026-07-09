@@ -402,6 +402,8 @@ pub fn to_repr(el: &GraphElement) -> ElementRepr {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => ElementRepr::Iri(iri.0.clone()),
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(n)) => ElementRepr::Blank(*n),
         GraphElement::GraphLiteral(lit) => lit_to_repr(lit),
+        // Triple terms: persistence support tracked in #143; emit as blank node placeholder.
+        GraphElement::TripleTerm(k) => ElementRepr::Blank(k.subject),
     }
 }
 

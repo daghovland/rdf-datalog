@@ -84,6 +84,8 @@ pub fn element_display(ds: &Datastore, id: GraphElementId) -> String {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => iri.0.clone(),
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(n)) => format!("_:b{n}"),
         GraphElement::GraphLiteral(lit) => lit.to_string(),
+        // Triple terms: display using the Debug representation of the key IDs (#143).
+        GraphElement::TripleTerm(k) => format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj),
     }
 }
 

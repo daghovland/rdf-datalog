@@ -458,6 +458,8 @@ pub fn id_to_elem(shapes: &Datastore, id: GraphElementId) -> ElemValue {
                 lang,
             }
         }
+        // Triple terms cannot appear as SHACL values; treat as blank node placeholder (#143).
+        GraphElement::TripleTerm(k) => ElemValue::BlankNode(k.subject),
     }
 }
 

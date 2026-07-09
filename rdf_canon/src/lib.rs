@@ -104,8 +104,8 @@ fn literal_to_oxrdf(literal: &RdfLiteral) -> Literal {
 fn element_to_subject(element: &GraphElement) -> Option<Subject> {
     match element {
         GraphElement::NodeOrEdge(r) => Some(resource_to_subject(r)),
-        // Literals cannot be subjects in RDF 1.1.
-        GraphElement::GraphLiteral(_) => None,
+        // Literals cannot be subjects in RDF 1.1; triple term subjects require RDF 1.2 (#143).
+        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
     }
 }
 
@@ -113,13 +113,15 @@ fn element_to_term(element: &GraphElement) -> Option<Term> {
     match element {
         GraphElement::NodeOrEdge(r) => Some(resource_to_term(r)),
         GraphElement::GraphLiteral(l) => Some(Term::Literal(literal_to_oxrdf(l))),
+        // Triple terms require RDF 1.2 oxrdf support (#143).
+        GraphElement::TripleTerm(_) => None,
     }
 }
 
 fn element_to_predicate(element: &GraphElement) -> Option<NamedNode> {
     match element {
         GraphElement::NodeOrEdge(r) => resource_to_predicate(r),
-        GraphElement::GraphLiteral(_) => None,
+        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
     }
 }
 
@@ -131,7 +133,8 @@ fn element_to_graph_name(element: &GraphElement) -> Option<GraphName> {
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(
             GraphName::BlankNode(BlankNode::new_unchecked(format!("bg{id}"))),
         ),
-        GraphElement::GraphLiteral(_) => None,
+        // Literals and triple terms cannot be graph names (#143).
+        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
     }
 }
 

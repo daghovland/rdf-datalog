@@ -329,6 +329,10 @@ fn gel_to_srx(el: &GraphElement) -> SrxValue {
             SrxValue::Bnode(format!("b{}", id))
         }
         GraphElement::GraphLiteral(lit) => gel_lit_to_srx(lit),
+        // Triple terms in SPARQL comparison require RDF 1.2 support (#143).
+        GraphElement::TripleTerm(k) => {
+            SrxValue::Uri(format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj))
+        }
     }
 }
 

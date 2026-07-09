@@ -56,6 +56,10 @@ pub(crate) fn graph_element_to_json(el: &GraphElement) -> Value {
             json!({ "type": "bnode", "value": format!("b{}", id) })
         }
         GraphElement::GraphLiteral(lit) => literal_to_json(lit),
+        // Triple terms in SPARQL JSON output require RDF 1.2 support (#143).
+        GraphElement::TripleTerm(k) => {
+            json!({ "type": "triple", "value": format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj) })
+        }
     }
 }
 

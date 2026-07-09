@@ -69,6 +69,13 @@ fn graph_element_to_xml(el: &GraphElement) -> String {
             format!("<bnode>b{}</bnode>", id)
         }
         GraphElement::GraphLiteral(lit) => literal_to_xml(lit),
+        // Triple terms in SPARQL XML output require RDF 1.2 support (#143).
+        GraphElement::TripleTerm(k) => {
+            format!(
+                "<triple><s>{}</s><p>{}</p><o>{}</o></triple>",
+                k.subject, k.predicate, k.obj
+            )
+        }
     }
 }
 

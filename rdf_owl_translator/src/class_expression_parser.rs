@@ -412,6 +412,8 @@ fn create_annotation_value(
             AnnotationValue::IndividualAnnotation(Individual::AnonymousIndividual(*n))
         }
         GraphElement::GraphLiteral(_lit) => AnnotationValue::LiteralAnnotation(gel.clone()),
+        // Triple terms cannot appear as OWL annotation values; treat as literal placeholder (#143).
+        GraphElement::TripleTerm(_) => AnnotationValue::LiteralAnnotation(gel.clone()),
     }
 }
 

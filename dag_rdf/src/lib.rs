@@ -14,7 +14,7 @@ pub use crate::datastore::Datastore;
 pub use crate::ingress::*;
 pub use crate::quadtable::QuadTable;
 pub use crate::query::{QuadPattern, Term};
-pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource};
+pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource, TripleTermKey};
 
 use std::collections::HashMap;
 
@@ -58,7 +58,7 @@ impl GraphElementManager {
     pub fn get_resource(&self, resource_id: GraphElementId) -> Option<&RdfResource> {
         match self.get_graph_element(resource_id) {
             GraphElement::NodeOrEdge(r) => Some(r),
-            GraphElement::GraphLiteral(_) => None,
+            GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
         }
     }
 
@@ -77,7 +77,7 @@ impl GraphElementManager {
         self.resource_map
             .iter()
             .filter_map(|(key, &value)| match key {
-                GraphElement::GraphLiteral(_) => None,
+                GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
                 GraphElement::NodeOrEdge(node) => match node {
                     RdfResource::Iri(_) => Some(value),
                     _ => None,
