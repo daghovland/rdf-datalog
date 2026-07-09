@@ -1449,3 +1449,128 @@ SELECT ?b WHERE {
         "§17.4.6: DAY of a dateTime literal"
     );
 }
+
+// ── SPARQL 1.2 triple-term pattern tests ─────────────────────────────────────
+//
+// All tests are `#[ignore]` pending SPARQL 1.2 triple-term query support.
+// Tracked in [#146](https://github.com/daghovland/rdf-datalog/issues/146).
+
+/// SPARQL 1.2 — SELECT with a concrete triple-term pattern in WHERE.
+///
+/// Dataset:
+/// ```turtle
+/// @prefix : <https://example.org/> .
+/// <<( :alice :knows :bob )>> :assertedBy :carol .
+/// ```
+///
+/// Query:
+/// ```sparql
+/// PREFIX : <https://example.org/>
+/// SELECT ?ann WHERE { <<( :alice :knows :bob )>> :assertedBy ?ann }
+/// ```
+///
+/// Expected: one result row with `?ann = :carol`.
+#[test]
+#[ignore] // #146: SPARQL 1.2 triple term patterns in WHERE clause
+fn test_sparql_triple_term_where_clause() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <https://example.org/> .
+<<( :alice :knows :bob )>> :assertedBy :carol .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT ?ann WHERE { <<( :alice :knows :bob )>> :assertedBy ?ann }
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "ann"),
+        Some("<https://example.org/carol>".to_string()),
+        "?ann should bind to :carol"
+    );
+}
+
+/// SPARQL 1.2 — SELECT with variables inside the embedded triple pattern.
+///
+/// Dataset:
+/// ```turtle
+/// @prefix : <https://example.org/> .
+/// <<( :alice :knows :bob )>> :assertedBy :carol .
+/// ```
+///
+/// Query:
+/// ```sparql
+/// PREFIX : <https://example.org/>
+/// SELECT ?s ?o WHERE { <<( ?s :knows ?o )>> :assertedBy :carol }
+/// ```
+///
+/// Expected: one result row with `?s = :alice`, `?o = :bob`.
+#[test]
+#[ignore] // #146: SPARQL 1.2 triple term patterns with variables in embedded triple
+fn test_sparql_triple_term_variable_inner() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <https://example.org/> .
+<<( :alice :knows :bob )>> :assertedBy :carol .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT ?s ?o WHERE { <<( ?s :knows ?o )>> :assertedBy :carol }
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "s"),
+        Some("<https://example.org/alice>".to_string()),
+        "?s should bind to :alice"
+    );
+    assert_eq!(
+        query_single_value(&ds, sparql, "o"),
+        Some("<https://example.org/bob>".to_string()),
+        "?o should bind to :bob"
+    );
+}
+
+/// Parse inline TriG (named graphs) for SPARQL integration tests.
+///
+/// Used only for the triple-term-in-named-graph test; plain Turtle does not
+/// support named graph syntax.
+fn parse_inline_trig(trig: &str) -> Datastore {
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("inline TriG must parse");
+    ds
+}
+
+/// SPARQL 1.2 — SELECT with a triple-term pattern inside a named GRAPH clause.
+///
+/// Dataset (TriG):
+/// ```trig
+/// @prefix : <https://example.org/> .
+/// :g1 { <<( :alice :knows :bob )>> :assertedBy :carol . }
+/// ```
+///
+/// Query:
+/// ```sparql
+/// PREFIX : <https://example.org/>
+/// SELECT ?g WHERE { GRAPH ?g { <<( :alice :knows :bob )>> :assertedBy :carol } }
+/// ```
+///
+/// Expected: one result row with `?g = :g1`.
+#[test]
+#[ignore] // #146: SPARQL 1.2 triple term patterns inside GRAPH clause
+fn test_sparql_triple_term_in_named_graph() {
+    let ds = parse_inline_trig(
+        r#"
+@prefix : <https://example.org/> .
+:g1 { <<( :alice :knows :bob )>> :assertedBy :carol . }
+"#,
+    );
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT ?g WHERE { GRAPH ?g { <<( :alice :knows :bob )>> :assertedBy :carol } }
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "g"),
+        Some("<https://example.org/g1>".to_string()),
+        "?g should bind to :g1"
+    );
+}
