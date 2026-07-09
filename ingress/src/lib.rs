@@ -91,8 +91,8 @@ impl fmt::Display for RdfLiteral {
 }
 
 /// Identifies an RDF 1.2 embedded triple ("triple term") by its three interned
-/// component IDs.  Each field is a `GraphElementId` (= `u32`) as assigned by
-/// [`dag_rdf::GraphElementManager`].
+/// component IDs.  Each field is a `GraphElementId` (= `u32`) assigned by the
+/// `GraphElementManager` in the `dag_rdf` crate.
 ///
 /// Defined here rather than in `dag_rdf` so that `GraphElement::TripleTerm` can
 /// carry it without introducing a circular dependency.
@@ -110,7 +110,7 @@ pub enum GraphElement {
     /// RDF 1.2 embedded triple (triple term): `<<( subject predicate object )>>`.
     ///
     /// The payload is a [`TripleTermKey`] whose fields are interned
-    /// `GraphElementId` values.  Use [`dag_rdf::Datastore::add_triple_term`]
+    /// `GraphElementId` values.  Use `Datastore::add_triple_term` in `dag_rdf`
     /// to intern a triple term and obtain its `GraphElementId`.
     ///
     /// Serialisation and reasoning support is tracked in
