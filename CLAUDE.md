@@ -51,6 +51,8 @@ All code changes (bug fixes, features) follow this workflow:
    git worktree remove .claude/worktrees/<branch-name>
    ```
 
+**Disk usage:** all worktrees share one Cargo target dir at `/home/dag/.cargo-shared-target/rdf-datalog` via `CARGO_TARGET_DIR` set in the shell profile (`~/.bashrc` and `~/.profile`), instead of each worktree building its own ~15GB `target/`. Concurrent builds across worktrees just serialize on Cargo's own lock file — correctness is unaffected. Still remove worktrees promptly after their PR merges (step 7 above): the checkout itself (source files) takes space too, and stale worktrees clutter `git worktree list`.
+
 Exception: trivial single-file documentation updates (like this one) may be committed directly to main without a worktree or PR.
 
 ## Commands
