@@ -296,7 +296,7 @@ pub async fn serve_on_listener(
         Some(Arc::new(Mutex::new(reasoner)))
     };
 
-    let network_policy = config.network_policy;
+    let network_policy = config.network_policy.clone();
     let registry = DatasetRegistry::new_with_default(store.clone());
     let state = AppState {
         store,

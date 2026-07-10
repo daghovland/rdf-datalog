@@ -146,40 +146,51 @@ impl Context {
                     // Silently skip the external context — preserve current behaviour.
                     Ok(self.clone())
                 }
-                NetworkPolicy::Allow => match &self.loader {
-                    Some(loader) => {
-                        // Cycle detection: skip a URL we are already in the process of loading.
-                        if self.visited_urls.contains(url.as_str()) {
-                            return Ok(self.clone());
-                        }
-                        let ctx_doc = loader.load(url).map_err(|e| {
-                            err(format!("Failed to load @context URL \"{url}\": {e}"))
-                        })?;
-                        // The fetched document may wrap the context under a top-level `@context`
-                        // key (standard JSON-LD context document format), or it may already be
-                        // the raw context object/array.  Handle both.
-                        let ctx_val = match &ctx_doc {
-                            Value::Object(map) if map.contains_key("@context") => {
-                                map["@context"].clone()
-                            }
-                            other => other.clone(),
-                        };
-                        // Mark this URL visited before recursing so chains don't loop.
-                        let mut loading_ctx = self.clone();
-                        loading_ctx.visited_urls.insert(url.clone());
-                        loading_ctx.extend(&ctx_val)
+                NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => {
+                    // AllowList prefix check: reject URLs not matching any configured
+                    // prefix, mirroring the same gate in sparql_endpoint's fetch_rdf.
+                    if let NetworkPolicy::AllowList(prefixes) = &self.network
+                        && !prefixes.iter().any(|p| url.starts_with(p.as_str()))
+                    {
+                        return Err(err(format!(
+                            "External @context URL \"{url}\": URL is not in the configured allow-list"
+                        )));
                     }
-                    None => Err(err(format!(
-                        "External @context URL \"{url}\": NetworkPolicy::Allow requires a \
-                         DocumentLoader. Use parse_jsonld_with_loader() to supply one. \
-                         See https://github.com/daghovland/rdf-datalog/issues/82"
-                    ))),
-                },
+                    match &self.loader {
+                        Some(loader) => {
+                            // Cycle detection: skip a URL we are already in the process of loading.
+                            if self.visited_urls.contains(url.as_str()) {
+                                return Ok(self.clone());
+                            }
+                            let ctx_doc = loader.load(url).map_err(|e| {
+                                err(format!("Failed to load @context URL \"{url}\": {e}"))
+                            })?;
+                            // The fetched document may wrap the context under a top-level `@context`
+                            // key (standard JSON-LD context document format), or it may already be
+                            // the raw context object/array.  Handle both.
+                            let ctx_val = match &ctx_doc {
+                                Value::Object(map) if map.contains_key("@context") => {
+                                    map["@context"].clone()
+                                }
+                                other => other.clone(),
+                            };
+                            // Mark this URL visited before recursing so chains don't loop.
+                            let mut loading_ctx = self.clone();
+                            loading_ctx.visited_urls.insert(url.clone());
+                            loading_ctx.extend(&ctx_val)
+                        }
+                        None => Err(err(format!(
+                            "External @context URL \"{url}\": NetworkPolicy::Allow requires a \
+                             DocumentLoader. Use parse_jsonld_with_loader() to supply one. \
+                             See https://github.com/daghovland/rdf-datalog/issues/82"
+                        ))),
+                    }
+                }
             },
             // null resets the active context but preserves the loader and network policy so
             // subsequent URL strings in the same array can still be resolved.
             Value::Null => Ok(Context {
-                network: self.network,
+                network: self.network.clone(),
                 loader: self.loader.clone(),
                 visited_urls: self.visited_urls.clone(),
                 ..Context::default()

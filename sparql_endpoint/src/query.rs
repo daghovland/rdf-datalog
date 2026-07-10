@@ -211,10 +211,10 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
             &mut store,
             prepared,
             Some(&mut *reasoner),
-            state.network_policy,
+            state.network_policy.clone(),
         )
     } else {
-        apply_prepared_update(&mut store, prepared, None, state.network_policy)
+        apply_prepared_update(&mut store, prepared, None, state.network_policy.clone())
     };
     let (net_inserts, net_deletes) = match result {
         Ok(delta) => delta,
@@ -304,7 +304,7 @@ async fn run_transactional_query(
             return (StatusCode::BAD_REQUEST, format!("Parse error: {:?}", e)).into_response();
         }
     };
-    let result = match execute(&query, &view, state.network_policy) {
+    let result = match execute(&query, &view, state.network_policy.clone()) {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -516,7 +516,7 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
 
     let store = state.store.read().await;
     let etag = format!("\"{}\"", store.generation);
-    let result = match execute(&query, &store, state.network_policy) {
+    let result = match execute(&query, &store, state.network_policy.clone()) {
         Ok(r) => r,
         Err(e) => {
             return (
