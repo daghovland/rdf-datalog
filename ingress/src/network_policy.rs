@@ -9,7 +9,9 @@ Contact: hovlanddag@gmail.com
 /// Controls how operations that require remote HTTP fetches are handled.
 ///
 /// Applies to: SPARQL `LOAD`, JSON-LD external `@context` URLs, SPARQL `SERVICE`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// CLI: `--network=deny|ignore|allow|allow:<prefix>[,<prefix>…]`
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NetworkPolicy {
     /// Remote fetches return a descriptive error. This is the default.
     ///
@@ -28,11 +30,18 @@ pub enum NetworkPolicy {
     /// Any client that can send a `LOAD <url>` query can make the server issue
     /// outbound HTTP requests — a Server-Side Request Forgery (SSRF) risk.
     ///
-    /// Planned hardening (private-IP blocking, redirect policy, body cap): [#135](https://github.com/daghovland/rdf-datalog/issues/135).
-    /// A URL prefix allowlist variant (`AllowList`) is planned in [#136](https://github.com/daghovland/rdf-datalog/issues/136).
+    /// SSRF hardening (private-IP blocking, redirect policy, body cap) is active:
+    /// [#135](https://github.com/daghovland/rdf-datalog/issues/135).
     ///
     /// Applies to: SPARQL `LOAD` ([#119](https://github.com/daghovland/rdf-datalog/issues/119)),
     /// JSON-LD `@context` URLs ([#82](https://github.com/daghovland/rdf-datalog/issues/82)),
     /// SPARQL `SERVICE` ([#51](https://github.com/daghovland/rdf-datalog/issues/51)).
     Allow,
+    /// Only URLs whose string representation starts with one of the given prefixes are fetched.
+    ///
+    /// The SSRF hardening from [#135](https://github.com/daghovland/rdf-datalog/issues/135)
+    /// (IP blocking, redirect policy, body cap) still applies on top of the prefix check.
+    ///
+    /// CLI: `--network allow:https://example.org/,https://data.gov/`
+    AllowList(Vec<String>),
 }
