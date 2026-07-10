@@ -107,7 +107,7 @@ impl fmt::Display for QuadResource {
 /// Assumes the resource is some integer literal which fits in a BigInt, and extracts it if that is the case.
 pub fn try_get_non_negative_integer_literal(gel: &GraphElement) -> Option<BigInt> {
     match gel {
-        GraphElement::NodeOrEdge(_) => None,
+        GraphElement::NodeOrEdge(_) | GraphElement::TripleTerm(_) => None,
         GraphElement::GraphLiteral(res) => match res {
             RdfLiteral::IntegerLiteral(nn) => Some(nn.clone()),
             RdfLiteral::TypedLiteral { type_iri, literal } => {
@@ -132,7 +132,7 @@ pub fn try_get_non_negative_integer_literal(gel: &GraphElement) -> Option<BigInt
 /// Assumes the resource is some boolean literal, and extracts it if that is the case.
 pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
     match gel {
-        GraphElement::NodeOrEdge(_) => None,
+        GraphElement::NodeOrEdge(_) | GraphElement::TripleTerm(_) => None,
         GraphElement::GraphLiteral(res) => match res {
             RdfLiteral::BooleanLiteral(nn) => Some(*nn),
             RdfLiteral::TypedLiteral { type_iri, literal } => {

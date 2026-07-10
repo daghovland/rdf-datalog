@@ -41,7 +41,8 @@ fn subject_term(elem: &GraphElement) -> Option<String> {
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
-        GraphElement::GraphLiteral(_) => None,
+        // Literals cannot be subjects; triple terms as subjects require RDF 1.2 support (#143).
+        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
     }
 }
 
@@ -61,6 +62,8 @@ fn object_term(elem: &GraphElement) -> Option<String> {
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
         GraphElement::GraphLiteral(lit) => Some(format_literal(lit)),
+        // Triple terms as objects require RDF 1.2 Turtle serialisation (#143).
+        GraphElement::TripleTerm(_) => None,
     }
 }
 

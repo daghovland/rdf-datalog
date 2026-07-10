@@ -205,6 +205,12 @@ pub fn try_get_individual(gel: &GraphElement) -> Individual {
             RdfResource::Iri(iri) => Individual::NamedIndividual(FullIri(iri.clone())),
             RdfResource::AnonymousBlankNode(n) => Individual::AnonymousIndividual(*n),
         },
+        // Triple terms cannot be OWL individuals; full RDF 1.2 support tracked in #143.
+        GraphElement::TripleTerm(_) => {
+            panic!(
+                "Invalid OWL: triple term used as individual (RDF 1.2 not yet supported, see issue #143)"
+            )
+        }
     }
 }
 
@@ -219,7 +225,7 @@ pub fn try_get_literal(gel: &GraphElement) -> &RdfLiteral {
 /// Parse a non-negative integer from a graph element.
 pub fn try_get_non_negative_integer_literal(gel: &GraphElement) -> Option<BigInt> {
     match gel {
-        GraphElement::NodeOrEdge(_) => None,
+        GraphElement::NodeOrEdge(_) | GraphElement::TripleTerm(_) => None,
         GraphElement::GraphLiteral(lit) => match lit {
             RdfLiteral::IntegerLiteral(n) => Some(n.clone()),
             RdfLiteral::TypedLiteral { type_iri, literal } => {
@@ -238,7 +244,7 @@ pub fn try_get_non_negative_integer_literal(gel: &GraphElement) -> Option<BigInt
 /// Parse a boolean from a graph element.
 pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
     match gel {
-        GraphElement::NodeOrEdge(_) => None,
+        GraphElement::NodeOrEdge(_) | GraphElement::TripleTerm(_) => None,
         GraphElement::GraphLiteral(lit) => match lit {
             RdfLiteral::BooleanLiteral(b) => Some(*b),
             RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_BOOLEAN => {

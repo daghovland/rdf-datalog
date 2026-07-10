@@ -226,6 +226,8 @@ pub fn graph_element_display(el: &GraphElement) -> String {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => format!("<{}>", iri.0),
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => format!("_:b{}", id),
         GraphElement::GraphLiteral(lit) => rdf_literal_display(lit),
+        // Triple terms: display using interned IDs; full RDF 1.2 display tracked in #143.
+        GraphElement::TripleTerm(k) => format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj),
     }
 }
 
@@ -320,6 +322,8 @@ fn graph_element_raw_value(el: &GraphElement) -> String {
             RdfLiteral::TimeLiteral(t) => t.to_string(),
             RdfLiteral::DateLiteral(d) => d.to_string(),
         },
+        // Triple terms: raw value is the display form (#143).
+        GraphElement::TripleTerm(k) => format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj),
     }
 }
 
@@ -395,6 +399,13 @@ fn element_to_json(el: &GraphElement) -> String {
             format!("{{\"type\":\"bnode\",\"value\":\"b{}\"}}", id)
         }
         GraphElement::GraphLiteral(lit) => literal_to_json(lit),
+        // Triple terms: JSON representation tracked in #143.
+        GraphElement::TripleTerm(k) => {
+            format!(
+                "{{\"type\":\"triple\",\"value\":\"<<( {} {} {} )>>\"}}",
+                k.subject, k.predicate, k.obj
+            )
+        }
     }
 }
 

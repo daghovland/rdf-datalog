@@ -51,6 +51,8 @@ fn graph_element_to_csv(el: &GraphElement) -> String {
             format!("_:b{}", id)
         }
         GraphElement::GraphLiteral(lit) => literal_to_csv(lit),
+        // Triple terms in CSV output require RDF 1.2 support (#143).
+        GraphElement::TripleTerm(k) => format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj),
     }
 }
 

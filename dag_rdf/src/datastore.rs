@@ -7,7 +7,10 @@ Contact: hovlanddag@gmail.com
 */
 
 use crate::ingress::{DEFAULT_GRAPH_ELEMENT_ID, GraphElementId, Quad, Triple};
-use crate::{GraphElement, GraphElementManager, IriReference, QuadTable, RdfLiteral, RdfResource};
+use crate::{
+    GraphElement, GraphElementManager, IriReference, QuadTable, RdfLiteral, RdfResource,
+    TripleTermKey,
+};
 
 /// Top-level RDF dataset store, mirroring DagSemTools.Rdf.Datastore.
 ///
@@ -91,6 +94,40 @@ impl Datastore {
             obj: triple.obj,
         });
         self.generation += 1;
+    }
+
+    /// Intern an RDF 1.2 embedded triple ("triple term") and record it in
+    /// `reified_triples`.
+    ///
+    /// Two calls with identical `(subject, predicate, obj)` IDs are idempotent:
+    /// they return the same `GraphElementId` and insert at most one row in
+    /// `reified_triples`.
+    ///
+    /// Related epic: [#143](https://github.com/daghovland/rdf-datalog/issues/143).
+    pub fn add_triple_term(
+        &mut self,
+        subject: GraphElementId,
+        predicate: GraphElementId,
+        obj: GraphElementId,
+    ) -> GraphElementId {
+        let key = GraphElement::TripleTerm(TripleTermKey {
+            subject,
+            predicate,
+            obj,
+        });
+        // Return existing ID without mutating reified_triples if already interned.
+        if let Some(&existing) = self.resources.resource_map.get(&key) {
+            return existing;
+        }
+        let id = self.resources.add_resource(key);
+        self.reified_triples.add_quad(Quad {
+            triple_id: id,
+            subject,
+            predicate,
+            obj,
+        });
+        self.generation += 1;
+        id
     }
 
     // ── Quad queries (default graph) ─────────────────────────────────────────
@@ -309,5 +346,96 @@ impl Datastore {
             (None, None, None, Some(o)) => self.named_graphs.get_quads_with_object(o).collect(),
             (None, None, None, None) => self.named_graphs.get_all_quads().collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: intern three distinct IRIs and return their IDs.
+    fn three_iris(ds: &mut Datastore) -> (GraphElementId, GraphElementId, GraphElementId) {
+        let s = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/s".to_string(),
+        )));
+        let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/p".to_string(),
+        )));
+        let o = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/o".to_string(),
+        )));
+        (s, p, o)
+    }
+
+    /// Interning the same (s, p, o) triple term twice must return the same ID.
+    #[test]
+    fn test_triple_term_same_ids_same_element_id() {
+        let mut ds = Datastore::new(100);
+        let (s, p, o) = three_iris(&mut ds);
+
+        let id1 = ds.add_triple_term(s, p, o);
+        let id2 = ds.add_triple_term(s, p, o);
+
+        assert_eq!(
+            id1, id2,
+            "same (s,p,o) must intern to the same GraphElementId"
+        );
+    }
+
+    /// Interning two distinct triple terms must yield different IDs.
+    #[test]
+    fn test_triple_term_different_spdo_different_ids() {
+        let mut ds = Datastore::new(100);
+        let (s, p, o) = three_iris(&mut ds);
+        let o2 = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/o2".to_string(),
+        )));
+
+        let id1 = ds.add_triple_term(s, p, o);
+        let id2 = ds.add_triple_term(s, p, o2);
+
+        assert_ne!(
+            id1, id2,
+            "different (s,p,o) must intern to different GraphElementIds"
+        );
+    }
+
+    /// After `add_triple_term`, the triple should appear in `reified_triples`
+    /// when queried by the returned ID.
+    #[test]
+    fn test_triple_term_stored_in_reified_triples() {
+        let mut ds = Datastore::new(100);
+        let (s, p, o) = three_iris(&mut ds);
+
+        let id = ds.add_triple_term(s, p, o);
+
+        let stored: Vec<_> = ds.get_reified_triples_with_id(id).collect();
+        assert_eq!(
+            stored.len(),
+            1,
+            "reified_triples must contain exactly one entry"
+        );
+        let t = &stored[0];
+        assert_eq!(t.subject, s);
+        assert_eq!(t.predicate, p);
+        assert_eq!(t.obj, o);
+    }
+
+    /// Interning the same triple term twice must not create duplicate rows in
+    /// `reified_triples`.
+    #[test]
+    fn test_triple_term_does_not_duplicate_reified_triples() {
+        let mut ds = Datastore::new(100);
+        let (s, p, o) = three_iris(&mut ds);
+
+        let id = ds.add_triple_term(s, p, o);
+        let _ = ds.add_triple_term(s, p, o); // second call must be a no-op
+
+        let stored: Vec<_> = ds.get_reified_triples_with_id(id).collect();
+        assert_eq!(
+            stored.len(),
+            1,
+            "second add_triple_term with same args must not duplicate reified_triples"
+        );
     }
 }

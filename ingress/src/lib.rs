@@ -90,10 +90,32 @@ impl fmt::Display for RdfLiteral {
     }
 }
 
+/// Identifies an RDF 1.2 embedded triple ("triple term") by its three interned
+/// component IDs.  Each field is a `GraphElementId` (= `u32`) assigned by the
+/// `GraphElementManager` in the `dag_rdf` crate.
+///
+/// Defined here rather than in `dag_rdf` so that `GraphElement::TripleTerm` can
+/// carry it without introducing a circular dependency.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct TripleTermKey {
+    pub subject: u32,
+    pub predicate: u32,
+    pub obj: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum GraphElement {
     NodeOrEdge(RdfResource),
     GraphLiteral(RdfLiteral),
+    /// RDF 1.2 embedded triple (triple term): `<<( subject predicate object )>>`.
+    ///
+    /// The payload is a [`TripleTermKey`] whose fields are interned
+    /// `GraphElementId` values.  Use `Datastore::add_triple_term` in `dag_rdf`
+    /// to intern a triple term and obtain its `GraphElementId`.
+    ///
+    /// Serialisation and reasoning support is tracked in
+    /// [#143](https://github.com/daghovland/rdf-datalog/issues/143).
+    TripleTerm(TripleTermKey),
 }
 
 impl fmt::Display for GraphElement {
@@ -101,6 +123,11 @@ impl fmt::Display for GraphElement {
         match self {
             GraphElement::NodeOrEdge(r) => write!(f, "{}", r),
             GraphElement::GraphLiteral(l) => write!(f, "{}", l),
+            // Display the interned IDs; a richer representation requires access
+            // to the Datastore and is left for full RDF 1.2 support (#143).
+            GraphElement::TripleTerm(k) => {
+                write!(f, "<<( {} {} {} )>>", k.subject, k.predicate, k.obj)
+            }
         }
     }
 }

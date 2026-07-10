@@ -198,6 +198,8 @@ fn element_to_value(ds: &Datastore, id: GraphElementId) -> Option<Value> {
             Some(Value::Object(m))
         }
         GraphElement::GraphLiteral(lit) => Some(literal_to_value(lit)),
+        // Triple terms as JSON-LD values require RDF 1.2 support (#143).
+        GraphElement::TripleTerm(_) => None,
     }
 }
 
