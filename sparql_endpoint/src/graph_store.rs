@@ -351,8 +351,16 @@ pub(crate) fn parse_rdf_body(
         UploadFormat::TriG => {
             turtle::parse_trig(&mut tmp, Cursor::new(body)).map_err(|e| e.to_string())
         }
-        UploadFormat::JsonLd => jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body), network)
-            .map_err(|e| e.to_string()),
+        UploadFormat::JsonLd => match network {
+            NetworkPolicy::Allow => {
+                let loader =
+                    std::sync::Arc::new(jsonld_parser::StaticDocumentLoader::with_schema_org());
+                jsonld_parser::parse_jsonld_with_loader(&mut tmp, Cursor::new(body), loader)
+                    .map_err(|e| e.to_string())
+            }
+            _ => jsonld_parser::parse_jsonld(&mut tmp, Cursor::new(body), network)
+                .map_err(|e| e.to_string()),
+        },
     };
     result
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("RDF parse error: {e}")).into_response())?;
