@@ -42,7 +42,16 @@ fn parse_ttl(ttl: &str) -> Datastore {
 /// - The `subject` field of that annotation quad must resolve to
 ///   `GraphElement::TripleTerm(_)`.
 #[test]
-#[ignore] // #145: enable RDF 1.2 triple-term syntax in the Turtle parser
+// #145: blocked on subject-position triple terms. Empirically, `oxttl` 0.2.3
+// (even with the `rdf-12` feature) rejects `<<(` in subject position with
+// `TurtleSyntaxError { message: "<<( is not a valid subject or graph name" }`.
+// This matches `oxrdf` 0.3.3's `Triple::subject: NamedOrBlankNode`, which has
+// no variant for a nested triple term. See "Subject-position blocker" in
+// docs/plans/RDF12_PLAN.md (Phase R2) for the two options considered; this is
+// Option A (object-position support only) until oxrdf/oxttl add a subject
+// representation for triple terms. Pending upstream oxrdf/oxttl support:
+// tracked in #153.
+#[ignore]
 fn test_triple_term_as_subject() {
     let ds = parse_ttl(
         r#"
@@ -83,7 +92,13 @@ fn test_triple_term_as_subject() {
 /// graphs.  The parser must intern it **once** (one row in `reified_triples`)
 /// and produce **two** annotation quads (one per named graph) in `named_graphs`.
 #[test]
-#[ignore] // #145: enable RDF 1.2 triple-term syntax in the Turtle / TriG parser
+// #145: blocked on subject-position triple terms (see comment on
+// `test_triple_term_as_subject` above). Also note: this test's Turtle source
+// uses TriG named-graph block syntax (`:g1 { ... }`), so once unblocked it
+// will additionally need `parse_ttl` (or a TriG-specific variant) to call
+// `turtle::parse_trig` rather than `turtle::parse_turtle`. Pending upstream
+// oxrdf/oxttl support: tracked in #153.
+#[ignore]
 fn test_same_triple_term_in_two_named_graphs() {
     let ds = parse_ttl(
         r#"
@@ -114,7 +129,11 @@ fn test_same_triple_term_in_two_named_graphs() {
 ///   terms, each interned once.
 /// - `named_graphs` must contain one annotation quad.
 #[test]
-#[ignore] // #145: enable RDF 1.2 nested triple-term syntax in the Turtle parser
+// #145: blocked on subject-position triple terms (see comment on
+// `test_triple_term_as_subject` above) — the outer triple term here is
+// itself a statement subject. Pending upstream oxrdf/oxttl support:
+// tracked in #153.
+#[ignore]
 fn test_nested_triple_term() {
     let ds = parse_ttl(
         r#"
@@ -145,7 +164,6 @@ fn test_nested_triple_term() {
 /// - `named_graphs` must contain exactly one quad with the triple term as
 ///   the **object**.
 #[test]
-#[ignore] // #145: enable RDF 1.2 triple-term syntax in the Turtle parser (object position)
 fn test_triple_term_as_object() {
     let ds = parse_ttl(
         r#"
@@ -182,7 +200,10 @@ fn test_triple_term_as_object() {
 /// After parsing `reified_triples` must contain one row and `named_graphs`
 /// one row, with the triple term as the subject.
 #[test]
-#[ignore] // #145: enable RDF 1.2 triple-term syntax in the Turtle parser
+// #145: blocked on subject-position triple terms (see comment on
+// `test_triple_term_as_subject` above). Pending upstream oxrdf/oxttl
+// support: tracked in #153.
+#[ignore]
 fn test_triple_term_with_literal_object() {
     let ds = parse_ttl(
         r#"

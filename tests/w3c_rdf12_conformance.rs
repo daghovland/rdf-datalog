@@ -526,7 +526,6 @@ fn turtle12_eval_entries() -> Vec<ManifestEntry> {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-turtle/
 #[test]
-#[ignore] // #145: implement RDF 1.2 Turtle parser (triple terms, annotations, reification)
 fn w3c_rdf12_turtle_positive_syntax() {
     let dir = suite_dir("w3c_rdf12_turtle").join("syntax");
     let entries = turtle12_syntax_entries();
@@ -550,7 +549,6 @@ fn w3c_rdf12_turtle_positive_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-turtle/
 #[test]
-#[ignore] // #145: implement RDF 1.2 Turtle parser (triple terms, annotations, reification)
 fn w3c_rdf12_turtle_negative_syntax() {
     let dir = suite_dir("w3c_rdf12_turtle").join("syntax");
     let entries = turtle12_syntax_entries();
@@ -574,7 +572,15 @@ fn w3c_rdf12_turtle_negative_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-turtle/
 #[test]
-#[ignore] // #145: implement RDF 1.2 Turtle parser (triple terms, annotations, reification)
+// #145: still failing (8 entries: turtle12-rt-{01,03..07}, turtle12-annotation-03,
+// turtle12-reified-triples-annotation-03) — these need full RDF-star reifier
+// (`<<s p o>>`, no parens) support with `rdf:reifies`/blank-node semantics,
+// which is beyond object-position triple-term parsing added in this phase.
+// Some entries additionally require subject-position triple terms, which are
+// blocked upstream in oxrdf/oxttl: see #153.
+// Positive/negative syntax coverage is coming from `w3c_rdf12_turtle_positive_syntax`
+// / `w3c_rdf12_turtle_negative_syntax` above, which already pass.
+#[ignore]
 fn w3c_rdf12_turtle_eval() {
     let dir = suite_dir("w3c_rdf12_turtle").join("eval");
     let entries = turtle12_eval_entries();
@@ -613,7 +619,6 @@ fn ntriples12_syntax_entries() -> Vec<ManifestEntry> {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-n-triples/
 #[test]
-#[ignore] // #145: implement RDF 1.2 N-Triples parser (triple terms)
 fn w3c_rdf12_ntriples_positive_syntax() {
     let dir = suite_dir("w3c_rdf12_ntriples").join("syntax");
     let entries = ntriples12_syntax_entries();
@@ -637,7 +642,6 @@ fn w3c_rdf12_ntriples_positive_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-n-triples/
 #[test]
-#[ignore] // #145: implement RDF 1.2 N-Triples parser (triple terms)
 fn w3c_rdf12_ntriples_negative_syntax() {
     let dir = suite_dir("w3c_rdf12_ntriples").join("syntax");
     let entries = ntriples12_syntax_entries();
@@ -676,7 +680,6 @@ fn nquads12_syntax_entries() -> Vec<ManifestEntry> {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-n-quads/
 #[test]
-#[ignore] // #145: implement RDF 1.2 N-Quads parser (triple terms)
 fn w3c_rdf12_nquads_positive_syntax() {
     let dir = suite_dir("w3c_rdf12_nquads").join("syntax");
     let entries = nquads12_syntax_entries();
@@ -700,7 +703,6 @@ fn w3c_rdf12_nquads_positive_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-n-quads/
 #[test]
-#[ignore] // #145: implement RDF 1.2 N-Quads parser (triple terms)
 fn w3c_rdf12_nquads_negative_syntax() {
     let dir = suite_dir("w3c_rdf12_nquads").join("syntax");
     let entries = nquads12_syntax_entries();
@@ -750,7 +752,6 @@ fn trig12_eval_entries() -> Vec<ManifestEntry> {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-trig/
 #[test]
-#[ignore] // #145: implement RDF 1.2 TriG parser (triple terms, annotations)
 fn w3c_rdf12_trig_positive_syntax() {
     let dir = suite_dir("w3c_rdf12_trig").join("syntax");
     let entries = trig12_syntax_entries();
@@ -774,7 +775,6 @@ fn w3c_rdf12_trig_positive_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-trig/
 #[test]
-#[ignore] // #145: implement RDF 1.2 TriG parser (triple terms, annotations)
 fn w3c_rdf12_trig_negative_syntax() {
     let dir = suite_dir("w3c_rdf12_trig").join("syntax");
     let entries = trig12_syntax_entries();
@@ -798,7 +798,12 @@ fn w3c_rdf12_trig_negative_syntax() {
 ///
 /// Reference: https://w3c.github.io/rdf-tests/rdf/rdf12/rdf-trig/
 #[test]
-#[ignore] // #145: implement RDF 1.2 TriG parser (triple terms, annotations)
+// #145: still failing (same 8 rt/annotation entries as Turtle 1.2 eval above) —
+// needs full RDF-star reifier (`<<s p o>>`) support, out of scope for this
+// phase. Some entries additionally require subject-position triple terms,
+// which are blocked upstream in oxrdf/oxttl: see #153. Positive/negative
+// syntax coverage above already passes.
+#[ignore]
 fn w3c_rdf12_trig_eval() {
     let dir = suite_dir("w3c_rdf12_trig").join("eval");
     let entries = trig12_eval_entries();

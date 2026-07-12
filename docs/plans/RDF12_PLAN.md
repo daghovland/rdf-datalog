@@ -212,11 +212,13 @@ Interns the `TripleTerm` and stores one row in `reified_triples` where the "grap
    ```
 4. Once inline tests pass, unignore W3C RDF 1.2 Turtle conformance tests from `tests/w3c_rdf12_conformance.rs` (positive syntax first, then eval).
 
-**Subject-position blocker:** `oxrdf 0.3.3` defines `Triple.subject: NamedOrBlankNode`, which cannot represent a triple in subject position. Two options:
-- **Option A:** Handle only object-position triple terms; return an error for subject-position until oxrdf is updated.
-- **Option B:** Check what `oxttl` with `rdf-12` actually emits for `<<( :s :p :o )>> :q :r` — it may already convert these to blank nodes + reification quads, in which case it works transparently.
+**Subject-position blocker — resolved empirically (Option A applies):** `oxrdf 0.3.3` defines `Triple.subject: NamedOrBlankNode`, which cannot represent a triple in subject position. Running `<<( :alice :knows :bob )>> :assertedBy :carol .` through `oxttl 0.2.3` (with the `rdf-12` feature enabled) confirms this is a hard grammar-level rejection, not a silent blank-node/reification fallback:
 
-Determine which option applies by running the first subject-position test and observing oxttl's output.
+```
+TurtleSyntaxError { message: "<<( is not a valid subject or graph name" }
+```
+
+So **Option A** applies: only object-position triple terms (`:s :p <<( a b c )>> .`) are supported for now — implemented in `turtle::intern_term`'s `Term::Triple` arm. Subject-position triple terms (`<<( a b c )>> :p :o .`), including as a nested subject inside another triple term, remain unsupported and the four corresponding tests in `turtle/tests/rdf12.rs` stay `#[ignore]`d, each with a comment pointing back here. `oxttl` already surfaces this as a normal `Err(TurtleParseError)`, so callers get a clear error rather than a panic or silent data loss. Revisit once `oxrdf`/`oxttl` add a subject-position representation for triple terms (tracked under epic [#143](https://github.com/daghovland/rdf-datalog/issues/143)).
 
 **N-Triples 1.2 / N-Quads 1.2 / TriG 1.2:** the same `intern_term` extension covers all formats since `NTriplesParser`, `NQuadsParser`, and `TriGParser` also come from oxttl.
 
@@ -305,7 +307,7 @@ Defer to a future issue — basic RDF 1.2 parsing + SPARQL querying should ship 
 
 ## Open questions
 
-1. **oxrdf subject-position triple terms** — does `oxrdf 0.3.3` with `rdf-12` feature extend `NamedOrBlankNode` to include `Triple`? Determine this in Phase R2 by testing oxttl's actual output for subject-position triple terms.
+1. **oxrdf subject-position triple terms** — resolved in Phase R2: no, `oxrdf 0.3.3`'s `NamedOrBlankNode` (used both for `Triple::subject` and for the `is_reified`/`ttSubject` grammar productions in `oxttl 0.2.3`) does not gain a `Triple` variant even with the `rdf-12` feature enabled. `oxttl` rejects `<<(` in subject position outright (`"<<( is not a valid subject or graph name"`). See the "Subject-position blocker" note under Phase R2 above.
 
 2. **SPARQL result XML/JSON encoding** — the SPARQL 1.2 spec adds an encoding for triple terms in result documents. Check the current draft and implement in Phase R4.
 
