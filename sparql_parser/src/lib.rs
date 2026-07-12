@@ -949,9 +949,49 @@ fn parse_path_negated_set<'a>(
 
 // ── Term / literal parsing ───────────────────────────────────────────────────
 
+/// Parse an RDF 1.2 triple term pattern: `<<( subject predicate object )>>`.
+///
+/// Grammar: `TripleTerm ::= '<<(' subject predicate object ')>>'`. Each of
+/// `subject`/`predicate`/`object` is parsed recursively via [`parse_term`],
+/// so triple terms may nest (`<<( <<( ... )>> :p ?o )>>`).
+///
+/// SPARQL 1.2: <https://www.w3.org/TR/sparql12-query/>. Executor support is
+/// limited to the subject position of the outer triple pattern — see
+/// `sparql_parser::execute` and epic
+/// [#143](https://github.com/daghovland/rdf-datalog/issues/143), phase R3
+/// ([#146](https://github.com/daghovland/rdf-datalog/issues/146)).
+fn parse_triple_term<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, Term> + 'a {
+    move |input| {
+        let (input, _) = tag("<<(")(input)?;
+        let (input, _) = sp(input)?;
+        let (input, subject) = parse_term(ctx)(input)?;
+        let (input, _) = sp1(input)?;
+        let (input, predicate) = parse_term(ctx)(input)?;
+        let (input, _) = sp1(input)?;
+        let (input, object) = parse_term(ctx)(input)?;
+        let (input, _) = sp(input)?;
+        let (input, _) = tag(")>>")(input)?;
+        Ok((
+            input,
+            Term::TripleTerm(Box::new(TriplePattern {
+                subject,
+                predicate,
+                object,
+            })),
+        ))
+    }
+}
+
 fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str, Term> + 'a {
     move |input| {
         alt((
+            // RDF 1.2 triple term: `<<( subject predicate object )>>`.
+            // Must be tried before the plain IRI-in-angle-brackets branch
+            // below, since `<<(` would otherwise be misparsed as `<` followed
+            // by content up to the first `>`.
+            parse_triple_term(ctx),
             // Variable
             map(preceded(char('?'), parse_varname), Term::Variable),
             // IRI in angle brackets
@@ -1806,7 +1846,10 @@ fn parse_values_value<'a>(
             map(tag_no_case("UNDEF"), |_| None),
             map(parse_term(ctx), |t| match t {
                 Term::Constant(gel) => Some(gel),
-                Term::Variable(_) => None,
+                // VALUES rows only ever hold constants (or UNDEF, handled
+                // above); a variable or triple term here is not valid syntax
+                // but we treat it as UNDEF rather than failing the parse.
+                Term::Variable(_) | Term::TripleTerm(_) => None,
             }),
         ))(input)
     }
@@ -1932,10 +1975,11 @@ fn parse_dataset_iri<'a>(
         let (rest, t) = term;
         match t {
             crate::ast::Term::Constant(ge) => Ok((rest, ge)),
-            crate::ast::Term::Variable(_) => Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Verify,
-            ))),
+            // A dataset clause names a graph IRI; neither a variable nor a
+            // triple term is valid syntax here.
+            crate::ast::Term::Variable(_) | crate::ast::Term::TripleTerm(_) => Err(
+                nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Verify)),
+            ),
         }
     }
 }
