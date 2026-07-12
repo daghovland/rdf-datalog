@@ -16,9 +16,7 @@ use crate::ast::{
     Aggregate, BinaryOp, DatasetClause, Expression, OrderCondition, ProjectionElement,
     PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
-use dag_rdf::{
-    Datastore, GraphElement, GraphElementId, RdfLiteral, Term as DagTerm, DEFAULT_GRAPH_ELEMENT_ID,
-};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, DEFAULT_GRAPH_ELEMENT_ID};
 use ingress::{
     IriReference, NetworkPolicy, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER,
     XSD_STRING,
@@ -747,21 +745,26 @@ fn eval_triple_pattern_core(
             .and_then(|gel| datastore.resources.resource_map.get(gel))
             .copied(),
     };
-    let s = match forced_subject {
-        Some(id) => Some(id),
-        None => match ast_term_to_dag_term(&tp.subject, sub, datastore) {
-            DagTerm::Resource(id) => Some(id),
-            _ => None,
-        },
+    let s_match = match forced_subject {
+        Some(id) => MatchTerm::Bound(id),
+        None => resolve_match_term(&tp.subject, sub, datastore),
     };
-    let p = match ast_term_to_dag_term(&tp.predicate, sub, datastore) {
-        DagTerm::Resource(id) => Some(id),
-        _ => None,
-    };
-    let o = match ast_term_to_dag_term(&tp.object, sub, datastore) {
-        DagTerm::Resource(id) => Some(id),
-        _ => None,
-    };
+    let p_match = resolve_match_term(&tp.predicate, sub, datastore);
+    let o_match = resolve_match_term(&tp.object, sub, datastore);
+
+    // A `Never` in any position (e.g. an unsupported triple-term shape) means
+    // this pattern cannot match anything — bail out before it gets collapsed
+    // to `None`, which `quads_matching` reads as "unconstrained wildcard".
+    // This is the exact bug class behind #146/#153: see `MatchTerm`.
+    if matches!(s_match, MatchTerm::Never)
+        || matches!(p_match, MatchTerm::Never)
+        || matches!(o_match, MatchTerm::Never)
+    {
+        return Vec::new();
+    }
+    let s = s_match.into_query_arg();
+    let p = p_match.into_query_arg();
+    let o = o_match.into_query_arg();
 
     for quad in datastore.quads_matching(g, s, p, o) {
         let mut new_sub = sub.clone();
@@ -810,25 +813,73 @@ fn eval_triple_pattern_core(
     new_solutions
 }
 
-fn ast_term_to_dag_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> DagTerm {
+/// Result of resolving a SPARQL [`Term`] against the current solution, for use
+/// as one position (subject/predicate/object) of a `Datastore::quads_matching`
+/// call.
+///
+/// This exists to keep two genuinely different outcomes from colliding on the
+/// same `None`: a free variable that should match *anything*, versus a term
+/// shape this evaluator cannot handle at all and that must therefore match
+/// *nothing*. Collapsing both to `Option::None` is exactly what caused a real
+/// bug: a triple term (`<<( ... )>>`) in predicate/object position — valid
+/// syntax per the parser, but unsupported by the executor (#146) — degraded
+/// to `None`, which `quads_matching` reads as "unconstrained", so the pattern
+/// silently matched every quad instead of none. See #153 for the review that
+/// found this. Every call site must check for `Never` before converting to
+/// the `Option<GraphElementId>` shape `quads_matching` expects — there is no
+/// implicit/accidental way to skip that check, unlike a bare `Option`.
+enum MatchTerm {
+    /// Resolves to a concrete, interned resource — constrains this position.
+    Bound(GraphElementId),
+    /// A genuinely free variable — matches anything in this position.
+    Wildcard,
+    /// This term shape can never match any quad (unsupported, or a constant
+    /// that was never interned) — the whole pattern should short-circuit to
+    /// zero results rather than silently drop the constraint.
+    Never,
+}
+
+impl MatchTerm {
+    /// Convert to the `Option<GraphElementId>` shape `quads_matching` expects.
+    /// Panics on `Never` — every call site must check `matches!(_, MatchTerm::Never)`
+    /// first and return an empty result instead of calling this.
+    fn into_query_arg(self) -> Option<GraphElementId> {
+        match self {
+            MatchTerm::Bound(id) => Some(id),
+            MatchTerm::Wildcard => None,
+            MatchTerm::Never => {
+                unreachable!("caller must check for MatchTerm::Never before converting")
+            }
+        }
+    }
+}
+
+fn resolve_match_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> MatchTerm {
     match term {
         Term::Variable(v) => match sub.get(v) {
             Some(gel) => match datastore.resources.resource_map.get(gel) {
-                Some(&id) => DagTerm::Resource(id),
-                // Computed value (e.g. BIND arithmetic result) not in the store —
-                // treat as an unbound variable so no quads can match it.
-                None => DagTerm::Variable(v.clone()),
+                Some(&id) => MatchTerm::Bound(id),
+                // Bound to a computed value (e.g. a BIND arithmetic result)
+                // that was never interned. Pre-existing quirk, out of scope
+                // here: this arguably should be `Never` (that exact value
+                // structurally cannot appear in any quad), but it has always
+                // resolved as an unconstrained wildcard, and changing it is
+                // an unrelated behavior change to already-shipped BIND
+                // handling — left as `Wildcard` to keep this fix scoped to
+                // the triple-term bug (#146/#153).
+                None => MatchTerm::Wildcard,
             },
-            None => DagTerm::Variable(v.clone()),
+            None => MatchTerm::Wildcard,
         },
         Term::Constant(gel) => match datastore.resources.resource_map.get(gel) {
-            Some(&id) => DagTerm::Resource(id),
-            None => DagTerm::Variable(format!("__unknown_{:?}", gel)),
+            Some(&id) => MatchTerm::Bound(id),
+            None => MatchTerm::Never,
         },
         // Triple terms are only handled specially in subject position (see
-        // `eval_triple_pattern`); in predicate/object position they are out
-        // of scope for phase R3 (#146) and never match anything.
-        Term::TripleTerm(_) => DagTerm::Variable("__unsupported_triple_term_position".to_string()),
+        // `eval_triple_pattern`); in predicate/object position — or as a
+        // property-path endpoint, see `PropertyPath::NegatedSet` — they are
+        // out of scope for phase R3 (#146) and must never match anything.
+        Term::TripleTerm(_) => MatchTerm::Never,
     }
 }
 
@@ -2368,8 +2419,16 @@ fn eval_path_pattern(
                     .and_then(|gel| datastore.resources.resource_map.get(gel))
                     .copied(),
             };
-            let s = resolve_term_to_id(subject_term, &sub, datastore);
-            let o = resolve_term_to_id(object_term, &sub, datastore);
+            let s_match = resolve_match_term(subject_term, &sub, datastore);
+            let o_match = resolve_match_term(object_term, &sub, datastore);
+            // See `MatchTerm`: an unsupported endpoint (e.g. a triple term)
+            // or a never-interned constant must not silently degrade to an
+            // unconstrained wildcard.
+            if matches!(s_match, MatchTerm::Never) || matches!(o_match, MatchTerm::Never) {
+                return Vec::new();
+            }
+            let s = s_match.into_query_arg();
+            let o = o_match.into_query_arg();
             let excluded_ids: HashSet<GraphElementId> = excluded
                 .iter()
                 .filter_map(|gel| datastore.resources.resource_map.get(gel).copied())
@@ -2431,22 +2490,6 @@ fn resolve_term_to_gel(
         Term::Constant(gel) => Some(gel.clone()),
         // Property paths over triple-term endpoints are out of scope for
         // phase R3 (#146); treat as unbound so no path steps match.
-        Term::TripleTerm(_) => None,
-    }
-}
-
-/// Resolve a `Term` to a `GraphElementId` using the current solution.
-fn resolve_term_to_id(
-    term: &Term,
-    sub: &PartialSub,
-    datastore: &Datastore,
-) -> Option<GraphElementId> {
-    match term {
-        Term::Variable(v) => sub
-            .get(v)
-            .and_then(|gel| datastore.resources.resource_map.get(gel))
-            .copied(),
-        Term::Constant(gel) => datastore.resources.resource_map.get(gel).copied(),
         Term::TripleTerm(_) => None,
     }
 }

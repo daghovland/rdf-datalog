@@ -1598,3 +1598,55 @@ SELECT ?g WHERE { GRAPH ?g { <<( :alice :knows :bob )>> :assertedBy :carol } }
         "?g should bind to :g1"
     );
 }
+
+/// SPARQL 1.2 — a triple term in *object* position (unsupported by phase R3,
+/// #146) must match zero rows, not silently drop the constraint and match
+/// every quad with the given subject/predicate.
+///
+/// Regression test for a bug found in review of PR #151 / tracked in #153:
+/// resolving an unsupported term shape to `None` and passing it straight to
+/// `Datastore::quads_matching` made `None` ambiguous between "unbound
+/// variable" (wildcard) and "can never match" — collapsing both cases
+/// silently turned an unsupported pattern into a wildcard instead of an
+/// empty result. See `MatchTerm` in `sparql_parser::execute`.
+///
+/// Dataset: two ordinary quads, no triple term involved at all —
+/// `(:s :p :o1)`, `(:s :p :o2)`.
+///
+/// Query:
+/// ```sparql
+/// SELECT * WHERE { :s :p <<( :a :b :c )>> }
+/// ```
+///
+/// Expected: zero rows. `<<( :a :b :c )>>` isn't in the store as a triple
+/// term at all, and even if it were, object-position triple terms aren't
+/// supported yet — either way this must not match `:o1`/`:o2`.
+#[test]
+fn test_sparql_triple_term_object_position_matches_nothing() {
+    let mut ds = Datastore::new(10_000);
+    let s = ds.add_node_resource(iri("s"));
+    let p = ds.add_node_resource(iri("p"));
+    let o1 = ds.add_node_resource(iri("o1"));
+    let o2 = ds.add_node_resource(iri("o2"));
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o1,
+    });
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o2,
+    });
+
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT * WHERE { :s :p <<( :a :b :c )>> }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert!(
+        result.rows.is_empty(),
+        "triple-term object position is unsupported and must match nothing, got {} rows",
+        result.rows.len()
+    );
+}
