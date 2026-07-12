@@ -160,6 +160,18 @@ fn intern_term(datastore: &mut Datastore, term: Term) -> Option<GraphElementId> 
                 .get_or_create_named_anon_resource(node.into_string()),
         ),
         Term::Literal(lit) => Some(datastore.add_literal_resource(convert_literal(lit))),
+        // RDF 1.2 triple term (`<<( s p o )>>`), object position only: oxrdf
+        // 0.3.3's `Triple::subject` is typed `NamedOrBlankNode`, which cannot
+        // itself hold a triple term, so `oxttl`'s grammar never emits a
+        // `Term::Triple` whose inner subject is nested further. Recursing on
+        // subject/object here is still correct for the object side, and the
+        // subject side degrades gracefully to `intern_subject`.
+        // Related: RDF 1.2 epic #143, Turtle parser #145.
+        Term::Triple(triple) => {
+            let s = intern_subject(datastore, triple.subject);
+            let p = intern_named_node(datastore, triple.predicate.into_string());
+            intern_term(datastore, triple.object).map(|o| datastore.add_triple_term(s, p, o))
+        }
     }
 }
 

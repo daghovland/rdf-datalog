@@ -5,6 +5,6 @@ edition = "2024"
 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
-oxttl = "0.2.3"
+oxttl = { version = "0.2.3", features = ["rdf-12"] }
 oxrdf = "0.3.3"
 log = "0.4"
