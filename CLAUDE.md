@@ -46,12 +46,12 @@ All code changes (bug fixes, features) follow this workflow:
    cargo test --workspace
    ```
 6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. Do not merge — the user reviews.
-7. **Remove the worktree** after pushing:
+7. **Remove the worktree** once the PR merges (keep it around until then — conflict-resolution or review-feedback commits may still need to land on the branch):
    ```bash
    git worktree remove .claude/worktrees/<branch-name>
    ```
 
-**Disk usage:** all worktrees share one Cargo target dir at `/home/dag/.cargo-shared-target/rdf-datalog` via `CARGO_TARGET_DIR` set in the shell profile (`~/.bashrc` and `~/.profile`), instead of each worktree building its own ~15GB `target/`. Concurrent builds across worktrees just serialize on Cargo's own lock file — correctness is unaffected. Still remove worktrees promptly after their PR merges (step 7 above): the checkout itself (source files) takes space too, and stale worktrees clutter `git worktree list`.
+**Disk usage:** all worktrees share one Cargo target dir at `/home/dag/.cargo-shared-target/rdf-datalog` via `CARGO_TARGET_DIR` set in the shell profile (`~/.bashrc` and `~/.profile`), instead of each worktree building its own ~15GB `target/`. This dir is never pruned automatically and grows unbounded (observed 24GB+ after a few parallel feature branches) — run `cargo clean` in it periodically once no worktree is mid-build. Concurrent builds across worktrees serialize on Cargo's own lock file, but incremental artifacts are keyed by crate, not by worktree: two worktrees editing the same crate's public API at the same time (e.g. both touching `sparql_parser::ast::Term`) can transiently see stale/phantom compile errors from each other's fingerprints. This has only produced transient failures so far (final builds came out clean, and CI is authoritative regardless of local state) but is a known hazard — if a build error doesn't match what's actually in the file, suspect this before debugging the code. Still remove worktrees promptly once merged (step 7 above): the checkout itself (source files) takes space too, and stale worktrees clutter `git worktree list`.
 
 Exception: trivial single-file documentation updates (like this one) may be committed directly to main without a worktree or PR.
 
