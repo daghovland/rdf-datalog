@@ -576,6 +576,8 @@ fn w3c_rdf12_turtle_negative_syntax() {
 // turtle12-reified-triples-annotation-03) — these need full RDF-star reifier
 // (`<<s p o>>`, no parens) support with `rdf:reifies`/blank-node semantics,
 // which is beyond object-position triple-term parsing added in this phase.
+// Some entries additionally require subject-position triple terms, which are
+// blocked upstream in oxrdf/oxttl: see #153.
 // Positive/negative syntax coverage is coming from `w3c_rdf12_turtle_positive_syntax`
 // / `w3c_rdf12_turtle_negative_syntax` above, which already pass.
 #[ignore]
@@ -798,7 +800,9 @@ fn w3c_rdf12_trig_negative_syntax() {
 #[test]
 // #145: still failing (same 8 rt/annotation entries as Turtle 1.2 eval above) —
 // needs full RDF-star reifier (`<<s p o>>`) support, out of scope for this
-// phase. Positive/negative syntax coverage above already passes.
+// phase. Some entries additionally require subject-position triple terms,
+// which are blocked upstream in oxrdf/oxttl: see #153. Positive/negative
+// syntax coverage above already passes.
 #[ignore]
 fn w3c_rdf12_trig_eval() {
     let dir = suite_dir("w3c_rdf12_trig").join("eval");

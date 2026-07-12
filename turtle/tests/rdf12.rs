@@ -49,7 +49,8 @@ fn parse_ttl(ttl: &str) -> Datastore {
 // no variant for a nested triple term. See "Subject-position blocker" in
 // docs/plans/RDF12_PLAN.md (Phase R2) for the two options considered; this is
 // Option A (object-position support only) until oxrdf/oxttl add a subject
-// representation for triple terms.
+// representation for triple terms. Pending upstream oxrdf/oxttl support:
+// tracked in #153.
 #[ignore]
 fn test_triple_term_as_subject() {
     let ds = parse_ttl(
@@ -95,7 +96,8 @@ fn test_triple_term_as_subject() {
 // `test_triple_term_as_subject` above). Also note: this test's Turtle source
 // uses TriG named-graph block syntax (`:g1 { ... }`), so once unblocked it
 // will additionally need `parse_ttl` (or a TriG-specific variant) to call
-// `turtle::parse_trig` rather than `turtle::parse_turtle`.
+// `turtle::parse_trig` rather than `turtle::parse_turtle`. Pending upstream
+// oxrdf/oxttl support: tracked in #153.
 #[ignore]
 fn test_same_triple_term_in_two_named_graphs() {
     let ds = parse_ttl(
@@ -129,7 +131,8 @@ fn test_same_triple_term_in_two_named_graphs() {
 #[test]
 // #145: blocked on subject-position triple terms (see comment on
 // `test_triple_term_as_subject` above) — the outer triple term here is
-// itself a statement subject.
+// itself a statement subject. Pending upstream oxrdf/oxttl support:
+// tracked in #153.
 #[ignore]
 fn test_nested_triple_term() {
     let ds = parse_ttl(
@@ -198,7 +201,8 @@ fn test_triple_term_as_object() {
 /// one row, with the triple term as the subject.
 #[test]
 // #145: blocked on subject-position triple terms (see comment on
-// `test_triple_term_as_subject` above).
+// `test_triple_term_as_subject` above). Pending upstream oxrdf/oxttl
+// support: tracked in #153.
 #[ignore]
 fn test_triple_term_with_literal_object() {
     let ds = parse_ttl(
