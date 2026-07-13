@@ -1078,6 +1078,9 @@ fn resolve_term(term: &Term, row: &SolutionRow) -> Option<GraphElement> {
     match term {
         Term::Constant(elem) => Some(elem.clone()),
         Term::Variable(name) => row.get(name).cloned(),
+        // RDF 1.2 triple terms in UPDATE templates are out of scope for
+        // phase R3 (#146, epic #143); skip rather than emit something wrong.
+        Term::TripleTerm(_) => None,
     }
 }
 

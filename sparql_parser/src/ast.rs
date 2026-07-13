@@ -95,6 +95,17 @@ pub struct TriplePattern {
 pub enum Term {
     Variable(String),
     Constant(GraphElement),
+    /// An RDF 1.2 triple term pattern: `<<( subject predicate object )>>`.
+    ///
+    /// Only supported in the subject position of the outer triple pattern by
+    /// the executor (see `sparql_parser::execute`); appearing elsewhere is a
+    /// parse-level accommodation for forward compatibility but currently
+    /// yields no matches. Tracked in epic
+    /// [#143](https://github.com/daghovland/rdf-datalog/issues/143), phase R3
+    /// ([#146](https://github.com/daghovland/rdf-datalog/issues/146)).
+    /// Object-position support and datalog rule integration are deferred to a
+    /// future "R6" issue — see `docs/plans/RDF12_PLAN.md`.
+    TripleTerm(Box<TriplePattern>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -1452,16 +1452,48 @@ SELECT ?b WHERE {
 
 // ── SPARQL 1.2 triple-term pattern tests ─────────────────────────────────────
 //
-// All tests are `#[ignore]` pending SPARQL 1.2 triple-term query support.
 // Tracked in [#146](https://github.com/daghovland/rdf-datalog/issues/146).
+//
+// These datasets are built directly via `Datastore::add_triple_term` rather
+// than parsed from Turtle: Turtle 1.2's `<<( s p o )>>` syntax is phase R2
+// ([#145](https://github.com/daghovland/rdf-datalog/issues/145)), a separate,
+// independent phase of epic #143 not required to be complete for SPARQL 1.2
+// triple-term *query* support (this phase, R3). See
+// `docs/plans/RDF12_PLAN.md`.
 
-/// SPARQL 1.2 — SELECT with a concrete triple-term pattern in WHERE.
-///
-/// Dataset:
+use dag_rdf::{IriReference, RdfResource};
+
+fn iri(local: &str) -> RdfResource {
+    RdfResource::Iri(IriReference(format!("https://example.org/{local}")))
+}
+
+/// Builds the dataset equivalent to the Turtle:
 /// ```turtle
 /// @prefix : <https://example.org/> .
 /// <<( :alice :knows :bob )>> :assertedBy :carol .
 /// ```
+/// directly through the `Datastore` API, since Turtle 1.2 triple-term parsing
+/// (phase R2, #145) is a separate, independent piece of work from this phase.
+fn build_triple_term_dataset() -> Datastore {
+    let mut ds = Datastore::new(10_000);
+    let alice = ds.add_node_resource(iri("alice"));
+    let knows = ds.add_node_resource(iri("knows"));
+    let bob = ds.add_node_resource(iri("bob"));
+    let asserted_by = ds.add_node_resource(iri("assertedBy"));
+    let carol = ds.add_node_resource(iri("carol"));
+
+    let triple_term = ds.add_triple_term(alice, knows, bob);
+    ds.add_triple(dag_rdf::Triple {
+        subject: triple_term,
+        predicate: asserted_by,
+        obj: carol,
+    });
+    ds
+}
+
+/// SPARQL 1.2 — SELECT with a concrete triple-term pattern in WHERE.
+///
+/// Dataset: see [`build_triple_term_dataset`].
 ///
 /// Query:
 /// ```sparql
@@ -1471,14 +1503,8 @@ SELECT ?b WHERE {
 ///
 /// Expected: one result row with `?ann = :carol`.
 #[test]
-#[ignore] // #146: SPARQL 1.2 triple term patterns in WHERE clause
 fn test_sparql_triple_term_where_clause() {
-    let ds = parse_inline_ttl(
-        r#"
-@prefix : <https://example.org/> .
-<<( :alice :knows :bob )>> :assertedBy :carol .
-"#,
-    );
+    let ds = build_triple_term_dataset();
     let sparql = r#"
 PREFIX : <https://example.org/>
 SELECT ?ann WHERE { <<( :alice :knows :bob )>> :assertedBy ?ann }
@@ -1492,11 +1518,7 @@ SELECT ?ann WHERE { <<( :alice :knows :bob )>> :assertedBy ?ann }
 
 /// SPARQL 1.2 — SELECT with variables inside the embedded triple pattern.
 ///
-/// Dataset:
-/// ```turtle
-/// @prefix : <https://example.org/> .
-/// <<( :alice :knows :bob )>> :assertedBy :carol .
-/// ```
+/// Dataset: see [`build_triple_term_dataset`].
 ///
 /// Query:
 /// ```sparql
@@ -1506,14 +1528,8 @@ SELECT ?ann WHERE { <<( :alice :knows :bob )>> :assertedBy ?ann }
 ///
 /// Expected: one result row with `?s = :alice`, `?o = :bob`.
 #[test]
-#[ignore] // #146: SPARQL 1.2 triple term patterns with variables in embedded triple
 fn test_sparql_triple_term_variable_inner() {
-    let ds = parse_inline_ttl(
-        r#"
-@prefix : <https://example.org/> .
-<<( :alice :knows :bob )>> :assertedBy :carol .
-"#,
-    );
+    let ds = build_triple_term_dataset();
     let sparql = r#"
 PREFIX : <https://example.org/>
 SELECT ?s ?o WHERE { <<( ?s :knows ?o )>> :assertedBy :carol }
@@ -1530,23 +1546,37 @@ SELECT ?s ?o WHERE { <<( ?s :knows ?o )>> :assertedBy :carol }
     );
 }
 
-/// Parse inline TriG (named graphs) for SPARQL integration tests.
-///
-/// Used only for the triple-term-in-named-graph test; plain Turtle does not
-/// support named graph syntax.
-fn parse_inline_trig(trig: &str) -> Datastore {
+/// Builds the dataset equivalent to the TriG:
+/// ```trig
+/// @prefix : <https://example.org/> .
+/// :g1 { <<( :alice :knows :bob )>> :assertedBy :carol . }
+/// ```
+/// directly through the `Datastore` API — see [`build_triple_term_dataset`]
+/// for why this bypasses the (separate-phase) Turtle/TriG 1.2 parser.
+fn build_triple_term_named_graph_dataset() -> Datastore {
     let mut ds = Datastore::new(10_000);
-    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("inline TriG must parse");
+    let alice = ds.add_node_resource(iri("alice"));
+    let knows = ds.add_node_resource(iri("knows"));
+    let bob = ds.add_node_resource(iri("bob"));
+    let asserted_by = ds.add_node_resource(iri("assertedBy"));
+    let carol = ds.add_node_resource(iri("carol"));
+    let g1 = ds.add_node_resource(iri("g1"));
+
+    let triple_term = ds.add_triple_term(alice, knows, bob);
+    ds.add_named_graph_triple(
+        g1,
+        dag_rdf::Triple {
+            subject: triple_term,
+            predicate: asserted_by,
+            obj: carol,
+        },
+    );
     ds
 }
 
 /// SPARQL 1.2 — SELECT with a triple-term pattern inside a named GRAPH clause.
 ///
-/// Dataset (TriG):
-/// ```trig
-/// @prefix : <https://example.org/> .
-/// :g1 { <<( :alice :knows :bob )>> :assertedBy :carol . }
-/// ```
+/// Dataset: see [`build_triple_term_named_graph_dataset`].
 ///
 /// Query:
 /// ```sparql
@@ -1556,14 +1586,8 @@ fn parse_inline_trig(trig: &str) -> Datastore {
 ///
 /// Expected: one result row with `?g = :g1`.
 #[test]
-#[ignore] // #146: SPARQL 1.2 triple term patterns inside GRAPH clause
 fn test_sparql_triple_term_in_named_graph() {
-    let ds = parse_inline_trig(
-        r#"
-@prefix : <https://example.org/> .
-:g1 { <<( :alice :knows :bob )>> :assertedBy :carol . }
-"#,
-    );
+    let ds = build_triple_term_named_graph_dataset();
     let sparql = r#"
 PREFIX : <https://example.org/>
 SELECT ?g WHERE { GRAPH ?g { <<( :alice :knows :bob )>> :assertedBy :carol } }
@@ -1572,5 +1596,57 @@ SELECT ?g WHERE { GRAPH ?g { <<( :alice :knows :bob )>> :assertedBy :carol } }
         query_single_value(&ds, sparql, "g"),
         Some("<https://example.org/g1>".to_string()),
         "?g should bind to :g1"
+    );
+}
+
+/// SPARQL 1.2 — a triple term in *object* position (unsupported by phase R3,
+/// #146) must match zero rows, not silently drop the constraint and match
+/// every quad with the given subject/predicate.
+///
+/// Regression test for a bug found in review of PR #151 / tracked in #153:
+/// resolving an unsupported term shape to `None` and passing it straight to
+/// `Datastore::quads_matching` made `None` ambiguous between "unbound
+/// variable" (wildcard) and "can never match" — collapsing both cases
+/// silently turned an unsupported pattern into a wildcard instead of an
+/// empty result. See `MatchTerm` in `sparql_parser::execute`.
+///
+/// Dataset: two ordinary quads, no triple term involved at all —
+/// `(:s :p :o1)`, `(:s :p :o2)`.
+///
+/// Query:
+/// ```sparql
+/// SELECT * WHERE { :s :p <<( :a :b :c )>> }
+/// ```
+///
+/// Expected: zero rows. `<<( :a :b :c )>>` isn't in the store as a triple
+/// term at all, and even if it were, object-position triple terms aren't
+/// supported yet — either way this must not match `:o1`/`:o2`.
+#[test]
+fn test_sparql_triple_term_object_position_matches_nothing() {
+    let mut ds = Datastore::new(10_000);
+    let s = ds.add_node_resource(iri("s"));
+    let p = ds.add_node_resource(iri("p"));
+    let o1 = ds.add_node_resource(iri("o1"));
+    let o2 = ds.add_node_resource(iri("o2"));
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o1,
+    });
+    ds.add_triple(dag_rdf::Triple {
+        subject: s,
+        predicate: p,
+        obj: o2,
+    });
+
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT * WHERE { :s :p <<( :a :b :c )>> }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert!(
+        result.rows.is_empty(),
+        "triple-term object position is unsupported and must match nothing, got {} rows",
+        result.rows.len()
     );
 }

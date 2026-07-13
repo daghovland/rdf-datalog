@@ -64,18 +64,37 @@ fn bound_count(tp: &TriplePattern, bound: &HashSet<String>) -> usize {
         .filter(|t| match t {
             Term::Constant(_) => false,
             Term::Variable(v) => bound.contains(v),
+            // RDF 1.2 triple-term subjects (`<<( s p o )>>`) aren't scored by
+            // this heuristic; `known_cardinality` also treats them as
+            // unconstrained (see `resolve_constant` below). Correctness is
+            // unaffected — this only feeds join-order selection, not
+            // `eval_bgp` itself. Precise costing is deferred; see epic #143
+            // phase R3 (#146).
+            Term::TripleTerm(_) => false,
         })
         .count()
 }
 
-/// Variables referenced by a triple pattern's subject/predicate/object.
+/// Variables referenced by a triple pattern's subject/predicate/object,
+/// including variables nested inside an RDF 1.2 triple-term subject.
 fn pattern_variables(tp: &TriplePattern) -> impl Iterator<Item = &String> {
     [&tp.subject, &tp.predicate, &tp.object]
         .into_iter()
-        .filter_map(|t| match t {
-            Term::Variable(v) => Some(v),
-            Term::Constant(_) => None,
-        })
+        .flat_map(term_variables)
+}
+
+/// Recursively collect variable names from a `Term`, descending into nested
+/// triple-term patterns.
+fn term_variables(t: &Term) -> Box<dyn Iterator<Item = &String> + '_> {
+    match t {
+        Term::Variable(v) => Box::new(std::iter::once(v)),
+        Term::Constant(_) => Box::new(std::iter::empty()),
+        Term::TripleTerm(inner) => Box::new(
+            [&inner.subject, &inner.predicate, &inner.object]
+                .into_iter()
+                .flat_map(term_variables),
+        ),
+    }
 }
 
 /// Resolves a `Term` to its interned `GraphElementId` if it's a constant
@@ -83,7 +102,9 @@ fn pattern_variables(tp: &TriplePattern) -> impl Iterator<Item = &String> {
 /// `Some(None)` for a constant that was never interned (can never match).
 fn resolve_constant(term: &Term, datastore: &Datastore) -> Option<Option<dag_rdf::GraphElementId>> {
     match term {
-        Term::Variable(_) => None,
+        // Triple-term subjects are not costed by this heuristic (see
+        // `bound_count` above); treat like an unconstrained variable.
+        Term::Variable(_) | Term::TripleTerm(_) => None,
         Term::Constant(ge) => Some(datastore.resources.resource_map.get(ge).copied()),
     }
 }
