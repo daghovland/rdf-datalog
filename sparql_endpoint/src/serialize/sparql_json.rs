@@ -10,7 +10,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/sparql11-results-json/>
 
-use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
+use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
 use serde_json::{Value, json};
 use sparql_parser::SelectResult;
 
@@ -22,7 +22,10 @@ pub fn ask_to_sparql_json(result: bool) -> String {
 }
 
 /// Serialize a `SelectResult` as a SPARQL JSON result document.
-pub fn to_sparql_json(result: &SelectResult) -> String {
+///
+/// `store` is needed to resolve RDF 1.2 triple-term bindings recursively
+/// (see `graph_element_to_json` below).
+pub fn to_sparql_json(result: &SelectResult, store: &Datastore) -> String {
     let vars: Vec<Value> = result.variables.iter().map(|v| json!(v)).collect();
 
     let bindings: Vec<Value> = result
@@ -32,7 +35,7 @@ pub fn to_sparql_json(result: &SelectResult) -> String {
             let mut binding = serde_json::Map::new();
             for var in &result.variables {
                 if let Some(element) = row.get(var) {
-                    binding.insert(var.clone(), graph_element_to_json(element));
+                    binding.insert(var.clone(), graph_element_to_json(store, element));
                 }
             }
             Value::Object(binding)
@@ -47,7 +50,16 @@ pub fn to_sparql_json(result: &SelectResult) -> String {
     doc.to_string()
 }
 
-pub(crate) fn graph_element_to_json(el: &GraphElement) -> Value {
+/// Encode a single `GraphElement` as a SPARQL JSON result term.
+///
+/// RDF 1.2 triple terms (`GraphElement::TripleTerm`) are encoded per the
+/// SPARQL 1.2 Query Results JSON Format draft's triple-term binding:
+/// `{"type": "triple", "value": {"subject": S, "predicate": P, "object": O}}`,
+/// where `S`/`P`/`O` are themselves full term encodings (recursive — a
+/// triple term's own subject/object may be another triple term). Spec:
+/// <https://www.w3.org/TR/sparql12-results-json/#select-encode-terms>
+/// (Working Draft, not yet a Recommendation). Epic: #143.
+pub(crate) fn graph_element_to_json(store: &Datastore, el: &GraphElement) -> Value {
     match el {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             json!({ "type": "uri", "value": iri.0 })
@@ -56,9 +68,16 @@ pub(crate) fn graph_element_to_json(el: &GraphElement) -> Value {
             json!({ "type": "bnode", "value": format!("b{}", id) })
         }
         GraphElement::GraphLiteral(lit) => literal_to_json(lit),
-        // Triple terms in SPARQL JSON output require RDF 1.2 support (#143).
         GraphElement::TripleTerm(k) => {
-            json!({ "type": "triple", "value": format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj) })
+            let subject =
+                graph_element_to_json(store, store.resources.get_graph_element(k.subject));
+            let predicate =
+                graph_element_to_json(store, store.resources.get_graph_element(k.predicate));
+            let object = graph_element_to_json(store, store.resources.get_graph_element(k.obj));
+            json!({
+                "type": "triple",
+                "value": { "subject": subject, "predicate": predicate, "object": object }
+            })
         }
     }
 }
