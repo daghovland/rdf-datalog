@@ -860,14 +860,20 @@ fn resolve_match_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> M
             Some(gel) => match datastore.resources.resource_map.get(gel) {
                 Some(&id) => MatchTerm::Bound(id),
                 // Bound to a computed value (e.g. a BIND arithmetic result)
-                // that was never interned. Pre-existing quirk, out of scope
-                // here: this arguably should be `Never` (that exact value
-                // structurally cannot appear in any quad), but it has always
-                // resolved as an unconstrained wildcard, and changing it is
-                // an unrelated behavior change to already-shipped BIND
-                // handling — left as `Wildcard` to keep this fix scoped to
-                // the triple-term bug (#146/#153).
-                None => MatchTerm::Wildcard,
+                // that was never interned — that exact value structurally
+                // cannot appear in any quad, so this must be `Never`, not an
+                // unconstrained wildcard (#154). Every current call site
+                // (the `bind!` macro below, the graph-variable recheck, and
+                // `PropertyPath::NegatedSet`'s equivalent logic) happens to
+                // re-verify this variable's binding against the matched
+                // quad afterwards, so returning `Wildcard` here was already
+                // filtered back down to zero rows in practice — this was a
+                // latent/defensive-correctness and performance issue (an
+                // avoidable unconstrained scan), not an observable
+                // query-result bug. Returning `Never` directly avoids the
+                // wasted scan and removes the risk entirely for any future
+                // call site added without that recheck.
+                None => MatchTerm::Never,
             },
             None => MatchTerm::Wildcard,
         },
@@ -3035,5 +3041,86 @@ fn bind_template_term(
         // CONSTRUCT templates containing a triple term are out of scope for
         // phase R3 (#146); skip the triple rather than emit something wrong.
         Term::TripleTerm(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod resolve_match_term_tests {
+    use super::*;
+    use num_bigint::BigInt;
+
+    /// #154: a variable bound (e.g. via `BIND`) to a computed value that was
+    /// never interned into the datastore must resolve to `MatchTerm::Never`,
+    /// not `MatchTerm::Wildcard` — that exact value structurally cannot
+    /// appear in any stored quad, so treating the position as unconstrained
+    /// would (absent the defensive recheck every current call site happens
+    /// to perform, see the comment on the `Term::Variable` arm above) wrongly
+    /// let the pattern match every quad in that position instead of none.
+    ///
+    /// This is a white-box unit test on the private `resolve_match_term`
+    /// function directly, rather than an end-to-end query test, precisely
+    /// because every current caller's own downstream equality recheck
+    /// already masks the difference in final query results — see the
+    /// black-box regression test
+    /// `test_sparql_bind_computed_value_not_interned_matches_nothing` in
+    /// `tests/sparql12_suite.rs`, which passes both before and after this
+    /// fix and therefore cannot discriminate red from green on its own.
+    #[test]
+    fn variable_bound_to_never_interned_value_resolves_to_never() {
+        let ds = Datastore::new(10);
+
+        // A computed value that was never added to `ds` at all, e.g. the
+        // result of `BIND(?x + 1000000 AS ?y)` where `1000001` never
+        // otherwise appears as a term in the store.
+        let computed =
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(1_000_001_i64)));
+        let mut sub: PartialSub = HashMap::new();
+        sub.insert("y".to_string(), computed);
+
+        let term = Term::Variable("y".to_string());
+        let result = resolve_match_term(&term, &sub, &ds);
+
+        assert!(
+            matches!(result, MatchTerm::Never),
+            "a variable bound to a value never interned into the store must \
+             resolve to MatchTerm::Never (it can never match any real quad), \
+             not MatchTerm::Wildcard"
+        );
+    }
+
+    /// Sanity check: a genuinely unbound variable is still a `Wildcard`,
+    /// distinguishing it from the bound-but-never-interned case above.
+    #[test]
+    fn unbound_variable_resolves_to_wildcard() {
+        let ds = Datastore::new(10);
+        let sub: PartialSub = HashMap::new();
+        let term = Term::Variable("z".to_string());
+
+        let result = resolve_match_term(&term, &sub, &ds);
+
+        assert!(
+            matches!(result, MatchTerm::Wildcard),
+            "a genuinely unbound variable must still resolve to MatchTerm::Wildcard"
+        );
+    }
+
+    /// Sanity check: a variable bound to a value that *is* interned resolves
+    /// to `Bound` with the corresponding id.
+    #[test]
+    fn variable_bound_to_interned_value_resolves_to_bound() {
+        let mut ds = Datastore::new(10);
+        let resource = GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(42)));
+        let id = ds.add_resource(resource.clone());
+
+        let mut sub: PartialSub = HashMap::new();
+        sub.insert("y".to_string(), resource);
+        let term = Term::Variable("y".to_string());
+
+        let result = resolve_match_term(&term, &sub, &ds);
+
+        assert!(
+            matches!(result, MatchTerm::Bound(bound_id) if bound_id == id),
+            "a variable bound to an interned value must resolve to MatchTerm::Bound(its id)"
+        );
     }
 }

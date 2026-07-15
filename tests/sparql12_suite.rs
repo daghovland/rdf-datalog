@@ -1650,3 +1650,56 @@ SELECT * WHERE { :s :p <<( :a :b :c )>> }
         result.rows.len()
     );
 }
+
+/// SPARQL 1.2 — a variable bound via `BIND` to a computed value that was
+/// never interned into the datastore (i.e. that exact value does not appear
+/// as a term in any stored quad) must, when used later in a triple-pattern
+/// position, match zero rows — not silently drop the constraint and match
+/// every quad in that position.
+///
+/// Regression test for #154, the same root-cause bug class as #146/#153
+/// (`MatchTerm` collapsing "unconstrained wildcard" and "structurally
+/// cannot match" into the same case) but triggered by a `BIND`-computed
+/// value rather than an unsupported term shape.
+///
+/// Dataset: two ordinary quads, `(:s :n 1)` and `(:other :q 2)`. Neither has
+/// `1000001` — the value `?y` gets bound to below — as a term anywhere.
+///
+/// Query:
+/// ```sparql
+/// SELECT * WHERE {
+///     :s :n ?x .
+///     BIND(?x + 1000000 AS ?y)
+///     ?a ?b ?y .
+/// }
+/// ```
+///
+/// Expected: zero rows. `?y` is bound to `1000001`, a concrete value that
+/// was never interned into the store, so `?a ?b ?y` structurally cannot
+/// match any real quad.
+#[test]
+fn test_sparql_bind_computed_value_not_interned_matches_nothing() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <https://example.org/>
+:s :n 1 .
+:other :q 2 .
+"#,
+    );
+
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT * WHERE {
+    :s :n ?x .
+    BIND(?x + 1000000 AS ?y)
+    ?a ?b ?y .
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert!(
+        result.rows.is_empty(),
+        "?y is bound to a computed value (1000001) never interned into the store, \
+         so `?a ?b ?y` must match zero rows, got {} rows",
+        result.rows.len()
+    );
+}
