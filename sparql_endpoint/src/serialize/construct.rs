@@ -8,16 +8,21 @@ Contact: hovlanddag@gmail.com
 
 //! Serialize CONSTRUCT query results as N-Triples (a valid subset of Turtle).
 
-use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
+use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource, TripleTermKey};
 use sparql_parser::ResolvedTriple;
 
 /// Serialize a list of CONSTRUCT triples as N-Triples / Turtle.
-pub fn serialize_construct_ntriples(triples: &[ResolvedTriple]) -> String {
+///
+/// `store` is needed to resolve RDF 1.2 triple terms recursively — a
+/// `ResolvedTriple`'s subject/predicate/object are already resolved
+/// `GraphElement`s, but a `GraphElement::TripleTerm`'s own subject/predicate/
+/// object are interned `GraphElementId`s that must be looked up in `store`.
+pub fn serialize_construct_ntriples(triples: &[ResolvedTriple], store: &Datastore) -> String {
     let mut out = String::new();
     for triple in triples {
-        let s = subject_term(&triple.subject);
+        let s = subject_term(store, &triple.subject);
         let p = predicate_term(&triple.predicate);
-        let o = object_term(&triple.object);
+        let o = object_term(store, &triple.object);
         if let (Some(s), Some(p), Some(o)) = (s, p, o) {
             out.push_str(&s);
             out.push(' ');
@@ -30,14 +35,16 @@ pub fn serialize_construct_ntriples(triples: &[ResolvedTriple]) -> String {
     out
 }
 
-fn subject_term(elem: &GraphElement) -> Option<String> {
+fn subject_term(store: &Datastore, elem: &GraphElement) -> Option<String> {
     match elem {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
-        // Literals cannot be subjects; triple terms require RDF 1.2 support (#143).
-        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
+        // Literals cannot be a subject (RDF data model), triple term or not.
+        GraphElement::GraphLiteral(_) => None,
+        // RDF 1.2 embedded triple. Epic: #143.
+        GraphElement::TripleTerm(key) => triple_term_term(store, key),
     }
 }
 
@@ -50,15 +57,28 @@ fn predicate_term(elem: &GraphElement) -> Option<String> {
     }
 }
 
-fn object_term(elem: &GraphElement) -> Option<String> {
+fn object_term(store: &Datastore, elem: &GraphElement) -> Option<String> {
     match elem {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
         GraphElement::GraphLiteral(lit) => Some(format_literal(lit)),
-        // Triple terms as objects require RDF 1.2 Turtle serialisation (#143).
-        GraphElement::TripleTerm(_) => None,
+        // RDF 1.2 embedded triple ("triple term"). Epic: #143.
+        GraphElement::TripleTerm(key) => triple_term_term(store, key),
+    }
+}
+
+/// Serialize an RDF 1.2 embedded triple ("triple term") as `<<( s p o )>>`,
+/// recursing through `store` to resolve its own subject/predicate/object.
+/// Mirrors `turtle::serialize::triple_term_term`. Epic: #143.
+fn triple_term_term(store: &Datastore, key: &TripleTermKey) -> Option<String> {
+    let s = subject_term(store, store.resources.get_graph_element(key.subject));
+    let p = predicate_term(store.resources.get_graph_element(key.predicate));
+    let o = object_term(store, store.resources.get_graph_element(key.obj));
+    match (s, p, o) {
+        (Some(s), Some(p), Some(o)) => Some(format!("<<( {s} {p} {o} )>>")),
+        _ => None,
     }
 }
 

@@ -92,11 +92,17 @@ pub async fn productive_values(
         &params.class,
         &params.property,
     ) {
-        Some(values) => Json(json!({
-            "covered": true,
-            "values": values.iter().map(graph_element_to_json).collect::<Vec<_>>(),
-        }))
-        .into_response(),
+        Some(values) => {
+            let store = state.store.read().await;
+            Json(json!({
+                "covered": true,
+                "values": values
+                    .iter()
+                    .map(|v| graph_element_to_json(&store, v))
+                    .collect::<Vec<_>>(),
+            }))
+            .into_response()
+        }
         None => Json(json!({ "covered": false, "values": [] })).into_response(),
     }
 }

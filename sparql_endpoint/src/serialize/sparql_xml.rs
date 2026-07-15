@@ -10,11 +10,14 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/rdf-sparql-XMLres/>
 
-use dag_rdf::{GraphElement, RdfLiteral, RdfResource};
+use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
 use sparql_parser::SelectResult;
 
 /// Serialize a `SelectResult` as a SPARQL XML result document.
-pub fn to_sparql_xml(result: &SelectResult) -> String {
+///
+/// `store` is needed to resolve RDF 1.2 triple-term bindings recursively
+/// (see `graph_element_to_xml` below).
+pub fn to_sparql_xml(result: &SelectResult, store: &Datastore) -> String {
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <sparql xmlns=\"http://www.w3.org/2005/sparql-results#\">\n  <head>\n",
@@ -32,7 +35,7 @@ pub fn to_sparql_xml(result: &SelectResult) -> String {
                 out.push_str("      <binding name=\"");
                 out.push_str(&xml_escape(var));
                 out.push_str("\">");
-                out.push_str(&graph_element_to_xml(el));
+                out.push_str(&graph_element_to_xml(store, el));
                 out.push_str("</binding>\n");
             }
         }
@@ -60,7 +63,15 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn graph_element_to_xml(el: &GraphElement) -> String {
+/// Encode a single `GraphElement` as a SPARQL XML result term.
+///
+/// RDF 1.2 triple terms (`GraphElement::TripleTerm`) are encoded per the
+/// SPARQL 1.2 Query Results XML Format draft's triple-term binding:
+/// `<triple><subject>S</subject><predicate>P</predicate><object>O</object></triple>`,
+/// where `S`/`P`/`O` are themselves full term encodings (recursive). Spec:
+/// <https://www.w3.org/TR/sparql12-results-xml/> (Working Draft, not yet a
+/// Recommendation). Epic: #143.
+fn graph_element_to_xml(store: &Datastore, el: &GraphElement) -> String {
     match el {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             format!("<uri>{}</uri>", xml_escape(&iri.0))
@@ -69,11 +80,13 @@ fn graph_element_to_xml(el: &GraphElement) -> String {
             format!("<bnode>b{}</bnode>", id)
         }
         GraphElement::GraphLiteral(lit) => literal_to_xml(lit),
-        // Triple terms in SPARQL XML output require RDF 1.2 support (#143).
         GraphElement::TripleTerm(k) => {
+            let subject = graph_element_to_xml(store, store.resources.get_graph_element(k.subject));
+            let predicate =
+                graph_element_to_xml(store, store.resources.get_graph_element(k.predicate));
+            let object = graph_element_to_xml(store, store.resources.get_graph_element(k.obj));
             format!(
-                "<triple><s>{}</s><p>{}</p><o>{}</o></triple>",
-                k.subject, k.predicate, k.obj
+                "<triple><subject>{subject}</subject><predicate>{predicate}</predicate><object>{object}</object></triple>"
             )
         }
     }

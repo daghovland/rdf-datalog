@@ -33,6 +33,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
+use dag_rdf::Datastore;
 use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 
@@ -314,7 +315,7 @@ async fn run_transactional_query(
                 .into_response();
         }
     };
-    format_query_result(result, headers)
+    format_query_result(result, headers, &view)
 }
 
 // ── Transactional writes ──────────────────────────────────────────────────────
@@ -431,7 +432,7 @@ async fn run_transactional_update(update_str: &str, tx_id: &str, state: &AppStat
 ///
 /// Used by both the normal query path (which adds an ETag separately) and the
 /// transactional-read path (which does not add an ETag).
-fn format_query_result(result: QueryResult, headers: &HeaderMap) -> Response {
+fn format_query_result(result: QueryResult, headers: &HeaderMap, store: &Datastore) -> Response {
     match result {
         QueryResult::Ask(boolean) => {
             let accept = headers.get("accept").and_then(|v| v.to_str().ok());
@@ -471,31 +472,37 @@ fn format_query_result(result: QueryResult, headers: &HeaderMap) -> Response {
             };
             let (body, ct) = match fmt {
                 SelectFormat::SparqlXml => (
-                    to_sparql_xml(&select_result),
+                    to_sparql_xml(&select_result, store),
                     "application/sparql-results+xml; charset=utf-8",
                 ),
                 SelectFormat::Csv => (to_sparql_csv(&select_result), "text/csv; charset=utf-8"),
                 SelectFormat::SparqlJson => (
-                    to_sparql_json(&select_result),
+                    to_sparql_json(&select_result, store),
                     "application/sparql-results+json; charset=utf-8",
                 ),
             };
             (StatusCode::OK, [("content-type", ct)], body).into_response()
         }
         QueryResult::Construct(triples) => {
-            let body = serialize_construct_ntriples(&triples);
+            let body = serialize_construct_ntriples(&triples, store);
             (
                 StatusCode::OK,
-                [("content-type", "application/n-triples; charset=utf-8")],
+                [(
+                    "content-type",
+                    "application/n-triples; charset=utf-8; version=1.2",
+                )],
                 body,
             )
                 .into_response()
         }
         QueryResult::Describe(triples) => {
-            let body = serialize_construct_ntriples(&triples);
+            let body = serialize_construct_ntriples(&triples, store);
             (
                 StatusCode::OK,
-                [("content-type", "application/n-triples; charset=utf-8")],
+                [(
+                    "content-type",
+                    "application/n-triples; charset=utf-8; version=1.2",
+                )],
                 body,
             )
                 .into_response()
@@ -569,12 +576,12 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
             };
             let (body, ct) = match fmt {
                 SelectFormat::SparqlXml => (
-                    to_sparql_xml(&select_result),
+                    to_sparql_xml(&select_result, &store),
                     "application/sparql-results+xml; charset=utf-8",
                 ),
                 SelectFormat::Csv => (to_sparql_csv(&select_result), "text/csv; charset=utf-8"),
                 SelectFormat::SparqlJson => (
-                    to_sparql_json(&select_result),
+                    to_sparql_json(&select_result, &store),
                     "application/sparql-results+json; charset=utf-8",
                 ),
             };
@@ -584,11 +591,14 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
             )
         }
         QueryResult::Construct(triples) => {
-            let body = serialize_construct_ntriples(&triples);
+            let body = serialize_construct_ntriples(&triples, &store);
             with_etag(
                 (
                     StatusCode::OK,
-                    [("content-type", "application/n-triples; charset=utf-8")],
+                    [(
+                        "content-type",
+                        "application/n-triples; charset=utf-8; version=1.2",
+                    )],
                     body,
                 )
                     .into_response(),
@@ -598,11 +608,14 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
         QueryResult::Describe(triples) => {
             // Stub: serialise the same way as CONSTRUCT until a proper DESCRIBE
             // result format is determined (issue #49).
-            let body = serialize_construct_ntriples(&triples);
+            let body = serialize_construct_ntriples(&triples, &store);
             with_etag(
                 (
                     StatusCode::OK,
-                    [("content-type", "application/n-triples; charset=utf-8")],
+                    [(
+                        "content-type",
+                        "application/n-triples; charset=utf-8; version=1.2",
+                    )],
                     body,
                 )
                     .into_response(),

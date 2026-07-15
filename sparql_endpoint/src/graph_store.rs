@@ -191,25 +191,25 @@ pub(crate) fn graph_response_parts(
     match negotiate_rdf_format(accept) {
         Some(RdfFormat::Turtle) => (
             StatusCode::OK,
-            [("content-type", "text/turtle; charset=utf-8")],
+            [("content-type", "text/turtle; charset=utf-8; version=1.2")],
             serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NTriples) => (
             StatusCode::OK,
-            [("content-type", "application/n-triples")],
+            [("content-type", "application/n-triples; version=1.2")],
             serialize_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::NQuads) => (
             StatusCode::OK,
-            [("content-type", "application/n-quads")],
+            [("content-type", "application/n-quads; version=1.2")],
             serialize_nquads_graph(store, graph_id),
         )
             .into_response(),
         Some(RdfFormat::TriG) => (
             StatusCode::OK,
-            [("content-type", "application/trig")],
+            [("content-type", "application/trig; version=1.2")],
             serialize_trig_graph(store, graph_id),
         )
             .into_response(),
@@ -395,13 +395,13 @@ pub async fn gsp_get_inner(
         return match negotiate_rdf_format(accept) {
             Some(RdfFormat::NQuads) => (
                 StatusCode::OK,
-                [("content-type", "application/n-quads")],
+                [("content-type", "application/n-quads; version=1.2")],
                 serialize_nquads(&store),
             )
                 .into_response(),
             Some(RdfFormat::TriG) => (
                 StatusCode::OK,
-                [("content-type", "application/trig")],
+                [("content-type", "application/trig; version=1.2")],
                 serialize_trig(&store),
             )
                 .into_response(),

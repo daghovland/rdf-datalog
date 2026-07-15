@@ -13,16 +13,16 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{
     DEFAULT_GRAPH_ELEMENT_ID, DEFAULT_GRAPH_IRI, Datastore, GraphElement, GraphElementId,
-    RdfLiteral, RdfResource,
+    RdfLiteral, RdfResource, TripleTermKey,
 };
 
 /// Serialize all quads with `triple_id == graph_id` to a Turtle string.
 pub fn serialize_graph(store: &Datastore, graph_id: GraphElementId) -> String {
     let mut out = String::new();
     for quad in store.named_graphs.get_graph(graph_id) {
-        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let s = subject_term(store, store.resources.get_graph_element(quad.subject));
         let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let o = object_term(store, store.resources.get_graph_element(quad.obj));
         if let (Some(s), Some(p), Some(o)) = (s, p, o) {
             out.push_str(&s);
             out.push(' ');
@@ -35,14 +35,19 @@ pub fn serialize_graph(store: &Datastore, graph_id: GraphElementId) -> String {
     out
 }
 
-fn subject_term(elem: &GraphElement) -> Option<String> {
+fn subject_term(store: &Datastore, elem: &GraphElement) -> Option<String> {
     match elem {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
-        // Literals cannot be subjects; triple terms as subjects require RDF 1.2 support (#143).
-        GraphElement::GraphLiteral(_) | GraphElement::TripleTerm(_) => None,
+        // Literals cannot be a subject (RDF data model), triple term or not.
+        GraphElement::GraphLiteral(_) => None,
+        // RDF 1.2 embedded triple. Parser support for triple terms in
+        // *subject* position is blocked upstream (see #153); this arm exists
+        // so a `Datastore` built directly (not via the Turtle parser) still
+        // round-trips correctly. Epic: #143.
+        GraphElement::TripleTerm(key) => triple_term_term(store, key),
     }
 }
 
@@ -55,15 +60,35 @@ fn predicate_term(elem: &GraphElement) -> Option<String> {
     }
 }
 
-fn object_term(elem: &GraphElement) -> Option<String> {
+fn object_term(store: &Datastore, elem: &GraphElement) -> Option<String> {
     match elem {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
             Some(format!("<{}>", escape_iri(&iri.0)))
         }
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => Some(format!("_:b{id}")),
         GraphElement::GraphLiteral(lit) => Some(format_literal(lit)),
-        // Triple terms as objects require RDF 1.2 Turtle serialisation (#143).
-        GraphElement::TripleTerm(_) => None,
+        // RDF 1.2 embedded triple ("triple term"). Object-position triple
+        // terms are produced by the Turtle parser today (#145); epic #143.
+        GraphElement::TripleTerm(key) => triple_term_term(store, key),
+    }
+}
+
+/// Serialize an RDF 1.2 embedded triple ("triple term") as `<<( s p o )>>`.
+///
+/// Recurses through `store` to resolve the triple term's own subject,
+/// predicate and object `GraphElementId`s, so a triple term nested inside
+/// another triple term (subject or object position) serializes correctly
+/// too. Returns `None` if any of the three positions cannot be serialized
+/// (e.g. a malformed term whose subject resolves to a bare literal).
+///
+/// Spec: <https://www.w3.org/TR/rdf12-turtle/#triple-terms>. Epic: #143.
+fn triple_term_term(store: &Datastore, key: &TripleTermKey) -> Option<String> {
+    let s = subject_term(store, store.resources.get_graph_element(key.subject));
+    let p = predicate_term(store.resources.get_graph_element(key.predicate));
+    let o = object_term(store, store.resources.get_graph_element(key.obj));
+    match (s, p, o) {
+        (Some(s), Some(p), Some(o)) => Some(format!("<<( {s} {p} {o} )>>")),
+        _ => None,
     }
 }
 
@@ -165,9 +190,9 @@ fn escape_str(s: &str) -> String {
 pub fn serialize_nquads(store: &Datastore) -> String {
     let mut out = String::new();
     for quad in store.named_graphs.get_all_quads() {
-        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let s = subject_term(store, store.resources.get_graph_element(quad.subject));
         let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let o = object_term(store, store.resources.get_graph_element(quad.obj));
         let (Some(s), Some(p), Some(o)) = (s, p, o) else {
             continue;
         };
@@ -195,9 +220,9 @@ pub fn serialize_trig(store: &Datastore) -> String {
 
     // Default graph: bare triples
     for quad in store.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
-        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let s = subject_term(store, store.resources.get_graph_element(quad.subject));
         let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let o = object_term(store, store.resources.get_graph_element(quad.obj));
         if let (Some(s), Some(p), Some(o)) = (s, p, o) {
             out.push_str(&format!("{s} {p} {o} .\n"));
         }
@@ -218,9 +243,9 @@ pub fn serialize_trig(store: &Datastore) -> String {
         };
         out.push_str(&format!("\nGRAPH {g} {{\n"));
         for quad in store.named_graphs.get_graph(graph_id) {
-            let s = subject_term(store.resources.get_graph_element(quad.subject));
+            let s = subject_term(store, store.resources.get_graph_element(quad.subject));
             let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-            let o = object_term(store.resources.get_graph_element(quad.obj));
+            let o = object_term(store, store.resources.get_graph_element(quad.obj));
             if let (Some(s), Some(p), Some(o)) = (s, p, o) {
                 out.push_str(&format!("    {s} {p} {o} .\n"));
             }
@@ -244,9 +269,9 @@ pub fn serialize_nquads_graph(store: &Datastore, graph_id: GraphElementId) -> St
     };
     let mut out = String::new();
     for quad in store.named_graphs.get_graph(graph_id) {
-        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let s = subject_term(store, store.resources.get_graph_element(quad.subject));
         let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let o = object_term(store, store.resources.get_graph_element(quad.obj));
         let (Some(s), Some(p), Some(o)) = (s, p, o) else {
             continue;
         };
@@ -272,9 +297,9 @@ pub fn serialize_trig_graph(store: &Datastore, graph_id: GraphElementId) -> Stri
     };
     let mut out = format!("GRAPH {g} {{\n");
     for quad in store.named_graphs.get_graph(graph_id) {
-        let s = subject_term(store.resources.get_graph_element(quad.subject));
+        let s = subject_term(store, store.resources.get_graph_element(quad.subject));
         let p = predicate_term(store.resources.get_graph_element(quad.predicate));
-        let o = object_term(store.resources.get_graph_element(quad.obj));
+        let o = object_term(store, store.resources.get_graph_element(quad.obj));
         if let (Some(s), Some(p), Some(o)) = (s, p, o) {
             out.push_str(&format!("    {s} {p} {o} .\n"));
         }
@@ -700,5 +725,167 @@ ex:Alice a ex:Person .
     fn trig_empty_store_is_empty() {
         let ds = Datastore::new(64);
         assert!(serialize_trig(&ds).is_empty());
+    }
+
+    // ── RDF 1.2 triple-term serialisation (#147, epic #143) ───────────────────
+
+    /// Round-trip: parse a Turtle document with an object-position triple
+    /// term, serialize the resulting `Datastore` back to Turtle, and check
+    /// the `<<( … )>>` syntax appears in the output and re-parses to the
+    /// same triple/quad counts.
+    #[test]
+    fn serialize_object_position_triple_term_roundtrip() {
+        let ttl = r#"
+            @prefix : <https://example.org/> .
+            :carol :claims <<( :alice :knows :bob )>> .
+        "#;
+        let mut ds = Datastore::new(1_000);
+        crate::parse_turtle(&mut ds, ttl.as_bytes()).expect("parse failed");
+        assert_eq!(ds.reified_triples.quad_count, 1);
+        assert_eq!(ds.named_graphs.quad_count, 1);
+
+        let out = serialize_graph(&ds, 0);
+        assert!(
+            out.contains("<<( ") && out.contains(" )>>"),
+            "output must contain triple-term syntax, got: {out}"
+        );
+        assert!(
+            out.contains("<https://example.org/alice>")
+                && out.contains("<https://example.org/knows>")
+                && out.contains("<https://example.org/bob>"),
+            "embedded triple's components must appear, got: {out}"
+        );
+
+        // Re-parse: the annotation triple and the embedded triple term must
+        // both survive the round trip.
+        let mut ds2 = Datastore::new(1_000);
+        crate::parse_turtle(&mut ds2, out.as_bytes())
+            .unwrap_or_else(|e| panic!("re-parse failed: {e}\noutput was:\n{out}"));
+        assert_eq!(
+            ds2.reified_triples.quad_count, 1,
+            "reified_triples must survive roundtrip; output:\n{out}"
+        );
+        assert_eq!(
+            ds2.named_graphs.quad_count, 1,
+            "named_graphs must survive roundtrip; output:\n{out}"
+        );
+        let quad = ds2.named_graphs.get_all_quads().next().unwrap();
+        assert!(
+            matches!(
+                ds2.resources.get_graph_element(quad.obj),
+                GraphElement::TripleTerm(_)
+            ),
+            "re-parsed object must still be a TripleTerm"
+        );
+    }
+
+    /// A `Datastore` built directly via `add_triple_term` (not via parsing)
+    /// must serialize correctly, with the triple term appearing wherever it
+    /// is referenced (here: as the object of a default-graph triple).
+    #[test]
+    fn serialize_triple_term_built_via_add_triple_term() {
+        let mut ds = Datastore::new(64);
+        let alice = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/alice".to_owned(),
+        )));
+        let knows = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/knows".to_owned(),
+        )));
+        let bob = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/bob".to_owned(),
+        )));
+        let term_id = ds.add_triple_term(alice, knows, bob);
+
+        let carol = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/carol".to_owned(),
+        )));
+        let claims = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/claims".to_owned(),
+        )));
+        ds.add_triple(Triple {
+            subject: carol,
+            predicate: claims,
+            obj: term_id,
+        });
+
+        let out = serialize_graph(&ds, 0);
+        assert_eq!(
+            out,
+            "<http://example.org/carol> <http://example.org/claims> \
+             <<( <http://example.org/alice> <http://example.org/knows> <http://example.org/bob> )>> .\n"
+        );
+    }
+
+    /// Nested triple terms: a triple term whose own subject is itself a
+    /// triple term must serialize recursively (`<<( <<( … )>> p o )>>`).
+    /// The Turtle parser cannot produce this shape today (subject-position
+    /// triple terms are blocked upstream, #153), so this is built directly
+    /// via `add_triple_term` — but the serializer must not assume triple
+    /// terms only ever appear in object position.
+    #[test]
+    fn serialize_nested_triple_term() {
+        let mut ds = Datastore::new(64);
+        let alice = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/alice".to_owned(),
+        )));
+        let knows = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/knows".to_owned(),
+        )));
+        let bob = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/bob".to_owned(),
+        )));
+        let inner = ds.add_triple_term(alice, knows, bob);
+
+        let asserted_by = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/assertedBy".to_owned(),
+        )));
+        let carol = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/carol".to_owned(),
+        )));
+        // Outer triple term: <<( <inner-term> :assertedBy :carol )>>
+        let outer = ds.add_triple_term(inner, asserted_by, carol);
+
+        let dave = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/dave".to_owned(),
+        )));
+        let believed_by = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/believedBy".to_owned(),
+        )));
+        ds.add_triple(Triple {
+            subject: outer,
+            predicate: believed_by,
+            obj: dave,
+        });
+
+        let out = serialize_graph(&ds, 0);
+        assert_eq!(
+            out,
+            "<<( <<( <http://example.org/alice> <http://example.org/knows> <http://example.org/bob> )>> \
+             <http://example.org/assertedBy> <http://example.org/carol> )>> \
+             <http://example.org/believedBy> <http://example.org/dave> .\n"
+        );
+    }
+
+    /// Triple term appears as the object of an N-Quads/N-Triples line too.
+    #[test]
+    fn nquads_triple_term_object_roundtrip() {
+        let ttl = r#"
+            @prefix : <https://example.org/> .
+            :carol :claims <<( :alice :knows :bob )>> .
+        "#;
+        let mut ds = Datastore::new(1_000);
+        crate::parse_turtle(&mut ds, ttl.as_bytes()).expect("parse failed");
+
+        let out = serialize_nquads(&ds);
+        assert!(
+            out.contains("<<( ") && out.contains(" )>>"),
+            "N-Quads output must contain triple-term syntax, got: {out}"
+        );
+
+        let mut ds2 = Datastore::new(1_000);
+        crate::parse_nquads(&mut ds2, out.as_bytes())
+            .unwrap_or_else(|e| panic!("re-parse failed: {e}\noutput was:\n{out}"));
+        assert_eq!(ds2.reified_triples.quad_count, 1);
+        assert_eq!(ds2.named_graphs.quad_count, 1);
     }
 }
