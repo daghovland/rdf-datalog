@@ -742,6 +742,7 @@ dependencies = [
  "ingress",
  "jsonld-parser",
  "log",
+ "manchester-parser",
  "owl-ontology",
  "owl2rl2datalog",
  "rdf-owl-translator",
