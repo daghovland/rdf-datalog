@@ -742,6 +742,7 @@ dependencies = [
  "ingress",
  "jsonld-parser",
  "log",
+ "manchester-parser",
  "owl-ontology",
  "owl2rl2datalog",
  "rdf-owl-translator",
@@ -1730,7 +1731,12 @@ name = "manchester-parser"
 version = "0.1.0"
 dependencies = [
  "dag-rdf",
+ "ingress",
+ "nom",
+ "num-bigint",
+ "ordered-float 5.3.0",
  "owl-ontology",
+ "rust_decimal",
 ]
 
 [[package]]

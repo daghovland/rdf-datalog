@@ -6,3 +6,8 @@ edition = "2024"
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 owl-ontology = { path = "../owl_ontology" }
+ingress = { path = "../ingress" }
+nom = "7.1"
+num-bigint = "0.4.4"
+rust_decimal = "1"
+ordered-float = "5.3.0"
