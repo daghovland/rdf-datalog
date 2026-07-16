@@ -19,8 +19,14 @@ Three logical permissions map to every operation:
 | Permission | Operations |
 |------------|-----------|
 | `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, `GET /rdf-graph-store`, `GET /$/…` |
-| `Write` | `POST /{name}/update` (SPARQL Update), `PUT/POST/DELETE /{name}/data`, `PUT/POST/DELETE /rdf-graph-store` |
-| `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop) |
+| `Write` | `POST /{name}/update` (SPARQL Update), `PUT/POST/DELETE /{name}/data`, `PUT/POST/DELETE /rdf-graph-store`, `POST /transaction/begin`, `POST /transaction/{txId}/commit`, `POST /transaction/{txId}/rollback` |
+| `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop), `POST /$/compact` (rewrite persistence changelog) |
+
+`POST /sparql` (and its `/{name}/sparql`, `/{name}/query` aliases) is classified
+by inspecting the request body, not just the path: a SPARQL Update embedded
+via `Content-Type: application/sparql-update` or a form `update=` field is
+`Write`, everything else is `Read`. See
+[#163](https://github.com/daghovland/rdf-datalog/issues/163).
 
 `Write` implies `Read`.  `Admin` implies both.
 
