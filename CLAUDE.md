@@ -110,7 +110,7 @@ dagalog (root binary + library)
 ├── sparql_parser/       — SPARQL 1.2 SELECT parser (nom) + executor
 ├── datalog_parser/      — Datalog rules parser (nom)
 ├── sparql_endpoint/     — HTTP SPARQL endpoint (axum + tokio)
-└── manchester_parser/   — OWL Manchester syntax parser   [stub]
+└── manchester_parser/   — OWL Manchester syntax parser (nom-based, `.omn` → `owl_ontology::Ontology`)
 ```
 
 ## Architecture decisions
@@ -150,6 +150,9 @@ nom-based SPARQL 1.2 parser and in-memory executor. Supports: `SELECT`, `DESCRIB
 
 ### `sparql_endpoint` crate
 `axum`-based HTTP server exposing SPARQL 1.1 Protocol endpoints (`GET /sparql`, `POST /sparql`), Service Description, content negotiation, and CORS. State is an `Arc<RwLock<Datastore>>`.
+
+### `manchester_parser` crate
+nom-based OWL 2 Manchester Syntax (`.omn`) parser producing an `owl_ontology::Ontology`. Covers ontology headers/prefixes/imports, entity frames (`Class:`, `ObjectProperty:`, `DataProperty:`, `Individual:`, `AnnotationProperty:`), and common class expressions/restrictions. See [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](docs/plans/MANCHESTER_SYNTAX_PLAN.md) for the exact grammar subset in scope; deferred productions (SWRL rules, `DisjointUnionOf:`, `HasKey:`, property chains, compound data ranges) are tracked in [#157](https://github.com/daghovland/rdf-datalog/issues/157).
 
 ### Key design pattern
 All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.
