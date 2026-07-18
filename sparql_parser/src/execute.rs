@@ -198,7 +198,7 @@ pub fn execute(
             for sub in &solutions {
                 let candidates: Vec<GraphElement> = if resources.is_empty() {
                     // DESCRIBE *: describe all variables bound in this solution
-                    sub.values().cloned().collect()
+                    sub.values().map(|v| v.resolve(datastore)).collect()
                 } else {
                     resources
                         .iter()
@@ -426,16 +426,16 @@ fn project_with_exprs(
         match elem {
             ProjectionElement::Star => {
                 for (k, v) in sub {
-                    row.insert(k.clone(), v.clone());
+                    row.insert(k.clone(), v.resolve(datastore));
                 }
             }
             ProjectionElement::Variable(v) => {
                 if let Some(val) = sub.get(v) {
-                    row.insert(v.clone(), val.clone());
+                    row.insert(v.clone(), val.resolve(datastore));
                 }
             }
             ProjectionElement::Expression(expr, alias) => {
-                if let Some(val) = eval_expression_value(expr, sub, datastore) {
+                if let Some(val) = eval_expression_value_inner(expr, sub, datastore) {
                     row.insert(alias.clone(), val);
                 }
             }
@@ -446,12 +446,94 @@ fn project_with_exprs(
 
 // ── Evaluation ────────────────────────────────────────────────────────────────
 
-/// Internal solution mapping: variable → concrete graph element.
+/// A single variable binding during evaluation.
 ///
-/// Uses `GraphElement` values directly (not interned IDs) so that computed
-/// values from `BIND` expressions can be stored without requiring a mutable
-/// reference to the datastore.
-type PartialSub = SolutionRow;
+/// The common case — a value bound directly from a matched quad — is kept as a
+/// cheap interned [`GraphElementId`] (`u32`) so the hot BGP/join path never
+/// clones a full [`GraphElement`]. Computed values (from `BIND`, `VALUES`, or
+/// aggregates) may not be interned in the store, so they are carried inline as
+/// a `GraphElement` instead — this is why a plain
+/// `HashMap<String, GraphElementId>` does not work: interning a fresh value
+/// would require `&mut Datastore`, but the eval stack only holds `&Datastore`.
+///
+/// Intentionally does **not** derive `PartialEq`: equality between two bindings
+/// must compare their *resolved* [`GraphElement`] values (an `Interned` id and a
+/// `Computed` value can denote the same element), which requires the datastore —
+/// use [`psv_eq`]. Omitting the derive makes any accidental representation-level
+/// `==` or `.contains` a compile error rather than a silent correctness bug.
+/// See <https://github.com/daghovland/rdf-datalog/issues/141>.
+#[derive(Clone, Debug)]
+enum PartialSubValue {
+    /// A value that came straight from a quad field — cheap to clone, resolved
+    /// back to a [`GraphElement`] via the datastore only when needed.
+    Interned(GraphElementId),
+    /// A computed value (`BIND`/`VALUES`/aggregate result) that is not
+    /// necessarily present in the store, carried inline.
+    Computed(GraphElement),
+}
+
+impl PartialSubValue {
+    /// Resolve to a concrete [`GraphElement`] (cloning). `Interned` ids are
+    /// looked up in the store; `Computed` values are returned as-is.
+    fn resolve(&self, datastore: &Datastore) -> GraphElement {
+        match self {
+            PartialSubValue::Interned(id) => datastore.resources.get_graph_element(*id).clone(),
+            PartialSubValue::Computed(gel) => gel.clone(),
+        }
+    }
+
+    /// The interned [`GraphElementId`] this binding denotes, if any. `Interned`
+    /// already holds it; a `Computed` value only has one when it happens to be
+    /// present in the store. Returns `None` for a computed value that was never
+    /// interned. Equivalent to the pre-#141 `resource_map.get(gel).copied()`.
+    fn to_id(&self, datastore: &Datastore) -> Option<GraphElementId> {
+        match self {
+            PartialSubValue::Interned(id) => Some(*id),
+            PartialSubValue::Computed(gel) => datastore.resources.resource_map.get(gel).copied(),
+        }
+    }
+}
+
+/// Value-equality between two bindings, reproducing the pre-#141 semantics
+/// where `PartialSub` held resolved [`GraphElement`]s compared with `==`.
+fn psv_eq(a: &PartialSubValue, b: &PartialSubValue, datastore: &Datastore) -> bool {
+    match (a, b) {
+        // Interning is injective (`add_resource` dedups), so equal ids denote
+        // equal elements — no datastore lookup needed on the hot path.
+        (PartialSubValue::Interned(x), PartialSubValue::Interned(y)) => x == y,
+        (PartialSubValue::Computed(x), PartialSubValue::Computed(y)) => x == y,
+        // Mixed: an interned id and a computed value can still denote the same
+        // element, so compare resolved forms.
+        _ => a.resolve(datastore) == b.resolve(datastore),
+    }
+}
+
+/// Whole-solution equality by resolved value, reproducing the pre-#141
+/// `HashMap<String, GraphElement>` `==`/`.contains` semantics: same key set and
+/// each shared variable's binding resolves to the same [`GraphElement`].
+fn partial_subs_equal(a: &PartialSub, b: &PartialSub, datastore: &Datastore) -> bool {
+    a.len() == b.len()
+        && a.iter().all(|(k, va)| match b.get(k) {
+            Some(vb) => psv_eq(va, vb, datastore),
+            None => false,
+        })
+}
+
+/// Wrap a resolved [`SolutionRow`] as a [`PartialSub`]. Used at the public API
+/// boundary where callers hand us already-resolved [`GraphElement`] bindings;
+/// they are carried as `Computed` (a `Computed` value that is in fact interned
+/// is still resolved correctly by [`PartialSubValue::to_id`] / [`psv_eq`]).
+fn solution_row_to_partial(row: &SolutionRow) -> PartialSub {
+    row.iter()
+        .map(|(k, v)| (k.clone(), PartialSubValue::Computed(v.clone())))
+        .collect()
+}
+
+/// Internal solution mapping: variable → [`PartialSubValue`]. Decoupled from
+/// [`SolutionRow`] (the public result type) so the hot path can hold interned
+/// ids; see [`PartialSubValue`]. Resolution back to `GraphElement` happens only
+/// when producing final query results or evaluating expressions.
+type PartialSub = HashMap<String, PartialSubValue>;
 
 #[derive(Clone)]
 enum ActiveGraph {
@@ -511,7 +593,7 @@ fn eval_component(
                 .flat_map(|outer_sub| {
                     inner_rows
                         .iter()
-                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub))
+                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore))
                         .collect::<Vec<_>>()
                 })
                 .collect()
@@ -550,7 +632,7 @@ fn eval_component(
             .filter(|sub| {
                 let minus_sols =
                     eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
-                minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms))
+                minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms, datastore))
             })
             .collect(),
 
@@ -565,14 +647,9 @@ fn eval_component(
                         ActiveGraph::Fixed(graph_id)
                     }
                     Term::Variable(var) => {
-                        if let Some(gel) = sub.get(var) {
-                            if let Some(&graph_id) = datastore.resources.resource_map.get(gel) {
-                                ActiveGraph::Fixed(graph_id)
-                            } else {
-                                ActiveGraph::Variable(var.clone())
-                            }
-                        } else {
-                            ActiveGraph::Variable(var.clone())
+                        match sub.get(var).and_then(|val| val.to_id(datastore)) {
+                            Some(graph_id) => ActiveGraph::Fixed(graph_id),
+                            None => ActiveGraph::Variable(var.clone()),
                         }
                     }
                     // A triple term can never name a graph.
@@ -586,7 +663,7 @@ fn eval_component(
             .into_iter()
             .filter_map(|mut sub| {
                 let val = eval_bind_expr(expr, &sub, datastore)?;
-                sub.insert(alias.clone(), val);
+                sub.insert(alias.clone(), PartialSubValue::Computed(val));
                 Some(sub)
             })
             .collect(),
@@ -602,13 +679,14 @@ fn eval_component(
                     let mut ok = true;
                     for (var, val_opt) in vars.iter().zip(row.iter()) {
                         if let Some(gel) = val_opt {
+                            let new_val = PartialSubValue::Computed(gel.clone());
                             match new_sub.get(var) {
-                                Some(existing) if existing != gel => {
+                                Some(existing) if !psv_eq(existing, &new_val, datastore) => {
                                     ok = false;
                                     break;
                                 }
                                 _ => {
-                                    new_sub.insert(var.clone(), gel.clone());
+                                    new_sub.insert(var.clone(), new_val);
                                 }
                             }
                         } // UNDEF (None) — leave unbound
@@ -630,10 +708,10 @@ fn eval_component(
 }
 
 /// Two substitutions are compatible if they agree on all shared variables.
-fn compatible(a: &PartialSub, b: &PartialSub) -> bool {
-    for (var, gel_a) in a {
-        if let Some(gel_b) = b.get(var) {
-            if gel_a != gel_b {
+fn compatible(a: &PartialSub, b: &PartialSub, datastore: &Datastore) -> bool {
+    for (var, val_a) in a {
+        if let Some(val_b) = b.get(var) {
+            if !psv_eq(val_a, val_b, datastore) {
                 return false;
             }
         }
@@ -689,14 +767,14 @@ fn eval_triple_pattern(
         for (term_id, inner_bindings) in triple_term_candidates(inner, sub, datastore) {
             let mut merged = sub.clone();
             let mut ok = true;
-            for (var, gel) in inner_bindings {
+            for (var, val) in inner_bindings {
                 match merged.get(&var) {
-                    Some(existing) if existing != &gel => {
+                    Some(existing) if !psv_eq(existing, &val, datastore) => {
                         ok = false;
                         break;
                     }
                     _ => {
-                        merged.insert(var, gel);
+                        merged.insert(var, val);
                     }
                 }
             }
@@ -740,10 +818,7 @@ fn eval_triple_pattern_core(
 
     let g = match active_graph {
         ActiveGraph::Fixed(id) => Some(*id),
-        ActiveGraph::Variable(v) => sub
-            .get(v)
-            .and_then(|gel| datastore.resources.resource_map.get(gel))
-            .copied(),
+        ActiveGraph::Variable(v) => sub.get(v).and_then(|val| val.to_id(datastore)),
     };
     let s_match = match forced_subject {
         Some(id) => MatchTerm::Bound(id),
@@ -770,17 +845,19 @@ fn eval_triple_pattern_core(
         let mut new_sub = sub.clone();
         let mut ok = true;
 
-        // Bind a variable to the GraphElement resolved from a quad-field ID.
+        // Bind a variable to the interned ID of a matched quad field. Keeping
+        // the `GraphElementId` (rather than materialising the `GraphElement`)
+        // is the #141 hot-path win: no per-match clone/allocation.
         macro_rules! bind {
             ($term:expr, $id:expr) => {
                 if let Term::Variable(v) = $term {
-                    let gel = datastore.resources.get_graph_element($id).clone();
+                    let new_val = PartialSubValue::Interned($id);
                     match new_sub.get(v) {
-                        Some(existing) if existing != &gel => {
+                        Some(existing) if !psv_eq(existing, &new_val, datastore) => {
                             ok = false;
                         }
                         _ => {
-                            new_sub.insert(v.clone(), gel);
+                            new_sub.insert(v.clone(), new_val);
                         }
                     }
                 }
@@ -792,16 +869,13 @@ fn eval_triple_pattern_core(
         bind!(&tp.object, quad.obj);
 
         if let ActiveGraph::Variable(graph_var) = active_graph {
-            let gel = datastore
-                .resources
-                .get_graph_element(quad.triple_id)
-                .clone();
+            let new_val = PartialSubValue::Interned(quad.triple_id);
             match new_sub.get(graph_var) {
-                Some(existing) if existing != &gel => {
+                Some(existing) if !psv_eq(existing, &new_val, datastore) => {
                     ok = false;
                 }
                 _ => {
-                    new_sub.insert(graph_var.clone(), gel);
+                    new_sub.insert(graph_var.clone(), new_val);
                 }
             }
         }
@@ -857,7 +931,11 @@ impl MatchTerm {
 fn resolve_match_term(term: &Term, sub: &PartialSub, datastore: &Datastore) -> MatchTerm {
     match term {
         Term::Variable(v) => match sub.get(v) {
-            Some(gel) => match datastore.resources.resource_map.get(gel) {
+            // A binding straight from a quad is by construction interned — use
+            // its id directly, no store lookup.
+            Some(PartialSubValue::Interned(id)) => MatchTerm::Bound(*id),
+            Some(PartialSubValue::Computed(gel)) => match datastore.resources.resource_map.get(gel)
+            {
                 Some(&id) => MatchTerm::Bound(id),
                 // Bound to a computed value (e.g. a BIND arithmetic result)
                 // that was never interned — that exact value structurally
@@ -905,7 +983,7 @@ fn triple_term_candidates(
     inner: &TriplePattern,
     sub: &PartialSub,
     datastore: &Datastore,
-) -> Vec<(GraphElementId, HashMap<String, GraphElement>)> {
+) -> Vec<(GraphElementId, HashMap<String, PartialSubValue>)> {
     /// One position (subject/predicate/object) of the embedded pattern,
     /// resolved as far as possible against the current solution.
     enum Slot {
@@ -926,8 +1004,8 @@ fn triple_term_candidates(
                 None => Slot::Unmatchable,
             },
             Term::Variable(v) => match sub.get(v) {
-                Some(gel) => match datastore.resources.resource_map.get(gel) {
-                    Some(&id) => Slot::Known(id),
+                Some(val) => match val.to_id(datastore) {
+                    Some(id) => Slot::Known(id),
                     None => Slot::Unmatchable,
                 },
                 None => Slot::Free(v.clone()),
@@ -998,17 +1076,17 @@ fn triple_term_candidates(
 
     let mut out = Vec::new();
     for quad in quads {
-        let mut bindings: HashMap<String, GraphElement> = HashMap::new();
+        let mut bindings: HashMap<String, PartialSubValue> = HashMap::new();
         let mut ok = true;
 
         macro_rules! bind_free {
             ($slot:expr, $id:expr) => {
                 if let Slot::Free(v) = $slot {
-                    let gel = datastore.resources.get_graph_element($id).clone();
+                    let new_val = PartialSubValue::Interned($id);
                     match bindings.get(v) {
-                        Some(existing) if existing != &gel => ok = false,
+                        Some(existing) if !psv_eq(existing, &new_val, datastore) => ok = false,
                         _ => {
-                            bindings.insert(v.clone(), gel);
+                            bindings.insert(v.clone(), new_val);
                         }
                     }
                 }
@@ -1043,16 +1121,11 @@ pub fn eval_expr_as_filter(
     sub: &HashMap<String, GraphElementId>,
     datastore: &Datastore,
 ) -> bool {
-    // Convert the Datalog ID-based substitution to the GraphElement-based
-    // substitution expected by the SPARQL evaluator.
+    // The Datalog substitution already holds interned ids — carry them through
+    // directly as `Interned` bindings (no `GraphElement` materialisation).
     let gel_sub: PartialSub = sub
         .iter()
-        .map(|(var, &id)| {
-            (
-                var.clone(),
-                datastore.resources.get_graph_element(id).clone(),
-            )
-        })
+        .map(|(var, &id)| (var.clone(), PartialSubValue::Interned(id)))
         .collect();
     eval_expression_bool(
         expr,
@@ -1079,7 +1152,7 @@ pub fn eval_expression_bool_filter(
 ) -> bool {
     eval_expression_bool(
         expr,
-        sub,
+        &solution_row_to_partial(sub),
         datastore,
         &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
     )
@@ -1097,26 +1170,44 @@ fn eval_filter(
 
 /// Evaluate an expression to a concrete GraphElement value.
 ///
-/// `sub` maps variable names to their current bindings.  Constants in the
-/// query (e.g. `"SPARQL"` in `regex(?x, "SPARQL")`) are returned directly
+/// `sub` maps variable names to their bound [`GraphElement`] values.  Constants
+/// in the query (e.g. `"SPARQL"` in `regex(?x, "SPARQL")`) are returned directly
 /// without touching the datastore.
 ///
 /// Returns `None` when the expression is unbound or evaluation fails (e.g.
 /// division by zero, type mismatch).
+///
+/// This is the public entry point for downstream crates; internally the
+/// evaluator threads a `PartialSub` (which may hold interned ids) through
+/// `eval_expression_value_inner`.
 /// See: <https://github.com/daghovland/rdf-datalog/issues/60>
 pub fn eval_expression_value(
+    expr: &Expression,
+    sub: &SolutionRow,
+    datastore: &Datastore,
+) -> Option<GraphElement> {
+    eval_expression_value_inner(expr, &solution_row_to_partial(sub), datastore)
+}
+
+/// Evaluate an expression against an internal [`PartialSub`] solution.
+///
+/// `sub` maps variable names to their current bindings ([`PartialSubValue`]).
+/// Returns `None` when the expression is unbound or evaluation fails.
+fn eval_expression_value_inner(
     expr: &Expression,
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
     match expr {
-        Expression::Variable(v) => sub.get(v).cloned(),
+        Expression::Variable(v) => sub.get(v).map(|val| val.resolve(datastore)),
         Expression::Constant(gel) => Some(gel.clone()),
         Expression::FunctionCall(name, args) => eval_function_value(name, args, sub, datastore),
         Expression::Binary(l, op, r) => eval_arithmetic(l, op, r, sub, datastore),
-        Expression::Unary(UnaryOp::Plus, inner) => eval_expression_value(inner, sub, datastore),
+        Expression::Unary(UnaryOp::Plus, inner) => {
+            eval_expression_value_inner(inner, sub, datastore)
+        }
         Expression::Unary(UnaryOp::Minus, inner) => {
-            arithmetic_negate(eval_expression_value(inner, sub, datastore)?)
+            arithmetic_negate(eval_expression_value_inner(inner, sub, datastore)?)
         }
         _ => None,
     }
@@ -1163,8 +1254,8 @@ fn eval_arithmetic(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
-    let l = eval_expression_value(left, sub, datastore)?;
-    let r = eval_expression_value(right, sub, datastore)?;
+    let l = eval_expression_value_inner(left, sub, datastore)?;
+    let r = eval_expression_value_inner(right, sub, datastore)?;
     match (&l, &r) {
         (
             GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
@@ -1227,9 +1318,9 @@ fn eval_string_predicate(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<bool> {
-    let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+    let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
     let text = graph_element_to_string(&text_el)?;
-    let arg_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+    let arg_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
     let arg = graph_element_to_string(&arg_el)?;
     match name {
         "STRSTARTS" => Some(text.starts_with(arg.as_str())),
@@ -1252,9 +1343,9 @@ fn eval_function_value(
             Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
         }
         "STRBEFORE" => {
-            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let text = graph_element_to_string(&text_el)?;
-            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let sep = graph_element_to_string(&sep_el)?;
             let result = if sep.is_empty() {
                 String::new()
@@ -1269,9 +1360,9 @@ fn eval_function_value(
             )))
         }
         "STRAFTER" => {
-            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let text = graph_element_to_string(&text_el)?;
-            let sep_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let sep_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let sep = graph_element_to_string(&sep_el)?;
             let result = if sep.is_empty() {
                 text.clone()
@@ -1286,12 +1377,12 @@ fn eval_function_value(
             )))
         }
         "STR" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)))
         }
         "LANG" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) = el {
                 Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(lang)))
             } else {
@@ -1301,7 +1392,7 @@ fn eval_function_value(
             }
         }
         "STRLEN" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = match &el {
                 GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.clone(),
                 GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
@@ -1319,7 +1410,7 @@ fn eval_function_value(
             }))
         }
         "DATATYPE" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt_iri = match &el {
                 GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, .. }) => {
                     type_iri.0.clone()
@@ -1347,14 +1438,14 @@ fn eval_function_value(
         }
         // ── String functions ──────────────────────────────────────────────────
         "UCASE" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
                 s.to_uppercase(),
             )))
         }
         "LCASE" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
                 s.to_lowercase(),
@@ -1363,7 +1454,7 @@ fn eval_function_value(
         "CONCAT" => {
             let mut result = String::new();
             for arg in args {
-                let el = eval_expression_value(arg, sub, datastore)?;
+                let el = eval_expression_value_inner(arg, sub, datastore)?;
                 result.push_str(&graph_element_to_string(&el)?);
             }
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1371,12 +1462,12 @@ fn eval_function_value(
             )))
         }
         "SUBSTR" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s: Vec<char> = graph_element_to_string(&el)?.chars().collect();
-            let start_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let start_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let start: usize = element_to_usize(&start_el)?.saturating_sub(1);
             let result: String = if let Some(len_expr) = args.get(2) {
-                let len_el = eval_expression_value(len_expr, sub, datastore)?;
+                let len_el = eval_expression_value_inner(len_expr, sub, datastore)?;
                 let len: usize = element_to_usize(&len_el)?;
                 s.iter().skip(start).take(len).collect()
             } else {
@@ -1388,16 +1479,16 @@ fn eval_function_value(
         }
         // ── Term construction ─────────────────────────────────────────────────
         "IRI" | "URI" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let iri_str = graph_element_to_string(&el)?;
             Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
                 IriReference(iri_str),
             )))
         }
         "STRDT" => {
-            let lex_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let lex_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let literal = graph_element_to_string(&lex_el)?;
-            let dt_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let dt_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let type_iri = match dt_el {
                 GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => iri,
                 _ => return None,
@@ -1408,9 +1499,9 @@ fn eval_function_value(
             }))
         }
         "STRLANG" => {
-            let lex_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let lex_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let literal = graph_element_to_string(&lex_el)?;
-            let lang_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let lang_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let lang = graph_element_to_string(&lang_el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
                 lang,
@@ -1419,7 +1510,7 @@ fn eval_function_value(
         }
         // ── Type testing ──────────────────────────────────────────────────────
         "ISNUMERIC" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let is_numeric = match &el {
                 GraphElement::GraphLiteral(
                     RdfLiteral::IntegerLiteral(_)
@@ -1440,15 +1531,15 @@ fn eval_function_value(
             )))
         }
         "SAMETERM" => {
-            let a = eval_expression_value(args.first()?, sub, datastore)?;
-            let b = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let a = eval_expression_value_inner(args.first()?, sub, datastore)?;
+            let b = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
                 a == b,
             )))
         }
         // ── Numeric functions ─────────────────────────────────────────────────
         "ABS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
                     Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1482,7 +1573,7 @@ fn eval_function_value(
             }
         }
         "ROUND" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
                     Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
@@ -1497,7 +1588,7 @@ fn eval_function_value(
             }
         }
         "CEIL" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
                     Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
@@ -1512,7 +1603,7 @@ fn eval_function_value(
             }
         }
         "FLOOR" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
                     Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
@@ -1529,14 +1620,14 @@ fn eval_function_value(
         // ── Logic / control ───────────────────────────────────────────────────
         "COALESCE" => args
             .iter()
-            .find_map(|arg| eval_expression_value(arg, sub, datastore)),
+            .find_map(|arg| eval_expression_value_inner(arg, sub, datastore)),
         "IF" => {
-            let cond_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let cond_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let cond = element_to_bool(&cond_el)?;
             if cond {
-                eval_expression_value(args.get(1)?, sub, datastore)
+                eval_expression_value_inner(args.get(1)?, sub, datastore)
             } else {
-                eval_expression_value(args.get(2)?, sub, datastore)
+                eval_expression_value_inner(args.get(2)?, sub, datastore)
             }
         }
         // ── Blank nodes ───────────────────────────────────────────────────────
@@ -1553,7 +1644,7 @@ fn eval_function_value(
         }
         // ── String functions (continued) ──────────────────────────────────────
         "ENCODE_FOR_URI" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             let mut out = String::new();
             for byte in s.bytes() {
@@ -1567,14 +1658,14 @@ fn eval_function_value(
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(out)))
         }
         "REPLACE" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
-            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let pat = graph_element_to_string(&pat_el)?;
-            let rep_el = eval_expression_value(args.get(2)?, sub, datastore)?;
+            let rep_el = eval_expression_value_inner(args.get(2)?, sub, datastore)?;
             let rep = graph_element_to_string(&rep_el)?;
             let flags = if let Some(flag_expr) = args.get(3) {
-                if let Some(f_el) = eval_expression_value(flag_expr, sub, datastore) {
+                if let Some(f_el) = eval_expression_value_inner(flag_expr, sub, datastore) {
                     graph_element_to_string(&f_el).unwrap_or_default()
                 } else {
                     String::new()
@@ -1605,7 +1696,7 @@ fn eval_function_value(
             chrono::Utc::now(),
         ))),
         "YEAR" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1613,7 +1704,7 @@ fn eval_function_value(
             )))
         }
         "MONTH" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1621,7 +1712,7 @@ fn eval_function_value(
             )))
         }
         "DAY" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1629,7 +1720,7 @@ fn eval_function_value(
             )))
         }
         "HOURS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1637,7 +1728,7 @@ fn eval_function_value(
             )))
         }
         "MINUTES" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
@@ -1645,7 +1736,7 @@ fn eval_function_value(
             )))
         }
         "SECONDS" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
             Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
@@ -1653,7 +1744,7 @@ fn eval_function_value(
             )))
         }
         "TZ" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let tz_str = extract_tz_string(&el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
                 tz_str,
@@ -1661,7 +1752,7 @@ fn eval_function_value(
         }
         // ── Hash functions ────────────────────────────────────────────────────
         "MD5" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             let hash = md5::compute(s.as_bytes());
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1669,7 +1760,7 @@ fn eval_function_value(
             )))
         }
         "SHA1" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             use sha1::Digest;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1677,7 +1768,7 @@ fn eval_function_value(
             )))
         }
         "SHA256" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             use sha2::Digest;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1685,7 +1776,7 @@ fn eval_function_value(
             )))
         }
         "SHA384" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             use sha2::Digest;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1693,7 +1784,7 @@ fn eval_function_value(
             )))
         }
         "SHA512" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let s = graph_element_to_string(&el)?;
             use sha2::Digest;
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
@@ -1788,18 +1879,18 @@ fn eval_expression_bool(
                 Some(l || r)
             }
             BinaryOp::Eq => {
-                let l = eval_expression_value(left, sub, datastore)?;
-                let r = eval_expression_value(right, sub, datastore)?;
+                let l = eval_expression_value_inner(left, sub, datastore)?;
+                let r = eval_expression_value_inner(right, sub, datastore)?;
                 Some(l == r)
             }
             BinaryOp::Ne => {
-                let l = eval_expression_value(left, sub, datastore)?;
-                let r = eval_expression_value(right, sub, datastore)?;
+                let l = eval_expression_value_inner(left, sub, datastore)?;
+                let r = eval_expression_value_inner(right, sub, datastore)?;
                 Some(l != r)
             }
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
-                let l = eval_expression_value(left, sub, datastore)?;
-                let r = eval_expression_value(right, sub, datastore)?;
+                let l = eval_expression_value_inner(left, sub, datastore)?;
+                let r = eval_expression_value_inner(right, sub, datastore)?;
                 let ord = compare_graph_elements(&l, &r)?;
                 Some(match op {
                     BinaryOp::Lt => ord < 0,
@@ -1815,17 +1906,17 @@ fn eval_expression_bool(
             Some(!eval_expression_bool(inner, sub, datastore, active_graph).unwrap_or(false))
         }
         Expression::In(expr, list) => {
-            let val = eval_expression_value(expr, sub, datastore)?;
+            let val = eval_expression_value_inner(expr, sub, datastore)?;
             Some(list.iter().any(|item| {
-                eval_expression_value(item, sub, datastore)
+                eval_expression_value_inner(item, sub, datastore)
                     .map(|v| v == val)
                     .unwrap_or(false)
             }))
         }
         Expression::NotIn(expr, list) => {
-            let val = eval_expression_value(expr, sub, datastore)?;
+            let val = eval_expression_value_inner(expr, sub, datastore)?;
             Some(!list.iter().any(|item| {
-                eval_expression_value(item, sub, datastore)
+                eval_expression_value_inner(item, sub, datastore)
                     .map(|v| v == val)
                     .unwrap_or(false)
             }))
@@ -1842,7 +1933,7 @@ fn eval_expression_bool(
             Some(sols.is_empty())
         }
         _ => {
-            let el = eval_expression_value(expr, sub, datastore)?;
+            let el = eval_expression_value_inner(expr, sub, datastore)?;
             match el {
                 GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(b),
                 GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
@@ -1874,15 +1965,15 @@ fn eval_function_bool(
             }
         }
         "REGEX" => {
-            let text_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let text = graph_element_to_string(&text_el)?;
 
-            let pat_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let pat_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let pattern = graph_element_to_string(&pat_el)?;
 
             // Flags (optional 3rd arg)
             let flags = if let Some(flag_expr) = args.get(2) {
-                let fel = eval_expression_value(flag_expr, sub, datastore)?;
+                let fel = eval_expression_value_inner(flag_expr, sub, datastore)?;
                 graph_element_to_string(&fel).unwrap_or_default()
             } else {
                 String::new()
@@ -1897,10 +1988,10 @@ fn eval_function_bool(
             Some(matches)
         }
         "LANGMATCHES" => {
-            let lang_el = eval_expression_value(args.first()?, sub, datastore)?;
+            let lang_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let lang = graph_element_to_string(&lang_el)?.to_lowercase();
 
-            let range_el = eval_expression_value(args.get(1)?, sub, datastore)?;
+            let range_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let range = graph_element_to_string(&range_el)?.to_lowercase();
 
             Some(if range == "*" {
@@ -1910,21 +2001,21 @@ fn eval_function_bool(
             })
         }
         "ISIRI" | "ISURI" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             Some(matches!(
                 el,
                 dag_rdf::GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(_))
             ))
         }
         "ISBLANK" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             Some(matches!(
                 el,
                 dag_rdf::GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(_))
             ))
         }
         "ISLITERAL" => {
-            let el = eval_expression_value(args.first()?, sub, datastore)?;
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             Some(matches!(el, dag_rdf::GraphElement::GraphLiteral(_)))
         }
         _ => None,
@@ -1938,7 +2029,7 @@ fn eval_bind_expr(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
-    eval_expression_value(expr, sub, datastore)
+    eval_expression_value_inner(expr, sub, datastore)
 }
 
 /// Extract an integer from either `IntegerLiteral` or `TypedLiteral(xsd:integer)`.
@@ -2068,11 +2159,15 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
 // ── Subquery helpers ──────────────────────────────────────────────────────────
 
 /// Merge two partial substitutions: succeed if they agree on shared variables.
-fn merge_solutions(outer: &PartialSub, inner: &PartialSub) -> Option<PartialSub> {
+fn merge_solutions(
+    outer: &PartialSub,
+    inner: &PartialSub,
+    datastore: &Datastore,
+) -> Option<PartialSub> {
     let mut merged = outer.clone();
     for (var, val) in inner {
         match merged.get(var) {
-            Some(existing) if existing != val => return None,
+            Some(existing) if !psv_eq(existing, val, datastore) => return None,
             _ => {
                 merged.insert(var.clone(), val.clone());
             }
@@ -2131,7 +2226,7 @@ fn execute_select_inner(
                         }
                         ProjectionElement::Expression(expr, alias) => {
                             if let Some(val) = eval_expr_in_group(expr, &g, &rep, datastore) {
-                                row.insert(alias.clone(), val);
+                                row.insert(alias.clone(), PartialSubValue::Computed(val));
                             }
                         }
                         ProjectionElement::Star => {}
@@ -2182,8 +2277,10 @@ fn execute_select_inner(
     if *distinct {
         let mut seen: HashSet<Vec<(String, GraphElement)>> = HashSet::new();
         rows.retain(|row| {
-            let mut key: Vec<(String, GraphElement)> =
-                row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut key: Vec<(String, GraphElement)> = row
+                .iter()
+                .map(|(k, v)| (k.clone(), v.resolve(datastore)))
+                .collect();
             key.sort_by(|a, b| a.0.cmp(&b.0));
             seen.insert(key)
         });
@@ -2211,8 +2308,8 @@ fn execute_select_inner(
 fn sort_solutions(rows: &mut [PartialSub], order_by: &[OrderCondition], datastore: &Datastore) {
     rows.sort_by(|a, b| {
         for cond in order_by {
-            let av = eval_expression_value(&cond.expression, a, datastore);
-            let bv = eval_expression_value(&cond.expression, b, datastore);
+            let av = eval_expression_value_inner(&cond.expression, a, datastore);
+            let bv = eval_expression_value_inner(&cond.expression, b, datastore);
             let ord = match (&av, &bv) {
                 (Some(l), Some(r)) => compare_graph_elements_total(l, r),
                 (None, Some(_)) => std::cmp::Ordering::Less,
@@ -2360,7 +2457,7 @@ fn eval_path_pattern(
                     (Some(s), None) => {
                         if let Term::Variable(v) = object_term {
                             let mut new_sub = sub.clone();
-                            new_sub.insert(v.clone(), s);
+                            new_sub.insert(v.clone(), PartialSubValue::Computed(s));
                             vec![new_sub]
                         } else {
                             Vec::new()
@@ -2370,7 +2467,7 @@ fn eval_path_pattern(
                     (None, Some(o)) => {
                         if let Term::Variable(v) = subject_term {
                             let mut new_sub = sub.clone();
-                            new_sub.insert(v.clone(), o);
+                            new_sub.insert(v.clone(), PartialSubValue::Computed(o));
                             vec![new_sub]
                         } else {
                             Vec::new()
@@ -2387,10 +2484,13 @@ fn eval_path_pattern(
                 datastore,
                 active_graph,
             );
-            // Deduplicate (zero-hop and one-hop may produce the same solution)
+            // Deduplicate (zero-hop and one-hop may produce the same solution).
+            // Compare by resolved value: zero-hop bindings are `Computed` while
+            // one-hop bindings from a BGP match are `Interned`, so the same
+            // logical solution can appear in two representations (#141).
             let mut result = zero_hop;
             for s in one_hop {
-                if !result.contains(&s) {
+                if !result.iter().any(|r| partial_subs_equal(r, &s, datastore)) {
                     result.push(s);
                 }
             }
@@ -2420,10 +2520,7 @@ fn eval_path_pattern(
         PropertyPath::NegatedSet(excluded) => {
             let g = match active_graph {
                 ActiveGraph::Fixed(id) => Some(*id),
-                ActiveGraph::Variable(v) => sub
-                    .get(v)
-                    .and_then(|gel| datastore.resources.resource_map.get(gel))
-                    .copied(),
+                ActiveGraph::Variable(v) => sub.get(v).and_then(|val| val.to_id(datastore)),
             };
             let s_match = resolve_match_term(subject_term, &sub, datastore);
             let o_match = resolve_match_term(object_term, &sub, datastore);
@@ -2442,40 +2539,33 @@ fn eval_path_pattern(
 
             let mut results = Vec::new();
             for quad in datastore.quads_matching(g, s, None, o) {
-                let pred_gel = datastore
-                    .resources
-                    .get_graph_element(quad.predicate)
-                    .clone();
-                let pred_id = quad.predicate;
-                if excluded_ids.contains(&pred_id) {
+                if excluded_ids.contains(&quad.predicate) {
                     continue;
                 }
                 let mut new_sub = sub.clone();
                 let mut ok = true;
                 if let Term::Variable(v) = subject_term {
-                    let gel = datastore.resources.get_graph_element(quad.subject).clone();
+                    let new_val = PartialSubValue::Interned(quad.subject);
                     match new_sub.get(v) {
-                        Some(existing) if existing != &gel => {
+                        Some(existing) if !psv_eq(existing, &new_val, datastore) => {
                             ok = false;
                         }
                         _ => {
-                            new_sub.insert(v.clone(), gel);
+                            new_sub.insert(v.clone(), new_val);
                         }
                     }
                 }
                 if let Term::Variable(v) = object_term {
-                    let gel = datastore.resources.get_graph_element(quad.obj).clone();
+                    let new_val = PartialSubValue::Interned(quad.obj);
                     match new_sub.get(v) {
-                        Some(existing) if existing != &gel => {
+                        Some(existing) if !psv_eq(existing, &new_val, datastore) => {
                             ok = false;
                         }
                         _ => {
-                            new_sub.insert(v.clone(), gel);
+                            new_sub.insert(v.clone(), new_val);
                         }
                     }
                 }
-                // Suppress unused pred_gel warning
-                let _ = pred_gel;
                 if ok {
                     results.push(new_sub);
                 }
@@ -2489,10 +2579,10 @@ fn eval_path_pattern(
 fn resolve_term_to_gel(
     term: &Term,
     sub: &PartialSub,
-    _datastore: &Datastore,
+    datastore: &Datastore,
 ) -> Option<GraphElement> {
     match term {
-        Term::Variable(v) => sub.get(v).cloned(),
+        Term::Variable(v) => sub.get(v).map(|val| val.resolve(datastore)),
         Term::Constant(gel) => Some(gel.clone()),
         // Property paths over triple-term endpoints are out of scope for
         // phase R3 (#146); treat as unbound so no path steps match.
@@ -2537,9 +2627,10 @@ fn transitive_closure(
                 active_graph,
             );
             for s in next_subs {
-                if let Some(next_gel) = s.get("__tc_next") {
+                if let Some(next_val) = s.get("__tc_next") {
+                    let next_gel = next_val.resolve(datastore);
                     if visited.insert(next_gel.clone()) {
-                        queue.push(next_gel.clone());
+                        queue.push(next_gel);
                     }
                 }
             }
@@ -2568,7 +2659,7 @@ fn transitive_closure(
                     .into_iter()
                     .map(|gel| {
                         let mut new_sub = sub.clone();
-                        new_sub.insert(obj_var.clone(), gel);
+                        new_sub.insert(obj_var.clone(), PartialSubValue::Computed(gel));
                         new_sub
                     })
                     .collect()
@@ -2595,9 +2686,10 @@ fn transitive_closure(
                         active_graph,
                     );
                     for s in next_subs {
-                        if let Some(prev_gel) = s.get("__tc_prev") {
+                        if let Some(prev_val) = s.get("__tc_prev") {
+                            let prev_gel = prev_val.resolve(datastore);
                             if visited.insert(prev_gel.clone()) {
-                                queue.push(prev_gel.clone());
+                                queue.push(prev_gel);
                             }
                         }
                     }
@@ -2612,7 +2704,7 @@ fn transitive_closure(
                     .into_iter()
                     .map(|gel| {
                         let mut new_sub = sub.clone();
-                        new_sub.insert(subj_var.clone(), gel);
+                        new_sub.insert(subj_var.clone(), PartialSubValue::Computed(gel));
                         new_sub
                     })
                     .collect()
@@ -2627,10 +2719,7 @@ fn transitive_closure(
             let all_subjects: Vec<GraphElement> = {
                 let g = match active_graph {
                     ActiveGraph::Fixed(id) => Some(*id),
-                    ActiveGraph::Variable(v) => sub
-                        .get(v)
-                        .and_then(|gel| datastore.resources.resource_map.get(gel))
-                        .copied(),
+                    ActiveGraph::Variable(v) => sub.get(v).and_then(|val| val.to_id(datastore)),
                 };
                 datastore
                     .quads_matching(g, None, None, None)
@@ -2654,9 +2743,12 @@ fn transitive_closure(
                 let reachable = reachable_from(s_gel.clone());
                 for o_gel in reachable {
                     let mut new_sub = sub.clone();
-                    new_sub.insert(subj_var.clone(), s_gel.clone());
-                    new_sub.insert(obj_var.clone(), o_gel);
-                    if !results.contains(&new_sub) {
+                    new_sub.insert(subj_var.clone(), PartialSubValue::Computed(s_gel.clone()));
+                    new_sub.insert(obj_var.clone(), PartialSubValue::Computed(o_gel));
+                    if !results
+                        .iter()
+                        .any(|r| partial_subs_equal(r, &new_sub, datastore))
+                    {
                         results.push(new_sub);
                     }
                 }
@@ -2701,7 +2793,7 @@ fn group_by_solutions(
     'outer: for sub in solutions {
         let key: Vec<Option<GraphElement>> = group_by
             .iter()
-            .map(|expr| eval_expression_value(expr, sub, datastore))
+            .map(|expr| eval_expression_value_inner(expr, sub, datastore))
             .collect();
         for (k, group) in &mut map {
             if *k == key {
@@ -2726,7 +2818,7 @@ fn project_aggregate_row(
         match elem {
             ProjectionElement::Variable(v) => {
                 if let Some(val) = rep.get(v) {
-                    row.insert(v.clone(), val.clone());
+                    row.insert(v.clone(), val.resolve(datastore));
                 }
             }
             ProjectionElement::Expression(expr, alias) => {
@@ -2759,7 +2851,7 @@ fn eval_expr_in_group(
             // Reuse the arithmetic helper by creating single-element "groups" (for pure values)
             eval_binary_value(&lv, op, &rv)
         }
-        _ => eval_expression_value(expr, rep, datastore),
+        _ => eval_expression_value_inner(expr, rep, datastore),
     }
 }
 
@@ -2885,7 +2977,7 @@ fn eval_aggregate_value(
         Aggregate::Count(expr, distinct) => {
             let mut values: Vec<GraphElement> = group
                 .iter()
-                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
                 .collect();
             if *distinct {
                 let set: HashSet<_> = values.drain(..).collect();
@@ -2899,7 +2991,7 @@ fn eval_aggregate_value(
         Aggregate::Sum(expr, distinct) => {
             let mut values: Vec<GraphElement> = group
                 .iter()
-                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
                 .collect();
             if *distinct {
                 let set: HashSet<_> = values.drain(..).collect();
@@ -2911,7 +3003,7 @@ fn eval_aggregate_value(
         Aggregate::Avg(expr, distinct) => {
             let mut values: Vec<GraphElement> = group
                 .iter()
-                .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+                .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
                 .collect();
             if *distinct {
                 let set: HashSet<_> = values.drain(..).collect();
@@ -2933,7 +3025,7 @@ fn eval_aggregate_value(
 
         Aggregate::Min(expr, _) => group
             .iter()
-            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
             .reduce(|a, b| match compare_graph_elements(&a, &b) {
                 Some(ord) if ord <= 0 => a,
                 _ => b,
@@ -2941,7 +3033,7 @@ fn eval_aggregate_value(
 
         Aggregate::Max(expr, _) => group
             .iter()
-            .filter_map(|sub| eval_expression_value(expr, sub, datastore))
+            .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
             .reduce(|a, b| match compare_graph_elements(&a, &b) {
                 Some(ord) if ord >= 0 => a,
                 _ => b,
@@ -2949,13 +3041,13 @@ fn eval_aggregate_value(
 
         Aggregate::Sample(expr, _) => group
             .iter()
-            .find_map(|sub| eval_expression_value(expr, sub, datastore)),
+            .find_map(|sub| eval_expression_value_inner(expr, sub, datastore)),
 
         Aggregate::GroupConcat(expr, sep, distinct) => {
             let mut parts: Vec<String> = group
                 .iter()
                 .filter_map(|sub| {
-                    let el = eval_expression_value(expr, sub, datastore)?;
+                    let el = eval_expression_value_inner(expr, sub, datastore)?;
                     graph_element_to_string(&el)
                 })
                 .collect();
@@ -3016,12 +3108,12 @@ fn sum_values(values: &[GraphElement]) -> Option<GraphElement> {
 fn bind_template_term(
     term: &Term,
     sub: &PartialSub,
-    _datastore: &Datastore,
+    datastore: &Datastore,
     bnode_map: &mut HashMap<u32, u32>,
     bnode_counter: &mut u32,
 ) -> Option<GraphElement> {
     match term {
-        Term::Variable(v) => sub.get(v).cloned(),
+        Term::Variable(v) => sub.get(v).map(|val| val.resolve(datastore)),
         Term::Constant(gel) => {
             if let GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(orig_id)) = gel
             {
@@ -3075,7 +3167,7 @@ mod resolve_match_term_tests {
         let computed =
             GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(1_000_001_i64)));
         let mut sub: PartialSub = HashMap::new();
-        sub.insert("y".to_string(), computed);
+        sub.insert("y".to_string(), PartialSubValue::Computed(computed));
 
         let term = Term::Variable("y".to_string());
         let result = resolve_match_term(&term, &sub, &ds);
@@ -3113,7 +3205,7 @@ mod resolve_match_term_tests {
         let id = ds.add_resource(resource.clone());
 
         let mut sub: PartialSub = HashMap::new();
-        sub.insert("y".to_string(), resource);
+        sub.insert("y".to_string(), PartialSubValue::Interned(id));
         let term = Term::Variable("y".to_string());
 
         let result = resolve_match_term(&term, &sub, &ds);
@@ -3121,6 +3213,75 @@ mod resolve_match_term_tests {
         assert!(
             matches!(result, MatchTerm::Bound(bound_id) if bound_id == id),
             "a variable bound to an interned value must resolve to MatchTerm::Bound(its id)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod partial_sub_value_tests {
+    use super::*;
+    use num_bigint::BigInt;
+
+    /// #141: the whole reason [`PartialSubValue`] deliberately omits a derived
+    /// `PartialEq` is that representation-level equality is wrong — an
+    /// `Interned(id)` binding (from a triple-pattern match) and a
+    /// `Computed(gel)` binding (from `BIND`/`VALUES`) can denote the *same*
+    /// element. [`psv_eq`] must compare by resolved value, so a cross-variant
+    /// pair pointing at one interned element compares equal, while distinct
+    /// elements do not.
+    #[test]
+    fn psv_eq_compares_cross_variant_by_resolved_value() {
+        let mut ds = Datastore::new(10);
+        let resource = GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(42)));
+        let id = ds.add_resource(resource.clone());
+        let other = GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(43)));
+
+        let interned = PartialSubValue::Interned(id);
+        let computed_same = PartialSubValue::Computed(resource);
+        let computed_other = PartialSubValue::Computed(other);
+
+        assert!(
+            psv_eq(&interned, &computed_same, &ds),
+            "an Interned id and a Computed value denoting the same element must be equal"
+        );
+        assert!(
+            psv_eq(&computed_same, &interned, &ds),
+            "psv_eq must be symmetric across variants"
+        );
+        assert!(
+            !psv_eq(&interned, &computed_other, &ds),
+            "bindings denoting different elements must not be equal"
+        );
+    }
+
+    /// #141: [`PartialSubValue::to_id`] must reproduce the pre-refactor
+    /// `resource_map.get(gel)` lookup — an `Interned` binding already carries
+    /// its id; a `Computed` binding yields an id only when that value happens
+    /// to be interned, and `None` for a computed value (e.g. a `BIND`
+    /// arithmetic result) that was never added to the store.
+    #[test]
+    fn to_id_resolves_interned_and_present_computed_but_not_absent() {
+        let mut ds = Datastore::new(10);
+        let resource = GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(7)));
+        let id = ds.add_resource(resource.clone());
+
+        assert_eq!(
+            PartialSubValue::Interned(id).to_id(&ds),
+            Some(id),
+            "an Interned binding must return its own id"
+        );
+        assert_eq!(
+            PartialSubValue::Computed(resource).to_id(&ds),
+            Some(id),
+            "a Computed value that is interned must return the matching id"
+        );
+
+        let never_interned =
+            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(BigInt::from(1_000_001_i64)));
+        assert_eq!(
+            PartialSubValue::Computed(never_interned).to_id(&ds),
+            None,
+            "a Computed value never added to the store has no id"
         );
     }
 }

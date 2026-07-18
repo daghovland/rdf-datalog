@@ -7,23 +7,24 @@ Contact: hovlanddag@gmail.com
 */
 
 //! Regression guards for Phase B of the join-reordering plan
-//! (`docs/plans/JOIN_REORDERING_PLAN.md`): replacing `PartialSub =
-//! HashMap<String, GraphElement>` with `HashMap<String, BoundValue>` where
-//! bindings from triple-pattern matches become `Indexed(GraphElementId)` and
-//! bindings from BIND/VALUES become `Inline(GraphElement)`.
+//! (`docs/plans/JOIN_REORDERING_PLAN.md`, issue
+//! [#141](https://github.com/daghovland/rdf-datalog/issues/141)): replacing
+//! `PartialSub = HashMap<String, GraphElement>` with
+//! `HashMap<String, PartialSubValue>` where bindings from triple-pattern
+//! matches become `Interned(GraphElementId)` and bindings from BIND/VALUES
+//! become `Computed(GraphElement)`.
 //!
-//! These tests are `#[ignore]`d per TDD convention (user reviews before Phase B
-//! implementation begins). They pass today with the GraphElement-based sub;
-//! they must still pass after Phase B. Note: this is a regression net, not a
-//! classic red-green test — there is no "naturally failing" state because Phase
-//! B is a behavior-preserving refactor with no new observable functionality.
+//! This is a regression net, not a classic red-green test — there is no
+//! "naturally failing" state because Phase B is a behavior-preserving refactor
+//! with no new observable functionality: these must pass identically before and
+//! after the change.
 //!
 //! Key correctness risks guarded here:
-//! - `compatible()` comparing an `Indexed` value (from a triple pattern) with
-//!   an `Inline` value (from VALUES or BIND) — must compare by *value*, not by
-//!   variant.
-//! - `ast_term_to_dag_term` resolving an `Inline` variable to a store ID for
-//!   use as a pattern constraint.
+//! - `compatible()` / `psv_eq()` comparing an `Interned` value (from a triple
+//!   pattern) with a `Computed` value (from VALUES or BIND) — must compare by
+//!   *resolved value*, not by variant.
+//! - `resolve_match_term` resolving a `Computed` variable to a store ID for use
+//!   as a pattern constraint.
 //! - `eval_expr_as_filter` building a PartialSub from `HashMap<String,
 //!   GraphElementId>` without unnecessary clones.
 
@@ -71,7 +72,6 @@ fn run_query(ds: &Datastore, sparql: &str) -> Vec<SolutionRow> {
 ///
 /// This exercises `compatible()` / `bind!` with mixed Inline+Indexed variants.
 #[test]
-#[ignore]
 fn values_clause_unifies_with_triple_pattern_binding() {
     let mut ds = Datastore::new(1_000);
     add_triple(
@@ -110,7 +110,6 @@ fn values_clause_unifies_with_triple_pattern_binding() {
 /// which requires `ast_term_to_dag_term` to resolve an `Inline` value back to
 /// a store ID. The join must still produce the correct result.
 #[test]
-#[ignore]
 fn bind_alias_used_as_constraint_in_subsequent_pattern() {
     let mut ds = Datastore::new(1_000);
     add_triple(
@@ -161,7 +160,6 @@ fn bind_alias_used_as_constraint_in_subsequent_pattern() {
 /// both. This exercises `compatible()` when merging UNION rows that have the
 /// same variable populated by different paths.
 #[test]
-#[ignore]
 fn union_with_values_branch_produces_correct_rows() {
     let mut ds = Datastore::new(1_000);
     add_triple(
