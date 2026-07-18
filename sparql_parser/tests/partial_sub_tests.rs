@@ -193,3 +193,71 @@ fn union_with_values_branch_produces_correct_rows() {
         );
     }
 }
+
+// ── Path dedup: same logical solution in Computed and Interned form ──────────
+
+/// Reflexive edge + zero-or-one path: the zero-hop solution binds `?z` as
+/// `Computed` (copied from the resolved subject) while the one-hop solution
+/// binds `?z` as `Interned` (from the BGP match). With `ex:a knows ex:a` these
+/// are the SAME logical row, so the path dedup must compare by *resolved
+/// value* (`partial_subs_equal`) — representation-level equality (a derived
+/// `PartialEq`, where `Computed(a) != Interned(a)`) would return 2 rows.
+#[test]
+fn zero_or_one_path_dedups_reflexive_solution() {
+    let mut ds = Datastore::new(1_000);
+    // ex:a knows itself — the zero-hop and one-hop solutions coincide
+    add_triple(
+        &mut ds,
+        "http://example.org/a",
+        "http://example.org/knows",
+        iri_node("http://example.org/a"),
+    );
+
+    let query = r#"
+        SELECT ?z WHERE {
+            <http://example.org/a> <http://example.org/knows>? ?z .
+        }
+    "#;
+
+    let rows = run_query(&ds, query);
+    assert_eq!(
+        rows.len(),
+        1,
+        "zero-hop and one-hop bind ?z to the same element — must dedup to one row"
+    );
+    assert_eq!(rows[0].get("z"), Some(&iri_node("http://example.org/a")));
+}
+
+/// Reflexive edge + transitive closure with both endpoints unbound: the
+/// zero-length path and the one-hop path both yield (?x = a, ?y = a), and the
+/// result must be exactly one row. No existing path test data contains a
+/// reflexive triple, so this pins the cycle/self-loop row count for `*`.
+/// (Verified during #141: the closure's interior `partial_subs_equal` dedup is
+/// defensive-only — the BFS visited-set already prevents duplicates, so this
+/// row count holds even with that dedup removed. The cross-variant dedup
+/// guard is `zero_or_one_path_dedups_reflexive_solution` above.)
+#[test]
+fn transitive_closure_dedups_reflexive_solution() {
+    let mut ds = Datastore::new(1_000);
+    add_triple(
+        &mut ds,
+        "http://example.org/a",
+        "http://example.org/knows",
+        iri_node("http://example.org/a"),
+    );
+
+    let query = r#"
+        SELECT ?x ?y WHERE {
+            ?x <http://example.org/knows>* ?y .
+        }
+    "#;
+
+    let rows = run_query(&ds, query);
+    assert_eq!(
+        rows.len(),
+        1,
+        "zero-length and one-hop paths both yield (a, a) — must dedup to one row"
+    );
+    assert_eq!(rows[0].get("x"), Some(&iri_node("http://example.org/a")));
+    assert_eq!(rows[0].get("y"), Some(&iri_node("http://example.org/a")));
+}
