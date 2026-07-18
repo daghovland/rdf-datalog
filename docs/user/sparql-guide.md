@@ -197,3 +197,7 @@ SELECT * WHERE { ?s ?p ?o } LIMIT 5
 ## See also
 
 - [W3C SPARQL 1.1 specification](https://www.w3.org/TR/sparql11-query/)
+- [`tests/sparql12_suite.rs`](../../tests/sparql12_suite.rs) (`cargo test --test sparql12_suite`) —
+  organised by spec section to match this guide, with many more query examples
+- [`tests/w3c_sparql11_suite.rs`](../../tests/w3c_sparql11_suite.rs) — the vendored W3C
+  SPARQL 1.1 conformance suite

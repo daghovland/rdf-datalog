@@ -15,6 +15,8 @@ Contact: hovlanddag@gmail.com
 //! - `format_results`
 //!
 //! All test data lives in `tests/testdata/`.
+//!
+//! Run just this file: `cargo test --test cli_integration`
 
 use dag_rdf::Datastore;
 use dagalog::{

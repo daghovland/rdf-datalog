@@ -161,3 +161,8 @@ rule fires.
 
 - [Formats](formats.md) — loading the ontology/data files reasoning operates on
 - [SPARQL guide](sparql-guide.md) — querying the materialised triples
+- [`tests/owl_integration.rs`](../../tests/owl_integration.rs) (`cargo test --test owl_integration`)
+  and [`tests/datalog_integration.rs`](../../tests/datalog_integration.rs)
+  (`cargo test --test datalog_integration`) — the executable test suites this page is based on
+- [`tests/manchester_owl_reasoning.rs`](../../tests/manchester_owl_reasoning.rs) — Manchester
+  Syntax ontologies driving the same reasoning pipeline

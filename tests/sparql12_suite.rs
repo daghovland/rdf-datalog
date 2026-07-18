@@ -16,6 +16,8 @@ Contact: hovlanddag@gmail.com
 //! The queries are numbered to match their corresponding SPARQL 1.2 spec section.
 //!
 //! Reference:  https://www.w3.org/TR/sparql12-query/
+//!
+//! Run just this file: `cargo test --test sparql12_suite`
 
 use dag_rdf::Datastore;
 use dagalog::{graph_element_display, load_file, run_sparql_query};
@@ -809,10 +811,8 @@ WHERE { ?book :price ?price . }
 
 /// SPARQL 1.2 §11.4: HAVING filters out groups that do not satisfy the condition.
 ///
-/// Only org1 has total price > 25 (sum 30 vs org2's sum 30 — both pass here,
-/// so use HAVING (SUM(?price) > 25) — both pass, test HAVING (SUM(?price) > 30)
-/// to confirm neither passes, or adjust.
-/// Strategy: HAVING (MIN(?price) > 15) keeps only org2 (min price 30 > 15).
+/// org1's min price is 10, org2's is 30. `HAVING (MIN(?price) > 15)` keeps
+/// only org2 and filters org1 out.
 #[test]
 fn spec_s11_having() {
     let ds = load("sparql12_aggregates.ttl");
@@ -1025,23 +1025,12 @@ SELECT ?y WHERE {
 
 /// SPARQL 1.2 §9: Inverse combined with sequence  ^foaf:knows/foaf:knows.
 ///
-/// ?x ^foaf:knows/foaf:knows ?z:
-///   ^foaf:knows from x gives the set that x is known-by,
-///   then foaf:knows from there gives the next hop.
-///   alice is known by nobody → 0 pairs starting at alice.
-///   bob is known by alice → alice/foaf:knows→bob and alice/foaf:knows→carol; so bob→{bob,carol}
-///   carol is known by bob  → bob/foaf:knows→{carol, dave}...
-/// Concretely: pairs (x, z) where ∃w: w knows x ∧ w knows z.
-///   w=alice: x=bob, z=bob (same); x=bob, z=carol (different)
-///              but alice knows only bob → only (bob,bob) and that's it for alice
-///   Actually alice knows {bob}, bob knows {carol}, etc. Let's recalculate:
-///   For each w, w knows x and w knows z.
-///   alice knows {bob}: pairs (bob, bob)
-///   bob knows {carol}: pairs (carol, carol)
-///   carol knows {dave}: pairs (dave, dave)
-///   dave knows {eve}: pairs (eve, eve)
-///   So 4 pairs (x=z cases, self-pairs via one common parent).
-/// Expected: 4 rows
+/// `?x ^foaf:knows/foaf:knows ?z` matches pairs (x, z) for which some w
+/// exists with `w foaf:knows x` and `w foaf:knows z`. In this chain
+/// (alice→bob→carol→dave→eve) every knower has exactly one target, so each
+/// w only ever pairs a node with itself: w=alice gives (bob, bob), w=bob
+/// gives (carol, carol), w=carol gives (dave, dave), w=dave gives (eve, eve).
+/// Expected: 4 rows (all self-pairs, one per common parent)
 #[test]
 fn spec_s9_inverse_sequence() {
     let ds = load("sparql12_paths.ttl");

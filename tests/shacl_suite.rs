@@ -18,6 +18,8 @@ Contact: hovlanddag@gmail.com
 //! W3C SHACL specification section number.
 //!
 //! Reference: <https://www.w3.org/TR/shacl/>
+//!
+//! Run just this file: `cargo test --test shacl_suite`
 
 use dag_rdf::Datastore;
 use dagalog::load_file;

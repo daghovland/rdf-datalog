@@ -3,6 +3,8 @@
 //! These tests verify that XML data mapped via RML can be queried with SPARQL,
 //! combined with Turtle ontologies, and reasoned over with OWL-RL — mirroring
 //! the JSON integration tests in `rml_json_integration.rs` but using XML sources.
+//!
+//! Run just this file: `cargo test --test rml_xml_integration`
 
 use dag_rdf::Datastore;
 use dagalog::{apply_ontologies, graph_element_display, load_file, run_sparql_query};

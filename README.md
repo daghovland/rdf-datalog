@@ -37,6 +37,10 @@ Not yet supported: SHACL-AF (SPARQL-based constraints), RML SQL/JDBC sources.
 > Every code example in this file is also an integration test in
 > [`tests/readme_examples.rs`](tests/readme_examples.rs).
 > If a test breaks, the README is out of date — update both together.
+>
+> Each section below also links a **"Proven by"** test suite — usually a larger,
+> spec-organised file with many more examples than fit here. Every one of those
+> files runs standalone with `cargo test --test <filename-without-.rs>`.
 
 ---
 
@@ -98,6 +102,11 @@ jsonld_parser::parse_jsonld(&mut ds, jsonld.as_bytes(), ingress::NetworkPolicy::
 dagalog::load_file(&mut ds, Path::new("data.ttl")).unwrap();
 ```
 
+**Proven by:** [`tests/jsonld_suite.rs`](tests/jsonld_suite.rs) (`cargo test --test jsonld_suite`)
+and the W3C conformance suites [`tests/w3c_rdf_conformance.rs`](tests/w3c_rdf_conformance.rs) /
+[`tests/w3c_rdf12_conformance.rs`](tests/w3c_rdf12_conformance.rs) — one test per spec example,
+runnable individually.
+
 ---
 
 ## SPARQL queries
@@ -120,6 +129,9 @@ let result = run_sparql_query(
 ).unwrap();
 // test: readme_sparql_filter
 ```
+
+**Proven by:** [`tests/sparql12_suite.rs`](tests/sparql12_suite.rs) (`cargo test --test sparql12_suite`),
+organised by spec section, and the [W3C SPARQL 1.1 conformance suite](tests/w3c_sparql11_suite.rs).
 
 ---
 
@@ -150,6 +162,10 @@ let mut ds = Datastore::new(100_000);
 apply_rml_mapping(Path::new("mapping.ttl"), Path::new("."), &mut ds).unwrap();
 ```
 
+**Proven by:** [`tests/rml_integration.rs`](tests/rml_integration.rs) (CSV, `cargo test --test rml_integration`),
+[`tests/rml_json_integration.rs`](tests/rml_json_integration.rs), and
+[`tests/rml_xml_integration.rs`](tests/rml_xml_integration.rs).
+
 ---
 
 ## OWL 2 RL reasoning
@@ -177,6 +193,9 @@ evaluate_rules(rules, &mut ds);
 Use `--ontology` on the CLI to apply reasoning before running a query. Ontologies written
 in OWL 2 Manchester Syntax (`.omn`) parse directly to the same `Ontology` type via the
 `manchester_parser` crate, so they reason identically.
+
+**Proven by:** [`tests/owl_integration.rs`](tests/owl_integration.rs) (`cargo test --test owl_integration`)
+and [`tests/manchester_owl_reasoning.rs`](tests/manchester_owl_reasoning.rs).
 
 ---
 
@@ -209,6 +228,8 @@ apply_rules(&mut ds, &[PathBuf::from("rules.datalog")]).unwrap();
 // test: readme_datalog_rule_forward_chain
 ```
 
+**Proven by:** [`tests/datalog_integration.rs`](tests/datalog_integration.rs) — `cargo test --test datalog_integration`.
+
 ---
 
 ## SHACL validation
@@ -235,6 +256,9 @@ if !report.conforms {
     }
 }
 ```
+
+**Proven by:** [`tests/shacl_suite.rs`](tests/shacl_suite.rs) — `cargo test --test shacl_suite`,
+one test per W3C SHACL spec example.
 
 ---
 
@@ -265,6 +289,8 @@ dagalog --data data.ttl --ontology schema.ttl --serve
 Multiple `--data`, `--ontology`, `--rules`, and `--mapping` flags may be given; mappings
 run after `--data` and before `--ontology`/`--rules`, so mapped triples participate in
 reasoning.
+
+**Proven by:** [`tests/cli_integration.rs`](tests/cli_integration.rs) — `cargo test --test cli_integration`.
 
 ---
 

@@ -28,9 +28,15 @@ Contact: hovlanddag@gmail.com
 //! - `rdft:TestXxxNegativeSyntax` — file must produce a parse error
 //! - `rdft:TestXxxEval` — parse and compare output against expected N-Triples/N-Quads
 //!
-//! All tests are `#[ignore]` pending RDF 1.2 parser support.
+//! Positive/negative syntax tests for all four formats are active. Only the
+//! Turtle 1.2 and TriG 1.2 eval tests (`w3c_rdf12_turtle_eval`,
+//! `w3c_rdf12_trig_eval`) remain `#[ignore]`, pending full RDF-star reifier
+//! (`<<s p o>>`, no parens) support — see the `#[ignore]` comment on each for
+//! the exact failing entries.
 //! Tracked in [#145](https://github.com/daghovland/rdf-datalog/issues/145) (R2) and
 //! [#146](https://github.com/daghovland/rdf-datalog/issues/146) (R3).
+//!
+//! Run just this file: `cargo test --test w3c_rdf12_conformance`
 
 use dag_rdf::{Datastore, GraphElement, RdfResource};
 use dagalog::load_file;

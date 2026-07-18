@@ -22,9 +22,12 @@ Contact: hovlanddag@gmail.com
 //! Each suite's `manifest.ttl` lists test entries with:
 //! - `rdft:TestXxxPositiveSyntax` — file must parse without error
 //! - `rdft:TestXxxNegativeSyntax` — file must produce a parse error
-//! - `rdft:TestXxxEval` — parse and compare output against expected N-Triples/N-Quads
-//!   (eval comparison is marked `#[ignore]` pending graph-isomorphism support)
+//! - `rdft:TestXxxEval` — parse and compare output against expected N-Triples/N-Quads,
+//!   up to blank-node renaming (graph isomorphism, via backtracking bijection search —
+//!   see `compare_datastores` below)
 //! - `rdft:TestXxxNegativeEval` — file must error or produce a non-matching result
+//!
+//! Run just this file: `cargo test --test w3c_rdf_conformance`
 
 use dag_rdf::{Datastore, GraphElement, RdfResource};
 use dagalog::load_file;
