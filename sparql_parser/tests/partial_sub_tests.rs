@@ -7,23 +7,24 @@ Contact: hovlanddag@gmail.com
 */
 
 //! Regression guards for Phase B of the join-reordering plan
-//! (`docs/plans/JOIN_REORDERING_PLAN.md`): replacing `PartialSub =
-//! HashMap<String, GraphElement>` with `HashMap<String, BoundValue>` where
-//! bindings from triple-pattern matches become `Indexed(GraphElementId)` and
-//! bindings from BIND/VALUES become `Inline(GraphElement)`.
+//! (`docs/plans/JOIN_REORDERING_PLAN.md`, issue
+//! [#141](https://github.com/daghovland/rdf-datalog/issues/141)): replacing
+//! `PartialSub = HashMap<String, GraphElement>` with
+//! `HashMap<String, PartialSubValue>` where bindings from triple-pattern
+//! matches become `Interned(GraphElementId)` and bindings from BIND/VALUES
+//! become `Computed(GraphElement)`.
 //!
-//! These tests are `#[ignore]`d per TDD convention (user reviews before Phase B
-//! implementation begins). They pass today with the GraphElement-based sub;
-//! they must still pass after Phase B. Note: this is a regression net, not a
-//! classic red-green test — there is no "naturally failing" state because Phase
-//! B is a behavior-preserving refactor with no new observable functionality.
+//! This is a regression net, not a classic red-green test — there is no
+//! "naturally failing" state because Phase B is a behavior-preserving refactor
+//! with no new observable functionality: these must pass identically before and
+//! after the change.
 //!
 //! Key correctness risks guarded here:
-//! - `compatible()` comparing an `Indexed` value (from a triple pattern) with
-//!   an `Inline` value (from VALUES or BIND) — must compare by *value*, not by
-//!   variant.
-//! - `ast_term_to_dag_term` resolving an `Inline` variable to a store ID for
-//!   use as a pattern constraint.
+//! - `compatible()` / `psv_eq()` comparing an `Interned` value (from a triple
+//!   pattern) with a `Computed` value (from VALUES or BIND) — must compare by
+//!   *resolved value*, not by variant.
+//! - `resolve_match_term` resolving a `Computed` variable to a store ID for use
+//!   as a pattern constraint.
 //! - `eval_expr_as_filter` building a PartialSub from `HashMap<String,
 //!   GraphElementId>` without unnecessary clones.
 
@@ -71,7 +72,6 @@ fn run_query(ds: &Datastore, sparql: &str) -> Vec<SolutionRow> {
 ///
 /// This exercises `compatible()` / `bind!` with mixed Inline+Indexed variants.
 #[test]
-#[ignore]
 fn values_clause_unifies_with_triple_pattern_binding() {
     let mut ds = Datastore::new(1_000);
     add_triple(
@@ -110,7 +110,6 @@ fn values_clause_unifies_with_triple_pattern_binding() {
 /// which requires `ast_term_to_dag_term` to resolve an `Inline` value back to
 /// a store ID. The join must still produce the correct result.
 #[test]
-#[ignore]
 fn bind_alias_used_as_constraint_in_subsequent_pattern() {
     let mut ds = Datastore::new(1_000);
     add_triple(
@@ -161,7 +160,6 @@ fn bind_alias_used_as_constraint_in_subsequent_pattern() {
 /// both. This exercises `compatible()` when merging UNION rows that have the
 /// same variable populated by different paths.
 #[test]
-#[ignore]
 fn union_with_values_branch_produces_correct_rows() {
     let mut ds = Datastore::new(1_000);
     add_triple(
@@ -194,4 +192,72 @@ fn union_with_values_branch_produces_correct_rows() {
             "every row must have x = :Alice"
         );
     }
+}
+
+// ── Path dedup: same logical solution in Computed and Interned form ──────────
+
+/// Reflexive edge + zero-or-one path: the zero-hop solution binds `?z` as
+/// `Computed` (copied from the resolved subject) while the one-hop solution
+/// binds `?z` as `Interned` (from the BGP match). With `ex:a knows ex:a` these
+/// are the SAME logical row, so the path dedup must compare by *resolved
+/// value* (`partial_subs_equal`) — representation-level equality (a derived
+/// `PartialEq`, where `Computed(a) != Interned(a)`) would return 2 rows.
+#[test]
+fn zero_or_one_path_dedups_reflexive_solution() {
+    let mut ds = Datastore::new(1_000);
+    // ex:a knows itself — the zero-hop and one-hop solutions coincide
+    add_triple(
+        &mut ds,
+        "http://example.org/a",
+        "http://example.org/knows",
+        iri_node("http://example.org/a"),
+    );
+
+    let query = r#"
+        SELECT ?z WHERE {
+            <http://example.org/a> <http://example.org/knows>? ?z .
+        }
+    "#;
+
+    let rows = run_query(&ds, query);
+    assert_eq!(
+        rows.len(),
+        1,
+        "zero-hop and one-hop bind ?z to the same element — must dedup to one row"
+    );
+    assert_eq!(rows[0].get("z"), Some(&iri_node("http://example.org/a")));
+}
+
+/// Reflexive edge + transitive closure with both endpoints unbound: the
+/// zero-length path and the one-hop path both yield (?x = a, ?y = a), and the
+/// result must be exactly one row. No existing path test data contains a
+/// reflexive triple, so this pins the cycle/self-loop row count for `*`.
+/// (Verified during #141: the closure's interior `partial_subs_equal` dedup is
+/// defensive-only — the BFS visited-set already prevents duplicates, so this
+/// row count holds even with that dedup removed. The cross-variant dedup
+/// guard is `zero_or_one_path_dedups_reflexive_solution` above.)
+#[test]
+fn transitive_closure_dedups_reflexive_solution() {
+    let mut ds = Datastore::new(1_000);
+    add_triple(
+        &mut ds,
+        "http://example.org/a",
+        "http://example.org/knows",
+        iri_node("http://example.org/a"),
+    );
+
+    let query = r#"
+        SELECT ?x ?y WHERE {
+            ?x <http://example.org/knows>* ?y .
+        }
+    "#;
+
+    let rows = run_query(&ds, query);
+    assert_eq!(
+        rows.len(),
+        1,
+        "zero-length and one-hop paths both yield (a, a) — must dedup to one row"
+    );
+    assert_eq!(rows[0].get("x"), Some(&iri_node("http://example.org/a")));
+    assert_eq!(rows[0].get("y"), Some(&iri_node("http://example.org/a")));
 }
