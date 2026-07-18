@@ -33,7 +33,7 @@ dagalog (root binary + library)
 ├── sparql_parser/       — SPARQL 1.2 SELECT parser (nom) + executor
 ├── datalog_parser/      — Datalog rules parser (nom)
 ├── sparql_endpoint/     — HTTP SPARQL endpoint (axum + tokio)
-└── manchester_parser/   — OWL Manchester syntax parser (stub)
+└── manchester_parser/   — OWL Manchester syntax parser
 ```
 
 See [CLAUDE.md](../../CLAUDE.md) for a per-crate description of each module's

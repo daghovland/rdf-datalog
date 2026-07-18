@@ -322,10 +322,9 @@ accepted as aliases for `rml:JSONPath`/`rml:XPath`.
 
 **In scope:** CSV, JSON, JSONL, XML, template IRIs, reference literals,
 language/datatype annotations, named graphs, blank nodes, `rml:class`,
-`rml:iterator`, nested JSONPath/XPath.
+`rml:iterator`, nested JSONPath/XPath, join conditions (`rml:JoinCondition`).
 
-**Not yet implemented:** SQL/JDBC sources, join conditions
-(`rml:JoinCondition`), FunctionMap (FNML).
+**Not yet implemented:** SQL/JDBC sources, FunctionMap (FNML).
 
 ---
 

@@ -186,16 +186,14 @@ SELECT * WHERE { ?s ?p ?o } LIMIT 5
 | Property paths — `/`, `*`, `+`, `?`, `\|`, `^`, `!` (all forms) | ✓ |
 | `GROUP BY`, `HAVING`, `ORDER BY` | ✓ |
 | Aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `SAMPLE`, `GROUP_CONCAT`) | ✓ |
-| `CONSTRUCT`, `ASK` | ✓ |
-| `DESCRIBE` | ✓ |
+| `CONSTRUCT`, `ASK`, `DESCRIBE` | ✓ |
 | `FROM` / `FROM NAMED` dataset clauses | ✓ |
-| `SERVICE` federated queries | Parsed; silently returns empty ([#51](https://github.com/daghovland/rdf-datalog/issues/51)) |
-| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, date/time, hash…) | Partial ([#52](https://github.com/daghovland/rdf-datalog/issues/52)) |
-| SPARQL Update `INSERT/DELETE WHERE` | Not yet implemented ([#53](https://github.com/daghovland/rdf-datalog/issues/53)) |
+| SPARQL Update (`INSERT/DELETE WHERE`, `INSERT/DELETE DATA`, `CLEAR`, `DROP`, …) | ✓ |
+| Scalar builtins (`COALESCE`, `IF`, `CONCAT`, `UCASE`, `LCASE`, `SUBSTR`, date/time, hash…) | ✓ |
+| `SERVICE` federated queries | Not implemented — `SILENT` returns empty, non-`SILENT` errors |
 
 ---
 
 ## See also
 
-- [Full SPARQL section in the README](../../README.md#sparql-queries) — more examples
 - [W3C SPARQL 1.1 specification](https://www.w3.org/TR/sparql11-query/)
