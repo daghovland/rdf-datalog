@@ -376,6 +376,26 @@ impl TestServer {
         let n = name.trim_start_matches('/');
         format!("{}/$/datasets/{n}", self.base_url)
     }
+
+    /// `POST /$/compact` — rewrite the persistence changelog as a minimal snapshot.
+    pub fn admin_compact_url(&self) -> String {
+        format!("{}/$/compact", self.base_url)
+    }
+
+    /// `POST /transaction/begin` — start a new transaction, returns `{"txId": ...}`.
+    pub fn transaction_begin_url(&self) -> String {
+        format!("{}/transaction/begin", self.base_url)
+    }
+
+    /// `POST /transaction/{txId}/commit` — commit an open transaction.
+    pub fn transaction_commit_url(&self, tx_id: &str) -> String {
+        format!("{}/transaction/{tx_id}/commit", self.base_url)
+    }
+
+    /// `POST /transaction/{txId}/rollback` — discard an open transaction.
+    pub fn transaction_rollback_url(&self, tx_id: &str) -> String {
+        format!("{}/transaction/{tx_id}/rollback", self.base_url)
+    }
 }
 
 // ── Shared OIDC test key infrastructure ─────────────────────────────────────

@@ -48,13 +48,22 @@ pub enum Permission {
 /// Map an HTTP method + path to the permission it requires.
 ///
 /// Follows the operation table in AUTH.md:
-/// - Admin: `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop).
-/// - Write: SPARQL Update (`POST …/update`), upload, GSP mutating methods.
+/// - Admin: `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop),
+///   `POST /$/compact` (rewrites the persistence changelog).
+/// - Write: SPARQL Update (`POST …/update`), upload, GSP mutating methods,
+///   the proprietary transaction API (`POST /transaction/...`).
 /// - Read: everything else, including `POST /sparql` and `POST /{name}/sparql`
 ///   which carry SPARQL SELECT queries, not updates.
+///
+/// `classify()` only ever sees the method and path — it cannot inspect the
+/// request body. `POST /sparql` (and its `/{name}/sparql`, `/{name}/query`
+/// aliases) can carry either a query *or* an embedded SPARQL Update, so
+/// `auth_middleware` performs an additional body-based check for those paths
+/// before falling back to this classification. See
+/// [#163](https://github.com/daghovland/rdf-datalog/issues/163).
 pub fn classify(method: &Method, path: &str) -> Permission {
     // Admin operations must be checked before the generic DELETE/PUT rule.
-    if method == Method::POST && path == "/$/datasets" {
+    if method == Method::POST && (path == "/$/datasets" || path == "/$/compact") {
         return Permission::Admin;
     }
     if method == Method::DELETE && path.starts_with("/$/datasets/") {
@@ -65,6 +74,13 @@ pub fn classify(method: &Method, path: &str) -> Permission {
     if method == Method::POST
         && (path == "/upload" || path.ends_with("/update") || path.ends_with("/rml"))
     {
+        return Permission::Write;
+    }
+
+    // The proprietary transaction API (begin/commit/rollback) is a write:
+    // commit mutates the store, and begin/rollback can churn or cancel other
+    // clients' in-flight transactions. See #163.
+    if method == Method::POST && path.starts_with("/transaction/") {
         return Permission::Write;
     }
 
@@ -82,8 +98,35 @@ pub fn classify(method: &Method, path: &str) -> Permission {
         return Permission::Write;
     }
 
-    // GET, HEAD, OPTIONS, POST /sparql, POST /{name}/sparql, POST /{name}/query …
-    Permission::Read
+    // POST /sparql, POST /{name}/sparql, POST /{name}/query are query-shaped
+    // endpoints — classify() alone can't see the body, so `auth_middleware`
+    // calls `detect_update_smuggling` instead of `classify()` for these paths
+    // to catch an update smuggled in under a Read classification. classify()
+    // still needs its own answer for direct callers (e.g. its unit tests), so
+    // it stays Read here.
+    if method == Method::POST && is_sparql_query_shaped(path) {
+        return Permission::Read;
+    }
+
+    // Stateless computation endpoints: they read (SHACL validation) or don't
+    // even touch (`/rml/map` takes the mapping and source in the request
+    // body) the datastore, so despite being POST they never mutate it.
+    if method == Method::POST && (path == "/rml/map" || path.ends_with("/shacl")) {
+        return Permission::Read;
+    }
+
+    // GET, HEAD, OPTIONS are safe/idempotent (RFC 7231 §4.2.1) regardless of
+    // path, so an unmatched path is still Read.
+    //
+    // Any other method reaching this point means a route exists that this
+    // classifier doesn't know about — fail closed to the strictest
+    // permission instead of the previous blanket Read, so a future write
+    // endpoint added without a matching branch above is locked down by
+    // default rather than silently exposed. See #163.
+    match *method {
+        Method::GET | Method::HEAD | Method::OPTIONS => Permission::Read,
+        _ => Permission::Admin,
+    }
 }
 
 // ── Auth errors ───────────────────────────────────────────────────────────────
@@ -398,6 +441,85 @@ fn forbidden_response() -> Response {
     (StatusCode::FORBIDDEN, "Forbidden: insufficient roles").into_response()
 }
 
+// ── Body-based reclassification for POST /sparql-shaped paths ────────────────
+//
+// `classify()` cannot see the request body, so on its own it always treats a
+// POST to `/sparql`, `/{name}/sparql`, `/{name}/query` as `Read`. The handler
+// (`sparql_post_with_state` in `query.rs`) inspects Content-Type and, for
+// form bodies, the body itself: an `application/sparql-update` body or a
+// form `update=` field dispatches to `run_update`, a genuine write with no
+// independent permission check. See #163.
+
+/// True for POST paths that the SPARQL Protocol handler treats as the query
+/// endpoint (`/sparql`, `/{name}/sparql`, `/{name}/query`) — the only paths
+/// where a body can smuggle an update under a Read classification.
+fn is_sparql_query_shaped(path: &str) -> bool {
+    path == "/sparql" || path.ends_with("/sparql") || path.ends_with("/query")
+}
+
+/// Upper bound on how many body bytes `detect_update_smuggling` will buffer.
+///
+/// Matches axum's server-wide `DefaultBodyLimit` (2 MiB, see `server.rs`), so
+/// this introduces no new DoS surface: any body large enough to be rejected
+/// here would also be rejected by the downstream `Bytes` extractor in
+/// `query.rs`.
+const SNIFF_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// Inspect a POST request to a SPARQL query-shaped path to determine whether
+/// its body actually carries a SPARQL Update rather than a query, and return
+/// the resulting permission alongside a request that still carries the
+/// original body intact (buffered bodies are reconstructed byte-for-byte so
+/// the downstream handler sees exactly what it does today).
+///
+/// - `Content-Type: application/sparql-update` → `Write`, no body read needed.
+/// - `application/x-www-form-urlencoded` → buffer (bounded by
+///   `SNIFF_BODY_LIMIT`) and scan for a literal `update=` field, matching the
+///   parsing in `query.rs::sparql_post_with_state` exactly (split on `&`,
+///   the key before `=` must equal `update`, not merely contain it).
+/// - Anything else (`application/sparql-query`, missing, unknown) → `Read`,
+///   no body read needed.
+async fn detect_update_smuggling(
+    request: axum::extract::Request,
+) -> Result<(Permission, axum::extract::Request), Response> {
+    let content_type = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+
+    if content_type.contains("application/sparql-update") {
+        return Ok((Permission::Write, request));
+    }
+
+    if !content_type.contains("application/x-www-form-urlencoded") {
+        return Ok((Permission::Read, request));
+    }
+
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, SNIFF_BODY_LIMIT).await {
+        Ok(b) => b,
+        Err(_) => {
+            return Err((StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response());
+        }
+    };
+
+    let is_update = std::str::from_utf8(&bytes)
+        .map(|s| {
+            s.split('&')
+                .any(|part| part.split_once('=').map(|(k, _)| k) == Some("update"))
+        })
+        .unwrap_or(false);
+
+    let required = if is_update {
+        Permission::Write
+    } else {
+        Permission::Read
+    };
+    let rebuilt = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+    Ok((required, rebuilt))
+}
+
 // ── Auth config endpoint ──────────────────────────────────────────────────────
 
 /// `GET /auth/config` — returns the active authentication mode and non-secret
@@ -472,10 +594,29 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    let required = classify(request.method(), request.uri().path());
+    // No auth configured at all — every permission passes regardless, so skip
+    // classification (and any body buffering it might require) entirely.
+    if matches!(state.config.auth, AuthConfig::None) {
+        return next.run(request).await;
+    }
+
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+
+    // `classify()` cannot see the body, so POST requests to SPARQL
+    // query-shaped paths need an extra body-based check to catch an update
+    // smuggled in under a Read classification. See #163.
+    let (required, request) = if method == Method::POST && is_sparql_query_shaped(&path) {
+        match detect_update_smuggling(request).await {
+            Ok(pair) => pair,
+            Err(response) => return response,
+        }
+    } else {
+        (classify(&method, &path), request)
+    };
 
     match &state.config.auth {
-        AuthConfig::None => next.run(request).await,
+        AuthConfig::None => unreachable!("handled above"),
 
         AuthConfig::ApiKey {
             key,
@@ -671,6 +812,92 @@ mod tests {
     #[test]
     fn get_server_info_is_read() {
         assert_eq!(classify(&Method::GET, "/$/server"), Permission::Read);
+    }
+
+    // ── Issue #163 regression: transaction API + /$/compact ────────────────────
+
+    #[test]
+    fn post_compact_is_admin() {
+        assert_eq!(classify(&Method::POST, "/$/compact"), Permission::Admin);
+    }
+
+    #[test]
+    fn post_transaction_begin_is_write() {
+        assert_eq!(
+            classify(&Method::POST, "/transaction/begin"),
+            Permission::Write
+        );
+    }
+
+    #[test]
+    fn post_transaction_commit_is_write() {
+        assert_eq!(
+            classify(&Method::POST, "/transaction/abc-123/commit"),
+            Permission::Write
+        );
+    }
+
+    #[test]
+    fn post_transaction_rollback_is_write() {
+        assert_eq!(
+            classify(&Method::POST, "/transaction/abc-123/rollback"),
+            Permission::Write
+        );
+    }
+
+    // ── classify() default hardening: fail-closed for unmatched non-safe
+    // methods. GET/HEAD/OPTIONS are safe/idempotent per RFC 7231 §4.2.1, so an
+    // unmatched path is still Read. Any other method reaching the fallthrough
+    // means a route exists that classify() doesn't know about yet — treat
+    // that as the strictest permission instead of the previous blanket Read,
+    // so a future endpoint added without updating classify() fails closed
+    // instead of open. See discussion in #163.
+
+    #[test]
+    fn post_unmatched_path_is_admin_fail_closed() {
+        assert_eq!(
+            classify(&Method::POST, "/some/future/endpoint"),
+            Permission::Admin
+        );
+    }
+
+    #[test]
+    fn patch_unmatched_path_is_admin_fail_closed() {
+        assert_eq!(classify(&Method::PATCH, "/ds/data"), Permission::Admin);
+    }
+
+    #[test]
+    fn get_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::GET, "/some/future/endpoint"),
+            Permission::Read
+        );
+    }
+
+    #[test]
+    fn head_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::HEAD, "/some/future/endpoint"),
+            Permission::Read
+        );
+    }
+
+    #[test]
+    fn post_rml_map_is_read() {
+        assert_eq!(classify(&Method::POST, "/rml/map"), Permission::Read);
+    }
+
+    #[test]
+    fn post_dataset_shacl_is_read() {
+        assert_eq!(classify(&Method::POST, "/ds/shacl"), Permission::Read);
+    }
+
+    #[test]
+    fn options_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::OPTIONS, "/some/future/endpoint"),
+            Permission::Read
+        );
     }
 
     // ── Claims dot-path extraction ─────────────────────────────────────────────

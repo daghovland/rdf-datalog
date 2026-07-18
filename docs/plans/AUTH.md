@@ -18,11 +18,24 @@ Three logical permissions map to every operation:
 
 | Permission | Operations |
 |------------|-----------|
-| `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, `GET /rdf-graph-store`, `GET /$/…` |
-| `Write` | `POST /{name}/update` (SPARQL Update), `PUT/POST/DELETE /{name}/data`, `PUT/POST/DELETE /rdf-graph-store` |
-| `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop) |
+| `Read` | `GET /sparql`, `GET /{name}/sparql`, `GET /{name}/data`, `GET /rdf-graph-store`, `GET /$/…`, `POST /rml/map` (stateless mapping, no store access), `POST /{name}/shacl` (validation, no mutation) |
+| `Write` | `POST /{name}/update` (SPARQL Update), `PUT/POST/DELETE /{name}/data`, `PUT/POST/DELETE /rdf-graph-store`, `POST /transaction/begin`, `POST /transaction/{txId}/commit`, `POST /transaction/{txId}/rollback` |
+| `Admin` | `POST /$/datasets` (create), `DELETE /$/datasets/{name}` (drop), `POST /$/compact` (rewrite persistence changelog) |
+
+`POST /sparql` (and its `/{name}/sparql`, `/{name}/query` aliases) is classified
+by inspecting the request body, not just the path: a SPARQL Update embedded
+via `Content-Type: application/sparql-update` or a form `update=` field is
+`Write`, everything else is `Read`. See
+[#163](https://github.com/daghovland/rdf-datalog/issues/163).
 
 `Write` implies `Read`.  `Admin` implies both.
+
+`classify()`'s default for a method/path combination it doesn't recognise is
+now method-aware rather than a blanket `Read`: `GET`/`HEAD`/`OPTIONS` are
+safe/idempotent per RFC 7231 §4.2.1, so an unmatched path is still `Read`; any
+other method (a route added later without a matching `classify()` branch)
+fails closed to `Admin` instead of silently being exposed as a read. See the
+design discussion in [#163](https://github.com/daghovland/rdf-datalog/issues/163).
 
 When `--read-only` is active the server enforces `Read`-only regardless of
 auth credentials — no token can unlock mutating endpoints.
