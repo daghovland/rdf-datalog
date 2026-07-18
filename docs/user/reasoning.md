@@ -75,8 +75,6 @@ println!("Derived {} new triples from {} axioms",
 - `owl:minQualifiedCardinality` — cardinality constraints
 - Inverse object properties
 
-See the [OWL 2 RL section in the README](../../README.md#owl-2-rl-reasoning) for a code example.
-
 ---
 
 ## Custom Datalog rules
@@ -161,5 +159,10 @@ rule fires.
 
 ## See also
 
-- [Custom Datalog rules in the README](../../README.md#custom-datalog-rules) — full syntax reference
-- [OWL-RL reasoning in the README](../../README.md#owl-2-rl-reasoning)
+- [Formats](formats.md) — loading the ontology/data files reasoning operates on
+- [SPARQL guide](sparql-guide.md) — querying the materialised triples
+- [`tests/owl_integration.rs`](../../tests/owl_integration.rs) (`cargo test --test owl_integration`)
+  and [`tests/datalog_integration.rs`](../../tests/datalog_integration.rs)
+  (`cargo test --test datalog_integration`) — the executable test suites this page is based on
+- [`tests/manchester_owl_reasoning.rs`](../../tests/manchester_owl_reasoning.rs) — Manchester
+  Syntax ontologies driving the same reasoning pipeline

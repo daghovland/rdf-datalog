@@ -322,10 +322,9 @@ accepted as aliases for `rml:JSONPath`/`rml:XPath`.
 
 **In scope:** CSV, JSON, JSONL, XML, template IRIs, reference literals,
 language/datatype annotations, named graphs, blank nodes, `rml:class`,
-`rml:iterator`, nested JSONPath/XPath.
+`rml:iterator`, nested JSONPath/XPath, join conditions (`rml:JoinCondition`).
 
-**Not yet implemented:** SQL/JDBC sources, join conditions
-(`rml:JoinCondition`), FunctionMap (FNML).
+**Not yet implemented:** SQL/JDBC sources, FunctionMap (FNML).
 
 ---
 
@@ -374,4 +373,8 @@ larger than typical SPARQL Update bodies.
 
 - [Reasoning and rules](reasoning.md) — combine mapped data with OWL-RL or Datalog
 - [Formats](formats.md) — native RDF formats (Turtle, JSON-LD, etc.)
+- [`tests/rml_integration.rs`](../../tests/rml_integration.rs) (CSV, `cargo test --test rml_integration`),
+  [`tests/rml_json_integration.rs`](../../tests/rml_json_integration.rs), and
+  [`tests/rml_xml_integration.rs`](../../tests/rml_xml_integration.rs) — the executable test
+  suites this page is based on
 - [RML 1.0 W3C spec](https://www.w3.org/TR/rml/)

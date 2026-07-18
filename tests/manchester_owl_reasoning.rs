@@ -23,6 +23,8 @@ Contact: hovlanddag@gmail.com
 //! fact is seeded directly as a quad. Wiring Manchester ABox assertions into
 //! the `Datastore` is tracked in
 //! [#159](https://github.com/daghovland/rdf-datalog/issues/159).
+//!
+//! Run just this file: `cargo test --test manchester_owl_reasoning`
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, Triple};
 use datalog::evaluate_rules;

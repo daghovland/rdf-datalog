@@ -163,5 +163,8 @@ See the [RML mapping guide](rml-mapping.md) for the full reference.
 ## See also
 
 - [RML mapping guide](rml-mapping.md) — map CSV/JSON/JSONL to RDF
-- [JSON-LD section in the README](../../README.md#json-ld-11) — full feature table and examples
-- [Turtle/TriG section in the README](../../README.md#turtle--trig)
+- [SPARQL guide](sparql-guide.md) — querying the loaded data
+- [`tests/jsonld_suite.rs`](../../tests/jsonld_suite.rs) (`cargo test --test jsonld_suite`) and
+  the W3C conformance suites [`tests/w3c_rdf_conformance.rs`](../../tests/w3c_rdf_conformance.rs) /
+  [`tests/w3c_rdf12_conformance.rs`](../../tests/w3c_rdf12_conformance.rs) — one runnable test
+  per spec example, the executable proof behind this page

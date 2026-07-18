@@ -4,6 +4,8 @@
 //! combined with existing Turtle ontologies, and reasoned over with OWL-RL.
 //! They live here (root-crate tests) rather than inside `rml/tests/` so they
 //! can cross crate boundaries freely.
+//!
+//! Run just this file: `cargo test --test rml_integration`
 
 use dag_rdf::Datastore;
 use dagalog::{apply_ontologies, graph_element_display, load_file, run_sparql_query};
@@ -26,7 +28,6 @@ fn testdata_dir() -> std::path::PathBuf {
 // ── RML + SPARQL SELECT ───────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rml_mapped_data_is_queryable_with_sparql_select() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(
@@ -56,7 +57,6 @@ fn rml_mapped_data_is_queryable_with_sparql_select() {
 }
 
 #[test]
-//#[ignore]
 fn rml_sparql_subject_iris_follow_template() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(
@@ -81,7 +81,6 @@ fn rml_sparql_subject_iris_follow_template() {
 }
 
 #[test]
-//#[ignore]
 fn rml_class_shorthand_triples_visible_in_sparql() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(
@@ -106,7 +105,6 @@ fn rml_class_shorthand_triples_visible_in_sparql() {
 }
 
 #[test]
-//#[ignore]
 fn rml_sparql_filter_on_mapped_literal() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(
@@ -138,7 +136,6 @@ fn rml_sparql_filter_on_mapped_literal() {
 // ── RML + Turtle ontology ─────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rml_combined_with_turtle_ontology_in_same_datastore() {
     let mut ds = Datastore::new(10_000);
     // Load an ontology from Turtle (rdfs:subClassOf hierarchy)
@@ -166,7 +163,6 @@ fn rml_combined_with_turtle_ontology_in_same_datastore() {
 // ── RML + OWL-RL reasoning ────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rml_plus_owlrl_reasoning_infers_superclass_membership() {
     let mut ds = Datastore::new(10_000);
     // Ontology: Student ⊆ Person ⊆ Agent
@@ -207,7 +203,6 @@ fn rml_plus_owlrl_reasoning_infers_superclass_membership() {
 }
 
 #[test]
-//#[ignore]
 fn rml_owlrl_does_not_infer_subclass_without_ontology() {
     let mut ds = Datastore::new(10_000);
     // Map students without loading the hierarchy ontology
@@ -236,7 +231,6 @@ fn rml_owlrl_does_not_infer_subclass_without_ontology() {
 // ── RML two-source mapping ────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rml_mapping_with_two_triples_maps_populates_both() {
     let mut ds = Datastore::new(10_000);
     // mapping file has two TriplesMap blocks: one for persons.csv, one for students.csv
@@ -255,7 +249,6 @@ fn rml_mapping_with_two_triples_maps_populates_both() {
 }
 
 #[test]
-//#[ignore]
 fn rml_two_maps_subjects_have_distinct_iris() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(
@@ -298,7 +291,6 @@ fn rml_two_maps_subjects_have_distinct_iris() {
 // ── Idempotency ───────────────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn applying_same_mapping_twice_does_not_duplicate_triples() {
     let mut ds = Datastore::new(10_000);
     apply_rml_mapping(

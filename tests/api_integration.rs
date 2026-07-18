@@ -9,6 +9,8 @@ Contact: hovlanddag@gmail.com
 //! Integration tests translated from DagSemTools `Api.Tests/TestApi.cs`.
 //!
 //! Each test corresponds to a `[Fact]` in the original C# suite.
+//!
+//! Run just this file: `cargo test --test api_integration`
 
 use dag_rdf::{Datastore, IriReference, RdfResource};
 use dagalog::{apply_rules, graph_element_display, load_file, run_sparql_query};

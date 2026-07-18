@@ -22,6 +22,8 @@ Contact: hovlanddag@gmail.com
 //! All eval test categories are now active. The SRX comparison infrastructure
 //! (`compare_with_srx`) was already implemented. Update syntax tests now pass
 //! using the `parse_update` function from `sparql_endpoint::sparql_update`.
+//!
+//! Run just this file: `cargo test --test w3c_sparql11_suite`
 
 use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
 use dagalog::{load_file, run_sparql_query};

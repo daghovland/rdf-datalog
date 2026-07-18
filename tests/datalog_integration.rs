@@ -13,6 +13,8 @@ Contact: hovlanddag@gmail.com
 //!
 //! Test data files mirror the DagSemTools DatalogParser.Unit.Tests/TestData/
 //! directory and are stored in tests/testdata/.
+//!
+//! Run just this file: `cargo test --test datalog_integration`
 
 use dag_rdf::{Datastore, GraphElement, RdfLiteral};
 use dagalog::{apply_rules, graph_element_display, load_file, run_sparql_query};
@@ -413,9 +415,11 @@ ex:c a ex:person .
 
 // ── FilterAtom: SPARQL expressions as Datalog guards ─────────────────────────
 //
-// These tests verify Phase E2 of EXPRESSION_PLAN.md: RuleAtom::FilterAtom holds
-// a sparql_parser::ast::Expression and filters substitutions during rule evaluation.
-// Un-ignore in order: E2 first (engine), E5 last (parser).
+// These tests verify Phases E2 and E5 of docs/plans/EXPRESSION_PLAN.md:
+// RuleAtom::FilterAtom holds a sparql_parser::ast::Expression and filters
+// substitutions during rule evaluation (E2, the engine side), and the
+// Datalog parser accepts `FILTER(expr)` in a rule body and produces that
+// FilterAtom (E5, the parser side).
 
 /// Rule with a numeric comparison guard: derive violation(x) only when age < 18.
 /// Data: ex:alice ex:age 25; ex:bob ex:age 15.
@@ -873,10 +877,10 @@ ex:v[?x] :- [?x, ex:label, ?v], FILTER(STRLEN(?v) < 3) .
     );
 }
 
-/// End-to-end: parse a rule with FILTER(?a < 18) and evaluate it against data.
-/// Data: ex:alice ex:age 25; ex:bob ex:age 15.
-/// Parsed rule derives ex:violation for nodes with age < 18.
-/// Expected: only ex:bob appears in violation set.
+/// End-to-end: parse a rule with FILTER(?a < 20) and evaluate it against data.
+/// Data: ex:alice ex:age 15; ex:bob ex:age 25.
+/// Parsed rule derives ex:violation for nodes with age < 20.
+/// Expected: only ex:alice appears in violation set.
 #[test]
 fn parsed_filter_rule_end_to_end() {
     let ttl = r#"

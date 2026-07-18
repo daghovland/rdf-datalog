@@ -17,6 +17,8 @@ Contact: hovlanddag@gmail.com
 //!
 //! Only `parse_imported_context` is `#[ignore]` — it requires HTTP fetching
 //! of external context documents (`@import`), not yet implemented.
+//!
+//! Run just this file: `cargo test --test jsonld_suite`
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
 use dagalog::run_sparql_query;

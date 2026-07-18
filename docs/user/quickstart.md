@@ -123,4 +123,4 @@ SELECT ?contact ?name WHERE {
 - [RML mapping](rml-mapping.md) — load CSV, JSON, or XML data as RDF
 - [Reasoning and rules](reasoning.md) — OWL-RL reasoning, custom Datalog rules
 - [Deployment](deployment.md) — authentication, Docker, environment variables
-- [Full reference in README](../../README.md) — complete feature reference
+- [User docs index](index.md) — full list of topics

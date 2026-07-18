@@ -11,6 +11,8 @@ Contact: hovlanddag@gmail.com
 //! Each test corresponds to a `[Fact]` or `[Theory]` in the original C# suite.
 //! Tests that require functionality not yet implemented (Tableau, ALC) are
 //! marked `#[ignore]`.
+//!
+//! Run just this file: `cargo test --test owl_integration`
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
 use dagalog::load_file;
