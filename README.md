@@ -1,9 +1,10 @@
 # dagalog
 
 A fast RDF triplestore with native Rust implementation of Datalog-based OWL-RL reasoning,
-custom Datalog rules, JSON-LD 1.1 parsing/serialisation, and a SPARQL HTTP endpoint.
+custom Datalog rules, RDF (Turtle, TriG, NQuads, JSON-LD) 1.1 and 1.2 parsing/serialisation, and a SPARQL HTTP endpoint.
 
-Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET).
+The core is a Rust port of [DagSemTools](https://github.com/daghovland/DagSemTools) (F#/.NET). 
+Almost all implementation is done by LLM-based agents.
 
 > **New here?** Start with the [5-minute quickstart](docs/user/quickstart.md) — load data and
 > run your first query without needing to read the rest of this file.
