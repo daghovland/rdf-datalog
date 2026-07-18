@@ -66,7 +66,7 @@ dagalog --data people.ttl \
 
 Expected output:
 
-```
+```text
 ?name
 ---------
 "Alice"

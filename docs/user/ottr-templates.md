@@ -74,7 +74,7 @@ expand_documents(&[doc], &mut ds).unwrap();
 Use `load_stottr_file` to read from disk. Templates and instances can live in separate files —
 pass all documents to `expand_documents` and it merges them before expanding:
 
-```rust
+```rust,no_run
 use dag_rdf::Datastore;
 use ottr::{expand_documents, load_stottr_file};
 use std::path::Path;
@@ -193,7 +193,7 @@ ex:Person(<http://example.com/bob>,   "Bob") .
 
 To load from a file on disk:
 
-```
+```text
 %%ottr path/to/templates.stottr
 ```
 
@@ -211,7 +211,7 @@ SELECT ?person ?name WHERE { ?person foaf:name ?name }
 OTTR templates expand into plain triples and integrate transparently with reasoning.
 Load an OWL ontology alongside the expanded data and run `%%reason`:
 
-```
+```text
 %%load ontology.ttl
 %%ottr templates.stottr
 %%reason

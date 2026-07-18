@@ -23,6 +23,25 @@ use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
+// ── User-guide doctests ───────────────────────────────────────────────────────
+//
+// The Rust code fences in `docs/user/*.md` are wired up as real rustdoc
+// doctests by re-exposing each file's contents as extra doc comments on this
+// module, gated to `cfg(doctest)` so they never appear in normal `cargo doc`
+// output and never affect ordinary builds. `dagalog` is the include point
+// because it depends (directly or via `[dev-dependencies]`) on every crate
+// these guides call out to — `jsonld_parser`, `ottr`, `rml`, `sparql_endpoint`,
+// etc. — so the doctests can resolve every symbol they use.
+//
+// This module holds no code; it exists purely to carry the `doc` attributes.
+// See [#167](https://github.com/daghovland/rdf-datalog/issues/167).
+#[cfg_attr(doctest, doc = include_str!("../docs/user/deployment.md"))]
+#[cfg_attr(doctest, doc = include_str!("../docs/user/formats.md"))]
+#[cfg_attr(doctest, doc = include_str!("../docs/user/reasoning.md"))]
+#[cfg_attr(doctest, doc = include_str!("../docs/user/rml-mapping.md"))]
+#[cfg_attr(doctest, doc = include_str!("../docs/user/ottr-templates.md"))]
+mod user_guide_doctests {}
+
 // ── Output format ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]

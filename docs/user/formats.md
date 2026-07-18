@@ -89,6 +89,8 @@ dagalog -d data.ttl -Q query.sparql --format json
 Three forms are available from the Rust API:
 
 ```rust
+# use dag_rdf::Datastore;
+# let ds = Datastore::new(100);
 // Compacted — @context present, full IRIs everywhere
 let out = jsonld_parser::serialize_jsonld(&ds);
 
@@ -97,6 +99,7 @@ let expanded = jsonld_parser::serialize_jsonld_expanded(&ds);
 
 // Flattened — {"@graph": [all subjects at top level]}
 let flat = jsonld_parser::serialize_jsonld_flattened(&ds);
+# let _ = (out, expanded, flat);
 ```
 
 All three forms are re-parseable by `jsonld_parser::parse_jsonld` (round-trip tested).
@@ -117,7 +120,7 @@ dagalog --data people.ttl --data org.jsonld --query "SELECT * WHERE { ?s ?p ?o }
 
 ### Rust API
 
-```rust
+```rust,no_run
 use dagalog::load_file;
 use dag_rdf::Datastore;
 use std::path::Path;

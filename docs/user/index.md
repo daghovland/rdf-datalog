@@ -26,7 +26,7 @@ RDF (Resource Description Framework) is a standard for describing things on the 
 Data is stored as **triples**: every fact has a subject, a predicate, and an object —
 like a sentence with a subject, verb, and object.
 
-```
+```turtle
 <http://example.org/Alice>  <http://example.org/knows>  <http://example.org/Bob> .
 ```
 
