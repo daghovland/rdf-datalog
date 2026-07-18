@@ -743,6 +743,7 @@ dependencies = [
  "jsonld-parser",
  "log",
  "manchester-parser",
+ "ottr",
  "owl-ontology",
  "owl2rl2datalog",
  "rdf-owl-translator",

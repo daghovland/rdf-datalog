@@ -54,7 +54,7 @@ And a mapping file `mapping.ttl`:
 
 Apply the mapping with the Rust API:
 
-```rust
+```rust,no_run
 use rml::apply_rml_mapping;
 use dag_rdf::Datastore;
 use std::path::Path;
@@ -156,7 +156,7 @@ Files with extension `.jsonl` or `.ndjson` are automatically read line by line.
 Each non-blank line is parsed as a JSON object and becomes one row. The same
 JSONPath references apply.
 
-```
+```text
 {"id": "1", "name": "Alice"}
 {"id": "2", "name": "Bob"}
 ```
@@ -244,8 +244,12 @@ against each iterated node.
 
 Load an ontology and a mapping into the same store — they live side by side:
 
-```rust
+```rust,no_run
 use dagalog::{apply_ontologies, load_file};
+# use rml::apply_rml_mapping;
+# use dag_rdf::Datastore;
+# use std::path::Path;
+# let mut ds = Datastore::new(100_000);
 
 load_file(&mut ds, Path::new("hierarchy.ttl")).unwrap();
 apply_rml_mapping(Path::new("mapping.ttl"), Path::new("."), &mut ds).unwrap();

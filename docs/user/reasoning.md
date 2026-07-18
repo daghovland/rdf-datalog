@@ -52,7 +52,7 @@ dagalog --ontology myontology.ttl \
 
 ### Rust API
 
-```rust
+```rust,no_run
 use dagalog::{apply_ontologies, load_file};
 use dag_rdf::Datastore;
 use std::path::{Path, PathBuf};
@@ -120,9 +120,11 @@ dagalog --data data.ttl --rules rules.datalog \
 
 ### Rust API
 
-```rust
+```rust,no_run
 use dagalog::apply_rules;
 use std::path::PathBuf;
+# use dag_rdf::Datastore;
+# let mut ds = Datastore::new(100_000);
 
 apply_rules(&mut ds, &[PathBuf::from("rules.datalog")]).unwrap();
 ```

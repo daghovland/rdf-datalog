@@ -70,7 +70,7 @@ ORDER BY ?name
 
 Parse the cell body as Turtle and add the resulting triples to the session datastore.
 
-```
+```text
 %%turtle
 @prefix ex:   <http://example.com/> .
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
@@ -85,7 +85,7 @@ Output: `Loaded 6 triples.`
 
 Load a Turtle, TriG, or N-Triples file from disk.
 
-```
+```text
 %%load data/people.ttl
 ```
 
@@ -94,7 +94,7 @@ Load a Turtle, TriG, or N-Triples file from disk.
 Apply an [RML mapping file](rml-mapping.md) to its declared sources (CSV, JSON,
 XML) and add the resulting triples to the session datastore.
 
-```
+```text
 %%rml mappings/persons.ttl
 ```
 
@@ -103,7 +103,7 @@ XML) and add the resulting triples to the session datastore.
 Materialise all triples that can be inferred from any OWL axioms already in the
 datastore. Adds the inferred triples in-place.
 
-```
+```text
 %%reason
 ```
 
@@ -113,7 +113,7 @@ Output: `Reasoning complete. 1 243 triples added.`
 
 Parse the cell body as Datalog rules and run forward-chaining materialisation.
 
-```
+```text
 %%datalog
 ?x <http://example.com/colleague> ?y :-
     ?x <http://example.com/worksFor> ?org ,
@@ -124,7 +124,7 @@ Parse the cell body as Datalog rules and run forward-chaining materialisation.
 
 Validate the current datastore against a SHACL shapes file.
 
-```
+```text
 %%validate shapes/person.ttl
 ```
 
@@ -132,7 +132,7 @@ Validate the current datastore against a SHACL shapes file.
 
 ## Typical pipeline
 
-```
+```text
 [Cell 1] %%turtle        — seed a few triples inline
 [Cell 2] SELECT …        — verify the data is there
 [Cell 3] %%rml …         — map a CSV file to RDF

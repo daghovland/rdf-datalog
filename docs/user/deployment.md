@@ -253,6 +253,7 @@ curl http://localhost:3030/auth/config
 #### Library usage
 
 ```rust
+# #[allow(unused_imports)]
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve};
 
 // Azure Entra ID convenience constructor:
@@ -260,6 +261,7 @@ let config = Config {
     auth: AuthConfig::Oidc(OidcConfig::azure("<tenant-id>", "api://dagalog")),
     ..Config::default()
 };
+# let _ = &config;
 
 // Generic OIDC (Google, Keycloak, Auth0, …):
 let config = Config {
@@ -275,6 +277,7 @@ let config = Config {
     }),
     ..Config::default()
 };
+# let _ = &config;
 ```
 
 ---
@@ -351,10 +354,11 @@ generated RDF directly, touching no dataset — see the
 
 ### Library usage
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use dag_rdf::Datastore;
+# #[allow(unused_imports)]
 use sparql_endpoint::{AuthConfig, Config, serve};
 
 #[tokio::main]
