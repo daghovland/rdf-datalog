@@ -98,8 +98,35 @@ pub fn classify(method: &Method, path: &str) -> Permission {
         return Permission::Write;
     }
 
-    // GET, HEAD, OPTIONS, POST /sparql, POST /{name}/sparql, POST /{name}/query …
-    Permission::Read
+    // POST /sparql, POST /{name}/sparql, POST /{name}/query are query-shaped
+    // endpoints — classify() alone can't see the body, so `auth_middleware`
+    // calls `detect_update_smuggling` instead of `classify()` for these paths
+    // to catch an update smuggled in under a Read classification. classify()
+    // still needs its own answer for direct callers (e.g. its unit tests), so
+    // it stays Read here.
+    if method == Method::POST && is_sparql_query_shaped(path) {
+        return Permission::Read;
+    }
+
+    // Stateless computation endpoints: they read (SHACL validation) or don't
+    // even touch (`/rml/map` takes the mapping and source in the request
+    // body) the datastore, so despite being POST they never mutate it.
+    if method == Method::POST && (path == "/rml/map" || path.ends_with("/shacl")) {
+        return Permission::Read;
+    }
+
+    // GET, HEAD, OPTIONS are safe/idempotent (RFC 7231 §4.2.1) regardless of
+    // path, so an unmatched path is still Read.
+    //
+    // Any other method reaching this point means a route exists that this
+    // classifier doesn't know about — fail closed to the strictest
+    // permission instead of the previous blanket Read, so a future write
+    // endpoint added without a matching branch above is locked down by
+    // default rather than silently exposed. See #163.
+    match *method {
+        Method::GET | Method::HEAD | Method::OPTIONS => Permission::Read,
+        _ => Permission::Admin,
+    }
 }
 
 // ── Auth errors ───────────────────────────────────────────────────────────────
@@ -815,6 +842,61 @@ mod tests {
         assert_eq!(
             classify(&Method::POST, "/transaction/abc-123/rollback"),
             Permission::Write
+        );
+    }
+
+    // ── classify() default hardening: fail-closed for unmatched non-safe
+    // methods. GET/HEAD/OPTIONS are safe/idempotent per RFC 7231 §4.2.1, so an
+    // unmatched path is still Read. Any other method reaching the fallthrough
+    // means a route exists that classify() doesn't know about yet — treat
+    // that as the strictest permission instead of the previous blanket Read,
+    // so a future endpoint added without updating classify() fails closed
+    // instead of open. See discussion in #163.
+
+    #[test]
+    fn post_unmatched_path_is_admin_fail_closed() {
+        assert_eq!(
+            classify(&Method::POST, "/some/future/endpoint"),
+            Permission::Admin
+        );
+    }
+
+    #[test]
+    fn patch_unmatched_path_is_admin_fail_closed() {
+        assert_eq!(classify(&Method::PATCH, "/ds/data"), Permission::Admin);
+    }
+
+    #[test]
+    fn get_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::GET, "/some/future/endpoint"),
+            Permission::Read
+        );
+    }
+
+    #[test]
+    fn head_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::HEAD, "/some/future/endpoint"),
+            Permission::Read
+        );
+    }
+
+    #[test]
+    fn post_rml_map_is_read() {
+        assert_eq!(classify(&Method::POST, "/rml/map"), Permission::Read);
+    }
+
+    #[test]
+    fn post_dataset_shacl_is_read() {
+        assert_eq!(classify(&Method::POST, "/ds/shacl"), Permission::Read);
+    }
+
+    #[test]
+    fn options_unmatched_path_is_read() {
+        assert_eq!(
+            classify(&Method::OPTIONS, "/some/future/endpoint"),
+            Permission::Read
         );
     }
 
