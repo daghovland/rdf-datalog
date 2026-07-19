@@ -145,6 +145,28 @@ pub fn execute(
                 (variables, rows)
             };
 
+            // ORDER BY
+            //
+            // `rows` here holds already-resolved `SolutionRow`s (post
+            // projection, so `(expr AS ?alias)` bindings are available as
+            // sort keys), while `sort_solutions`/`eval_expression_value_inner`
+            // operate on `PartialSub`. Bridge the two representations via
+            // `solution_row_to_partial` and resolve back afterwards. See
+            // `execute_select_inner` for the equivalent subquery path.
+            if !order_by.is_empty() {
+                let mut partial_rows: Vec<PartialSub> =
+                    rows.iter().map(solution_row_to_partial).collect();
+                sort_solutions(&mut partial_rows, order_by, datastore);
+                rows = partial_rows
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|(k, v)| (k, v.resolve(datastore)))
+                            .collect()
+                    })
+                    .collect();
+            }
+
             if *distinct {
                 let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
                     std::collections::HashSet::new();
