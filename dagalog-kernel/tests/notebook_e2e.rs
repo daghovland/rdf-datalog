@@ -284,24 +284,23 @@ async fn test_full_notebook_replay() {
     // Code cells, in notebook order:
     //   0  step1-turtle          1  step2-sparql
     //   2  step3-rml             3  step4-owl-ontology
-    //   4  step4-reason          5  step4-inferred-query
-    //   6  step5-sparql          7  step6-datalog
-    //   8  step6-query           9  step7-ottr
-    //  10  step7-query
+    //   4  step4-reason          5  step5-sparql
+    //   6  step6-datalog         7  step6-query
+    //   8  step7-ottr            9  step7-query
+    //  10  (blank placeholder cell — must be a no-op, see below)
     let expected_streams: &[(usize, &str)] = &[
         (0, "Loaded 10 triples."),
         (2, "Loaded 6 triples."),
         (3, "Loaded 4 triples."),
         (4, "Reasoning complete. 1 triple added."),
-        (7, "Applied 1 rule."),
-        (9, "Expanded 4 triples."),
+        (6, "Applied 1 rule."),
+        (8, "Expanded 4 triples."),
     ];
     let expected_rich_plain: &[(usize, &str)] = &[
         (1, "2 result(s)."),
         (5, "3 result(s)."),
-        (6, "3 result(s)."),
-        (8, "6 result(s)."),
-        (10, "5 result(s)."),
+        (7, "6 result(s)."),
+        (9, "5 result(s)."),
     ];
 
     let mut kernel = KernelHarness::start(&root).await;
@@ -335,4 +334,13 @@ async fn test_full_notebook_replay() {
             "cell {idx} text/plain mismatch"
         );
     }
+
+    // The trailing blank placeholder cell must be a true no-op: "ok" status
+    // (checked above) with no stream or rich output, not a SPARQL parse error.
+    let last = outcomes.last().expect("notebook has at least one cell");
+    assert_eq!(
+        last.stream, None,
+        "blank cell should produce no stream output"
+    );
+    assert_eq!(last.rich, None, "blank cell should produce no rich output");
 }

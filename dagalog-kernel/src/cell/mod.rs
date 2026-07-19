@@ -35,6 +35,11 @@ pub fn check_path_safe(untrusted: &Path) -> Result<(), String> {
 /// The kind of operation a notebook cell requests.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CellType {
+    /// A cell with no (or only whitespace) source — a no-op, matching how a
+    /// real Jupyter kernel treats running a blank cell. Without this, an
+    /// empty cell falls through to `Sparql("")`, which fails to parse as a
+    /// query and reports a confusing "SPARQL parse error" for doing nothing.
+    Empty,
     /// Default: treat the whole cell as a SPARQL query/update.
     Sparql(String),
     /// `%%rml <path>` — apply an RML mapping file.
@@ -57,6 +62,9 @@ pub enum CellType {
 
 /// Parse a cell string into a `CellType` by inspecting the first line for `%%` magics.
 pub fn detect_cell_type(cell: &str) -> CellType {
+    if cell.trim().is_empty() {
+        return CellType::Empty;
+    }
     let trimmed = cell.trim_start();
     if let Some(rest) = trimmed.strip_prefix("%%") {
         let (first_line, remainder) = rest.split_once('\n').unwrap_or((rest, ""));
@@ -108,6 +116,16 @@ mod tests {
     fn test_plain_sparql_cell() {
         let cell = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10";
         assert_eq!(detect_cell_type(cell), CellType::Sparql(cell.to_string()));
+    }
+
+    #[test]
+    fn test_empty_cell_is_noop_not_sparql() {
+        assert_eq!(detect_cell_type(""), CellType::Empty);
+    }
+
+    #[test]
+    fn test_whitespace_only_cell_is_noop() {
+        assert_eq!(detect_cell_type("   \n  \n"), CellType::Empty);
     }
 
     #[test]

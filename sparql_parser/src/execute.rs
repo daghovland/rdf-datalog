@@ -108,14 +108,17 @@ pub fn execute(
             group_by,
             having,
             dataset,
-            order_by: _,
+            order_by,
         } => {
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions = eval_components(
+            let budget =
+                select_solution_budget(*distinct, order_by, group_by, projection, *offset, *limit);
+            let solutions = eval_components_budgeted(
                 where_clause,
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
+                budget,
             );
 
             let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
@@ -562,36 +565,62 @@ fn eval_components(
     datastore: &Datastore,
     active_graph: ActiveGraph,
 ) -> Vec<PartialSub> {
-    // Phase C (#38): reorder a conjunctive group so a constraining conjunct is
-    // scheduled before a `UNION` it shares variables with, letting its bindings
-    // flow into the union arms via the existing per-arm threading. Gated by a
-    // cheap check so the common path (notably per-row OPTIONAL/MINUS/EXISTS
-    // inner evaluations) stays allocation-free and byte-for-byte unchanged.
-    if crate::component_ordering::should_reorder(components) {
+    eval_components_budgeted(components, solutions, datastore, active_graph, None)
+}
+
+/// Evaluate a component list, optionally short-circuiting once `budget`
+/// output solutions exist.
+///
+/// The budget is the maximum number of solutions the caller will ever
+/// consume (`OFFSET + LIMIT` at the top level). It is passed to the **last**
+/// component only: the last component's output *is* the final solution set in
+/// order, and projection is 1:1 with solutions while `OFFSET`/`LIMIT` are
+/// prefix operations, so returning the first `budget` solutions of the last
+/// component is byte-identical to producing them all and truncating. Earlier
+/// components must be fully materialised (a later component may filter, so we
+/// cannot know how many of their rows are needed). Only the BGP arm actually
+/// reads the budget; every other arm ignores it and relies on the caller's
+/// existing truncation. See issue #165.
+///
+/// Phase C (#38): before evaluating, a conjunctive group is reordered so a
+/// constraining conjunct is scheduled before a `UNION` it shares variables
+/// with, letting its bindings flow into the union arms via the existing
+/// per-arm threading. Gated by a cheap check so the common path (notably
+/// per-row `OPTIONAL`/`MINUS`/`EXISTS` inner evaluations) stays
+/// allocation-free and byte-for-byte unchanged. Reordering is
+/// result-preserving (bag-join commutes/distributes over bag-union), so it
+/// composes safely with the budget above: the budget applies to whichever
+/// component ends up physically last *after* reordering, and since only the
+/// BGP arm actually honors it, a non-BGP arm landing in last position simply
+/// ignores the budget and falls back on the caller's existing truncation — a
+/// missed optimisation in that combination, never a correctness issue.
+fn eval_components_budgeted(
+    components: &[QueryComponent],
+    solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+    active_graph: ActiveGraph,
+    budget: Option<usize>,
+) -> Vec<PartialSub> {
+    let ordered: Vec<&QueryComponent> = if crate::component_ordering::should_reorder(components) {
         let already_bound: HashSet<String> = solutions
             .first()
             .map(|sub| sub.keys().cloned().collect())
             .unwrap_or_default();
-        let ordered =
-            crate::component_ordering::order_components(components, &already_bound, datastore);
-        let mut current = solutions;
-        for comp in ordered {
-            current = eval_component(comp, current, datastore, &active_graph);
-            if current.is_empty() {
-                break;
-            }
-        }
-        current
+        crate::component_ordering::order_components(components, &already_bound, datastore)
     } else {
-        let mut current = solutions;
-        for comp in components {
-            current = eval_component(comp, current, datastore, &active_graph);
-            if current.is_empty() {
-                break;
-            }
+        components.iter().collect()
+    };
+
+    let mut current = solutions;
+    let last = ordered.len().saturating_sub(1);
+    for (i, comp) in ordered.into_iter().enumerate() {
+        let comp_budget = if i == last { budget } else { None };
+        current = eval_component(comp, current, datastore, &active_graph, comp_budget);
+        if current.is_empty() {
+            break;
         }
-        current
     }
+    current
 }
 
 fn eval_component(
@@ -599,9 +628,10 @@ fn eval_component(
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     match comp {
-        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph),
+        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph, budget),
 
         QueryComponent::PathPattern(subject, path, object) => solutions
             .into_iter()
@@ -741,6 +771,63 @@ fn compatible(a: &PartialSub, b: &PartialSub, datastore: &Datastore) -> bool {
     true
 }
 
+// ── LIMIT short-circuit budget (issue #165) ─────────────────────────────────
+
+/// The maximum number of solutions the top-level (or subquery) SELECT will
+/// ever consume, i.e. `OFFSET + LIMIT`, or `None` when the full solution set
+/// is required.
+///
+/// Returns `None` — disabling the short-circuit — whenever a solution-set
+/// modifier must observe every row: no `LIMIT` at all (an `OFFSET` alone is
+/// unbounded), `ORDER BY` (sorts the whole set), `GROUP BY` / aggregates
+/// (folds every row), or `DISTINCT` (a conservative first pass; counting
+/// distinct rows early is legal but not done here). Because SPARQL leaves row
+/// order unspecified without `ORDER BY`, returning the first `OFFSET + LIMIT`
+/// solutions is a legal — and here byte-identical — selection.
+fn select_solution_budget(
+    distinct: bool,
+    order_by: &[OrderCondition],
+    group_by: &[Expression],
+    projection: &[ProjectionElement],
+    offset: Option<u64>,
+    limit: Option<u64>,
+) -> Option<usize> {
+    let limit = limit? as usize;
+    if distinct || !order_by.is_empty() || !group_by.is_empty() {
+        return None;
+    }
+    if projection.iter().any(elem_has_aggregate) {
+        return None;
+    }
+    let offset = offset.map(|o| o as usize).unwrap_or(0);
+    Some(offset.saturating_add(limit))
+}
+
+/// True if the same variable name appears in more than one position of the
+/// triple pattern (subject/predicate/object plus the graph variable, when the
+/// active graph is variable). Such repetition means a matched quad can be
+/// dropped by the equality re-check in `eval_triple_pattern_core`, so a
+/// quad-level `LIMIT` would under-produce and must not be applied.
+fn pattern_repeats_variable(tp: &TriplePattern, active_graph: &ActiveGraph) -> bool {
+    let mut names: Vec<&str> = Vec::with_capacity(4);
+    for term in [&tp.subject, &tp.predicate, &tp.object] {
+        if let Term::Variable(v) = term {
+            names.push(v.as_str());
+        }
+    }
+    if let ActiveGraph::Variable(v) = active_graph {
+        names.push(v.as_str());
+    }
+    for i in 0..names.len() {
+        for j in (i + 1)..names.len() {
+            if names[i] == names[j] {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // ── BGP evaluation ────────────────────────────────────────────────────────────
 
 fn eval_bgp(
@@ -748,6 +835,7 @@ fn eval_bgp(
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     let already_bound: HashSet<String> = solutions
         .first()
@@ -756,12 +844,39 @@ fn eval_bgp(
     let order = crate::join_ordering::order_patterns(patterns, &already_bound, datastore);
 
     let mut current = solutions;
-    for &idx in &order {
+    let last = order.len().saturating_sub(1);
+    for (pos, &idx) in order.iter().enumerate() {
         let pattern = &patterns[idx];
-        current = current
-            .into_iter()
-            .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph))
-            .collect();
+        // Only the last-executed pattern produces the BGP's final output, so
+        // only it may honour the row budget (issue #165). Earlier patterns
+        // feed the join and must be fully materialised.
+        let pat_budget = if pos == last { budget } else { None };
+        current = match pat_budget {
+            Some(b) => {
+                // Accumulate across input solutions with a shrinking budget so
+                // the total never exceeds `b`, preserving the exact prefix the
+                // unbudgeted evaluation would have produced.
+                let mut acc = Vec::new();
+                for sub in current {
+                    if acc.len() >= b {
+                        break;
+                    }
+                    let remaining = b - acc.len();
+                    acc.extend(eval_triple_pattern(
+                        pattern,
+                        &sub,
+                        datastore,
+                        active_graph,
+                        Some(remaining),
+                    ));
+                }
+                acc
+            }
+            None => current
+                .into_iter()
+                .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph, None))
+                .collect(),
+        };
         if current.is_empty() {
             break;
         }
@@ -774,6 +889,7 @@ fn eval_triple_pattern(
     sub: &PartialSub,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     // RDF 1.2 triple-term subject: `<<( s p o )>> pred obj`. Resolve the
     // embedded pattern against `reified_triples` first (yielding one or more
@@ -801,19 +917,23 @@ fn eval_triple_pattern(
                 }
             }
             if ok {
+                // The triple-term subject path forces the subject and may fan
+                // out over multiple candidates, so the quad-take budget is not
+                // sound here — pass `None` and let the outer truncation apply.
                 results.extend(eval_triple_pattern_core(
                     tp,
                     Some(term_id),
                     &merged,
                     datastore,
                     active_graph,
+                    None,
                 ));
             }
         }
         return results;
     }
 
-    eval_triple_pattern_core(tp, None, sub, datastore, active_graph)
+    eval_triple_pattern_core(tp, None, sub, datastore, active_graph, budget)
 }
 
 /// Core outer-pattern evaluation shared by plain triple patterns and the
@@ -826,6 +946,7 @@ fn eval_triple_pattern_core(
     sub: &PartialSub,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
@@ -863,7 +984,21 @@ fn eval_triple_pattern_core(
     let p = p_match.into_query_arg();
     let o = o_match.into_query_arg();
 
-    for quad in datastore.quads_matching(g, s, p, o) {
+    // A row budget lets us stop enumerating matches early (issue #165). Pushing
+    // the budget down as a *quad* limit (avoiding materialising every match)
+    // is only sound when each matched quad yields exactly one solution — i.e.
+    // the pattern has no repeated variable across its positions, which would
+    // otherwise drop quads via the `ok` check below and under-produce. When
+    // that gate fails we still cap the produced solutions, just after a full
+    // scan.
+    let quad_limit = match budget {
+        Some(b) if forced_subject.is_none() && !pattern_repeats_variable(tp, active_graph) => {
+            Some(b)
+        }
+        _ => None,
+    };
+
+    for quad in datastore.quads_matching_limited(g, s, p, o, quad_limit) {
         let mut new_sub = sub.clone();
         let mut ok = true;
 
@@ -904,6 +1039,13 @@ fn eval_triple_pattern_core(
 
         if ok {
             new_solutions.push(new_sub);
+            // Always-safe backstop: we only ever need `budget` solutions from
+            // this call, regardless of whether the quad-take gate applied.
+            if let Some(b) = budget {
+                if new_solutions.len() >= b {
+                    break;
+                }
+            }
         }
     }
     new_solutions
@@ -2222,7 +2364,14 @@ fn execute_select_inner(
     };
 
     let initial: Vec<PartialSub> = vec![HashMap::new()];
-    let solutions = eval_components(where_clause, initial, datastore, (*active_graph).clone());
+    let budget = select_solution_budget(*distinct, order_by, group_by, projection, *offset, *limit);
+    let solutions = eval_components_budgeted(
+        where_clause,
+        initial,
+        datastore,
+        (*active_graph).clone(),
+        budget,
+    );
 
     let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
@@ -2390,7 +2539,7 @@ fn eval_path_pattern(
                 predicate: Term::Constant(gel.clone()),
                 object: object_term.clone(),
             };
-            eval_triple_pattern(&tp, &sub, datastore, active_graph)
+            eval_triple_pattern(&tp, &sub, datastore, active_graph, None)
         }
 
         PropertyPath::Sequence(steps) => {
@@ -3304,6 +3453,132 @@ mod partial_sub_value_tests {
             PartialSubValue::Computed(never_interned).to_id(&ds),
             None,
             "a Computed value never added to the store has no id"
+        );
+    }
+}
+
+#[cfg(test)]
+mod limit_budget_tests {
+    use super::*;
+    use crate::ast::{
+        Aggregate, Expression, OrderCondition, ProjectionElement, Term, TriplePattern,
+    };
+
+    fn var(name: &str) -> Term {
+        Term::Variable(name.to_string())
+    }
+
+    fn iri_const(iri: &str) -> Term {
+        Term::Constant(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
+            IriReference(iri.to_string()),
+        )))
+    }
+
+    /// A plain `SELECT ... LIMIT n` (no ORDER BY / DISTINCT / GROUP BY /
+    /// aggregate) yields a budget of `OFFSET + LIMIT`, the number of rows the
+    /// query can ever return.
+    #[test]
+    fn budget_is_offset_plus_limit_for_plain_select() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, None, Some(10)),
+            Some(10),
+            "LIMIT 10 with no OFFSET budgets 10 rows"
+        );
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, Some(5), Some(10)),
+            Some(15),
+            "OFFSET 5 LIMIT 10 must fetch 15 rows before slicing"
+        );
+    }
+
+    /// No LIMIT means the whole solution set is required — an OFFSET alone is
+    /// unbounded, so there is no budget.
+    #[test]
+    fn no_limit_means_no_budget() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, None, None),
+            None
+        );
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, Some(3), None),
+            None,
+            "OFFSET without LIMIT is unbounded"
+        );
+    }
+
+    /// Modifiers that must observe every row disable the short-circuit.
+    #[test]
+    fn full_set_modifiers_disable_budget() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+
+        assert_eq!(
+            select_solution_budget(true, &[], &[], &proj, None, Some(10)),
+            None,
+            "DISTINCT (conservative first pass) disables the budget"
+        );
+
+        let order = vec![OrderCondition {
+            expression: Expression::Variable("s".into()),
+            ascending: true,
+        }];
+        assert_eq!(
+            select_solution_budget(false, &order, &[], &proj, None, Some(10)),
+            None,
+            "ORDER BY must sort the whole set"
+        );
+
+        let group = vec![Expression::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &group, &proj, None, Some(10)),
+            None,
+            "GROUP BY must fold every row"
+        );
+
+        let agg_proj = vec![ProjectionElement::Expression(
+            Expression::Aggregate(Aggregate::CountStar),
+            "c".into(),
+        )];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &agg_proj, None, Some(10)),
+            None,
+            "an aggregate projection must fold every row"
+        );
+    }
+
+    /// The quad-take gate: distinct variable positions can be truncated at the
+    /// quad level; a repeated variable cannot (a matched quad may be dropped).
+    #[test]
+    fn repeated_variable_gate() {
+        let distinct = TriplePattern {
+            subject: var("s"),
+            predicate: var("p"),
+            object: var("o"),
+        };
+        assert!(
+            !pattern_repeats_variable(&distinct, &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID)),
+            "s/p/o are distinct — quad-take is sound"
+        );
+
+        let self_loop = TriplePattern {
+            subject: var("x"),
+            predicate: iri_const("http://example.org/p"),
+            object: var("x"),
+        };
+        assert!(
+            pattern_repeats_variable(&self_loop, &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID)),
+            "?x ... ?x repeats a variable — quad-take must be disabled"
+        );
+
+        // The graph variable colliding with a pattern variable also counts.
+        assert!(
+            pattern_repeats_variable(&distinct, &ActiveGraph::Variable("s".into())),
+            "graph variable equal to the subject variable is a repeat"
+        );
+        assert!(
+            !pattern_repeats_variable(&distinct, &ActiveGraph::Variable("g".into())),
+            "a fresh graph variable is not a repeat"
         );
     }
 }
