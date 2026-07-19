@@ -628,7 +628,33 @@ fn eval_components_budgeted(
             .first()
             .map(|sub| sub.keys().cloned().collect())
             .unwrap_or_default();
-        crate::component_ordering::order_components(components, &already_bound, datastore)
+        // Correctness-critical, unlike `already_bound` above: variables
+        // guaranteed bound on *every* incoming row, not just the first one.
+        // Hoisting a conjunct across an `OPTIONAL`/`MINUS` barrier (issue
+        // #174) must never be permitted based on a variable that's only
+        // *conditionally* bound (e.g. bound in one `UNION` arm but not
+        // another feeding into this call) — see
+        // `component_ordering::order_components` for why an
+        // over-approximation here is unsound, not just imprecise.
+        let guaranteed_bound: HashSet<String> = {
+            let mut rows = solutions.iter();
+            match rows.next() {
+                None => HashSet::new(),
+                Some(first) => {
+                    let mut acc: HashSet<String> = first.keys().cloned().collect();
+                    for sub in rows {
+                        acc.retain(|k| sub.contains_key(k));
+                    }
+                    acc
+                }
+            }
+        };
+        crate::component_ordering::order_components(
+            components,
+            &already_bound,
+            &guaranteed_bound,
+            datastore,
+        )
     } else {
         components.iter().collect()
     };
