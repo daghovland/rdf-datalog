@@ -228,3 +228,48 @@ fn nested_optional_with_union_constraint() {
     // a: q->y1, r->z1 so z bound; b: no q so z unbound. Both kept via :keep.
     assert_eq!(pairs(&ds, &q, "s", "z"), vec!["a,z1", "b,<unbound>"]);
 }
+
+/// Interaction with the #165 row-budget short-circuit: a query with both a
+/// reorderable `UNION`-constraint group and a top-level `LIMIT` must return
+/// exactly the first `n` rows of the unlimited result — reordering changes
+/// *which* component ends up physically last (here the constraining BGP,
+/// originally last, is hoisted before the `UNION`, so the `UNION` ends up
+/// last instead), and the budget is only ever passed to whatever is last.
+/// Since `UNION` doesn't honor the budget itself, correctness must fall back
+/// on the caller's own truncation rather than a broken/missing cutoff.
+#[test]
+fn union_constraint_reorder_composes_with_limit() {
+    let ds = ds_from(
+        r#"@prefix : <http://example.org/> .
+           :a :p1 :x1 .
+           :b :p1 :x1 .
+           :c :p2 :x1 .
+           :d :p2 :x1 .
+           :a :pc :y .
+           :b :pc :y .
+           :c :pc :y .
+           :d :pc :y .
+        "#,
+    );
+    let unlimited = format!(
+        "{PREFIX} SELECT ?s WHERE {{ {{ ?s :p1 ?o1 }} UNION {{ ?s :p2 ?o1 }} ?s :pc ?o2 }}"
+    );
+    let limited = format!("{unlimited} LIMIT 2");
+
+    assert_eq!(row_count(&ds, &unlimited), 4, "sanity: 4 rows unlimited");
+    let full = values(&ds, &unlimited, "s");
+    let mut top2 = values(&ds, &limited, "s");
+    top2.sort();
+
+    assert_eq!(
+        row_count(&ds, &limited),
+        2,
+        "LIMIT 2 must return exactly 2 rows even though the group was reordered"
+    );
+    // Every limited row must be one that actually appears in the unlimited
+    // result (no rows invented or dropped-then-reintroduced by reordering).
+    assert!(
+        top2.iter().all(|s| full.contains(s)),
+        "limited rows {top2:?} must be a subset of the unlimited rows {full:?}"
+    );
+}
