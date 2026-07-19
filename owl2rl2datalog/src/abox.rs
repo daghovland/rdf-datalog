@@ -28,21 +28,29 @@ use owl_ontology::{
 
 /// Intern an `Individual` as a `GraphElementId`.
 ///
-/// Named individuals become IRI nodes; anonymous individuals become blank
-/// nodes reusing the parser-assigned id. Note that this shares the `u32` blank
-/// node space with [`Datastore::new_anonymous_blank_node`], so an anonymous
-/// individual could in principle collide with a blank node ingested from RDF
-/// into the same store; giving anonymous individuals a distinct namespace is
-/// left to [#183](https://github.com/daghovland/rdf-datalog/issues/183)
-/// follow-up work.
+/// Named individuals become IRI nodes. Anonymous individuals are routed
+/// through [`GraphElementManager::get_or_create_named_anon_resource`] keyed
+/// by a namespaced string derived from the parser-assigned id (rather than
+/// reusing that raw `u32` directly as the `AnonymousBlankNode` id). That
+/// method dedups by string key — so repeated references to the same
+/// anonymous individual within one ontology still intern to the same node —
+/// and on a cache miss allocates a fresh id from
+/// `GraphElementManager::anon_resource_count`, the single monotonic counter
+/// that also backs [`Datastore::new_anonymous_blank_node`] (used by
+/// Turtle/TriG/N-Triples/JSON-LD blank-node ingestion). Since both sources
+/// draw from that one counter, an anonymous individual's id can never
+/// numerically collide with an RDF-ingested blank node's id regardless of
+/// allocation order, fixing [#183](https://github.com/daghovland/rdf-datalog/issues/183).
+/// The `owl-anon-individual#` prefix guards against a string-key collision
+/// with a raw Turtle blank-node label happening to equal the bare id.
 fn intern_individual(datastore: &mut Datastore, individual: &Individual) -> GraphElementId {
     match individual {
         Individual::NamedIndividual(FullIri(iri)) => {
             datastore.add_node_resource(RdfResource::Iri(iri.clone()))
         }
-        Individual::AnonymousIndividual(id) => {
-            datastore.add_node_resource(RdfResource::AnonymousBlankNode(*id))
-        }
+        Individual::AnonymousIndividual(id) => datastore
+            .resources
+            .get_or_create_named_anon_resource(format!("owl-anon-individual#{id}")),
     }
 }
 
@@ -132,4 +140,81 @@ pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> usize {
         }
     }
     added
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dag_rdf::GraphElement;
+    use ingress::OntologyVersion;
+
+    /// Regression test for [#183](https://github.com/daghovland/rdf-datalog/issues/183):
+    /// an anonymous individual materialised by `assert_abox` must never
+    /// collide with an unrelated RDF-ingested blank node in the same
+    /// `Datastore`, even when the OWL parser's own anonymous-individual
+    /// counter and `Datastore::new_anonymous_blank_node`'s counter would,
+    /// coincidentally, assign the same raw `u32`.
+    ///
+    /// `Datastore::new_anonymous_blank_node` (i.e.
+    /// `GraphElementManager::create_unnamed_anon_resource`) increments its
+    /// counter *before* minting, so the first call always produces
+    /// `RdfResource::AnonymousBlankNode(1)`. We hand-build an ontology whose
+    /// single anonymous individual carries that exact raw id (`1`), which is
+    /// the only way to deterministically reproduce the collision: a
+    /// parser-driven id can't be pinned down this precisely.
+    #[test]
+    fn anonymous_individual_does_not_collide_with_rdf_blank_node() {
+        let mut ds = Datastore::new(100);
+
+        // An RDF-ingested blank node, e.g. from Turtle. This is the exact
+        // same primitive `GraphElementManager::create_unnamed_anon_resource`
+        // that backs `get_or_create_named_anon_resource`, so it faithfully
+        // stands in for a blank node parsed from RDF data. It is always
+        // `AnonymousBlankNode(1)` for a freshly-created `Datastore`.
+        let rdf_blank_node_id = ds.new_anonymous_blank_node();
+
+        // An ontology with one anonymous individual asserted as a `:Thing`,
+        // carrying the raw id `1` — matching the RDF blank node's raw id
+        // above, to reproduce the collision precisely.
+        let class_iri = IriReference("http://example.org/Thing".to_string());
+        let ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![Axiom::AxiomAssertion(Assertion::ClassAssertion(
+                vec![],
+                ClassExpression::ClassName(FullIri(class_iri.clone())),
+                Individual::AnonymousIndividual(1),
+            ))],
+        );
+
+        let added = assert_abox(&mut ds, &ontology);
+        assert_eq!(added, 1, "the ClassAssertion must materialise one triple");
+
+        // Find the subject of the materialised `?s rdf:type :Thing` triple —
+        // that's the GraphElementId the anonymous individual was interned to.
+        let rdf_type_id = ds
+            .resources
+            .resource_map
+            .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                RDF_TYPE.to_owned(),
+            ))))
+            .copied()
+            .expect("rdf:type must have been interned by assert_abox");
+        let class_id = ds
+            .resources
+            .resource_map
+            .get(&GraphElement::NodeOrEdge(RdfResource::Iri(class_iri)))
+            .copied()
+            .expect(":Thing must have been interned by assert_abox");
+        let matches = ds.quads_matching(None, None, Some(rdf_type_id), Some(class_id));
+        assert_eq!(matches.len(), 1, "exactly one individual must be typed");
+        let anon_individual_id = matches[0].subject;
+
+        assert_ne!(
+            anon_individual_id, rdf_blank_node_id,
+            "an anonymous individual materialised by assert_abox must not collide with an \
+             unrelated RDF-ingested blank node in the same Datastore"
+        );
+    }
 }
