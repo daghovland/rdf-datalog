@@ -280,6 +280,30 @@ impl Datastore {
         predicate: Option<GraphElementId>,
         object: Option<GraphElementId>,
     ) -> Vec<Quad> {
+        self.quads_matching_limited(graph, subject, predicate, object, None)
+    }
+
+    /// Like [`Datastore::quads_matching`], but stops after at most `limit`
+    /// quads when `limit` is `Some`.
+    ///
+    /// The underlying index scans are lazy iterators, so a bounded `limit`
+    /// avoids materialising the whole matching set — the enabler for the
+    /// SPARQL `LIMIT` short-circuit (issue #165). `limit == None` behaves
+    /// exactly like [`Datastore::quads_matching`] (return everything).
+    ///
+    /// Truncating quads is only sound for the caller when every returned quad
+    /// yields exactly one solution — i.e. the triple pattern has no repeated
+    /// variable across its positions. The executor owns that gate; this
+    /// method only implements the bounded scan.
+    pub fn quads_matching_limited(
+        &self,
+        graph: Option<GraphElementId>,
+        subject: Option<GraphElementId>,
+        predicate: Option<GraphElementId>,
+        object: Option<GraphElementId>,
+        limit: Option<usize>,
+    ) -> Vec<Quad> {
+        let take = limit.unwrap_or(usize::MAX);
         match (graph, subject, predicate, object) {
             (Some(g), Some(s), Some(p), Some(o)) => {
                 if self.named_graphs.contains(&Quad {
@@ -301,50 +325,74 @@ impl Datastore {
             (Some(g), Some(s), Some(p), None) => self
                 .named_graphs
                 .get_quads_with_id_subject_predicate(g, s, p)
+                .take(take)
                 .collect(),
             (Some(g), Some(s), None, Some(o)) => self
                 .named_graphs
                 .get_quads_with_id_subject_object(g, s, o)
+                .take(take)
                 .collect(),
             (Some(g), None, Some(p), Some(o)) => self
                 .named_graphs
                 .get_quads_with_id_object_predicate(g, o, p)
+                .take(take)
                 .collect(),
-            (Some(g), Some(s), None, None) => {
-                self.named_graphs.get_quads_with_id_subject(g, s).collect()
-            }
+            (Some(g), Some(s), None, None) => self
+                .named_graphs
+                .get_quads_with_id_subject(g, s)
+                .take(take)
+                .collect(),
             (Some(g), None, Some(p), None) => self
                 .named_graphs
                 .get_quads_with_id_predicate(g, p)
+                .take(take)
                 .collect(),
-            (Some(g), None, None, Some(o)) => {
-                self.named_graphs.get_quads_with_id_object(g, o).collect()
-            }
-            (Some(g), None, None, None) => self.named_graphs.get_graph(g).collect(),
+            (Some(g), None, None, Some(o)) => self
+                .named_graphs
+                .get_quads_with_id_object(g, o)
+                .take(take)
+                .collect(),
+            (Some(g), None, None, None) => self.named_graphs.get_graph(g).take(take).collect(),
             (None, Some(s), Some(p), Some(o)) => {
                 // This is tricky as we don't have a cross-graph subject-predicate-object index easily accessible that returns quads
                 // But we can iterate over all quads and filter, or if we assume it's small...
                 self.named_graphs
                     .get_all_quads()
                     .filter(|q| q.subject == s && q.predicate == p && q.obj == o)
+                    .take(take)
                     .collect()
             }
             (None, Some(s), Some(p), None) => self
                 .named_graphs
                 .get_quads_with_subject_predicate(s, p)
+                .take(take)
                 .collect(),
             (None, Some(s), None, Some(o)) => self
                 .named_graphs
                 .get_quads_with_subject_object(s, o)
+                .take(take)
                 .collect(),
             (None, None, Some(p), Some(o)) => self
                 .named_graphs
                 .get_quads_with_object_predicate(o, p)
+                .take(take)
                 .collect(),
-            (None, Some(s), None, None) => self.named_graphs.get_quads_with_subject(s).collect(),
-            (None, None, Some(p), None) => self.named_graphs.get_quads_with_predicate(p).collect(),
-            (None, None, None, Some(o)) => self.named_graphs.get_quads_with_object(o).collect(),
-            (None, None, None, None) => self.named_graphs.get_all_quads().collect(),
+            (None, Some(s), None, None) => self
+                .named_graphs
+                .get_quads_with_subject(s)
+                .take(take)
+                .collect(),
+            (None, None, Some(p), None) => self
+                .named_graphs
+                .get_quads_with_predicate(p)
+                .take(take)
+                .collect(),
+            (None, None, None, Some(o)) => self
+                .named_graphs
+                .get_quads_with_object(o)
+                .take(take)
+                .collect(),
+            (None, None, None, None) => self.named_graphs.get_all_quads().take(take).collect(),
         }
     }
 }
