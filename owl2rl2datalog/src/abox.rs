@@ -33,7 +33,7 @@ use owl_ontology::{
 /// node space with [`Datastore::new_anonymous_blank_node`], so an anonymous
 /// individual could in principle collide with a blank node ingested from RDF
 /// into the same store; giving anonymous individuals a distinct namespace is
-/// left to [#159](https://github.com/daghovland/rdf-datalog/issues/159)
+/// left to [#183](https://github.com/daghovland/rdf-datalog/issues/183)
 /// follow-up work.
 fn intern_individual(datastore: &mut Datastore, individual: &Individual) -> GraphElementId {
     match individual {
