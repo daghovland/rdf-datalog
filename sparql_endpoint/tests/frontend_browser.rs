@@ -443,6 +443,143 @@ async fn export_buttons_appear_after_query() {
     driver.quit().await.unwrap();
 }
 
+// ── Default LIMIT + pagination (issue #165) ────────────────────────────────────
+
+/// A store with `n` `ex:sK ex:p ex:oK` triples, as Turtle.
+fn many_triples(n: usize) -> String {
+    let mut s = String::from("@prefix ex: <http://example.org/> .\n");
+    for k in 0..n {
+        s.push_str(&format!("ex:s{k} ex:p ex:o{k} .\n"));
+    }
+    s
+}
+
+/// A SELECT with no explicit LIMIT gets a default page and Prev/Next controls.
+#[tokio::test]
+async fn default_limit_shows_pagination_for_unlimited_select() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(&many_triples(150)).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(
+        wait_for_element(&driver, "#pager-next", 4000).await,
+        "pagination controls should appear for an unlimited SELECT"
+    );
+    // First page: exactly DEFAULT_PAGE_SIZE (100) rows, Prev disabled.
+    let count = driver
+        .find(By::Css("#query-result .count"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        count.starts_with("100 result"),
+        "first page should hold the default 100 rows, got: {count}"
+    );
+    let prev = driver.find(By::Css("#pager-prev")).await.unwrap();
+    assert!(
+        !prev.is_enabled().await.unwrap(),
+        "Prev must be disabled on the first page"
+    );
+    driver.quit().await.unwrap();
+}
+
+/// A user-supplied LIMIT is respected and suppresses pagination entirely.
+#[tokio::test]
+async fn explicit_limit_suppresses_pagination() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(&many_triples(150)).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_text(&driver, "#query-result .count", 4000).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let count = driver
+        .find(By::Css("#query-result .count"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        count.starts_with("5 result"),
+        "explicit LIMIT 5 must be honoured, got: {count}"
+    );
+    assert!(
+        driver.find(By::Css(".pager")).await.is_err(),
+        "no pagination controls when the user supplies their own LIMIT"
+    );
+    driver.quit().await.unwrap();
+}
+
+/// Clicking Next advances the OFFSET window to the second page.
+#[tokio::test]
+async fn pagination_next_advances_offset() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(&many_triples(150)).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#pager-next", 4000).await);
+    driver
+        .find(By::Css("#pager-next"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    // Second page: rows 101–150, and Prev becomes enabled.
+    let deadline = Instant::now() + Duration::from_millis(4000);
+    loop {
+        if let Ok(el) = driver.find(By::Css("#pager-info")).await
+            && let Ok(t) = el.text().await
+            && t.contains("Rows 101")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "second page info (Rows 101–…) never appeared"
+        );
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+    let prev = driver.find(By::Css("#pager-prev")).await.unwrap();
+    assert!(
+        prev.is_enabled().await.unwrap(),
+        "Prev must be enabled on the second page"
+    );
+    driver.quit().await.unwrap();
+}
+
 // ── Class hierarchy view ──────────────────────────────────────────────────────
 
 #[tokio::test]

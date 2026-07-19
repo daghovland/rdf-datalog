@@ -620,6 +620,13 @@
     const PREFIXES_KEY = 'dagalog-prefixes';
     const HISTORY_KEY  = 'dagalog-history';
     const GRAPH_NODE_LIMIT = 200;
+    // Default page size applied to SELECT queries that carry no explicit
+    // LIMIT/OFFSET, so a query over a large store returns a bounded first
+    // page with Prev/Next pagination instead of every row (issue #165).
+    const DEFAULT_PAGE_SIZE = 100;
+    // Pagination context for the current result, or null when the query
+    // manages its own row window (explicit LIMIT/OFFSET, or a non-SELECT form).
+    let pager = null;
 
     const DEFAULT_PREFIXES = [
       ['rdf',     'http://www.w3.org/1999/02/22-rdf-syntax-ns#'],
@@ -1059,10 +1066,67 @@
     }
 
     // ── Query editor ───────────────────────────────────────────────────────────
-    async function runQuery() {
+    // Which query form this is (select/ask/construct/describe), by the first
+    // such keyword. Used to decide whether a default LIMIT may be appended.
+    function queryForm(q) {
+      const m = q.match(/\b(SELECT|ASK|CONSTRUCT|DESCRIBE)\b/i);
+      return m ? m[1].toLowerCase() : 'unknown';
+    }
+
+    // True if the user already controls the row window themselves.
+    function queryHasLimitOrOffset(q) {
+      return /\b(LIMIT|OFFSET)\b/i.test(q);
+    }
+
+    // Append Prev/Next controls below the result. Next is disabled once a page
+    // comes back short (no further full page), Prev when on the first page.
+    function renderPagination(container, rowCount) {
+      if (!pager) return;
+      const bar = document.createElement('div');
+      bar.className = 'pager';
+      bar.style.cssText = 'display:flex;gap:0.5rem;align-items:center;margin-top:0.6rem';
+
+      const prev = document.createElement('button');
+      prev.id = 'pager-prev';
+      prev.textContent = '‹ Prev';
+      prev.disabled = pager.offset === 0;
+      prev.onclick = () => runQueryPage(Math.max(0, pager.offset - pager.pageSize));
+
+      const next = document.createElement('button');
+      next.id = 'pager-next';
+      next.textContent = 'Next ›';
+      next.disabled = rowCount < pager.pageSize;
+      next.onclick = () => runQueryPage(pager.offset + pager.pageSize);
+
+      const info = document.createElement('span');
+      info.id = 'pager-info';
+      info.className = 'hint';
+      info.textContent = rowCount === 0
+        ? 'No more results (default LIMIT ' + pager.pageSize + ' applied)'
+        : 'Rows ' + (pager.offset + 1) + '–' + (pager.offset + rowCount)
+          + ' · default LIMIT ' + pager.pageSize + ' applied · add your own LIMIT to disable paging';
+      bar.append(prev, next, info);
+      container.appendChild(bar);
+    }
+
+    async function runQuery() { return runQueryPage(0); }
+
+    async function runQueryPage(offset) {
       const rawQuery = document.getElementById('query').value.trim();
       if (!rawQuery) return;
-      const query     = prependPrefixes(rawQuery);
+      // Paginate only SELECT queries with no explicit LIMIT/OFFSET; anything
+      // else runs verbatim (issue #165).
+      const paginate = queryForm(rawQuery) === 'select' && !queryHasLimitOrOffset(rawQuery);
+      let effectiveRaw = rawQuery;
+      if (paginate) {
+        pager = { rawQuery, pageSize: DEFAULT_PAGE_SIZE, offset };
+        // This endpoint's parser expects LIMIT before OFFSET.
+        effectiveRaw = rawQuery + ' LIMIT ' + DEFAULT_PAGE_SIZE
+          + (offset ? ' OFFSET ' + offset : '');
+      } else {
+        pager = null;
+      }
+      const query     = prependPrefixes(effectiveRaw);
       const btn       = document.getElementById('run-btn');
       const container = document.getElementById('query-result');
       btn.disabled    = true;
@@ -1111,6 +1175,7 @@
           renderTable(container, data, null);
           addExportButtons(container, data);
         }
+        renderPagination(container, count ?? 0);
         saveHistory(rawQuery, count);
       } catch (e) {
         showMsg(container, e.message, false);
