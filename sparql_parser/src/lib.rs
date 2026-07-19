@@ -1669,14 +1669,19 @@ fn parse_function_call<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
-        // Function name: bare word, prefixed IRI, or full <IRI>
+        // Function name: full <IRI>, prefixed IRI, or bare word.
+        // Prefixed names (`xsd:integer`) and full IRIs must be tried before the
+        // bare-word fallback: `take_while1` on alphanumeric/`_` greedily matches
+        // just the prefix of `xsd:integer` (stopping at `:`) and *succeeds*, so
+        // if it were tried first `alt` would commit to that branch and never
+        // backtrack into `parse_prefixed_name` — see #186.
         let (input, fname) = alt((
+            map(parse_iri_ref, |iri| iri.0),
+            map(parse_prefixed_name(ctx), |iri| iri.0),
             map(
                 take_while1(|c: char| c.is_alphanumeric() || c == '_'),
                 |s: &str| s.to_string(),
             ),
-            map(parse_iri_ref, |iri| iri.0),
-            map(parse_prefixed_name(ctx), |iri| iri.0),
         ))(input)?;
 
         let (input, _) = sp(input)?;
