@@ -581,6 +581,19 @@ fn eval_components(
 /// cannot know how many of their rows are needed). Only the BGP arm actually
 /// reads the budget; every other arm ignores it and relies on the caller's
 /// existing truncation. See issue #165.
+///
+/// Phase C (#38): before evaluating, a conjunctive group is reordered so a
+/// constraining conjunct is scheduled before a `UNION` it shares variables
+/// with, letting its bindings flow into the union arms via the existing
+/// per-arm threading. Gated by a cheap check so the common path (notably
+/// per-row `OPTIONAL`/`MINUS`/`EXISTS` inner evaluations) stays
+/// allocation-free and byte-for-byte unchanged. Reordering is
+/// result-preserving (bag-join commutes/distributes over bag-union), so it
+/// composes safely with the budget above: the budget applies to whichever
+/// component ends up physically last *after* reordering, and since only the
+/// BGP arm actually honors it, a non-BGP arm landing in last position simply
+/// ignores the budget and falls back on the caller's existing truncation — a
+/// missed optimisation in that combination, never a correctness issue.
 fn eval_components_budgeted(
     components: &[QueryComponent],
     solutions: Vec<PartialSub>,
@@ -588,9 +601,19 @@ fn eval_components_budgeted(
     active_graph: ActiveGraph,
     budget: Option<usize>,
 ) -> Vec<PartialSub> {
+    let ordered: Vec<&QueryComponent> = if crate::component_ordering::should_reorder(components) {
+        let already_bound: HashSet<String> = solutions
+            .first()
+            .map(|sub| sub.keys().cloned().collect())
+            .unwrap_or_default();
+        crate::component_ordering::order_components(components, &already_bound, datastore)
+    } else {
+        components.iter().collect()
+    };
+
     let mut current = solutions;
-    let last = components.len().saturating_sub(1);
-    for (i, comp) in components.iter().enumerate() {
+    let last = ordered.len().saturating_sub(1);
+    for (i, comp) in ordered.into_iter().enumerate() {
         let comp_budget = if i == last { budget } else { None };
         current = eval_component(comp, current, datastore, &active_graph, comp_budget);
         if current.is_empty() {

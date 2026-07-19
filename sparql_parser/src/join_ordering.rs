@@ -113,7 +113,7 @@ fn resolve_constant(term: &Term, datastore: &Datastore) -> Option<Option<dag_rdf
 /// `.len()` lookups on `QuadTable`'s public index fields — no allocation,
 /// no `.collect()`. Returns 0 if a constant term doesn't resolve to a known
 /// resource (the pattern can never match).
-fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> usize {
+pub(crate) fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> usize {
     let table = &datastore.named_graphs;
 
     let subject = resolve_constant(&tp.subject, datastore);
