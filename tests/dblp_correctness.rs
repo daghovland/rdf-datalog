@@ -30,13 +30,18 @@ Contact: hovlanddag@gmail.com
 //! `CEIL`, `FLOOR`, `ROUND`, `YEAR`, `MONTH`, `DAY`) as missing from
 //! `sparql_parser::execute`. As observed against this fixture, most of those
 //! now execute without erroring (their correctness isn't asserted here —
-//! only that they don't crash). Two of them, `STRSTARTS` and `STRENDS`, are
-//! not just unimplemented at execution time but entirely absent from the
-//! parser grammar, so the `strstarts`/`strends` benchmark queries are a hard
-//! `ParseFail` rather than an `ExecFail`. The assertions below are
-//! calibrated to that observed reality: a small, named allowlist for the two
-//! known-unparseable queries (so any *other* parse failure is a real
-//! regression), plus loose headroom on the overall OK count.
+//! only that they don't crash). `STRSTARTS`/`STRENDS` themselves were never
+//! missing from the grammar; the two benchmark queries that use them
+//! (`strstarts`, `strends`) previously hard-failed to parse for an unrelated
+//! reason — the `xsd:integer(...)` numeric-cast wrapper around them hit a
+//! parser bug where prefixed-name function calls (`xsd:integer(...)`, or any
+//! `prefix:localname(...)`) failed to parse at all, fixed in
+//! [#186](https://github.com/daghovland/rdf-datalog/issues/186). Both
+//! queries now parse and execute cleanly (see `KNOWN_PARSE_GAPS` below,
+//! which is now empty). The assertions are still calibrated with loose
+//! headroom on the overall OK count, since `xsd:integer(...)` itself is not
+//! yet implemented as a value-casting function at execution time (it
+//! evaluates to unbound rather than erroring).
 
 use dag_rdf::Datastore;
 use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
@@ -222,14 +227,15 @@ fn dblp_correctness_smoke() {
     report("TOTAL", t0.elapsed().as_millis());
 
     // Parsing is independent of the missing-builtins *execution* gap and of
-    // dataset size, so almost every parse failure here is a real grammar
-    // regression — except `STRSTARTS`/`STRENDS`, which (as observed against
-    // this fixture) are not just unimplemented at execution time but
-    // entirely absent from the parser grammar today, so their benchmark
-    // queries hard-fail to parse rather than falling through to ExecFail.
-    // Allowlisting exactly those two keeps the assertion meaningful: any
-    // *other* parse failure still fails the test immediately.
-    const KNOWN_PARSE_GAPS: &[&str] = &["strstarts", "strends"];
+    // dataset size, so any parse failure here is a real grammar regression.
+    // `STRSTARTS`/`STRENDS` used to be allowlisted here — their benchmark
+    // queries hard-failed to parse because of the `xsd:integer(...)` wrapper
+    // hitting the prefixed-name function-call parser bug fixed in #186, not
+    // because of `STRSTARTS`/`STRENDS` themselves. Now that #186 is fixed,
+    // both parse cleanly and the allowlist is empty; kept as a named const
+    // (rather than removed outright) so a future real parser gap has an
+    // obvious place to land without restructuring this assertion.
+    const KNOWN_PARSE_GAPS: &[&str] = &[];
     let unexpected_parse_fails: Vec<&str> = non_ok_names
         .iter()
         .filter(|(_, status)| *status == "PARSEFAIL")

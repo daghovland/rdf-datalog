@@ -2,7 +2,7 @@
 //! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md and
 //! https://github.com/daghovland/rdf-datalog/issues/52
 
-use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
+use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource, Triple};
 use num_bigint::BigInt;
 use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
@@ -549,5 +549,112 @@ fn test_struuid_returns_uuid_string() {
             assert_eq!(&s[13..14], "-", "UUID part 2-3 separator missing");
         }
         other => panic!("expected plain string; got {other:?}"),
+    }
+}
+
+// ── Prefixed-name function-call parsing (#186) ─────────────────────────────
+//
+// `parse_function_call` used to try a bare-alphanumeric-word match *before*
+// `parse_prefixed_name` when parsing a function's name. For input like
+// `xsd:integer(?o)`, the bare-word alternative greedily matches just `xsd`
+// (stopping at `:`) and *succeeds*, so nom's `alt` commits to it and never
+// backtracks into the prefixed-name alternative — the parser then expects
+// `(` right after `xsd`, sees `:`, and the whole function-call parse fails.
+// See https://github.com/daghovland/rdf-datalog/issues/186.
+
+/// Minimal repro from #186: a prefixed-name function call (`xsd:integer(...)`)
+/// must parse. This does not assert anything about the *value* `xsd:integer`
+/// produces — casting to `xsd:integer` isn't implemented as a value function
+/// yet (a separate concern from this parser bug) — only that the query
+/// parses and executes without error.
+#[test]
+fn test_prefixed_name_function_call_parses() {
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (xsd:integer(?o) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+}
+
+/// Same query as above, but executed against a datastore with one matching
+/// `rdfs:label` triple, to confirm the parsed query also *executes* cleanly
+/// (returns exactly one row) rather than merely parsing.
+#[test]
+fn test_prefixed_name_function_call_executes() {
+    let mut ds = Datastore::new(64);
+    let s = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/s".to_string(),
+    )));
+    let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+    )));
+    let o = ds.add_literal_resource(RdfLiteral::LiteralString("42".to_string()));
+    ds.add_triple(Triple {
+        subject: s,
+        predicate: p,
+        obj: o,
+    });
+
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (xsd:integer(?o) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    let result = match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Select(r) => r,
+        _ => panic!("expected SELECT"),
+    };
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected exactly one row for the single matching triple"
+    );
+}
+
+/// Other prefixed-name-as-function-name cast forms from the same family
+/// (`xsd:string`, `xsd:double`) must also parse — the bug affects any
+/// `prefix:localname(...)` call, not just `xsd:integer`.
+#[test]
+fn test_other_xsd_prefixed_cast_calls_parse() {
+    for fname in ["xsd:string", "xsd:double", "xsd:dateTime"] {
+        let sparql = format!(
+            r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ({fname}(?o) AS ?v) {{ ?s ?p ?o }}"#
+        );
+        parse_query(&sparql, &mut ctx())
+            .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    }
+}
+
+/// The exact query shape from the DBLP benchmark's `strstarts`/`strends`
+/// diagnostics (`tests/testdata/dblp.benchmark.tsv`) that originally
+/// surfaced #186: a builtin call (`STRSTARTS`) nested inside a prefixed-name
+/// cast (`xsd:integer`) nested inside an aggregate (`SUM`).
+#[test]
+fn test_benchmark_shape_sum_xsd_integer_strstarts_parses() {
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (SUM(xsd:integer(STRSTARTS(?o, "a"))) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+}
+
+/// Regression: bare-word builtin function calls (which never contain `:`)
+/// must keep parsing after the `alt` reorder in `parse_function_call`.
+#[test]
+fn test_bare_word_builtin_calls_still_parse_after_reorder() {
+    for sparql in [
+        r#"SELECT (SUM(?x) AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (ABS(?x) AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (STRSTARTS(?x, "a") AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (COUNT(*) AS ?v) { ?s ?p ?x }"#,
+    ] {
+        parse_query(sparql, &mut ctx())
+            .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
     }
 }
