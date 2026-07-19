@@ -9,7 +9,10 @@ Contact: hovlanddag@gmail.com
 //! Translation of OWL 2 axioms to datalog rules, implementing Section 4.3 of
 //! <https://www.w3.org/TR/owl2-profiles/#OWL_2_RL>.
 
+pub mod abox;
 pub mod equality;
+
+pub use abox::assert_abox;
 
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{GraphElementId, GraphElementManager, RdfResource, Term};
