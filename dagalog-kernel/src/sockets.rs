@@ -185,10 +185,14 @@ enum CellOutput {
     Rich(Vec<(String, String)>),
     /// Plain status text (%%turtle, %%load, %%rml, %%reason, %%datalog, %%ottr).
     Stream(String),
+    /// A no-op (blank cell) — nothing is sent to iopub, matching a real
+    /// Jupyter kernel's silent success on an empty cell.
+    Empty,
 }
 
 fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, String> {
     match cell_type {
+        CellType::Empty => Ok(CellOutput::Empty),
         CellType::Sparql(code) => execute_sparql(ds, &code).map(CellOutput::Rich),
         CellType::Turtle(src) => execute_turtle(ds, &src).map(CellOutput::Stream),
         CellType::Load(path) => {
@@ -300,6 +304,7 @@ async fn handle_execute(
             CellOutput::Stream(text) => {
                 let _ = send_stream(iopub, &text, req_header, key).await;
             }
+            CellOutput::Empty => {}
         },
         Ok(_) => {}
         Err(ref e) => {

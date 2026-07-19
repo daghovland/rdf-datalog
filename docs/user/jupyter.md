@@ -39,7 +39,7 @@ jupyter kernelspec list
 The repo ships an introductory notebook at `notebooks/dagalog_intro.ipynb`:
 
 ```sh
-jupyter lab notebooks/dagalog_intro.ipynb
+jupyter lab  --ServerApp.root_dir=. notebooks/dagalog_intro.ipynb
 ```
 
 Select **Dagalog (SPARQL + RDF)** from the kernel picker. Run cells top-to-bottom to
