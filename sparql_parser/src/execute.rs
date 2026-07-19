@@ -562,14 +562,36 @@ fn eval_components(
     datastore: &Datastore,
     active_graph: ActiveGraph,
 ) -> Vec<PartialSub> {
-    let mut current = solutions;
-    for comp in components {
-        current = eval_component(comp, current, datastore, &active_graph);
-        if current.is_empty() {
-            break;
+    // Phase C (#38): reorder a conjunctive group so a constraining conjunct is
+    // scheduled before a `UNION` it shares variables with, letting its bindings
+    // flow into the union arms via the existing per-arm threading. Gated by a
+    // cheap check so the common path (notably per-row OPTIONAL/MINUS/EXISTS
+    // inner evaluations) stays allocation-free and byte-for-byte unchanged.
+    if crate::component_ordering::should_reorder(components) {
+        let already_bound: HashSet<String> = solutions
+            .first()
+            .map(|sub| sub.keys().cloned().collect())
+            .unwrap_or_default();
+        let ordered =
+            crate::component_ordering::order_components(components, &already_bound, datastore);
+        let mut current = solutions;
+        for comp in ordered {
+            current = eval_component(comp, current, datastore, &active_graph);
+            if current.is_empty() {
+                break;
+            }
         }
+        current
+    } else {
+        let mut current = solutions;
+        for comp in components {
+            current = eval_component(comp, current, datastore, &active_graph);
+            if current.is_empty() {
+                break;
+            }
+        }
+        current
     }
-    current
 }
 
 fn eval_component(

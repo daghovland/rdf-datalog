@@ -20,6 +20,7 @@ Contact: hovlanddag@gmail.com
 //! - Blank node subjects/objects
 
 pub mod ast;
+mod component_ordering;
 pub mod execute;
 mod join_ordering;
 pub use execute::{
