@@ -988,7 +988,6 @@ fn test_sum_xsd_integer_strstarts_benchmark_shape() {
 // See https://github.com/daghovland/rdf-datalog/issues/194
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_from_valid_lexical_form() {
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15T10:30:45Z") AS ?result) WHERE {}"#,
@@ -1005,7 +1004,6 @@ fn test_xsd_cast_datetime_from_valid_lexical_form() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_from_lexical_form_without_timezone() {
     // `2004-04-12T13:20:00` (no timezone) is a valid xsd:dateTime lexical
     // form; `chrono::DateTime::parse_from_rfc3339` alone rejects it (RFC 3339
@@ -1028,7 +1026,6 @@ fn test_xsd_cast_datetime_from_lexical_form_without_timezone() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_from_date_normalizes_to_midnight_utc() {
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15") AS ?result) WHERE {}"#,
@@ -1047,7 +1044,6 @@ fn test_xsd_cast_datetime_from_date_normalizes_to_midnight_utc() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_from_typed_datetime_literal() {
     let result = eval_function(&format!(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15T10:30:45Z"^^<{XSD_DATE_TIME}>) AS ?result) WHERE {{}}"#
@@ -1064,7 +1060,6 @@ fn test_xsd_cast_datetime_from_typed_datetime_literal() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_from_datetime_literal_is_identity() {
     // `xsd:dateTime(NOW())` casts an already-native `DateTimeLiteral` — the
     // "identity" input case (mirrors how e.g. `xsd:boolean(xsd:boolean(...))`
@@ -1082,7 +1077,6 @@ fn test_xsd_cast_datetime_from_datetime_literal_is_identity() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_invalid_lexical_form_is_unbound() {
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("not a date") AS ?result) WHERE {}"#,
@@ -1094,7 +1088,6 @@ fn test_xsd_cast_datetime_invalid_lexical_form_is_unbound() {
 }
 
 #[test]
-#[ignore]
 fn test_xsd_cast_datetime_bare_year_is_unbound() {
     // A bare `xsd:gYear`-shaped string ("2020") is not a valid xsd:dateTime
     // or xsd:date lexical form, so it must NOT cast successfully — even
