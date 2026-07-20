@@ -939,19 +939,15 @@ ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 20) .
 /// end-to-end case, rather than leaving it merely implied by code structure.
 ///
 /// Data: ex:a ex:val "42" (string); ex:b ex:val "10" (string). Rule casts the
-/// string value to `xsd:integer` and compares it numerically to `40`.
+/// string value to `xsd:integer` and compares it for equality to `42`.
 ///
-/// Uses `>` rather than `=` for the comparison: `=`/`!=` currently do a raw
-/// structural comparison between the cast's native `IntegerLiteral` and a
-/// query-text numeric literal's `TypedLiteral` representation, which are
-/// different enum variants for the same value and therefore never `==`-equal
-/// — a real, pre-existing, systemic gap (affects `ABS`/arithmetic/etc. too,
-/// not just casts) filed separately as
-/// [#208](https://github.com/daghovland/rdf-datalog/issues/208). `<`/`>`/`<=`/
-/// `>=` already normalize both representations to `f64` and are unaffected,
-/// so they're used here to isolate this test to what #190 actually claims:
-/// the cast function itself works, and is shared with Datalog's `FILTER`
-/// unmodified. Switch this back to `=` once #208 is fixed.
+/// Originally used `>` instead of `=` here, to route around a separate,
+/// now-fixed bug ([#208](https://github.com/daghovland/rdf-datalog/issues/208)):
+/// `=`/`!=` used to do a raw structural comparison between the cast's native
+/// `IntegerLiteral` and a query-text numeric literal's `TypedLiteral`
+/// representation, which are different enum variants for the same value and
+/// were therefore never `==`-equal. Now that #208 normalizes both
+/// representations for `=`/`!=` too, this uses the more natural `=` directly.
 /// Expected: only ex:a violates.
 #[test]
 fn parsed_filter_xsd_integer_cast_end_to_end() {
@@ -965,7 +961,7 @@ ex:b ex:val "10" .
 
     let src = r#"
 prefix ex: <http://example.org/>
-ex:violation[?x] :- [?x, ex:val, ?v], FILTER(xsd:integer(?v) > 40) .
+ex:violation[?x] :- [?x, ex:val, ?v], FILTER(xsd:integer(?v) = 42) .
 "#;
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
     assert_eq!(rules.len(), 1, "should parse 1 rule");
@@ -987,12 +983,12 @@ ex:violation[?x] :- [?x, ex:val, ?v], FILTER(xsd:integer(?v) > 40) .
 
     assert!(
         violators.contains(&"<http://example.org/a>".to_string()),
-        "ex:a (val \"42\" cast to xsd:integer 42, > 40) should violate; got: {:?}",
+        "ex:a (val \"42\" cast to xsd:integer 42, = 42) should violate; got: {:?}",
         violators
     );
     assert!(
         !violators.contains(&"<http://example.org/b>".to_string()),
-        "ex:b (val \"10\", not > 40) should NOT violate; got: {:?}",
+        "ex:b (val \"10\", not = 42) should NOT violate; got: {:?}",
         violators
     );
 }
