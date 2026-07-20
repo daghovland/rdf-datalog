@@ -29,7 +29,7 @@ use owl_ontology::{
 /// Intern an `Individual` as a `GraphElementId`.
 ///
 /// Named individuals become IRI nodes. Anonymous individuals are routed
-/// through [`GraphElementManager::get_or_create_named_anon_resource`] keyed
+/// through [`dag_rdf::GraphElementManager::get_or_create_named_anon_resource`] keyed
 /// by a namespaced string derived from the parser-assigned id (rather than
 /// reusing that raw `u32` directly as the `AnonymousBlankNode` id). That
 /// method dedups by string key — so repeated references to the same
