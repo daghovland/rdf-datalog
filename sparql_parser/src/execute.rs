@@ -2162,12 +2162,12 @@ fn eval_expression_bool(
             BinaryOp::Eq => {
                 let l = eval_expression_value_inner(left, sub, datastore)?;
                 let r = eval_expression_value_inner(right, sub, datastore)?;
-                Some(l == r)
+                Some(values_equal(&l, &r))
             }
             BinaryOp::Ne => {
                 let l = eval_expression_value_inner(left, sub, datastore)?;
                 let r = eval_expression_value_inner(right, sub, datastore)?;
-                Some(l != r)
+                Some(!values_equal(&l, &r))
             }
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
                 let l = eval_expression_value_inner(left, sub, datastore)?;
@@ -2190,7 +2190,7 @@ fn eval_expression_bool(
             let val = eval_expression_value_inner(expr, sub, datastore)?;
             Some(list.iter().any(|item| {
                 eval_expression_value_inner(item, sub, datastore)
-                    .map(|v| v == val)
+                    .map(|v| values_equal(&v, &val))
                     .unwrap_or(false)
             }))
         }
@@ -2198,7 +2198,7 @@ fn eval_expression_bool(
             let val = eval_expression_value_inner(expr, sub, datastore)?;
             Some(!list.iter().any(|item| {
                 eval_expression_value_inner(item, sub, datastore)
-                    .map(|v| v == val)
+                    .map(|v| values_equal(&v, &val))
                     .unwrap_or(false)
             }))
         }
@@ -2602,6 +2602,35 @@ fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
     Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
         f.into(),
     )))
+}
+
+/// Equality for `=`/`!=`/`IN`/`NOT IN` (SPARQL 1.1 §17.3, §17.4.1.9).
+///
+/// Computed results elsewhere in this module (unary minus, binary arithmetic,
+/// `ABS`/`CEIL`/`FLOOR`/`ROUND`, string predicates like `STRSTARTS`, xsd
+/// casts) produce the native `RdfLiteral` variants (`IntegerLiteral`,
+/// `DecimalLiteral`, `DoubleLiteral`, `FloatLiteral`, `BooleanLiteral`), while
+/// literals parsed directly from SPARQL query text (e.g. bare `42`, `true`)
+/// become `TypedLiteral { type_iri, literal }` (`parse_numeric_literal`/
+/// `parse_boolean_literal` in `lib.rs`, matching what the `turtle` crate
+/// produces for parsed Turtle data). A raw Rust `==` sees these as different
+/// enum variants even when they denote the same value, so e.g.
+/// `(1 + 1) = 2` wrongly compared unequal (#208).
+///
+/// This normalizes numeric and boolean literals across both representations,
+/// then falls back to plain equality for every other RDF term shape (IRIs,
+/// blank nodes, plain strings, language-tagged literals) — where the
+/// native/parsed split does not exist and `==` was already correct.
+fn values_equal(a: &GraphElement, b: &GraphElement) -> bool {
+    if let (GraphElement::GraphLiteral(a_lit), GraphElement::GraphLiteral(b_lit)) = (a, b) {
+        if let (Some(af), Some(bf)) = (literal_to_f64(a_lit), literal_to_f64(b_lit)) {
+            return af.partial_cmp(&bf) == Some(std::cmp::Ordering::Equal);
+        }
+    }
+    if let (Some(a_bool), Some(b_bool)) = (element_to_bool(a), element_to_bool(b)) {
+        return a_bool == b_bool;
+    }
+    a == b
 }
 
 /// Compare graph elements for FILTER relational operators.
