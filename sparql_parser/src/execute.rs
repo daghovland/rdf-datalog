@@ -727,14 +727,68 @@ fn eval_component(
             result
         }
 
-        QueryComponent::Minus(inner) => solutions
-            .into_iter()
-            .filter(|sub| {
-                let minus_sols =
-                    eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
-                minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms, datastore))
-            })
-            .collect(),
+        QueryComponent::Minus(inner) => {
+            // SPARQL 1.1 §18.3 domain-disjointness escape: a row that shares
+            // no variable at all with anything the MINUS body could bind
+            // must never be excluded, regardless of the body's content. The
+            // previous implementation threaded the outer `sub` into the
+            // inner body's evaluation, so every produced solution was a
+            // trivial extension of `sub` and therefore always "compatible"
+            // and always domain-overlapping (dom always superset of
+            // dom(sub)) — the escape hatch never fired (issue #187).
+            // `inner_vars` is a static, safe-to-over-approximate set of
+            // every variable the body could ever bind; it's only used to
+            // short-circuit rows that can never be affected, never to
+            // decide an actual exclusion.
+            let inner_vars = crate::component_ordering::variables_in_components(inner);
+
+            // Ω2 is evaluated independently of the outer solutions — an
+            // unseeded start, i.e. the real right-hand-side semantics — and
+            // memoised across outer rows: its result never depends on
+            // `sub`, so recomputing it per row (as the old seeded threading
+            // did) was pure waste. This also fixes a subtler bug the naive
+            // "thread + check domain" approach would still have: seeding
+            // `sub` into a body containing `OPTIONAL` makes an
+            // already-bound variable look bound in the produced solution
+            // even when that specific inner branch never actually bound it
+            // (e.g. the W3C `full-minuend`/`part-minuend` negation tests),
+            // corrupting the per-row domain. Evaluating unseeded gives each
+            // μ2's real domain (its own `.keys()`), so the check below is
+            // exact.
+            //
+            // This trades the old per-row index-narrowing (seeding pushed a
+            // bound outer value into the inner BGP lookup) for one
+            // evaluation plus an O(outer × inner) anti-join scan, mirroring
+            // the nested-loop join the `Subquery` arm above already uses; a
+            // hash index keyed on a shared variable would be a reasonable
+            // follow-up if this ever shows up as a hot path.
+            let mut minus_solutions: Option<Vec<PartialSub>> = None;
+
+            solutions
+                .into_iter()
+                .filter(|sub| {
+                    if !sub.keys().any(|k| inner_vars.contains(k)) {
+                        // Domain-disjointness escape: statically impossible
+                        // for this row to share a variable with the body.
+                        return true;
+                    }
+                    let minus_sols = minus_solutions.get_or_insert_with(|| {
+                        eval_components(
+                            inner,
+                            vec![HashMap::new()],
+                            datastore,
+                            (*active_graph).clone(),
+                        )
+                    });
+                    // Exclude `sub` iff some μ2 is compatible with it AND
+                    // actually shares a bound variable with it — the
+                    // spec's `¬(¬compatible ∨ dom-disjoint)`.
+                    !minus_sols.iter().any(|ms| {
+                        compatible(sub, ms, datastore) && sub.keys().any(|k| ms.contains_key(k))
+                    })
+                })
+                .collect()
+        }
 
         QueryComponent::Graph(graph_term, inner) => solutions
             .into_iter()

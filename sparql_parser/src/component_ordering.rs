@@ -447,6 +447,23 @@ fn add_component_vars(comp: &QueryComponent, bound: &mut HashSet<String>) {
     collect_component_vars(comp, bound);
 }
 
+/// Union of every variable name referenced anywhere within `components`.
+///
+/// Used by `execute.rs`'s `MINUS` evaluation (issue
+/// [#187](https://github.com/daghovland/rdf-datalog/issues/187)) to cheaply
+/// detect when a `MINUS` body could not possibly share any variable with an
+/// outer row — the SPARQL 1.1 §18.3 domain-disjointness escape. An
+/// over-approximation is safe for that use: it can only cause a missed
+/// short-circuit (falling through to the exact per-row domain check), never
+/// an incorrect exclusion.
+pub(crate) fn variables_in_components(components: &[QueryComponent]) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    for c in components {
+        collect_component_vars(c, &mut vars);
+    }
+    vars
+}
+
 /// Collect all variable names appearing anywhere in a component into `vars`.
 fn collect_component_vars(comp: &QueryComponent, vars: &mut HashSet<String>) {
     match comp {
