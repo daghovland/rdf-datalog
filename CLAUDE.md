@@ -23,10 +23,16 @@ Include links to relevant epics (or issues) in markdwon documentation, and avoid
 Include links to relevant documentation in the issues and epics. Whenever mentioning documentation in the issue, create actual clickable links. 
 Reference the current working branch of the repository in the issue when working on it. 
 
-When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to the issue or epic that will fix it
+When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to one or more issues or epics that will fix it
 
 When creating an issue mark it as TODO. When working on it mark it as In Progress, use a worktree to create a new branch and note the agent and worktree id in the issue. 
-When done create a pull request between that branch and main before removing the worktree. The pull request and issue should be linked so the issue becomes closed when the pull request is merged.
+
+The environment the agents and subagents run in is prone to token limitation and rebooots.
+Agents should therefore early in the work create a branch, push that branch to the repo and create a pull request.
+The initial pull request can have minimal infomration initialy, but the branch should be pushed often, to avoid information loss.
+But only the work relevant branch should be pushed to.
+
+When finished finalize the pull request between that branch and main before removing the worktree. The pull request and issue should be linked so the issue becomes closed when the pull request is merged.
 
 ## Implementation workflow
 
