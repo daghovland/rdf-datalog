@@ -2,7 +2,7 @@
 //! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md and
 //! https://github.com/daghovland/rdf-datalog/issues/52
 
-use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
+use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource, Triple};
 use num_bigint::BigInt;
 use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
@@ -550,4 +550,427 @@ fn test_struuid_returns_uuid_string() {
         }
         other => panic!("expected plain string; got {other:?}"),
     }
+}
+
+// ── Prefixed-name function-call parsing (#186) ─────────────────────────────
+//
+// `parse_function_call` used to try a bare-alphanumeric-word match *before*
+// `parse_prefixed_name` when parsing a function's name. For input like
+// `xsd:integer(?o)`, the bare-word alternative greedily matches just `xsd`
+// (stopping at `:`) and *succeeds*, so nom's `alt` commits to it and never
+// backtracks into the prefixed-name alternative — the parser then expects
+// `(` right after `xsd`, sees `:`, and the whole function-call parse fails.
+// See https://github.com/daghovland/rdf-datalog/issues/186.
+
+/// Minimal repro from #186: a prefixed-name function call (`xsd:integer(...)`)
+/// must parse. This does not assert anything about the *value* `xsd:integer`
+/// produces — casting to `xsd:integer` isn't implemented as a value function
+/// yet (a separate concern from this parser bug) — only that the query
+/// parses and executes without error.
+#[test]
+fn test_prefixed_name_function_call_parses() {
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (xsd:integer(?o) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+}
+
+/// Same query as above, but executed against a datastore with one matching
+/// `rdfs:label` triple, to confirm the parsed query also *executes* cleanly
+/// (returns exactly one row) rather than merely parsing.
+#[test]
+fn test_prefixed_name_function_call_executes() {
+    let mut ds = Datastore::new(64);
+    let s = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/s".to_string(),
+    )));
+    let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+    )));
+    let o = ds.add_literal_resource(RdfLiteral::LiteralString("42".to_string()));
+    ds.add_triple(Triple {
+        subject: s,
+        predicate: p,
+        obj: o,
+    });
+
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (xsd:integer(?o) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    let result = match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Select(r) => r,
+        _ => panic!("expected SELECT"),
+    };
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected exactly one row for the single matching triple"
+    );
+}
+
+/// Other prefixed-name-as-function-name cast forms from the same family
+/// (`xsd:string`, `xsd:double`) must also parse — the bug affects any
+/// `prefix:localname(...)` call, not just `xsd:integer`.
+#[test]
+fn test_other_xsd_prefixed_cast_calls_parse() {
+    for fname in ["xsd:string", "xsd:double", "xsd:dateTime"] {
+        let sparql = format!(
+            r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ({fname}(?o) AS ?v) {{ ?s ?p ?o }}"#
+        );
+        parse_query(&sparql, &mut ctx())
+            .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    }
+}
+
+/// The exact query shape from the DBLP benchmark's `strstarts`/`strends`
+/// diagnostics (`tests/testdata/dblp.benchmark.tsv`) that originally
+/// surfaced #186: a builtin call (`STRSTARTS`) nested inside a prefixed-name
+/// cast (`xsd:integer`) nested inside an aggregate (`SUM`).
+#[test]
+fn test_benchmark_shape_sum_xsd_integer_strstarts_parses() {
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (SUM(xsd:integer(STRSTARTS(?o, "a"))) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+}
+
+/// Regression: bare-word builtin function calls (which never contain `:`)
+/// must keep parsing after the `alt` reorder in `parse_function_call`.
+#[test]
+fn test_bare_word_builtin_calls_still_parse_after_reorder() {
+    for sparql in [
+        r#"SELECT (SUM(?x) AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (ABS(?x) AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (STRSTARTS(?x, "a") AS ?v) { ?s ?p ?x }"#,
+        r#"SELECT (COUNT(*) AS ?v) { ?s ?p ?x }"#,
+    ] {
+        parse_query(sparql, &mut ctx())
+            .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    }
+}
+
+// ── XSD cast/constructor functions (#190) ───────────────────────────────────
+//
+// SPARQL 1.1 §17.4.2 "Functional Forms" datatype constructor/cast semantics:
+// `xsd:integer(v)`, `xsd:decimal(v)`, `xsd:double(v)`, `xsd:float(v)`,
+// `xsd:string(v)`, `xsd:boolean(v)`. Follow-up from #186/PR #189, which fixed
+// *parsing* of `prefix:localname(...)` function calls but deliberately left
+// value-casting semantics unimplemented (the call evaluated to unbound).
+// `xsd:dateTime(v)` casting is out of scope here — see the tracking issue
+// referenced next to the `XSD_DATE_TIME`-less dispatch in
+// `sparql_parser/src/execute.rs`.
+// See https://github.com/daghovland/rdf-datalog/issues/190
+
+#[test]
+fn test_xsd_cast_integer_from_string() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer("42") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(42)
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_integer_from_decimal_truncates() {
+    // xsd:integer(3.7) truncates toward zero (XPath fn:integer cast rules),
+    // it does not floor/round.
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(3.7) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(3)
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_integer_from_negative_decimal_truncates_toward_zero() {
+    // Discriminates truncation from floor: floor(-3.7) == -4, but XPath cast
+    // truncation of -3.7 must be -3.
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(-3.7) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(-3)
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_integer_from_boolean() {
+    let result_true = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(true) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result_true,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(1)
+        )))
+    );
+    let result_false = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(false) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result_false,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(0)
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_integer_invalid_string_is_unbound() {
+    // Per SPARQL error-handling rules, a failed cast makes the projected
+    // variable unbound rather than erroring the whole query (matches the
+    // established convention for other builtins in this file: `?result`
+    // simply doesn't appear in the row).
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer("not a number") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result, None,
+        "invalid xsd:integer cast should leave ?result unbound"
+    );
+}
+
+#[test]
+fn test_xsd_cast_string_from_integer() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:string(42) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, Some(str_literal("42")));
+}
+
+#[test]
+fn test_xsd_cast_string_from_boolean() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:string(true) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, Some(str_literal("true")));
+}
+
+#[test]
+fn test_xsd_cast_string_from_decimal() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:string(12.5) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, Some(str_literal("12.5")));
+}
+
+#[test]
+fn test_xsd_cast_boolean_from_string_true() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean("true") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+fn test_xsd_cast_boolean_from_string_zero_is_false() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean("0") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_boolean_from_integer() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean(5) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+fn test_xsd_cast_boolean_invalid_string_is_unbound() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean("maybe") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_xsd_cast_double_from_string() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:double("12.5") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+            12.5.into()
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_double_from_integer() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:double(42) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+            42.0.into()
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_double_invalid_string_is_unbound() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:double("abc") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_xsd_cast_float_from_string() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:float("2.5") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
+            2.5.into()
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_decimal_from_string() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:decimal("3.25") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+            "3.25".parse().unwrap()
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_decimal_from_integer() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:decimal(7) AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+            "7".parse().unwrap()
+        )))
+    );
+}
+
+/// `xsd:boolean(?o)` used directly as a FILTER condition (not just BIND).
+#[test]
+fn test_xsd_cast_boolean_in_filter_context() {
+    let mut ds = Datastore::new(64);
+    let s = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/s".to_string(),
+    )));
+    let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/flag".to_string(),
+    )));
+    let o = ds.add_literal_resource(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(XSD_INTEGER.to_string()),
+        literal: "1".to_string(),
+    });
+    ds.add_triple(Triple {
+        subject: s,
+        predicate: p,
+        obj: o,
+    });
+
+    let sparql = r#"
+        PREFIX ex: <http://example.org/>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT ?s WHERE { ?s ex:flag ?o . FILTER(xsd:boolean(?o)) }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    let result = match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Select(r) => r,
+        _ => panic!("expected SELECT"),
+    };
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "row with nonzero flag should pass FILTER(xsd:boolean(?o))"
+    );
+}
+
+/// The DBLP benchmark shape (#190/#35): `SUM(xsd:integer(STRSTARTS(?o, "a")))`
+/// must now produce a real, non-zero aggregate reflecting actual per-row cast
+/// results, not just "executes without erroring" (which #186 already covered).
+#[test]
+fn test_sum_xsd_integer_strstarts_benchmark_shape() {
+    let mut ds = Datastore::new(64);
+    let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://www.w3.org/2000/01/rdf-schema#label".to_string(),
+    )));
+    let labels = ["apple", "banana", "avocado", "cherry"];
+    for (i, label) in labels.iter().enumerate() {
+        let s = ds.add_node_resource(RdfResource::Iri(IriReference(format!(
+            "http://example.org/s{i}"
+        ))));
+        let o = ds.add_literal_resource(RdfLiteral::LiteralString(label.to_string()));
+        ds.add_triple(Triple {
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+
+    let sparql = r#"
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        SELECT (SUM(xsd:integer(STRSTARTS(?o, "a"))) AS ?count) { ?s rdfs:label ?o . }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx())
+        .unwrap_or_else(|e| panic!("parse failed for: {sparql}\nerror: {e:?}"));
+    let result = match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Select(r) => r,
+        _ => panic!("expected SELECT"),
+    };
+    let count = result
+        .rows
+        .first()
+        .and_then(|row| row.get("count").cloned());
+    // "apple" and "avocado" start with "a" → sum should be 2, not 0.
+    assert_eq!(
+        count,
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            BigInt::from(2)
+        )))
+    );
 }

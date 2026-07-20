@@ -509,6 +509,42 @@ LIMIT 3 OFFSET 1
     );
 }
 
+/// SPARQL 1.2 §13.3: ORDER BY at the top level of a query (no subquery
+/// wrapper) must sort the returned rows, not merely compute them.
+///
+/// Regression test for issue #170: `sparql_parser::execute`'s
+/// `Query::Select` arm computed solutions and applied DISTINCT/OFFSET/LIMIT
+/// but never called `sort_solutions`, so `ORDER BY` was silently ignored at
+/// the top level (only subqueries, via `execute_select_inner`, sorted).
+///
+/// Books have `ex:year` 2023, 2021, 2022, 2020, 2024 for book1..book5
+/// respectively (book6 has no year) — insertion order does not match sorted
+/// order, so this asserts exact row order, not just set membership.
+/// Expected ascending order by year: book4 (2020), book2 (2021), book3
+/// (2022), book1 (2023), book5 (2024).
+#[test]
+fn spec_s13_order_by_top_level_sorts_rows() {
+    let ds = load("sparql12_books.ttl");
+    let sparql = r#"
+PREFIX ex: <http://example.org/>
+SELECT ?book ?year WHERE {
+    ?book ex:year ?year .
+}
+ORDER BY ?year
+"#;
+    assert_eq!(
+        query_values(&ds, sparql, "book"),
+        vec![
+            "<http://example.org/book4>",
+            "<http://example.org/book2>",
+            "<http://example.org/book3>",
+            "<http://example.org/book1>",
+            "<http://example.org/book5>",
+        ],
+        "§13.3: top-level ORDER BY ?year must return rows in ascending year order"
+    );
+}
+
 // ── §5  FILTER ───────────────────────────────────────────────────────────────
 
 /// SPARQL 1.2 §5.3: FILTER with equality comparison on a literal.

@@ -108,14 +108,17 @@ pub fn execute(
             group_by,
             having,
             dataset,
-            order_by: _,
+            order_by,
         } => {
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions = eval_components(
+            let budget =
+                select_solution_budget(*distinct, order_by, group_by, projection, *offset, *limit);
+            let solutions = eval_components_budgeted(
                 where_clause,
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
+                budget,
             );
 
             let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
@@ -141,6 +144,28 @@ pub fn execute(
                     .collect();
                 (variables, rows)
             };
+
+            // ORDER BY
+            //
+            // `rows` here holds already-resolved `SolutionRow`s (post
+            // projection, so `(expr AS ?alias)` bindings are available as
+            // sort keys), while `sort_solutions`/`eval_expression_value_inner`
+            // operate on `PartialSub`. Bridge the two representations via
+            // `solution_row_to_partial` and resolve back afterwards. See
+            // `execute_select_inner` for the equivalent subquery path.
+            if !order_by.is_empty() {
+                let mut partial_rows: Vec<PartialSub> =
+                    rows.iter().map(solution_row_to_partial).collect();
+                sort_solutions(&mut partial_rows, order_by, datastore);
+                rows = partial_rows
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|(k, v)| (k, v.resolve(datastore)))
+                            .collect()
+                    })
+                    .collect();
+            }
 
             if *distinct {
                 let mut seen: std::collections::HashSet<Vec<(String, GraphElement)>> =
@@ -562,9 +587,83 @@ fn eval_components(
     datastore: &Datastore,
     active_graph: ActiveGraph,
 ) -> Vec<PartialSub> {
+    eval_components_budgeted(components, solutions, datastore, active_graph, None)
+}
+
+/// Evaluate a component list, optionally short-circuiting once `budget`
+/// output solutions exist.
+///
+/// The budget is the maximum number of solutions the caller will ever
+/// consume (`OFFSET + LIMIT` at the top level). It is passed to the **last**
+/// component only: the last component's output *is* the final solution set in
+/// order, and projection is 1:1 with solutions while `OFFSET`/`LIMIT` are
+/// prefix operations, so returning the first `budget` solutions of the last
+/// component is byte-identical to producing them all and truncating. Earlier
+/// components must be fully materialised (a later component may filter, so we
+/// cannot know how many of their rows are needed). Only the BGP arm actually
+/// reads the budget; every other arm ignores it and relies on the caller's
+/// existing truncation. See issue #165.
+///
+/// Phase C (#38): before evaluating, a conjunctive group is reordered so a
+/// constraining conjunct is scheduled before a `UNION` it shares variables
+/// with, letting its bindings flow into the union arms via the existing
+/// per-arm threading. Gated by a cheap check so the common path (notably
+/// per-row `OPTIONAL`/`MINUS`/`EXISTS` inner evaluations) stays
+/// allocation-free and byte-for-byte unchanged. Reordering is
+/// result-preserving (bag-join commutes/distributes over bag-union), so it
+/// composes safely with the budget above: the budget applies to whichever
+/// component ends up physically last *after* reordering, and since only the
+/// BGP arm actually honors it, a non-BGP arm landing in last position simply
+/// ignores the budget and falls back on the caller's existing truncation — a
+/// missed optimisation in that combination, never a correctness issue.
+fn eval_components_budgeted(
+    components: &[QueryComponent],
+    solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+    active_graph: ActiveGraph,
+    budget: Option<usize>,
+) -> Vec<PartialSub> {
+    let ordered: Vec<&QueryComponent> = if crate::component_ordering::should_reorder(components) {
+        let already_bound: HashSet<String> = solutions
+            .first()
+            .map(|sub| sub.keys().cloned().collect())
+            .unwrap_or_default();
+        // Correctness-critical, unlike `already_bound` above: variables
+        // guaranteed bound on *every* incoming row, not just the first one.
+        // Hoisting a conjunct across an `OPTIONAL`/`MINUS` barrier (issue
+        // #174) must never be permitted based on a variable that's only
+        // *conditionally* bound (e.g. bound in one `UNION` arm but not
+        // another feeding into this call) — see
+        // `component_ordering::order_components` for why an
+        // over-approximation here is unsound, not just imprecise.
+        let guaranteed_bound: HashSet<String> = {
+            let mut rows = solutions.iter();
+            match rows.next() {
+                None => HashSet::new(),
+                Some(first) => {
+                    let mut acc: HashSet<String> = first.keys().cloned().collect();
+                    for sub in rows {
+                        acc.retain(|k| sub.contains_key(k));
+                    }
+                    acc
+                }
+            }
+        };
+        crate::component_ordering::order_components(
+            components,
+            &already_bound,
+            &guaranteed_bound,
+            datastore,
+        )
+    } else {
+        components.iter().collect()
+    };
+
     let mut current = solutions;
-    for comp in components {
-        current = eval_component(comp, current, datastore, &active_graph);
+    let last = ordered.len().saturating_sub(1);
+    for (i, comp) in ordered.into_iter().enumerate() {
+        let comp_budget = if i == last { budget } else { None };
+        current = eval_component(comp, current, datastore, &active_graph, comp_budget);
         if current.is_empty() {
             break;
         }
@@ -577,9 +676,10 @@ fn eval_component(
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     match comp {
-        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph),
+        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph, budget),
 
         QueryComponent::PathPattern(subject, path, object) => solutions
             .into_iter()
@@ -627,14 +727,68 @@ fn eval_component(
             result
         }
 
-        QueryComponent::Minus(inner) => solutions
-            .into_iter()
-            .filter(|sub| {
-                let minus_sols =
-                    eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
-                minus_sols.is_empty() || minus_sols.iter().all(|ms| !compatible(sub, ms, datastore))
-            })
-            .collect(),
+        QueryComponent::Minus(inner) => {
+            // SPARQL 1.1 §18.3 domain-disjointness escape: a row that shares
+            // no variable at all with anything the MINUS body could bind
+            // must never be excluded, regardless of the body's content. The
+            // previous implementation threaded the outer `sub` into the
+            // inner body's evaluation, so every produced solution was a
+            // trivial extension of `sub` and therefore always "compatible"
+            // and always domain-overlapping (dom always superset of
+            // dom(sub)) — the escape hatch never fired (issue #187).
+            // `inner_vars` is a static, safe-to-over-approximate set of
+            // every variable the body could ever bind; it's only used to
+            // short-circuit rows that can never be affected, never to
+            // decide an actual exclusion.
+            let inner_vars = crate::component_ordering::variables_in_components(inner);
+
+            // Ω2 is evaluated independently of the outer solutions — an
+            // unseeded start, i.e. the real right-hand-side semantics — and
+            // memoised across outer rows: its result never depends on
+            // `sub`, so recomputing it per row (as the old seeded threading
+            // did) was pure waste. This also fixes a subtler bug the naive
+            // "thread + check domain" approach would still have: seeding
+            // `sub` into a body containing `OPTIONAL` makes an
+            // already-bound variable look bound in the produced solution
+            // even when that specific inner branch never actually bound it
+            // (e.g. the W3C `full-minuend`/`part-minuend` negation tests),
+            // corrupting the per-row domain. Evaluating unseeded gives each
+            // μ2's real domain (its own `.keys()`), so the check below is
+            // exact.
+            //
+            // This trades the old per-row index-narrowing (seeding pushed a
+            // bound outer value into the inner BGP lookup) for one
+            // evaluation plus an O(outer × inner) anti-join scan, mirroring
+            // the nested-loop join the `Subquery` arm above already uses; a
+            // hash index keyed on a shared variable would be a reasonable
+            // follow-up if this ever shows up as a hot path.
+            let mut minus_solutions: Option<Vec<PartialSub>> = None;
+
+            solutions
+                .into_iter()
+                .filter(|sub| {
+                    if !sub.keys().any(|k| inner_vars.contains(k)) {
+                        // Domain-disjointness escape: statically impossible
+                        // for this row to share a variable with the body.
+                        return true;
+                    }
+                    let minus_sols = minus_solutions.get_or_insert_with(|| {
+                        eval_components(
+                            inner,
+                            vec![HashMap::new()],
+                            datastore,
+                            (*active_graph).clone(),
+                        )
+                    });
+                    // Exclude `sub` iff some μ2 is compatible with it AND
+                    // actually shares a bound variable with it — the
+                    // spec's `¬(¬compatible ∨ dom-disjoint)`.
+                    !minus_sols.iter().any(|ms| {
+                        compatible(sub, ms, datastore) && sub.keys().any(|k| ms.contains_key(k))
+                    })
+                })
+                .collect()
+        }
 
         QueryComponent::Graph(graph_term, inner) => solutions
             .into_iter()
@@ -719,6 +873,63 @@ fn compatible(a: &PartialSub, b: &PartialSub, datastore: &Datastore) -> bool {
     true
 }
 
+// ── LIMIT short-circuit budget (issue #165) ─────────────────────────────────
+
+/// The maximum number of solutions the top-level (or subquery) SELECT will
+/// ever consume, i.e. `OFFSET + LIMIT`, or `None` when the full solution set
+/// is required.
+///
+/// Returns `None` — disabling the short-circuit — whenever a solution-set
+/// modifier must observe every row: no `LIMIT` at all (an `OFFSET` alone is
+/// unbounded), `ORDER BY` (sorts the whole set), `GROUP BY` / aggregates
+/// (folds every row), or `DISTINCT` (a conservative first pass; counting
+/// distinct rows early is legal but not done here). Because SPARQL leaves row
+/// order unspecified without `ORDER BY`, returning the first `OFFSET + LIMIT`
+/// solutions is a legal — and here byte-identical — selection.
+fn select_solution_budget(
+    distinct: bool,
+    order_by: &[OrderCondition],
+    group_by: &[Expression],
+    projection: &[ProjectionElement],
+    offset: Option<u64>,
+    limit: Option<u64>,
+) -> Option<usize> {
+    let limit = limit? as usize;
+    if distinct || !order_by.is_empty() || !group_by.is_empty() {
+        return None;
+    }
+    if projection.iter().any(elem_has_aggregate) {
+        return None;
+    }
+    let offset = offset.map(|o| o as usize).unwrap_or(0);
+    Some(offset.saturating_add(limit))
+}
+
+/// True if the same variable name appears in more than one position of the
+/// triple pattern (subject/predicate/object plus the graph variable, when the
+/// active graph is variable). Such repetition means a matched quad can be
+/// dropped by the equality re-check in `eval_triple_pattern_core`, so a
+/// quad-level `LIMIT` would under-produce and must not be applied.
+fn pattern_repeats_variable(tp: &TriplePattern, active_graph: &ActiveGraph) -> bool {
+    let mut names: Vec<&str> = Vec::with_capacity(4);
+    for term in [&tp.subject, &tp.predicate, &tp.object] {
+        if let Term::Variable(v) = term {
+            names.push(v.as_str());
+        }
+    }
+    if let ActiveGraph::Variable(v) = active_graph {
+        names.push(v.as_str());
+    }
+    for i in 0..names.len() {
+        for j in (i + 1)..names.len() {
+            if names[i] == names[j] {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // ── BGP evaluation ────────────────────────────────────────────────────────────
 
 fn eval_bgp(
@@ -726,6 +937,7 @@ fn eval_bgp(
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     let already_bound: HashSet<String> = solutions
         .first()
@@ -734,12 +946,39 @@ fn eval_bgp(
     let order = crate::join_ordering::order_patterns(patterns, &already_bound, datastore);
 
     let mut current = solutions;
-    for &idx in &order {
+    let last = order.len().saturating_sub(1);
+    for (pos, &idx) in order.iter().enumerate() {
         let pattern = &patterns[idx];
-        current = current
-            .into_iter()
-            .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph))
-            .collect();
+        // Only the last-executed pattern produces the BGP's final output, so
+        // only it may honour the row budget (issue #165). Earlier patterns
+        // feed the join and must be fully materialised.
+        let pat_budget = if pos == last { budget } else { None };
+        current = match pat_budget {
+            Some(b) => {
+                // Accumulate across input solutions with a shrinking budget so
+                // the total never exceeds `b`, preserving the exact prefix the
+                // unbudgeted evaluation would have produced.
+                let mut acc = Vec::new();
+                for sub in current {
+                    if acc.len() >= b {
+                        break;
+                    }
+                    let remaining = b - acc.len();
+                    acc.extend(eval_triple_pattern(
+                        pattern,
+                        &sub,
+                        datastore,
+                        active_graph,
+                        Some(remaining),
+                    ));
+                }
+                acc
+            }
+            None => current
+                .into_iter()
+                .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph, None))
+                .collect(),
+        };
         if current.is_empty() {
             break;
         }
@@ -752,6 +991,7 @@ fn eval_triple_pattern(
     sub: &PartialSub,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     // RDF 1.2 triple-term subject: `<<( s p o )>> pred obj`. Resolve the
     // embedded pattern against `reified_triples` first (yielding one or more
@@ -779,19 +1019,23 @@ fn eval_triple_pattern(
                 }
             }
             if ok {
+                // The triple-term subject path forces the subject and may fan
+                // out over multiple candidates, so the quad-take budget is not
+                // sound here — pass `None` and let the outer truncation apply.
                 results.extend(eval_triple_pattern_core(
                     tp,
                     Some(term_id),
                     &merged,
                     datastore,
                     active_graph,
+                    None,
                 ));
             }
         }
         return results;
     }
 
-    eval_triple_pattern_core(tp, None, sub, datastore, active_graph)
+    eval_triple_pattern_core(tp, None, sub, datastore, active_graph, budget)
 }
 
 /// Core outer-pattern evaluation shared by plain triple patterns and the
@@ -804,6 +1048,7 @@ fn eval_triple_pattern_core(
     sub: &PartialSub,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
+    budget: Option<usize>,
 ) -> Vec<PartialSub> {
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
@@ -841,7 +1086,21 @@ fn eval_triple_pattern_core(
     let p = p_match.into_query_arg();
     let o = o_match.into_query_arg();
 
-    for quad in datastore.quads_matching(g, s, p, o) {
+    // A row budget lets us stop enumerating matches early (issue #165). Pushing
+    // the budget down as a *quad* limit (avoiding materialising every match)
+    // is only sound when each matched quad yields exactly one solution — i.e.
+    // the pattern has no repeated variable across its positions, which would
+    // otherwise drop quads via the `ok` check below and under-produce. When
+    // that gate fails we still cap the produced solutions, just after a full
+    // scan.
+    let quad_limit = match budget {
+        Some(b) if forced_subject.is_none() && !pattern_repeats_variable(tp, active_graph) => {
+            Some(b)
+        }
+        _ => None,
+    };
+
+    for quad in datastore.quads_matching_limited(g, s, p, o, quad_limit) {
         let mut new_sub = sub.clone();
         let mut ok = true;
 
@@ -882,6 +1141,13 @@ fn eval_triple_pattern_core(
 
         if ok {
             new_solutions.push(new_sub);
+            // Always-safe backstop: we only ever need `budget` solutions from
+            // this call, regardless of whether the quad-take gate applied.
+            if let Some(b) = budget {
+                if new_solutions.len() >= b {
+                    break;
+                }
+            }
         }
     }
     new_solutions
@@ -1336,6 +1602,21 @@ fn eval_function_value(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
+    // XSD datatype constructor/cast functions (SPARQL 1.1 §17.4.2). Unlike the
+    // bare-keyword builtins below, these arrive as the function name's
+    // *resolved* IRI: `xsd:integer(...)` is parsed via `parse_prefixed_name`
+    // (or `<http://...#integer>(...)` via `parse_iri_ref`), never as the bare
+    // word `xsd:integer` (see #186/PR #189), so dispatch matches the full IRI
+    // rather than joining the uppercase-keyword match below. `xsd:dateTime`
+    // casting is intentionally not implemented — see
+    // https://github.com/daghovland/rdf-datalog/issues/194.
+    if matches!(
+        name,
+        XSD_STRING | XSD_BOOLEAN | XSD_INTEGER | XSD_DECIMAL | XSD_DOUBLE | XSD_FLOAT
+    ) {
+        let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+        return eval_xsd_cast(name, &el);
+    }
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
@@ -1952,6 +2233,18 @@ fn eval_function_bool(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<bool> {
+    // `xsd:boolean(v)` used directly in a boolean context (e.g.
+    // `FILTER(xsd:boolean(?x))`). The other XSD cast targets (integer,
+    // decimal, double, float, string) don't produce a boolean value, so — per
+    // this codebase's existing (narrow, non-EBV-coercing) boolean-context
+    // conventions, see `element_to_bool` — they're intentionally left
+    // unhandled here rather than inventing a general effective-boolean-value
+    // coercion just for casts.
+    if name == XSD_BOOLEAN {
+        let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+        let cast = cast_to_xsd_boolean(&el)?;
+        return element_to_bool(&cast);
+    }
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
@@ -2091,6 +2384,226 @@ fn literal_to_f64(lit: &RdfLiteral) -> Option<f64> {
     }
 }
 
+// ── XSD datatype constructor/cast functions (SPARQL 1.1 §17.4.2, #190) ────
+//
+// `xsd:integer(v)`, `xsd:decimal(v)`, `xsd:double(v)`, `xsd:float(v)`,
+// `xsd:string(v)`, `xsd:boolean(v)`: given an appropriately-typed input
+// (numeric literal, boolean, string, or matching-lexical-form typed
+// literal), produce a new literal of the target datatype. An invalid
+// conversion returns `None` — per this file's established convention (see
+// `ABS`/`ROUND`/etc. above), that leaves the enclosing expression's result
+// unbound rather than erroring the whole query.
+//
+// `xsd:dateTime(v)` is intentionally not implemented; see
+// https://github.com/daghovland/rdf-datalog/issues/194.
+
+/// Dispatch a resolved XSD datatype IRI to its cast implementation.
+fn eval_xsd_cast(target_iri: &str, el: &GraphElement) -> Option<GraphElement> {
+    match target_iri {
+        XSD_STRING => cast_to_xsd_string(el),
+        XSD_BOOLEAN => cast_to_xsd_boolean(el),
+        XSD_INTEGER => cast_to_xsd_integer(el),
+        XSD_DECIMAL => cast_to_xsd_decimal(el),
+        XSD_DOUBLE => cast_to_xsd_double(el),
+        XSD_FLOAT => cast_to_xsd_float(el),
+        _ => None,
+    }
+}
+
+/// Parse an XSD `integer` lexical form (optional sign, digits only) into a `BigInt`.
+fn parse_xsd_integer_lexical(s: &str) -> Option<BigInt> {
+    let t = s.trim();
+    let (sign, digits) = match t.strip_prefix('+') {
+        Some(rest) => ("", rest),
+        None => match t.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", t),
+        },
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    format!("{sign}{digits}").parse::<BigInt>().ok()
+}
+
+/// Parse an XSD `boolean` lexical form (`true`/`false`/`1`/`0`) into a `bool`.
+fn parse_xsd_boolean_lexical(s: &str) -> Option<bool> {
+    match s.trim() {
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parse an XSD `double`/`float` lexical form, including the special values
+/// `INF`/`-INF`/`NaN`, into an `f64`.
+fn parse_xsd_double_lexical(s: &str) -> Option<f64> {
+    match s.trim() {
+        "INF" | "+INF" => Some(f64::INFINITY),
+        "-INF" => Some(f64::NEG_INFINITY),
+        "NaN" => Some(f64::NAN),
+        other => other.parse::<f64>().ok(),
+    }
+}
+
+/// Cast to `xsd:string`: the lexical/string value of the source literal.
+/// Kept separate from `graph_element_to_string` (shared by `CONCAT`/`STRLEN`/
+/// etc.) so this cast's semantics — e.g. rendering native numeric/boolean
+/// literals — can't change the behaviour of those unrelated builtins.
+fn cast_to_xsd_string(el: &GraphElement) -> Option<GraphElement> {
+    let s = match el {
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => literal.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => literal.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => b.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => d.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => d.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(f)) => f.to_string(),
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)))
+}
+
+/// Cast to `xsd:boolean` per XPath casting rules: numeric zero/NaN is
+/// `false`, any other numeric value is `true`; strings must match the
+/// `xsd:boolean` lexical space (`true`/`false`/`1`/`0`).
+fn cast_to_xsd_boolean(el: &GraphElement) -> Option<GraphElement> {
+    let b = match el {
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => *b,
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_boolean_lexical(s)?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_boolean_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN || type_iri.0 == XSD_STRING =>
+        {
+            parse_xsd_boolean_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            let f = literal_to_f64(lit)?;
+            !f.is_nan() && f != 0.0
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+}
+
+/// Cast to `xsd:integer` per XPath fn:integer casting rules: numeric sources
+/// truncate toward zero (NOT floor/round — `xsd:integer(-3.7)` is `-3`).
+fn cast_to_xsd_integer(el: &GraphElement) -> Option<GraphElement> {
+    let n = match el {
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => BigInt::from(u8::from(*b)),
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_integer_lexical(s)?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_integer_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            BigInt::from(u8::from(parse_xsd_boolean_lexical(literal)?))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_INTEGER || type_iri.0 == XSD_STRING =>
+        {
+            parse_xsd_integer_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            // xsd:decimal / xsd:double / xsd:float (native or typed): truncate.
+            let f = literal_to_f64(lit)?;
+            if !f.is_finite() {
+                return None;
+            }
+            BigInt::from(f.trunc() as i64)
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+}
+
+/// Cast to `xsd:decimal`. Converts via the source's string form (rather than
+/// through `f64`) where possible, to avoid binary-float rounding noise in the
+/// resulting decimal's lexical form.
+fn cast_to_xsd_decimal(el: &GraphElement) -> Option<GraphElement> {
+    let d = match el {
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => *d,
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.to_string().parse().ok()?,
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => {
+            rust_decimal::Decimal::from(u8::from(*b))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.trim().parse().ok()?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            literal.trim().parse().ok()?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            rust_decimal::Decimal::from(u8::from(parse_xsd_boolean_lexical(literal)?))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_DECIMAL
+                || type_iri.0 == XSD_INTEGER
+                || type_iri.0 == XSD_STRING =>
+        {
+            literal.trim().parse().ok()?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            // xsd:double / xsd:float (native or typed): round-trip through the
+            // decimal string form of the f64 to avoid binary-float noise.
+            let f = literal_to_f64(lit)?;
+            if !f.is_finite() {
+                return None;
+            }
+            f.to_string().parse().ok()?
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)))
+}
+
+/// Shared numeric extraction for `xsd:double`/`xsd:float` casts: handles
+/// booleans and lexical strings (including `INF`/`NaN`) directly, and
+/// delegates to `literal_to_f64` for the plain numeric literal kinds it
+/// already covers.
+fn extract_f64_for_cast(el: &GraphElement) -> Option<f64> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => {
+            Some(if *b { 1.0 } else { 0.0 })
+        }
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_double_lexical(s),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_double_lexical(literal)
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            parse_xsd_boolean_lexical(literal).map(|b| if b { 1.0 } else { 0.0 })
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+            parse_xsd_double_lexical(literal)
+        }
+        GraphElement::GraphLiteral(lit) => literal_to_f64(lit),
+        _ => None,
+    }
+}
+
+/// Cast to `xsd:double`.
+fn cast_to_xsd_double(el: &GraphElement) -> Option<GraphElement> {
+    let f = extract_f64_for_cast(el)?;
+    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+        f.into(),
+    )))
+}
+
+/// Cast to `xsd:float`.
+fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
+    let f = extract_f64_for_cast(el)?;
+    Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
+        f.into(),
+    )))
+}
+
 /// Compare graph elements for FILTER relational operators.
 /// Returns negative, 0, positive, or None if not comparable.
 fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
@@ -2200,7 +2713,14 @@ fn execute_select_inner(
     };
 
     let initial: Vec<PartialSub> = vec![HashMap::new()];
-    let solutions = eval_components(where_clause, initial, datastore, (*active_graph).clone());
+    let budget = select_solution_budget(*distinct, order_by, group_by, projection, *offset, *limit);
+    let solutions = eval_components_budgeted(
+        where_clause,
+        initial,
+        datastore,
+        (*active_graph).clone(),
+        budget,
+    );
 
     let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
@@ -2368,7 +2888,7 @@ fn eval_path_pattern(
                 predicate: Term::Constant(gel.clone()),
                 object: object_term.clone(),
             };
-            eval_triple_pattern(&tp, &sub, datastore, active_graph)
+            eval_triple_pattern(&tp, &sub, datastore, active_graph, None)
         }
 
         PropertyPath::Sequence(steps) => {
@@ -3282,6 +3802,132 @@ mod partial_sub_value_tests {
             PartialSubValue::Computed(never_interned).to_id(&ds),
             None,
             "a Computed value never added to the store has no id"
+        );
+    }
+}
+
+#[cfg(test)]
+mod limit_budget_tests {
+    use super::*;
+    use crate::ast::{
+        Aggregate, Expression, OrderCondition, ProjectionElement, Term, TriplePattern,
+    };
+
+    fn var(name: &str) -> Term {
+        Term::Variable(name.to_string())
+    }
+
+    fn iri_const(iri: &str) -> Term {
+        Term::Constant(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
+            IriReference(iri.to_string()),
+        )))
+    }
+
+    /// A plain `SELECT ... LIMIT n` (no ORDER BY / DISTINCT / GROUP BY /
+    /// aggregate) yields a budget of `OFFSET + LIMIT`, the number of rows the
+    /// query can ever return.
+    #[test]
+    fn budget_is_offset_plus_limit_for_plain_select() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, None, Some(10)),
+            Some(10),
+            "LIMIT 10 with no OFFSET budgets 10 rows"
+        );
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, Some(5), Some(10)),
+            Some(15),
+            "OFFSET 5 LIMIT 10 must fetch 15 rows before slicing"
+        );
+    }
+
+    /// No LIMIT means the whole solution set is required — an OFFSET alone is
+    /// unbounded, so there is no budget.
+    #[test]
+    fn no_limit_means_no_budget() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, None, None),
+            None
+        );
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &proj, Some(3), None),
+            None,
+            "OFFSET without LIMIT is unbounded"
+        );
+    }
+
+    /// Modifiers that must observe every row disable the short-circuit.
+    #[test]
+    fn full_set_modifiers_disable_budget() {
+        let proj = vec![ProjectionElement::Variable("s".into())];
+
+        assert_eq!(
+            select_solution_budget(true, &[], &[], &proj, None, Some(10)),
+            None,
+            "DISTINCT (conservative first pass) disables the budget"
+        );
+
+        let order = vec![OrderCondition {
+            expression: Expression::Variable("s".into()),
+            ascending: true,
+        }];
+        assert_eq!(
+            select_solution_budget(false, &order, &[], &proj, None, Some(10)),
+            None,
+            "ORDER BY must sort the whole set"
+        );
+
+        let group = vec![Expression::Variable("s".into())];
+        assert_eq!(
+            select_solution_budget(false, &[], &group, &proj, None, Some(10)),
+            None,
+            "GROUP BY must fold every row"
+        );
+
+        let agg_proj = vec![ProjectionElement::Expression(
+            Expression::Aggregate(Aggregate::CountStar),
+            "c".into(),
+        )];
+        assert_eq!(
+            select_solution_budget(false, &[], &[], &agg_proj, None, Some(10)),
+            None,
+            "an aggregate projection must fold every row"
+        );
+    }
+
+    /// The quad-take gate: distinct variable positions can be truncated at the
+    /// quad level; a repeated variable cannot (a matched quad may be dropped).
+    #[test]
+    fn repeated_variable_gate() {
+        let distinct = TriplePattern {
+            subject: var("s"),
+            predicate: var("p"),
+            object: var("o"),
+        };
+        assert!(
+            !pattern_repeats_variable(&distinct, &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID)),
+            "s/p/o are distinct — quad-take is sound"
+        );
+
+        let self_loop = TriplePattern {
+            subject: var("x"),
+            predicate: iri_const("http://example.org/p"),
+            object: var("x"),
+        };
+        assert!(
+            pattern_repeats_variable(&self_loop, &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID)),
+            "?x ... ?x repeats a variable — quad-take must be disabled"
+        );
+
+        // The graph variable colliding with a pattern variable also counts.
+        assert!(
+            pattern_repeats_variable(&distinct, &ActiveGraph::Variable("s".into())),
+            "graph variable equal to the subject variable is a repeat"
+        );
+        assert!(
+            !pattern_repeats_variable(&distinct, &ActiveGraph::Variable("g".into())),
+            "a fresh graph variable is not a repeat"
         );
     }
 }

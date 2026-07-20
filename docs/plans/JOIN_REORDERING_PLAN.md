@@ -198,6 +198,40 @@ restriction in advance).
   semantics in OPTIONAL (a semi-join filter must not accidentally drop rows
   that SPARQL's OPTIONAL semantics require to be kept unbound).
 
+#### Phase C implementation (issue [#38](https://github.com/daghovland/rdf-datalog/issues/38))
+
+Re-measurement after A/B (see the [#38](https://github.com/daghovland/rdf-datalog/issues/38)
+comment thread) confirmed `union-constraint-large-join` is still the outlier:
+`eval_components` runs the WHERE clause as a left-to-right join pipeline, so a
+`UNION` that appears *before* a constraining conjunct is evaluated with empty
+outer solutions — both arms become full scans and the entire union is
+materialised before the downstream pattern filters it.
+
+The fix is **conservative component reordering**, not a hand-rolled value-set
+filter (`sparql_parser::component_ordering`, hooked into `eval_components`):
+
+- The executor **already** threads outer solutions into `UNION` arms and
+  `OPTIONAL` branches (`eval_component`). So the whole job is to get the
+  constraining conjunct scheduled *before* the `UNION`, and its bindings then
+  flow into the arms through that existing, proven path.
+- Moving a component before a `UNION` **within a maximal conjunctive run** is
+  result-preserving: bag-join is commutative/associative and distributes over
+  bag-union, so reordering can only change performance, never the result
+  multiset. Correctness therefore hinges only on *never reordering across a
+  barrier*.
+- **Barriers** (never reordered across, keep their position):
+  `Optional`, `Minus`, `Filter`, `Bind`, `Service`.
+  **Reorderable conjunctive components**: `BGP`, `Union`, `Values`,
+  `PathPattern`, `Graph`, `Subquery`.
+- Ordering within a run is greedy by `(connectedness desc, estimated
+  cardinality asc)` — the same shape as Phase A's intra-BGP heuristic, lifted
+  to the component level.
+- **Scoped to `UNION`-constraint.** `OPTIONAL` is deliberately *not* optimised:
+  a semi-join cannot reduce the left/outer rows of a left-join, so there is no
+  safe win there. Reordering only kicks in for runs that actually contain a
+  `UNION` (cheap gate that also keeps the per-row `OPTIONAL`/`MINUS`/`EXISTS`
+  inner-evaluation path allocation-free).
+
 ### Phase D — Worst-case-optimal join for cyclic star BGPs (exploratory)
 
 - Detect when a BGP's join graph is cyclic (e.g. 3+ patterns mutually
