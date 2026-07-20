@@ -925,6 +925,78 @@ ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 20) .
     );
 }
 
+/// End-to-end: an `xsd:integer(...)` cast (issue #190) used inside a Datalog
+/// rule's `FILTER(...)` clause, parsed via `datalog_parser` and evaluated via
+/// `datalog::evaluate_rules`.
+///
+/// `datalog_parser::parse_rule_atom`'s `FILTER(...)` handling delegates
+/// directly to `sparql_parser::parse_filter_expression`, and
+/// `datalog::evaluate`'s `FilterAtom` guard delegates directly to
+/// `sparql_parser::eval_expr_as_filter` — there is no separate Datalog
+/// expression grammar or evaluator, so any SPARQL expression feature (like
+/// the xsd cast functions added for #190) is automatically available here
+/// too. This test locks in that shared-architecture assumption with an actual
+/// end-to-end case, rather than leaving it merely implied by code structure.
+///
+/// Data: ex:a ex:val "42" (string); ex:b ex:val "10" (string). Rule casts the
+/// string value to `xsd:integer` and compares it numerically to `40`.
+///
+/// Uses `>` rather than `=` for the comparison: `=`/`!=` currently do a raw
+/// structural comparison between the cast's native `IntegerLiteral` and a
+/// query-text numeric literal's `TypedLiteral` representation, which are
+/// different enum variants for the same value and therefore never `==`-equal
+/// — a real, pre-existing, systemic gap (affects `ABS`/arithmetic/etc. too,
+/// not just casts) filed separately as
+/// [#208](https://github.com/daghovland/rdf-datalog/issues/208). `<`/`>`/`<=`/
+/// `>=` already normalize both representations to `f64` and are unaffected,
+/// so they're used here to isolate this test to what #190 actually claims:
+/// the cast function itself works, and is shared with Datalog's `FILTER`
+/// unmodified. Switch this back to `=` once #208 is fixed.
+/// Expected: only ex:a violates.
+#[test]
+fn parsed_filter_xsd_integer_cast_end_to_end() {
+    let ttl = r#"
+@prefix ex: <http://example.org/> .
+ex:a ex:val "42" .
+ex:b ex:val "10" .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:violation[?x] :- [?x, ex:val, ?v], FILTER(xsd:integer(?v) > 40) .
+"#;
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+    assert!(
+        matches!(rules[0].body[1], RuleAtom::FilterAtom(_)),
+        "body[1] should be FilterAtom"
+    );
+
+    datalog::evaluate_rules(rules, &mut ds);
+
+    let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x a ex:violation . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let violators: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        violators.contains(&"<http://example.org/a>".to_string()),
+        "ex:a (val \"42\" cast to xsd:integer 42, > 40) should violate; got: {:?}",
+        violators
+    );
+    assert!(
+        !violators.contains(&"<http://example.org/b>".to_string()),
+        "ex:b (val \"10\", not > 40) should NOT violate; got: {:?}",
+        violators
+    );
+}
+
 // ── Deletion of facts that infer new facts (issue #79, #83) ──────────────────
 //
 // Tests verify that re-running evaluate_rules after removing a base fact
