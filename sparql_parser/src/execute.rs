@@ -1602,6 +1602,21 @@ fn eval_function_value(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
+    // XSD datatype constructor/cast functions (SPARQL 1.1 §17.4.2). Unlike the
+    // bare-keyword builtins below, these arrive as the function name's
+    // *resolved* IRI: `xsd:integer(...)` is parsed via `parse_prefixed_name`
+    // (or `<http://...#integer>(...)` via `parse_iri_ref`), never as the bare
+    // word `xsd:integer` (see #186/PR #189), so dispatch matches the full IRI
+    // rather than joining the uppercase-keyword match below. `xsd:dateTime`
+    // casting is intentionally not implemented — see
+    // https://github.com/daghovland/rdf-datalog/issues/194.
+    if matches!(
+        name,
+        XSD_STRING | XSD_BOOLEAN | XSD_INTEGER | XSD_DECIMAL | XSD_DOUBLE | XSD_FLOAT
+    ) {
+        let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+        return eval_xsd_cast(name, &el);
+    }
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
@@ -2218,6 +2233,18 @@ fn eval_function_bool(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<bool> {
+    // `xsd:boolean(v)` used directly in a boolean context (e.g.
+    // `FILTER(xsd:boolean(?x))`). The other XSD cast targets (integer,
+    // decimal, double, float, string) don't produce a boolean value, so — per
+    // this codebase's existing (narrow, non-EBV-coercing) boolean-context
+    // conventions, see `element_to_bool` — they're intentionally left
+    // unhandled here rather than inventing a general effective-boolean-value
+    // coercion just for casts.
+    if name == XSD_BOOLEAN {
+        let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+        let cast = cast_to_xsd_boolean(&el)?;
+        return element_to_bool(&cast);
+    }
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
@@ -2355,6 +2382,226 @@ fn literal_to_f64(lit: &RdfLiteral) -> Option<f64> {
         }
         _ => None,
     }
+}
+
+// ── XSD datatype constructor/cast functions (SPARQL 1.1 §17.4.2, #190) ────
+//
+// `xsd:integer(v)`, `xsd:decimal(v)`, `xsd:double(v)`, `xsd:float(v)`,
+// `xsd:string(v)`, `xsd:boolean(v)`: given an appropriately-typed input
+// (numeric literal, boolean, string, or matching-lexical-form typed
+// literal), produce a new literal of the target datatype. An invalid
+// conversion returns `None` — per this file's established convention (see
+// `ABS`/`ROUND`/etc. above), that leaves the enclosing expression's result
+// unbound rather than erroring the whole query.
+//
+// `xsd:dateTime(v)` is intentionally not implemented; see
+// https://github.com/daghovland/rdf-datalog/issues/194.
+
+/// Dispatch a resolved XSD datatype IRI to its cast implementation.
+fn eval_xsd_cast(target_iri: &str, el: &GraphElement) -> Option<GraphElement> {
+    match target_iri {
+        XSD_STRING => cast_to_xsd_string(el),
+        XSD_BOOLEAN => cast_to_xsd_boolean(el),
+        XSD_INTEGER => cast_to_xsd_integer(el),
+        XSD_DECIMAL => cast_to_xsd_decimal(el),
+        XSD_DOUBLE => cast_to_xsd_double(el),
+        XSD_FLOAT => cast_to_xsd_float(el),
+        _ => None,
+    }
+}
+
+/// Parse an XSD `integer` lexical form (optional sign, digits only) into a `BigInt`.
+fn parse_xsd_integer_lexical(s: &str) -> Option<BigInt> {
+    let t = s.trim();
+    let (sign, digits) = match t.strip_prefix('+') {
+        Some(rest) => ("", rest),
+        None => match t.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", t),
+        },
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    format!("{sign}{digits}").parse::<BigInt>().ok()
+}
+
+/// Parse an XSD `boolean` lexical form (`true`/`false`/`1`/`0`) into a `bool`.
+fn parse_xsd_boolean_lexical(s: &str) -> Option<bool> {
+    match s.trim() {
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parse an XSD `double`/`float` lexical form, including the special values
+/// `INF`/`-INF`/`NaN`, into an `f64`.
+fn parse_xsd_double_lexical(s: &str) -> Option<f64> {
+    match s.trim() {
+        "INF" | "+INF" => Some(f64::INFINITY),
+        "-INF" => Some(f64::NEG_INFINITY),
+        "NaN" => Some(f64::NAN),
+        other => other.parse::<f64>().ok(),
+    }
+}
+
+/// Cast to `xsd:string`: the lexical/string value of the source literal.
+/// Kept separate from `graph_element_to_string` (shared by `CONCAT`/`STRLEN`/
+/// etc.) so this cast's semantics — e.g. rendering native numeric/boolean
+/// literals — can't change the behaviour of those unrelated builtins.
+fn cast_to_xsd_string(el: &GraphElement) -> Option<GraphElement> {
+    let s = match el {
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => literal.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => literal.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => b.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => d.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => d.to_string(),
+        GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(f)) => f.to_string(),
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)))
+}
+
+/// Cast to `xsd:boolean` per XPath casting rules: numeric zero/NaN is
+/// `false`, any other numeric value is `true`; strings must match the
+/// `xsd:boolean` lexical space (`true`/`false`/`1`/`0`).
+fn cast_to_xsd_boolean(el: &GraphElement) -> Option<GraphElement> {
+    let b = match el {
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => *b,
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_boolean_lexical(s)?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_boolean_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN || type_iri.0 == XSD_STRING =>
+        {
+            parse_xsd_boolean_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            let f = literal_to_f64(lit)?;
+            !f.is_nan() && f != 0.0
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+}
+
+/// Cast to `xsd:integer` per XPath fn:integer casting rules: numeric sources
+/// truncate toward zero (NOT floor/round — `xsd:integer(-3.7)` is `-3`).
+fn cast_to_xsd_integer(el: &GraphElement) -> Option<GraphElement> {
+    let n = match el {
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.clone(),
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => BigInt::from(u8::from(*b)),
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_integer_lexical(s)?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_integer_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            BigInt::from(u8::from(parse_xsd_boolean_lexical(literal)?))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_INTEGER || type_iri.0 == XSD_STRING =>
+        {
+            parse_xsd_integer_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            // xsd:decimal / xsd:double / xsd:float (native or typed): truncate.
+            let f = literal_to_f64(lit)?;
+            if !f.is_finite() {
+                return None;
+            }
+            BigInt::from(f.trunc() as i64)
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+}
+
+/// Cast to `xsd:decimal`. Converts via the source's string form (rather than
+/// through `f64`) where possible, to avoid binary-float rounding noise in the
+/// resulting decimal's lexical form.
+fn cast_to_xsd_decimal(el: &GraphElement) -> Option<GraphElement> {
+    let d = match el {
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => *d,
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => n.to_string().parse().ok()?,
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => {
+            rust_decimal::Decimal::from(u8::from(*b))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s.trim().parse().ok()?,
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            literal.trim().parse().ok()?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            rust_decimal::Decimal::from(u8::from(parse_xsd_boolean_lexical(literal)?))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_DECIMAL
+                || type_iri.0 == XSD_INTEGER
+                || type_iri.0 == XSD_STRING =>
+        {
+            literal.trim().parse().ok()?
+        }
+        GraphElement::GraphLiteral(lit) => {
+            // xsd:double / xsd:float (native or typed): round-trip through the
+            // decimal string form of the f64 to avoid binary-float noise.
+            let f = literal_to_f64(lit)?;
+            if !f.is_finite() {
+                return None;
+            }
+            f.to_string().parse().ok()?
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)))
+}
+
+/// Shared numeric extraction for `xsd:double`/`xsd:float` casts: handles
+/// booleans and lexical strings (including `INF`/`NaN`) directly, and
+/// delegates to `literal_to_f64` for the plain numeric literal kinds it
+/// already covers.
+fn extract_f64_for_cast(el: &GraphElement) -> Option<f64> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => {
+            Some(if *b { 1.0 } else { 0.0 })
+        }
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => parse_xsd_double_lexical(s),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_xsd_double_lexical(literal)
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_BOOLEAN =>
+        {
+            parse_xsd_boolean_lexical(literal).map(|b| if b { 1.0 } else { 0.0 })
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+            parse_xsd_double_lexical(literal)
+        }
+        GraphElement::GraphLiteral(lit) => literal_to_f64(lit),
+        _ => None,
+    }
+}
+
+/// Cast to `xsd:double`.
+fn cast_to_xsd_double(el: &GraphElement) -> Option<GraphElement> {
+    let f = extract_f64_for_cast(el)?;
+    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+        f.into(),
+    )))
+}
+
+/// Cast to `xsd:float`.
+fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
+    let f = extract_f64_for_cast(el)?;
+    Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
+        f.into(),
+    )))
 }
 
 /// Compare graph elements for FILTER relational operators.
