@@ -2902,6 +2902,141 @@ fn compare_graph_elements_total(a: &GraphElement, b: &GraphElement) -> std::cmp:
 // ── Property path evaluation ──────────────────────────────────────────────────
 
 /// Evaluate a property path pattern against the datastore, extending one solution.
+/// Zero-hop ("identity") solutions for a path pattern: subject and object
+/// must denote the same node. Used by `?` (`ZeroOrOne`) and by the `k == 0`
+/// case of bounded repetition (`{0}`, `{0,m}`).
+///
+/// Note: when both endpoints are unbound variables this currently returns
+/// no solutions rather than enumerating `subject = object = x` for every
+/// node `x` in the active graph — a pre-existing gap shared with
+/// `ZeroOrOne`, tracked (along with the other zero-length-path semantics
+/// gaps) in <https://github.com/daghovland/rdf-datalog/issues/203>.
+fn zero_hop_solutions(
+    subject_term: &Term,
+    object_term: &Term,
+    sub: &PartialSub,
+    datastore: &Datastore,
+) -> Vec<PartialSub> {
+    let s_gel = resolve_term_to_gel(subject_term, sub, datastore);
+    let o_gel = resolve_term_to_gel(object_term, sub, datastore);
+    match (s_gel, o_gel) {
+        // Both bound: must be equal
+        (Some(s), Some(o)) if s == o => vec![sub.clone()],
+        // Subject bound, object unbound: bind object = subject
+        (Some(s), None) => {
+            if let Term::Variable(v) = object_term {
+                let mut new_sub = sub.clone();
+                new_sub.insert(v.clone(), PartialSubValue::Computed(s));
+                vec![new_sub]
+            } else {
+                Vec::new()
+            }
+        }
+        // Object bound, subject unbound: bind subject = object
+        (None, Some(o)) => {
+            if let Term::Variable(v) = subject_term {
+                let mut new_sub = sub.clone();
+                new_sub.insert(v.clone(), PartialSubValue::Computed(o));
+                vec![new_sub]
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Evaluate a bounded/unbounded repetition path (`p{n}`, `p{n,m}`, `p{n,}`,
+/// `p{,m}`).
+///
+/// Unlike `ZeroOrMore`/`OneOrMore`, which use arbitrary-length-path
+/// (fixed-point/BFS) semantics — one solution per reachable pair, regardless
+/// of how many distinct walks connect it — bounded repetition uses ordinary
+/// sequence (join) semantics: `p{k}` is evaluated as a `k`-fold sequence of
+/// `p`, so distinct walks of the same length produce distinct (duplicate)
+/// solutions. This matches the W3C property-path test expectations (e.g.
+/// `data-diamond.ttl` has two distinct 2-hop walks from `:a` to `:z`, and
+/// `:a :p{2} ?z` is expected to produce two solutions with `?z = :z`, not
+/// one) — see
+/// <https://github.com/daghovland/rdf-datalog/issues/203>.
+///
+/// For an unbounded lower-bounded range (`{n,}`, `max == None`), this is
+/// evaluated as `p{n}` followed by `p*`: exactly `n` hops (preserving walk
+/// multiplicity, and safe on cyclic data since it's a fixed number of
+/// joins) followed by zero-or-more further hops (fixed-point reachability,
+/// so cycles don't cause non-termination or multiplicity blow-up).
+fn eval_repeat_path(
+    subject_term: &Term,
+    inner: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+    range: (usize, Option<usize>),
+) -> Vec<PartialSub> {
+    let (min, max) = range;
+    match max {
+        Some(max_n) => {
+            if min > max_n {
+                return Vec::new();
+            }
+            let mut results = Vec::new();
+            for k in min..=max_n {
+                results.extend(eval_exact_repeat(
+                    subject_term,
+                    inner,
+                    object_term,
+                    sub.clone(),
+                    datastore,
+                    active_graph,
+                    k,
+                ));
+            }
+            results
+        }
+        None => {
+            // {min,} == inner{min} / inner*
+            let mut steps: Vec<PropertyPath> = (0..min).map(|_| inner.clone()).collect();
+            steps.push(PropertyPath::ZeroOrMore(Box::new(inner.clone())));
+            let seq = PropertyPath::Sequence(steps);
+            eval_path_pattern(
+                subject_term,
+                &seq,
+                object_term,
+                sub,
+                datastore,
+                active_graph,
+            )
+        }
+    }
+}
+
+/// Evaluate `inner{k}` for an exact, non-negative repeat count `k`.
+fn eval_exact_repeat(
+    subject_term: &Term,
+    inner: &PropertyPath,
+    object_term: &Term,
+    sub: PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+    k: usize,
+) -> Vec<PartialSub> {
+    if k == 0 {
+        zero_hop_solutions(subject_term, object_term, &sub, datastore)
+    } else {
+        let steps: Vec<PropertyPath> = (0..k).map(|_| inner.clone()).collect();
+        let seq = PropertyPath::Sequence(steps);
+        eval_path_pattern(
+            subject_term,
+            &seq,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+        )
+    }
+}
+
 fn eval_path_pattern(
     subject_term: &Term,
     path: &PropertyPath,
@@ -2996,35 +3131,7 @@ fn eval_path_pattern(
 
         PropertyPath::ZeroOrOne(inner) => {
             // Zero hops: subject == object
-            let zero_hop = {
-                let s_gel = resolve_term_to_gel(subject_term, &sub, datastore);
-                let o_gel = resolve_term_to_gel(object_term, &sub, datastore);
-                match (s_gel, o_gel) {
-                    // Both bound: must be equal
-                    (Some(s), Some(o)) if s == o => vec![sub.clone()],
-                    // Subject bound, object unbound: bind object = subject
-                    (Some(s), None) => {
-                        if let Term::Variable(v) = object_term {
-                            let mut new_sub = sub.clone();
-                            new_sub.insert(v.clone(), PartialSubValue::Computed(s));
-                            vec![new_sub]
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                    // Object bound, subject unbound: bind subject = object
-                    (None, Some(o)) => {
-                        if let Term::Variable(v) = subject_term {
-                            let mut new_sub = sub.clone();
-                            new_sub.insert(v.clone(), PartialSubValue::Computed(o));
-                            vec![new_sub]
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                    _ => Vec::new(),
-                }
-            };
+            let zero_hop = zero_hop_solutions(subject_term, object_term, &sub, datastore);
             let one_hop = eval_path_pattern(
                 subject_term,
                 inner,
@@ -3064,6 +3171,16 @@ fn eval_path_pattern(
             datastore,
             active_graph,
             true,
+        ),
+
+        PropertyPath::Repeat(inner, min, max) => eval_repeat_path(
+            subject_term,
+            inner,
+            object_term,
+            sub,
+            datastore,
+            active_graph,
+            (*min, *max),
         ),
 
         PropertyPath::NegatedSet(excluded) => {

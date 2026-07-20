@@ -924,13 +924,19 @@ fn w3c_sparql11_negation() {
 fn w3c_sparql11_property_path() {
     let entries = load_sparql_manifest("property-path");
     // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine gaps: bounded/unbounded
-    // repetition path syntax `{n}`, `{n,}`, `{,n}`, `{n,m}`, and `{0}`/`{0,1}`
-    // zero-length paths aren't parsed (pp04, pp05, pp13, pp15, pp20, pp22,
-    // pp24, pp26, pp27, pp29), ASK queries aren't supported by
-    // `run_sparql_query` (pp08), and property paths across named graphs /
-    // `GRAPH` blocks have evaluation gaps (pp07, pp34, pp35). Not a
-    // regression from #192.
+    // for the general explanation). Bounded/unbounded repetition path syntax
+    // (`{n}`, `{n,m}`, `{n,}`, `{,m}`) is now implemented (issue #203:
+    // `PropertyPath::Repeat` in `sparql_parser`), fixing pp20/pp22/pp24/pp26/
+    // pp27/pp29 (no longer skipped below). Remaining genuine gaps, still
+    // tracked by #203:
+    // - pp04, pp05, pp13, pp15: zero-length-path identity semantics (`{0}`
+    //   and the zero-hop case of `*`/`?` don't enumerate
+    //   `subject = object = x` for every `x` when both endpoints are
+    //   unbound — see `zero_hop_solutions` in `sparql_parser/src/execute.rs`)
+    // - pp07, pp34, pp35: property paths across named graphs / `GRAPH`
+    //   blocks have evaluation gaps
+    // - pp08: reverse path (`^path`) as an ASK query — `run_sparql_query`
+    //   doesn't support ASK at all
     let skip: &[&str] = &[
         "(pp04) Variable length path with loop",
         "(pp05) Zero length path",
@@ -938,12 +944,6 @@ fn w3c_sparql11_property_path() {
         "(pp08) Reverse path",
         "(pp13) Zero Length Paths with Literals",
         "(pp15) Zero Length Paths on an empty graph",
-        "(pp20) Diamond -- :p{2}",
-        "(pp22) Diamond, with tail -- :p{3}",
-        "(pp24) Diamond, with loop -- :p{2}",
-        "(pp26) Diamond, with loop -- :p{2,4}",
-        "(pp27) Diamond, with loop -- :p{,3}",
-        "(pp29) Diamond, with loop -- :p{2,}",
         "(pp34) Named Graph 1",
         "(pp35) Named Graph 2",
     ];

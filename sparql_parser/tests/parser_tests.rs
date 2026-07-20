@@ -190,6 +190,71 @@ fn test_parse_semicolon_comma_and_property_path() {
     }
 }
 
+/// Parse a single-triple-pattern query and return the `PropertyPath` used
+/// as its predicate (panics if the WHERE clause isn't exactly one
+/// `PathPattern` component).
+fn parse_single_path(sparql: &str) -> PropertyPath {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse");
+    let Query::Select { where_clause, .. } = query else {
+        panic!("expected Select query");
+    };
+    assert_eq!(where_clause.len(), 1, "expected a single WHERE component");
+    match &where_clause[0] {
+        QueryComponent::PathPattern(_, path, _) => (**path).clone(),
+        other => panic!("Expected PathPattern, got: {:?}", other),
+    }
+}
+
+/// Issue #203: `path{n}` — exact repeat count.
+#[test]
+fn test_parse_bounded_repeat_exact() {
+    let sparql = "PREFIX : <http://example/> SELECT * WHERE { :a :p{2} ?z }";
+    let path = parse_single_path(sparql);
+    match path {
+        PropertyPath::Repeat(inner, min, max) => {
+            assert!(matches!(*inner, PropertyPath::Iri(_)));
+            assert_eq!((min, max), (2, Some(2)));
+        }
+        other => panic!("expected Repeat, got: {:?}", other),
+    }
+}
+
+/// Issue #203: `path{n,m}` — bounded range.
+#[test]
+fn test_parse_bounded_repeat_range() {
+    let sparql = "PREFIX : <http://example/> SELECT * WHERE { ?s :p{2,4} :z }";
+    let path = parse_single_path(sparql);
+    match path {
+        PropertyPath::Repeat(_, min, max) => assert_eq!((min, max), (2, Some(4))),
+        other => panic!("expected Repeat, got: {:?}", other),
+    }
+}
+
+/// Issue #203: `path{n,}` — unbounded, at least n.
+#[test]
+fn test_parse_bounded_repeat_min_only() {
+    let sparql = "PREFIX : <http://example/> SELECT * WHERE { ?s :p{2,} :z }";
+    let path = parse_single_path(sparql);
+    match path {
+        PropertyPath::Repeat(_, min, max) => assert_eq!((min, max), (2, None)),
+        other => panic!("expected Repeat, got: {:?}", other),
+    }
+}
+
+/// Issue #203: `path{,m}` — up to m, from zero.
+#[test]
+fn test_parse_bounded_repeat_max_only() {
+    let sparql = "PREFIX : <http://example/> SELECT * WHERE { ?s :p{,3} :z }";
+    let path = parse_single_path(sparql);
+    match path {
+        PropertyPath::Repeat(_, min, max) => assert_eq!((min, max), (0, Some(3))),
+        other => panic!("expected Repeat, got: {:?}", other),
+    }
+}
+
 #[test]
 fn test_parse_sparql12_optional_with_bound_filter() {
     let sparql = r#"
