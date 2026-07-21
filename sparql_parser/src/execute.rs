@@ -13,8 +13,8 @@ Contact: hovlanddag@gmail.com
 //! MIN, MAX, SAMPLE, GROUP_CONCAT).
 
 use crate::ast::{
-    Aggregate, BinaryOp, DatasetClause, Expression, OrderCondition, ProjectionElement,
-    PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
+    Aggregate, BinaryOp, DatasetClause, Expression, GroupCondition, OrderCondition,
+    ProjectionElement, PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, DEFAULT_GRAPH_ELEMENT_ID};
 use ingress::{
@@ -889,7 +889,7 @@ fn compatible(a: &PartialSub, b: &PartialSub, datastore: &Datastore) -> bool {
 fn select_solution_budget(
     distinct: bool,
     order_by: &[OrderCondition],
-    group_by: &[Expression],
+    group_by: &[GroupCondition],
     projection: &[ProjectionElement],
     offset: Option<u64>,
     limit: Option<u64>,
@@ -3499,9 +3499,17 @@ fn expr_has_aggregate(expr: &Expression) -> bool {
 /// Partition solutions into groups keyed by GROUP BY expressions.
 ///
 /// When `group_by` is empty all solutions fall into one implicit group.
+///
+/// A `GroupCondition` written `(expr AS ?var)` additionally binds the
+/// computed grouping key to `?var` in every solution of the resulting group
+/// (see [`bind_group_aliases`]), so it is available to the projection,
+/// `HAVING`, and `ORDER BY` like any other bound variable — this is what lets
+/// `GROUP BY (COALESCE(?w, ...) AS ?X)` project `?X` (W3C SPARQL 1.1
+/// `grouping` suite `Group-4`,
+/// <https://github.com/daghovland/rdf-datalog/issues/206>).
 fn group_by_solutions(
     solutions: &[PartialSub],
-    group_by: &[Expression],
+    group_by: &[GroupCondition],
     datastore: &Datastore,
 ) -> Vec<Vec<PartialSub>> {
     if group_by.is_empty() {
@@ -3511,17 +3519,47 @@ fn group_by_solutions(
     'outer: for sub in solutions {
         let key: Vec<Option<GraphElement>> = group_by
             .iter()
-            .map(|expr| eval_expression_value_inner(expr, sub, datastore))
+            .map(|gc| eval_expression_value_inner(&gc.expr, sub, datastore))
             .collect();
+        let bound_sub = bind_group_aliases(sub, group_by, &key);
         for (k, group) in &mut map {
             if *k == key {
-                group.push(sub.clone());
+                group.push(bound_sub);
                 continue 'outer;
             }
         }
-        map.push((key, vec![sub.clone()]));
+        map.push((key, vec![bound_sub]));
     }
     map.into_iter().map(|(_, g)| g).collect()
+}
+
+/// Bind each aliased `GroupCondition`'s computed key value to its alias
+/// variable in `sub`. Conditions with no `AS var` (the common case) leave
+/// `sub` untouched. An unbound key component (e.g. the grouping expression
+/// errored for this solution) leaves the alias unbound too, rather than
+/// binding it to some placeholder value.
+fn bind_group_aliases(
+    sub: &PartialSub,
+    group_by: &[GroupCondition],
+    key: &[Option<GraphElement>],
+) -> PartialSub {
+    if group_by.iter().all(|gc| gc.alias.is_none()) {
+        return sub.clone();
+    }
+    let mut sub = sub.clone();
+    for (gc, val) in group_by.iter().zip(key.iter()) {
+        if let Some(alias) = &gc.alias {
+            match val {
+                Some(v) => {
+                    sub.insert(alias.clone(), PartialSubValue::Computed(v.clone()));
+                }
+                None => {
+                    sub.remove(alias);
+                }
+            }
+        }
+    }
+    sub
 }
 
 /// Build the output row for one group in an aggregate query.
@@ -4008,7 +4046,8 @@ mod partial_sub_value_tests {
 mod limit_budget_tests {
     use super::*;
     use crate::ast::{
-        Aggregate, Expression, OrderCondition, ProjectionElement, Term, TriplePattern,
+        Aggregate, Expression, GroupCondition, OrderCondition, ProjectionElement, Term,
+        TriplePattern,
     };
 
     fn var(name: &str) -> Term {
@@ -4076,7 +4115,10 @@ mod limit_budget_tests {
             "ORDER BY must sort the whole set"
         );
 
-        let group = vec![Expression::Variable("s".into())];
+        let group = vec![GroupCondition {
+            expr: Expression::Variable("s".into()),
+            alias: None,
+        }];
         assert_eq!(
             select_solution_budget(false, &[], &group, &proj, None, Some(10)),
             None,
