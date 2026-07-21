@@ -746,6 +746,7 @@ dependencies = [
  "ottr",
  "owl-ontology",
  "owl2rl2datalog",
+ "rdf-canonicalization",
  "rdf-owl-translator",
  "rml",
  "serde_json",

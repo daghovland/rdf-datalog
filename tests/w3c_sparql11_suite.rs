@@ -34,8 +34,10 @@ Contact: hovlanddag@gmail.com
 use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, GraphElement, RdfLiteral, RdfResource, Triple};
 use dagalog::{load_file, run_sparql_query};
 use ingress::IriReference;
+use rdf_canon::canonicalize_graph;
 use sparql_endpoint::sparql_update::parse_update;
-use sparql_parser::{ParserContext, parse_query};
+use sparql_parser::ast::{DatasetClause, Query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use turtle::parse_turtle_with_base;
@@ -616,7 +618,9 @@ fn compare_with_srx(ds: &Datastore, sparql: &str, srx_path: &str) -> Option<Stri
     }
 }
 
-/// Run a full SPARQL evaluation test: load data, execute query, compare with SRX.
+/// Run a full SPARQL evaluation test: load data, execute query, compare with
+/// the expected result (SPARQL Results XML for SELECT/ASK, or a Turtle graph
+/// for CONSTRUCT/DESCRIBE — dispatched on the `mf:result` file extension).
 fn run_eval_test(entry: &SparqlTestEntry, skip: &[&str]) -> Option<String> {
     if skip.contains(&entry.name.as_str()) {
         return None;
@@ -624,7 +628,7 @@ fn run_eval_test(entry: &SparqlTestEntry, skip: &[&str]) -> Option<String> {
     if entry.kind != SparqlTestKind::Eval {
         return None;
     }
-    let srx_path = entry.result_file.as_deref()?;
+    let result_path = entry.result_file.as_deref()?;
     let query_path = &entry.action_query;
 
     let query_text = match std::fs::read_to_string(query_path) {
@@ -655,8 +659,120 @@ fn run_eval_test(entry: &SparqlTestEntry, skip: &[&str]) -> Option<String> {
         }
     }
 
-    compare_with_srx(&ds, &query_text, srx_path)
-        .map(|reason| format!("FAIL {}: {}", entry.name, reason))
+    // Some entries (e.g. `constructwhere04`) provide no `qt:data` at all and
+    // rely instead on the query's own `FROM <file>` clause to name the
+    // dataset to load, per the W3C DAWG test-suite convention. Only kick in
+    // when nothing was loaded above, so this can't double-load or otherwise
+    // affect the (much larger) set of entries that already specify `qt:data`.
+    // See [#204](https://github.com/daghovland/rdf-datalog/issues/204).
+    if entry.action_data.is_none() {
+        load_from_clause_data(&mut ds, &query_text, query_path);
+    }
+
+    if result_path.ends_with(".ttl") {
+        compare_construct_with_ttl(&ds, &query_text, result_path)
+            .map(|reason| format!("FAIL {}: {}", entry.name, reason))
+    } else {
+        compare_with_srx(&ds, &query_text, result_path)
+            .map(|reason| format!("FAIL {}: {}", entry.name, reason))
+    }
+}
+
+/// Load data referenced by a query's own default-graph `FROM <relative-file>`
+/// clause(s), resolved against the query file's directory.
+///
+/// Several W3C eval-test entries omit `qt:data` and expect the SPARQL
+/// processor itself to resolve `FROM` against the dataset. Best-effort: any
+/// clause that isn't a plain relative file path (e.g. an absolute
+/// `http(s)://` IRI, or one that simply doesn't resolve to a file on disk) is
+/// silently skipped rather than failing the test outright — this mirrors
+/// `dataset_active_graph`'s own silent-fallback behaviour when a `FROM` IRI
+/// isn't a known resource. See [#204](https://github.com/daghovland/rdf-datalog/issues/204).
+fn load_from_clause_data(ds: &mut Datastore, query_text: &str, query_path: &str) {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let Ok((_, query)) = parse_query(query_text, &mut ctx) else {
+        return;
+    };
+    let dataset: &[DatasetClause] = match &query {
+        Query::Select { dataset, .. } => dataset,
+        Query::Ask { dataset, .. } => dataset,
+        Query::Construct { dataset, .. } => dataset,
+        Query::Describe { dataset, .. } => dataset,
+    };
+    let Some(query_dir) = Path::new(query_path).parent() else {
+        return;
+    };
+    for clause in dataset {
+        if let DatasetClause::Default(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            iri,
+        )))) = clause
+        {
+            let path = query_dir.join(iri);
+            if path.is_file() {
+                let _ = load_file(ds, &path);
+            }
+        }
+    }
+}
+
+/// Compare a CONSTRUCT (or DESCRIBE) query's result graph against an expected
+/// Turtle file.
+///
+/// Uses RDFC-1.0 canonicalization ([`rdf_canon::canonicalize_graph`]) rather
+/// than a direct triple-set comparison so that blank-node relabelling
+/// differences between the executor's output and the expected fixture don't
+/// cause false mismatches. See [#204](https://github.com/daghovland/rdf-datalog/issues/204).
+fn compare_construct_with_ttl(ds: &Datastore, sparql: &str, ttl_path: &str) -> Option<String> {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+    };
+    let (_, query) = match parse_query(sparql, &mut ctx) {
+        Ok(q) => q,
+        Err(e) => return Some(format!("parse error: {:?}", e)),
+    };
+    let triples = match execute(&query, ds, NetworkPolicy::Deny) {
+        Ok(QueryResult::Construct(triples)) => triples,
+        Ok(QueryResult::Describe(triples)) => triples,
+        Ok(_) => return Some("expected a CONSTRUCT/DESCRIBE result".to_string()),
+        Err(e) => return Some(format!("execute error: {}", e)),
+    };
+
+    let mut actual_ds = Datastore::new(4_096);
+    for t in &triples {
+        let s = actual_ds.add_resource(t.subject.clone());
+        let p = actual_ds.add_resource(t.predicate.clone());
+        let o = actual_ds.add_resource(t.object.clone());
+        actual_ds.add_triple(dag_rdf::Triple {
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+
+    let mut expected_ds = Datastore::new(4_096);
+    if let Err(e) = load_file(&mut expected_ds, Path::new(ttl_path)) {
+        return Some(format!("cannot load expected result {}: {}", ttl_path, e));
+    }
+
+    let actual_canon = match canonicalize_graph(&actual_ds, dag_rdf::DEFAULT_GRAPH_ELEMENT_ID) {
+        Ok(c) => c,
+        Err(e) => return Some(format!("canonicalization error (actual): {}", e)),
+    };
+    let expected_canon = match canonicalize_graph(&expected_ds, dag_rdf::DEFAULT_GRAPH_ELEMENT_ID) {
+        Ok(c) => c,
+        Err(e) => return Some(format!("canonicalization error (expected): {}", e)),
+    };
+
+    if actual_canon == expected_canon {
+        None
+    } else {
+        Some(format!(
+            "graph mismatch:\n--- actual ---\n{}--- expected ---\n{}",
+            actual_canon, expected_canon
+        ))
+    }
 }
 
 /// Load an RDF file's triples into `ds` as a named graph, named by the
@@ -1072,18 +1188,20 @@ fn w3c_sparql11_property_path() {
 #[test]
 fn w3c_sparql11_construct() {
     let entries = load_sparql_manifest("construct");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). `CONSTRUCT WHERE {}` (shorthand form) is
-    // rejected by `run_sparql_query` with "CONSTRUCT queries are not
-    // supported via run_sparql_query" — same underlying CONSTRUCT-execution
-    // gap noted in the `subquery` suite's skip list. Not a regression from
-    // #192.
-    let skip: &[&str] = &[
-        "constructwhere01 - CONSTRUCT WHERE",
-        "constructwhere02 - CONSTRUCT WHERE",
-        "constructwhere03 - CONSTRUCT WHERE",
-        "constructwhere04 - CONSTRUCT WHERE",
-    ];
+    // `constructwhere01`-`04` used to fail here not because `CONSTRUCT WHERE
+    // { ... }` (the shorthand form) was rejected by the parser — it wasn't;
+    // `sparql_parser`'s parser and executor already handled it correctly
+    // (see `construct_short_form_parses` / `construct_short_form_returns_all_triples`
+    // in sparql_parser/tests/parser_tests.rs) — but because this harness's
+    // `run_eval_test` only knew how to compare SELECT/ASK results against a
+    // `.srx` file via `run_sparql_query`, which rejects CONSTRUCT outright.
+    // `constructwhere04` additionally needs its dataset loaded via its own
+    // `FROM <data.ttl>` clause, since its `mf:action` has no `qt:data` at
+    // all. Fixed by adding `.ttl`-vs-CONSTRUCT-graph comparison
+    // (`compare_construct_with_ttl`, via RDFC-1.0 canonicalization) and
+    // `FROM`-clause data loading (`load_from_clause_data`) to this harness.
+    // See [#204](https://github.com/daghovland/rdf-datalog/issues/204).
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))
