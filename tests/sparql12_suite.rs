@@ -2136,3 +2136,43 @@ ORDER BY ?sum
     assert_xsd_integer(result.rows[0].get("sum"), 2, "first row (ascending ?sum)");
     assert_xsd_integer(result.rows[1].get("sum"), 4, "second row (ascending ?sum)");
 }
+
+/// `project-expression` alias reuse inside a subquery's own SELECT list.
+///
+/// [#207](https://github.com/daghovland/rdf-datalog/issues/207) / [PR
+/// #220](https://github.com/daghovland/rdf-datalog/pull/220) fixed alias reuse
+/// (a later `(expr AS ?alias)` referencing an earlier one) for the top-level
+/// `SELECT` projection path (`project_with_exprs`). Subquery projection goes
+/// through a separate code path (`execute_select_inner`), so it was left
+/// unverified whether the fix applies there too. See
+/// [#223](https://github.com/daghovland/rdf-datalog/issues/223).
+#[test]
+fn spec_project_expression_reuse_alias_in_subquery_select() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX ex: <http://www.example.org/schema#>
+PREFIX in: <http://www.example.org/instance#>
+in:a ex:p 1 .
+in:a ex:q 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?sum ?twice WHERE {
+  { SELECT ((?y + ?z) AS ?sum) ((2 * ?sum) AS ?twice) WHERE {
+      ?x ex:p ?y .
+      ?x ex:q ?z
+    }
+  }
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    let row = &result.rows[0];
+    assert_xsd_integer(row.get("sum"), 3, "?sum = 1 + 2");
+    assert_xsd_integer(
+        row.get("twice"),
+        6,
+        "?twice = 2 * ?sum must see the ?sum alias from the earlier subquery SELECT item",
+    );
+}

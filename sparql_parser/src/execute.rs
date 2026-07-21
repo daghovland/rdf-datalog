@@ -442,6 +442,25 @@ fn first_non_silent_service(components: &[QueryComponent]) -> Option<&Term> {
 
 /// Project a solution row, evaluating any `(expr AS ?alias)` projection elements.
 ///
+/// Thin wrapper around [`project_with_exprs_partial`] that resolves each
+/// projected binding to a concrete [`GraphElement`] for the top-level
+/// `SELECT` result shape (`SolutionRow`). See that function for the
+/// alias-reuse semantics.
+fn project_with_exprs(
+    sub: &PartialSub,
+    projection: &[ProjectionElement],
+    datastore: &Datastore,
+) -> SolutionRow {
+    project_with_exprs_partial(sub, projection, datastore)
+        .into_iter()
+        .map(|(k, v)| (k, v.resolve(datastore)))
+        .collect()
+}
+
+/// Project a solution, evaluating any `(expr AS ?alias)` projection elements,
+/// keeping the result as a [`PartialSub`] (unresolved bindings) rather than a
+/// fully-resolved [`SolutionRow`].
+///
 /// A later `(expr AS ?alias)` SELECT item may reference an alias bound by an
 /// earlier one in the same projection list (e.g.
 /// `SELECT (?a + 1 AS ?x) (?x * 2 AS ?y)`) — the W3C project-expression
@@ -451,30 +470,36 @@ fn first_non_silent_service(components: &[QueryComponent]) -> Option<&Term> {
 /// against the original WHERE-clause bindings alone. `Star`/`Variable`
 /// projection elements are unaffected — they always read the original
 /// WHERE-clause bindings, never a previously-projected alias.
-/// See <https://github.com/daghovland/rdf-datalog/issues/207>.
-fn project_with_exprs(
+///
+/// Shared by the top-level `SELECT` path ([`project_with_exprs`]) and the
+/// non-aggregate subquery projection path (`execute_select_inner`), so the
+/// alias-reuse fix from issue 207 (linked below) applies uniformly to both —
+/// see issue 223 (linked below) for the subquery-path gap this closes.
+/// See <https://github.com/daghovland/rdf-datalog/issues/207> and
+/// <https://github.com/daghovland/rdf-datalog/issues/223>.
+fn project_with_exprs_partial(
     sub: &PartialSub,
     projection: &[ProjectionElement],
     datastore: &Datastore,
-) -> SolutionRow {
-    let mut row: SolutionRow = HashMap::new();
+) -> PartialSub {
+    let mut row: PartialSub = HashMap::new();
     let mut extended: PartialSub = sub.clone();
     for elem in projection {
         match elem {
             ProjectionElement::Star => {
                 for (k, v) in sub {
-                    row.insert(k.clone(), v.resolve(datastore));
+                    row.insert(k.clone(), v.clone());
                 }
             }
             ProjectionElement::Variable(v) => {
                 if let Some(val) = sub.get(v) {
-                    row.insert(v.clone(), val.resolve(datastore));
+                    row.insert(v.clone(), val.clone());
                 }
             }
             ProjectionElement::Expression(expr, alias) => {
                 if let Some(val) = eval_expression_value_inner(expr, &extended, datastore) {
                     extended.insert(alias.clone(), PartialSubValue::Computed(val.clone()));
-                    row.insert(alias.clone(), val);
+                    row.insert(alias.clone(), PartialSubValue::Computed(val));
                 }
             }
         }
@@ -2991,35 +3016,14 @@ fn execute_select_inner(
             })
             .collect()
     } else {
-        // Build projected variables list (without expanding SELECT *)
-        let vars: Vec<String> = projection
-            .iter()
-            .filter_map(|p| match p {
-                ProjectionElement::Variable(v) => Some(v.clone()),
-                ProjectionElement::Expression(_, alias) => Some(alias.clone()),
-                ProjectionElement::Star => None,
-            })
-            .collect();
-        let proj_vars: Option<Vec<String>> = if projection
-            .iter()
-            .any(|p| matches!(p, ProjectionElement::Star))
-        {
-            None // keep all vars for SELECT *
-        } else {
-            Some(vars)
-        };
+        // Evaluate any `(expr AS ?alias)` projection elements (with alias
+        // reuse across the subquery's own projection list — see
+        // `project_with_exprs_partial`), and project down to just the
+        // requested variables (or keep everything for `SELECT *`).
+        // See https://github.com/daghovland/rdf-datalog/issues/223.
         solutions
             .into_iter()
-            .map(|sub| {
-                if let Some(ref pvars) = proj_vars {
-                    pvars
-                        .iter()
-                        .filter_map(|v| sub.get(v).map(|val| (v.clone(), val.clone())))
-                        .collect()
-                } else {
-                    sub
-                }
-            })
+            .map(|sub| project_with_exprs_partial(&sub, projection, datastore))
             .collect()
     };
 
