@@ -1056,21 +1056,23 @@ fn w3c_sparql11_exists() {
 #[test]
 fn w3c_sparql11_bindings() {
     let entries = load_sparql_manifest("bindings");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine gaps in post-query VALUES
-    // semantics (join/filter behaviour of a trailing VALUES clause against
-    // the outer pattern) and in subquery-scoped VALUES parsing, not a
-    // regression from #192.
-    let skip: &[&str] = &[
-        "Post-query VALUES with subj-var, 1 row",
-        "Post-query VALUES with obj-var, 1 row",
-        "Post-query VALUES with 2 obj-vars, 1 row",
-        "Post-query VALUES with 2 obj-vars, 1 row with UNDEF",
-        "Post-query VALUES with 2 obj-vars, 2 rows with UNDEF",
-        "Post-query VALUES with pred-var, 1 row",
-        "Post-query VALUES with (OPTIONAL) obj-var, 1 row",
-        "Post-subquery VALUES",
-    ];
+    // Fixed by issue #200: a trailing `VALUES { ... }` clause after a
+    // query's (or subquery's) solution modifiers — SPARQL grammar's
+    // `ValuesClause` — was not parsed at all; the clause text was silently
+    // dropped by `run_sparql_query`'s `let (_, query) = parse_query(...)`,
+    // so these entries evaluated as if the VALUES clause were absent. Fixed
+    // by parsing an optional `ValuesClause` at the end of `parse_query_body`
+    // (shared by both top-level `SelectQuery` and nested `SubSelect`, which
+    // is why the "Post-subquery VALUES" grammar gap needed no separate
+    // fix) and joining it into the solution set as the final step, after
+    // all other solution modifiers (see `join_solutions_with_values` in
+    // `sparql_parser::execute`). Along the way, a latent bug in
+    // `parse_values_row` (inferring the parenthesised-row-vs-bare-value
+    // grammar choice from `vars.len() == 1` rather than from whether the var
+    // list itself used `InlineDataFull`'s parens) was also fixed — it broke
+    // `VALUES (?x) { (v) }` (single var, still parenthesised), which
+    // "Post-query VALUES with (OPTIONAL) obj-var, 1 row" exercises.
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))

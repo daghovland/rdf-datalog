@@ -1,5 +1,13 @@
 use dag_rdf::GraphElement;
 
+/// The parsed contents of a `VALUES` data block: variable names, plus each
+/// inline-data row (`None` entries are `UNDEF`). Shared by
+/// [`QueryComponent::Values`] (an inline block inside a group graph pattern)
+/// and [`Query::Select`]'s `values_clause` (a trailing `ValuesClause`,
+/// joined in as the final step — see
+/// <https://github.com/daghovland/rdf-datalog/issues/200>).
+pub type ValuesData = (Vec<String>, Vec<Vec<Option<GraphElement>>>);
+
 /// A SPARQL property path expression (predicate position in triple patterns).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PropertyPath {
@@ -57,6 +65,16 @@ pub enum Query {
         limit: Option<u64>,
         offset: Option<u64>,
         distinct: bool,
+        /// A trailing `VALUES { ... }` clause (SPARQL grammar's
+        /// `ValuesClause`, which follows `WhereClause SolutionModifier` for
+        /// both a top-level `SelectQuery` and a nested `SubSelect`) —
+        /// distinct from an inline `VALUES` block inside `where_clause`'s
+        /// group graph pattern. Joined against the query's solutions as the
+        /// final step, after `group_by`/`having`/`order_by`/`distinct`/
+        /// `offset`/`limit` have all been applied (see the
+        /// `join_solutions_with_values` helper in `sparql_parser::execute`).
+        /// See <https://github.com/daghovland/rdf-datalog/issues/200>.
+        values_clause: Option<ValuesData>,
     },
     Ask {
         dataset: Vec<DatasetClause>,
