@@ -887,6 +887,304 @@ SELECT ?x ?name WHERE {
     );
 }
 
+// ── §15 Post-query / post-subquery VALUES ────────────────────────────────────
+//
+// Mirrors the W3C SPARQL 1.1 bindings test suite entries `values01`–`values07`
+// and `inline02` (`tests/testdata/w3c_sparql11/bindings/`); see
+// `tests/w3c_sparql11_suite.rs::w3c_sparql11_bindings` for the fixture-driven
+// equivalents and https://github.com/daghovland/rdf-datalog/issues/200.
+//
+// A trailing `VALUES { ... }` clause placed *after* the closing `}` of a
+// query's WHERE block (and, for a subquery, after its own solution
+// modifiers) is a distinct grammar production from the inline
+// `VALUES` tested by `spec_s15_values_inline` above (which sits *inside* the
+// WHERE block's group graph pattern). Per the SPARQL 1.1 grammar,
+// `SubSelect ::= SelectClause DatasetClause* WhereClause SolutionModifier
+// ValuesClause`, so a `{ SELECT ... } VALUES ... }` is the *same* production
+// applied to a nested subquery.
+
+/// W3C `values01` — post-query VALUES restricting a subject variable.
+#[test]
+fn spec_s15_post_query_values_subj_var() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix dc:   <http://purl.org/dc/elements/1.1/> .
+@prefix :     <http://example.org/book/> .
+@prefix ns:   <http://example.org/ns#> .
+
+:book1  dc:title  "SPARQL Tutorial" .
+:book1  ns:price  42 .
+:book2  dc:title  "The Semantic Web" .
+:book2  ns:price  23 .
+"#,
+    );
+    let sparql = r#"
+PREFIX dc:   <http://purl.org/dc/elements/1.1/>
+PREFIX :     <http://example.org/book/>
+PREFIX ns:   <http://example.org/ns#>
+
+SELECT ?book ?title ?price
+{
+   ?book dc:title ?title ;
+         ns:price ?price .
+}
+VALUES ?book {
+ :book1
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "values01: post-query VALUES should restrict to book1 only"
+    );
+    assert_eq!(
+        query_single_value(&ds, sparql, "title").as_deref(),
+        Some("\"SPARQL Tutorial\"")
+    );
+}
+
+/// W3C `values02` — post-query VALUES restricting an object variable.
+#[test]
+fn spec_s15_post_query_values_obj_var() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+
+SELECT ?s ?o
+{
+  ?s ?p ?o .
+} VALUES ?o {
+ :b
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "values02: post-query VALUES should restrict ?o to :b"
+    );
+}
+
+/// W3C `values03` — post-query VALUES with two object variables, one row.
+#[test]
+fn spec_s15_post_query_values_two_obj_vars() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+
+SELECT ?s ?o1 ?o2
+{
+  ?s ?p1 ?o1 .
+  ?s ?p2 ?o2 .
+} VALUES (?o1 ?o2) {
+ ("Alan" "alan@example.org")
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "values03: post-query VALUES should restrict to the single matching pair"
+    );
+}
+
+/// W3C `values04` — post-query VALUES, two object variables, one row with UNDEF.
+///
+/// `UNDEF` in a VALUES row leaves that variable unconstrained by the row (not
+/// forced unbound); each compatible combination is its own solution.
+#[test]
+fn spec_s15_post_query_values_two_obj_vars_undef() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+
+SELECT ?s ?o1 ?o2
+{
+  ?s ?p1 ?o1 .
+  ?s ?p2 ?o2 .
+} VALUES (?o1 ?o2) {
+ ("Alan" UNDEF)
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        3,
+        "values04: UNDEF ?o2 is unconstrained, so all three ?o2 bindings for ?s=:a survive"
+    );
+}
+
+/// W3C `values05` — post-query VALUES, two rows with UNDEF each.
+#[test]
+fn spec_s15_post_query_values_two_obj_vars_two_rows_undef() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+
+SELECT ?s ?o1 ?o2
+{
+  ?s ?p1 ?o1 .
+  ?s ?p2 ?o2 .
+} VALUES (?o1 ?o2) {
+ (UNDEF "Alan")
+ (:b UNDEF)
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        6,
+        "values05: six compatible combinations across both VALUES rows (see values05.srx)"
+    );
+}
+
+/// W3C `values06` — post-query VALUES restricting a predicate variable.
+#[test]
+fn spec_s15_post_query_values_pred_var() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?s ?p1 ?o1
+{
+  ?s ?p1 ?o1 .
+} VALUES ?p1 {
+ foaf:knows
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "values06: post-query VALUES should restrict ?p1 to foaf:knows"
+    );
+}
+
+/// W3C `values07` — post-query VALUES joining across an OPTIONAL.
+///
+/// The VALUES clause binds `?o2` even for rows where the OPTIONAL left it
+/// unbound (compatible join — no conflicting existing binding to reject).
+#[test]
+fn spec_s15_post_query_values_optional_obj_var() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:c foaf:name "Alice" .
+:c foaf:mbox "alice@example.org" .
+:a foaf:knows :b .
+:b foaf:knows :c .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?s ?o1 ?o2
+{
+  ?s ?p1 ?o1
+  OPTIONAL { ?s foaf:knows ?o2 }
+} VALUES (?o2) {
+ (:b)
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        5,
+        "values07: all 5 rows survive, each with ?o2 = :b (see values07.srx)"
+    );
+}
+
+/// W3C `inline02` ("Post-subquery VALUES") — VALUES immediately following a
+/// `{ SELECT ... }` subquery's own solution modifiers, inside the same
+/// braces (`SubSelect ::= ... WhereClause SolutionModifier ValuesClause`).
+#[test]
+fn spec_s15_post_subquery_values() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+:a foaf:name "Alan" .
+:a foaf:mbox "alan@example.org" .
+:b foaf:name "Bob" .
+:b foaf:mbox "bob@example.org" .
+:a foaf:knows :b .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+
+SELECT ?s ?o {
+	{
+		SELECT * WHERE {
+			?s ?p ?o .
+		}
+		VALUES (?o) { (:b) }
+	}
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "inline02: subquery's own trailing VALUES should restrict ?o to :b"
+    );
+}
+
 // ── §11  Aggregates ───────────────────────────────────────────────────────────
 //
 // Data: tests/testdata/sparql12_aggregates.ttl

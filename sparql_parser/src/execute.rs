@@ -109,6 +109,7 @@ pub fn execute(
             having,
             dataset,
             order_by,
+            values_clause,
         } => {
             let initial: Vec<PartialSub> = vec![HashMap::new()];
             let budget =
@@ -123,7 +124,7 @@ pub fn execute(
 
             let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
-            let (variables, mut rows) = if aggregate_mode {
+            let (mut variables, mut rows) = if aggregate_mode {
                 let groups = group_by_solutions(&solutions, group_by, datastore);
                 let vars = projection_variables(projection, where_clause, datastore);
                 let rows: Vec<SolutionRow> = groups
@@ -188,6 +189,27 @@ pub fn execute(
             }
             if let Some(lim) = limit {
                 rows.truncate(*lim as usize);
+            }
+
+            // Post-query ValuesClause: joined in as the final step, after
+            // every other solution modifier (SPARQL 1.1 §10.2 / issue #200).
+            if let Some((vars, val_rows)) = values_clause {
+                let partial_rows: Vec<PartialSub> =
+                    rows.iter().map(solution_row_to_partial).collect();
+                let joined = join_solutions_with_values(partial_rows, vars, val_rows, datastore);
+                rows = joined
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|(k, v)| (k, v.resolve(datastore)))
+                            .collect()
+                    })
+                    .collect();
+                for v in vars {
+                    if !variables.contains(v) {
+                        variables.push(v.clone());
+                    }
+                }
             }
 
             Ok(QueryResult::Select(SelectResult { variables, rows }))
@@ -869,34 +891,7 @@ fn eval_component(
             .collect(),
 
         QueryComponent::Values(vars, rows) => {
-            let mut result = Vec::new();
-            for sub in solutions {
-                for row in rows {
-                    if vars.len() != row.len() {
-                        continue;
-                    }
-                    let mut new_sub = sub.clone();
-                    let mut ok = true;
-                    for (var, val_opt) in vars.iter().zip(row.iter()) {
-                        if let Some(gel) = val_opt {
-                            let new_val = PartialSubValue::Computed(gel.clone());
-                            match new_sub.get(var) {
-                                Some(existing) if !psv_eq(existing, &new_val, datastore) => {
-                                    ok = false;
-                                    break;
-                                }
-                                _ => {
-                                    new_sub.insert(var.clone(), new_val);
-                                }
-                            }
-                        } // UNDEF (None) — leave unbound
-                    }
-                    if ok {
-                        result.push(new_sub);
-                    }
-                }
-            }
-            result
+            join_solutions_with_values(solutions, vars, rows, datastore)
         }
 
         QueryComponent::Service(_, inner, _) => {
@@ -905,6 +900,60 @@ fn eval_component(
             Vec::new()
         }
     }
+}
+
+/// Natural join of a solution set against a `VALUES` data block: `vars` names
+/// the columns, `rows` is each inline-data row (`None` for `UNDEF`).
+///
+/// For every existing solution, every VALUES row that doesn't conflict with
+/// an already-bound variable produces one output solution (so a solution can
+/// multiply into several rows when more than one VALUES row is compatible —
+/// see the W3C bindings-suite `values04`/`values05` fixtures, which rely on
+/// exactly this to produce more output rows than input solutions). A `None`
+/// (`UNDEF`) entry in a row leaves that variable unconstrained by *that row*
+/// — it neither introduces a new binding nor conflicts with an existing one
+/// — per SPARQL 1.1 §10.2's inline-data-as-join semantics.
+///
+/// Shared by the inline `VALUES { ... }` block inside a group graph pattern
+/// ([`QueryComponent::Values`], evaluated in [`eval_component`]) and the
+/// trailing post-query / post-subquery `ValuesClause`
+/// (`Query::Select::values_clause`, joined in as the final step by
+/// [`execute`] and [`execute_select_inner`]). See
+/// <https://github.com/daghovland/rdf-datalog/issues/200>.
+fn join_solutions_with_values(
+    solutions: Vec<PartialSub>,
+    vars: &[String],
+    rows: &[Vec<Option<GraphElement>>],
+    datastore: &Datastore,
+) -> Vec<PartialSub> {
+    let mut result = Vec::new();
+    for sub in solutions {
+        for row in rows {
+            if vars.len() != row.len() {
+                continue;
+            }
+            let mut new_sub = sub.clone();
+            let mut ok = true;
+            for (var, val_opt) in vars.iter().zip(row.iter()) {
+                if let Some(gel) = val_opt {
+                    let new_val = PartialSubValue::Computed(gel.clone());
+                    match new_sub.get(var) {
+                        Some(existing) if !psv_eq(existing, &new_val, datastore) => {
+                            ok = false;
+                            break;
+                        }
+                        _ => {
+                            new_sub.insert(var.clone(), new_val);
+                        }
+                    }
+                } // UNDEF (None) — leave unbound
+            }
+            if ok {
+                result.push(new_sub);
+            }
+        }
+    }
+    result
 }
 
 /// Two substitutions are compatible if they agree on all shared variables.
@@ -2987,6 +3036,7 @@ fn execute_select_inner(
         group_by,
         having,
         order_by,
+        values_clause,
         ..
     } = query
     else {
@@ -3079,6 +3129,13 @@ fn execute_select_inner(
     // LIMIT
     if let Some(lim) = limit {
         rows.truncate(*lim as usize);
+    }
+
+    // Post-(sub)query ValuesClause — see the equivalent step in `execute`'s
+    // `Query::Select` arm and issue #200. `rows` here is already `PartialSub`
+    // (no projection-boundary resolution needed, unlike the top-level path).
+    if let Some((vars, val_rows)) = values_clause {
+        rows = join_solutions_with_values(rows, vars, val_rows, datastore);
     }
 
     rows

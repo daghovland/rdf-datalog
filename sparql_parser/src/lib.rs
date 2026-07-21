@@ -291,6 +291,17 @@ fn parse_query_body<'a>(
         let (input, offset) = parse_limit_offset("OFFSET")(input)?;
         let (input, _) = sp(input)?;
 
+        // ValuesClause ::= ( 'VALUES' DataBlock )? — a trailing VALUES block
+        // after the solution modifiers, applying to both a top-level
+        // SelectQuery and a nested SubSelect (`{ SELECT ... } VALUES ...}`
+        // shares this same production). See issue #200.
+        let (input, values_component) = opt(|i| parse_values(ctx)(i))(input)?;
+        let (input, _) = sp(input)?;
+        let values_clause = values_component.map(|c| match c {
+            QueryComponent::Values(vars, rows) => (vars, rows),
+            _ => unreachable!("parse_values always returns QueryComponent::Values"),
+        });
+
         Ok((
             input,
             Query::Select {
@@ -303,6 +314,7 @@ fn parse_query_body<'a>(
                 limit,
                 offset,
                 distinct,
+                values_clause,
             },
         ))
     }
@@ -1970,16 +1982,26 @@ fn parse_values<'a>(
         let (input, _) = tag_no_case("VALUES")(input)?;
         let (input, _) = sp1(input)?;
 
-        // Single variable: VALUES ?x { ... }
-        // Multiple: VALUES (?x ?y) { ... }
-        let (input, vars) = alt((
-            // Single variable
-            map(preceded(char('?'), parse_varname), |v| vec![v]),
-            // Multiple in parens
-            delimited(
-                pair(char('('), sp),
-                many0(terminated(preceded(char('?'), parse_varname), sp)),
-                char(')'),
+        // Single variable, no parens: VALUES ?x { val1 val2 ... }
+        // (grammar's `InlineDataOneVar`) — each row is a bare value.
+        // Parenthesised var list, one or more vars: VALUES (?x ?y...) { (v1
+        // v2...) ... } (grammar's `InlineDataFull`) — each row is *always*
+        // parenthesised too, even for a single var (`VALUES (?x) { (v1) }`);
+        // this differs from `InlineDataOneVar` above despite both having
+        // exactly one variable, so `parse_values_row` must be told which
+        // form is in effect rather than inferring it from `vars.len()`. See
+        // W3C bindings-suite `values07` and issue #200.
+        let (input, (vars, paren_vars)) = alt((
+            // Single variable, bare
+            map(preceded(char('?'), parse_varname), |v| (vec![v], false)),
+            // Parenthesised var list
+            map(
+                delimited(
+                    pair(char('('), sp),
+                    many0(terminated(preceded(char('?'), parse_varname), sp)),
+                    char(')'),
+                ),
+                |vars| (vars, true),
             ),
         ))(input)?;
 
@@ -1988,7 +2010,7 @@ fn parse_values<'a>(
         let (input, _) = sp(input)?;
 
         // Rows
-        let (input, rows) = many0(parse_values_row(ctx, vars.len()))(input)?;
+        let (input, rows) = many0(parse_values_row(ctx, vars.len(), paren_vars))(input)?;
 
         let (input, _) = sp(input)?;
         let (input, _) = char('}')(input)?;
@@ -2000,15 +2022,18 @@ fn parse_values<'a>(
 fn parse_values_row<'a>(
     ctx: &'a ParserContext,
     n_vars: usize,
+    paren_vars: bool,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Option<GraphElement>>> + 'a {
     move |input| {
         let (input, _) = sp(input)?;
-        if n_vars == 1 {
-            // Without parens for single var
+        if n_vars == 1 && !paren_vars {
+            // `InlineDataOneVar` — bare value, no parens (`VALUES ?x { v }`).
             let (input, val) = parse_values_value(ctx)(input)?;
             let (input, _) = sp(input)?;
             Ok((input, vec![val]))
         } else {
+            // `InlineDataFull` — always parenthesised, even for a single var
+            // (`VALUES (?x) { (v) }`).
             let (input, _) = char('(')(input)?;
             let (input, _) = sp(input)?;
             let (input, vals) = separated_list0(sp1, parse_values_value(ctx))(input)?;
