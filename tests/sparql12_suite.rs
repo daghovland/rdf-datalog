@@ -1094,6 +1094,56 @@ WHERE { ?book :price ?price . }
     );
 }
 
+/// SPARQL 1.2 §11.4 / W3C `grouping` suite `Group-4`: `GROUP BY` with an
+/// EXPRESSION (not a bare variable) as the grouping key, using the
+/// `(expr AS ?var)` form so the computed key is also bound for projection.
+///
+/// Isolates the grouping *mechanism* with plain arithmetic rather than
+/// `COALESCE`, so a failure here points at GROUP BY parsing/evaluation and
+/// not at the COALESCE function itself (which is exercised separately by
+/// `Group-4` in `tests/w3c_sparql11_suite.rs::w3c_sparql11_grouping`).
+///
+/// s1: x=1,y=4 → sum=5; s2: x=2,y=3 → sum=5; s3: x=10,y=1 → sum=11.
+/// Expect 2 groups: sum=5 (2 members), sum=11 (1 member).
+///
+/// Tracked by https://github.com/daghovland/rdf-datalog/issues/206.
+#[test]
+fn spec_s11_group_by_expression_key() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:s1 :x 1 ; :y 4 .
+:s2 :x 2 ; :y 3 .
+:s3 :x 10 ; :y 1 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?sum (COUNT(?s) AS ?cnt)
+WHERE { ?s :x ?x ; :y ?y . }
+GROUP BY (?x + ?y AS ?sum)
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "GROUP BY (?x + ?y AS ?sum) → 2 distinct sums (5 and 11)"
+    );
+    let mut sums = query_values(&ds, sparql, "sum");
+    sums.sort();
+    assert_eq!(
+        sums,
+        vec!["11", "5"],
+        "grouping key values must be bound as ?sum in the output"
+    );
+    let mut counts = query_values(&ds, sparql, "cnt");
+    counts.sort();
+    assert_eq!(
+        counts,
+        vec!["1", "2"],
+        "sum=5 has 2 members (s1,s2); sum=11 has 1 member (s3)"
+    );
+}
+
 // ── §9 (extended)  Property Paths ────────────────────────────────────────────
 //
 // Data: tests/testdata/sparql12_paths.ttl

@@ -2041,13 +2041,52 @@ fn parse_values_value<'a>(
 
 fn parse_group_by<'a>(
     ctx: &'a ParserContext,
-) -> impl Fn(&'a str) -> IResult<&'a str, Vec<Expression>> + 'a {
+) -> impl Fn(&'a str) -> IResult<&'a str, Vec<GroupCondition>> + 'a {
     move |input| {
         let (input, gb) = opt(preceded(
             tuple((tag_no_case("GROUP"), sp1, tag_no_case("BY"), sp1)),
-            separated_list1(sp1, |i| parse_expression(ctx)(i)),
+            separated_list1(sp1, |i| parse_group_condition(ctx)(i)),
         ))(input)?;
         Ok((input, gb.unwrap_or_default()))
+    }
+}
+
+/// A single `GroupCondition` per the SPARQL 1.1 grammar
+/// (<https://www.w3.org/TR/sparql11-query/#rGroupCondition>): either
+/// `( Expression ( AS Var )? )` — a bracketted expression, optionally binding
+/// its computed value to `Var` — or a bare `BuiltInCall` / `FunctionCall` /
+/// `Var` with no wrapping parens and no alias.
+///
+/// The bracketted form must be tried first: it is a strict superset of a
+/// plain parenthesised expression (`(?x + ?y)`), which the `AS` clause is
+/// simply optional on.
+fn parse_group_condition<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, GroupCondition> + 'a {
+    move |input| {
+        alt((
+            map(
+                delimited(
+                    pair(char('('), sp),
+                    pair(
+                        |i| parse_expression(ctx)(i),
+                        opt(preceded(
+                            // sp (not sp1): parse_expression eagerly consumes
+                            // trailing whitespace, mirroring the projection
+                            // `(?expr AS ?alias)` parser above.
+                            tuple((sp, tag_no_case("AS"), sp1, char('?'))),
+                            parse_varname,
+                        )),
+                    ),
+                    pair(sp, char(')')),
+                ),
+                |(expr, alias)| GroupCondition { expr, alias },
+            ),
+            map(
+                |i| parse_expression(ctx)(i),
+                |expr| GroupCondition { expr, alias: None },
+            ),
+        ))(input)
     }
 }
 

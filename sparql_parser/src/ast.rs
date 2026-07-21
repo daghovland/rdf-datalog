@@ -51,7 +51,7 @@ pub enum Query {
         projection: Vec<ProjectionElement>,
         dataset: Vec<DatasetClause>,
         where_clause: Vec<QueryComponent>,
-        group_by: Vec<Expression>,
+        group_by: Vec<GroupCondition>,
         having: Vec<Expression>,
         order_by: Vec<OrderCondition>,
         limit: Option<u64>,
@@ -176,4 +176,17 @@ pub enum Aggregate {
 pub struct OrderCondition {
     pub expression: Expression,
     pub ascending: bool,
+}
+
+/// A single `GROUP BY` condition: `Var`, a bare `BuiltInCall`/`FunctionCall`,
+/// or `( Expression ( AS Var )? )`. The `alias` is `Some` only for the
+/// bracketted `AS`-form, which — per the SPARQL 1.1 grammar (`GroupCondition`,
+/// <https://www.w3.org/TR/sparql11-query/#rGroupCondition>) — additionally
+/// binds the computed grouping key to `alias` in every solution of the
+/// resulting group, making it available to the projection, `HAVING`, and
+/// `ORDER BY` just like any other bound variable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GroupCondition {
+    pub expr: Expression,
+    pub alias: Option<String>,
 }

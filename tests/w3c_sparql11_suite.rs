@@ -1282,10 +1282,8 @@ fn w3c_sparql11_functions() {
 #[test]
 fn w3c_sparql11_grouping() {
     let entries = load_sparql_manifest("grouping");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine GROUP-BY-with-expression
-    // grouping-key gap, not a regression from #192.
-    let skip: &[&str] = &["Group-4"];
+    // Group-4 (GROUP BY with an expression grouping key) fixed by #206.
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))
