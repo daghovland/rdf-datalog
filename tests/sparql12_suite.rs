@@ -1952,7 +1952,6 @@ fn assert_xsd_integer(el: Option<&GraphElement>, expected: i64, msg: &str) {
 /// silently vanish. Data: `in:a ex:p 1 ; ex:q 1, 2` — one row where `?y = ?z`
 /// holds, one where it doesn't.
 #[test]
-#[ignore = "https://github.com/daghovland/rdf-datalog/issues/207: eval_expression_value_inner doesn't handle BinaryOp::Eq"]
 fn spec_project_expression_equality() {
     let ds = parse_inline_ttl(
         r#"
@@ -1994,7 +1993,6 @@ SELECT ?z ((?y = ?z) AS ?eq) WHERE {
 /// are unaffected — while a row where the expression evaluates cleanly must
 /// still get the correctly `xsd:integer`-typed result (not `xsd:double`).
 #[test]
-#[ignore = "https://github.com/daghovland/rdf-datalog/issues/207: eval_arithmetic always promotes TypedLiteral-shaped xsd:integer operands to xsd:double"]
 fn spec_project_expression_arithmetic_error_leaves_alias_unbound() {
     let ds = parse_inline_ttl(
         r#"
@@ -2036,7 +2034,6 @@ SELECT ?z ((?y + ?z) AS ?sum) WHERE {
 /// same projection list (`(?y + ?z AS ?sum) (2 * ?sum AS ?twice)`), not just
 /// the WHERE-clause bindings.
 #[test]
-#[ignore = "https://github.com/daghovland/rdf-datalog/issues/207: project_with_exprs evaluates each SELECT item only against WHERE-clause bindings, not earlier aliases"]
 fn spec_project_expression_reuse_alias_in_select() {
     let ds = parse_inline_ttl(
         r#"
@@ -2068,7 +2065,6 @@ SELECT ((?y + ?z) AS ?sum) ((2 * ?sum) AS ?twice) WHERE {
 /// by": `ORDER BY` may reference a `(expr AS ?alias)` projected variable, and
 /// must sort by its (correctly `xsd:integer`-typed) value.
 #[test]
-#[ignore = "https://github.com/daghovland/rdf-datalog/issues/207: same root cause as spec_project_expression_arithmetic_error_leaves_alias_unbound (xsd:double promotion)"]
 fn spec_project_expression_reuse_alias_in_order_by() {
     let ds = parse_inline_ttl(
         r#"

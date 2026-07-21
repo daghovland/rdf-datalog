@@ -441,12 +441,24 @@ fn first_non_silent_service(components: &[QueryComponent]) -> Option<&Term> {
 }
 
 /// Project a solution row, evaluating any `(expr AS ?alias)` projection elements.
+///
+/// A later `(expr AS ?alias)` SELECT item may reference an alias bound by an
+/// earlier one in the same projection list (e.g.
+/// `SELECT (?a + 1 AS ?x) (?x * 2 AS ?y)`) — the W3C project-expression
+/// conformance suite's "Reuse a project expression variable in select" case.
+/// To support that, expressions are evaluated against a `sub`-derived
+/// substitution that accumulates each computed alias as it goes, rather than
+/// against the original WHERE-clause bindings alone. `Star`/`Variable`
+/// projection elements are unaffected — they always read the original
+/// WHERE-clause bindings, never a previously-projected alias.
+/// See <https://github.com/daghovland/rdf-datalog/issues/207>.
 fn project_with_exprs(
     sub: &PartialSub,
     projection: &[ProjectionElement],
     datastore: &Datastore,
 ) -> SolutionRow {
     let mut row: SolutionRow = HashMap::new();
+    let mut extended: PartialSub = sub.clone();
     for elem in projection {
         match elem {
             ProjectionElement::Star => {
@@ -460,7 +472,8 @@ fn project_with_exprs(
                 }
             }
             ProjectionElement::Expression(expr, alias) => {
-                if let Some(val) = eval_expression_value_inner(expr, sub, datastore) {
+                if let Some(val) = eval_expression_value_inner(expr, &extended, datastore) {
+                    extended.insert(alias.clone(), PartialSubValue::Computed(val.clone()));
                     row.insert(alias.clone(), val);
                 }
             }
@@ -1468,7 +1481,46 @@ fn eval_expression_value_inner(
         Expression::Variable(v) => sub.get(v).map(|val| val.resolve(datastore)),
         Expression::Constant(gel) => Some(gel.clone()),
         Expression::FunctionCall(name, args) => eval_function_value(name, args, sub, datastore),
-        Expression::Binary(l, op, r) => eval_arithmetic(l, op, r, sub, datastore),
+        Expression::Binary(
+            l,
+            op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div),
+            r,
+        ) => eval_arithmetic(l, op, r, sub, datastore),
+        // Comparison (`=`, `!=`, `<`, `>`, `<=`, `>=`) and logical (`&&`,
+        // `||`) operators don't produce a value of their own in
+        // `eval_arithmetic` — they're boolean-valued. In a value-producing
+        // context (projection, `BIND`) that boolean must still surface as
+        // an `xsd:boolean` literal rather than silently evaluating to
+        // nothing; delegate to the boolean evaluator (which already
+        // normalizes numeric equality/ordering across literal
+        // representations, see `values_equal`/`compare_graph_elements`) and
+        // wrap the result. `EXISTS`/`NOT EXISTS` don't appear directly under
+        // these operators here (they're handled by `eval_expression_bool`
+        // itself against the default graph, matching `eval_bind_expr`'s and
+        // `eval_expression_bool_filter`'s existing convention for
+        // value/BIND contexts that have no `ActiveGraph` in scope).
+        // See https://github.com/daghovland/rdf-datalog/issues/207.
+        Expression::Binary(
+            _,
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Gt
+            | BinaryOp::Le
+            | BinaryOp::Ge
+            | BinaryOp::And
+            | BinaryOp::Or,
+            _,
+        )
+        | Expression::Unary(UnaryOp::Not, _) => {
+            let b = eval_expression_bool(
+                expr,
+                sub,
+                datastore,
+                &ActiveGraph::Fixed(DEFAULT_GRAPH_ELEMENT_ID),
+            )?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+        }
         Expression::Unary(UnaryOp::Plus, inner) => {
             eval_expression_value_inner(inner, sub, datastore)
         }
@@ -1511,7 +1563,55 @@ fn arithmetic_negate(el: GraphElement) -> Option<GraphElement> {
     }
 }
 
-/// Evaluate a binary arithmetic expression (Add/Sub/Mul/Div).
+/// A numeric literal normalised to one of SPARQL/XPath's four numeric type
+/// ranks — `xsd:integer` ⊂ `xsd:decimal` ⊂ `xsd:float` ⊂ `xsd:double`
+/// (SPARQL 1.1 §17.1, "Operand Data Types") — regardless of which
+/// `RdfLiteral` shape it arrived in.
+enum NumericLit {
+    Integer(BigInt),
+    Decimal(rust_decimal::Decimal),
+    Float(f64),
+    Double(f64),
+}
+
+/// Classify a literal's numeric type and value.
+///
+/// Both the Turtle parser (`turtle::convert_literal`) and the SPARQL
+/// numeric-literal parser (`parse_numeric_literal`, deliberately mirroring
+/// it) always produce the generic `RdfLiteral::TypedLiteral { type_iri,
+/// literal }` shape for numeric data — the canonical `IntegerLiteral` /
+/// `DecimalLiteral` variants are only ever produced internally (e.g. by a
+/// prior arithmetic step). Recognising only the canonical variants here
+/// would mean arithmetic on any real data silently falls through to
+/// `xsd:double` promotion, corrupting `1 + 1` into `2.0e0`. See
+/// <https://github.com/daghovland/rdf-datalog/issues/207> (and the sibling
+/// gap in <https://github.com/daghovland/rdf-datalog/issues/198>).
+fn classify_numeric(lit: &RdfLiteral) -> Option<NumericLit> {
+    match lit {
+        RdfLiteral::IntegerLiteral(n) => Some(NumericLit::Integer(n.clone())),
+        RdfLiteral::DecimalLiteral(d) => Some(NumericLit::Decimal(*d)),
+        RdfLiteral::FloatLiteral(f) => Some(NumericLit::Float(f.into_inner())),
+        RdfLiteral::DoubleLiteral(d) => Some(NumericLit::Double(d.into_inner())),
+        RdfLiteral::TypedLiteral { type_iri, literal } => match type_iri.0.as_str() {
+            XSD_INTEGER => literal.parse::<BigInt>().ok().map(NumericLit::Integer),
+            XSD_DECIMAL => literal
+                .parse::<rust_decimal::Decimal>()
+                .ok()
+                .map(NumericLit::Decimal),
+            XSD_FLOAT => literal.parse::<f64>().ok().map(NumericLit::Float),
+            XSD_DOUBLE => literal.parse::<f64>().ok().map(NumericLit::Double),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Evaluate a binary arithmetic expression (Add/Sub/Mul/Div), applying the
+/// SPARQL/XPath numeric type-promotion rules: the result takes the wider of
+/// the two operand types (integer < decimal < float < double), so
+/// `integer + integer` stays `integer`, `decimal + integer` becomes
+/// `decimal`, and only an operand that is genuinely `xsd:float`/`xsd:double`
+/// forces promotion to floating point.
 /// Returns `None` if operands are not numeric or op is not arithmetic.
 fn eval_arithmetic(
     left: &Expression,
@@ -1522,54 +1622,108 @@ fn eval_arithmetic(
 ) -> Option<GraphElement> {
     let l = eval_expression_value_inner(left, sub, datastore)?;
     let r = eval_expression_value_inner(right, sub, datastore)?;
-    match (&l, &r) {
-        (
-            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
-            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
-        ) => {
-            let result = match op {
-                BinaryOp::Add => a + b,
-                BinaryOp::Sub => a - b,
-                BinaryOp::Mul => a * b,
-                BinaryOp::Div => {
-                    if b == &BigInt::from(0) {
-                        return None;
-                    }
-                    a / b
+    let l_lit = match &l {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    let r_lit = match &r {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    let ln = classify_numeric(l_lit)?;
+    let rn = classify_numeric(r_lit)?;
+
+    // Exact fast path: integer op integer stays integer.
+    if let (NumericLit::Integer(a), NumericLit::Integer(b)) = (&ln, &rn) {
+        let result = match op {
+            BinaryOp::Add => a + b,
+            BinaryOp::Sub => a - b,
+            BinaryOp::Mul => a * b,
+            BinaryOp::Div => {
+                if b == &BigInt::from(0) {
+                    return None;
                 }
-                _ => return None,
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                result,
-            )))
-        }
-        _ => {
-            // Promote to f64 for mixed / floating-point arithmetic
-            let af = literal_to_f64(match &l {
-                GraphElement::GraphLiteral(lit) => lit,
-                _ => return None,
-            })?;
-            let bf = literal_to_f64(match &r {
-                GraphElement::GraphLiteral(lit) => lit,
-                _ => return None,
-            })?;
-            let result = match op {
-                BinaryOp::Add => af + bf,
-                BinaryOp::Sub => af - bf,
-                BinaryOp::Mul => af * bf,
-                BinaryOp::Div => {
-                    if bf == 0.0 {
-                        return None;
-                    }
-                    af / bf
-                }
-                _ => return None,
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                result.into(),
-            )))
-        }
+                a / b
+            }
+            _ => return None,
+        };
+        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
+            result,
+        )));
     }
+
+    // A genuinely `xsd:double` operand forces double-precision arithmetic.
+    if matches!(ln, NumericLit::Double(_)) || matches!(rn, NumericLit::Double(_)) {
+        let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
+        return Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
+            result.into(),
+        )));
+    }
+
+    // A genuinely `xsd:float` operand (with no double present) forces
+    // float-precision arithmetic.
+    if matches!(ln, NumericLit::Float(_)) || matches!(rn, NumericLit::Float(_)) {
+        let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
+        return Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
+            result.into(),
+        )));
+    }
+
+    // Remaining case: an integer/decimal mix with at least one decimal
+    // operand — exact decimal arithmetic, result stays decimal.
+    let ad = numeric_lit_to_decimal(&ln)?;
+    let bd = numeric_lit_to_decimal(&rn)?;
+    let result = match op {
+        BinaryOp::Add => ad + bd,
+        BinaryOp::Sub => ad - bd,
+        BinaryOp::Mul => ad * bd,
+        BinaryOp::Div => {
+            if bd.is_zero() {
+                return None;
+            }
+            ad / bd
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+        result,
+    )))
+}
+
+/// Widen a classified numeric literal to `f64` for float/double arithmetic.
+fn numeric_lit_to_f64(n: &NumericLit) -> f64 {
+    match n {
+        NumericLit::Integer(i) => i.to_string().parse().unwrap_or(f64::NAN),
+        NumericLit::Decimal(d) => d.to_string().parse().unwrap_or(f64::NAN),
+        NumericLit::Float(f) | NumericLit::Double(f) => *f,
+    }
+}
+
+/// Widen a classified integer/decimal numeric literal to `Decimal` for exact
+/// decimal arithmetic. Not meaningful for `Float`/`Double` — callers only
+/// reach this after ruling both out.
+fn numeric_lit_to_decimal(n: &NumericLit) -> Option<rust_decimal::Decimal> {
+    match n {
+        NumericLit::Integer(i) => i.to_string().parse().ok(),
+        NumericLit::Decimal(d) => Some(*d),
+        NumericLit::Float(_) | NumericLit::Double(_) => None,
+    }
+}
+
+/// Apply an arithmetic `BinaryOp` to two `f64` operands.
+fn apply_f64_op(op: &BinaryOp, a: f64, b: f64) -> Option<f64> {
+    Some(match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div => {
+            if b == 0.0 {
+                return None;
+            }
+            a / b
+        }
+        _ => return None,
+    })
 }
 
 /// Shared implementation for the boolean-valued string predicates
