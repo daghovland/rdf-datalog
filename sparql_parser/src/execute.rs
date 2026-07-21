@@ -828,10 +828,18 @@ fn eval_component(
 
         QueryComponent::Bind(expr, alias) => solutions
             .into_iter()
-            .filter_map(|mut sub| {
-                let val = eval_bind_expr(expr, &sub, datastore)?;
-                sub.insert(alias.clone(), PartialSubValue::Computed(val));
-                Some(sub)
+            .map(|mut sub| {
+                // SPARQL 1.1 §18.3 Extend: if evaluating the expression
+                // raises an error — e.g. `BIND(?nova AS ?z)` where `?nova`
+                // was never bound (W3C `bind04`) — the row is not dropped;
+                // `alias` is simply left unbound for that solution. The
+                // previous `filter_map` dropped the whole row instead,
+                // wrongly turning an "unbound" outcome into "no match". See
+                // <https://github.com/daghovland/rdf-datalog/issues/198>.
+                if let Some(val) = eval_bind_expr(expr, &sub, datastore) {
+                    sub.insert(alias.clone(), PartialSubValue::Computed(val));
+                }
+                sub
             })
             .collect(),
 
@@ -1647,9 +1655,22 @@ fn eval_arithmetic(
             }
             _ => return None,
         };
-        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            result,
-        )));
+        // Emit the same `TypedLiteral { type_iri, literal }` shape the
+        // Turtle and SPARQL numeric-literal parsers always produce for real
+        // data (see `classify_numeric`'s doc comment above) rather than the
+        // canonical `IntegerLiteral` variant. A `BIND`-computed value used in
+        // a later triple-pattern position (e.g. `BIND(?o+1 AS ?z) . ?s1 ?p1
+        // ?z`) is looked up in `resource_map` by structural equality
+        // (`resolve_match_term`); an `IntegerLiteral` never structurally
+        // equals the `TypedLiteral` shape under which the same value was
+        // actually interned, so the lookup silently failed and the join
+        // produced zero rows regardless of whether the value was genuinely
+        // present. See W3C `bind03` and
+        // <https://github.com/daghovland/rdf-datalog/issues/198>.
+        return Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_INTEGER.to_string()),
+            literal: result.to_string(),
+        }));
     }
 
     // A genuinely `xsd:double` operand forces double-precision arithmetic.

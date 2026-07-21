@@ -362,21 +362,26 @@ fn must_bind_vars(comp: &QueryComponent) -> HashSet<String> {
             })
             .map(|(_, n)| n.clone())
             .collect(),
-        // `Bind` drops the row entirely when the expression fails to
-        // evaluate (see `eval_component`'s `Bind` arm in `execute.rs`), so
-        // every *surviving* row does have the alias bound.
-        QueryComponent::Bind(_, alias) => {
-            let mut vars = HashSet::new();
-            vars.insert(alias.clone());
-            vars
-        }
+        // `Bind` does *not* guarantee its alias is bound in every surviving
+        // row: per SPARQL 1.1 §18.3 Extend, an expression evaluation error
+        // (e.g. an unbound variable referenced by the `BIND` expression —
+        // W3C `bind04`) leaves the row in place with `alias` simply unbound,
+        // rather than dropping it (see `eval_component`'s `Bind` arm in
+        // `execute.rs`). Crediting `alias` here would over-approximate
+        // `guaranteed_bound`, which the module docs require to be a true
+        // under-approximation — an over-approximation could permit an unsafe
+        // `OPTIONAL`/`MINUS` hoist past a later conjunct that assumes `alias`
+        // is definitely bound. See
+        // <https://github.com/daghovland/rdf-datalog/issues/198>.
+        //
         // `Optional`/`Minus` never guarantee a new binding for what follows
         // (a non-matching `OPTIONAL` leaves its variables unbound; `Minus`
         // never binds anything into the outer solution at all). `Filter`
         // never binds. `Service` and `Subquery` are conservatively credited
         // with nothing, rather than spend the complexity to compute their
         // guaranteed set precisely.
-        QueryComponent::Optional(_)
+        QueryComponent::Bind(_, _)
+        | QueryComponent::Optional(_)
         | QueryComponent::Minus(_)
         | QueryComponent::Filter(_)
         | QueryComponent::Service(_, _, _)

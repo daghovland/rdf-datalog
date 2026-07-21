@@ -978,15 +978,45 @@ fn w3c_sparql11_bind() {
     // parser is fixed they execute for real and fail on genuine BIND
     // evaluation gaps (arithmetic/type coercion in BIND expressions, and
     // BIND variable-scope enforcement for bind10). Not a regression from
-    // #192 — pre-existing gaps it happened to mask. See #192 for context;
-    // dedicated fix issues should be filed separately.
+    // #192 — pre-existing gaps it happened to mask. See #192 for context.
+    //
+    // Status as of #198:
+    // - bind01/02/05/06 were already fixed as a side effect of #220's
+    //   `eval_arithmetic` type-promotion fix (arithmetic on real
+    //   `TypedLiteral`-shaped operands no longer silently promotes to
+    //   `xsd:double`).
+    // - bind03/bind04 are fixed here: `eval_arithmetic`'s integer fast path
+    //   now emits the same `TypedLiteral { type_iri: xsd:integer, .. }` shape
+    //   the Turtle/SPARQL parsers produce for real data (previously it
+    //   emitted the canonical `IntegerLiteral` variant, which never
+    //   structurally matched an interned `TypedLiteral` of the same value, so
+    //   a later triple pattern joining against a `BIND`-computed value always
+    //   matched zero rows — bind03); and a `BIND` whose expression errors
+    //   (e.g. references a never-bound variable) now leaves the target
+    //   variable unbound instead of dropping the whole row, per SPARQL 1.1
+    //   §18.3 Extend — bind04.
+    // - bind07/bind08/bind10 remain skipped: all three are one underlying
+    //   gap, not three independent ones — this engine does not implement
+    //   SPARQL 1.1 §18.2.2.8's group-graph-pattern scoping rules. A nested
+    //   `{ ... }` group is flattened into its parent's component list at
+    //   parse time with no scope boundary at all
+    //   (`sparql_parser::parse_group_graph_pattern_contents`, the "Inline
+    //   sub-group" branch), `UNION` arms are evaluated with the outer
+    //   solutions threaded straight in rather than independently-then-joined
+    //   (`execute.rs`'s `Union` arm), and `FILTER` is treated as a
+    //   position-fixed "hard barrier" rather than being deferred to the end
+    //   of its enclosing group. Each of bind07/08/10 depends on a case where
+    //   the correct result requires a variable to be treated as *out of
+    //   scope* for a `BIND`/`FILTER` expression specifically because of where
+    //   a nested group or `UNION` arm boundary falls — something a naive
+    //   "thread all current bindings straight into the nested pattern"
+    //   streaming evaluator cannot express. Fixing this properly needs a real
+    //   `QueryComponent::Group` variant, independent-evaluate-then-join
+    //   semantics for it and for `UNION`, and per-group `FILTER` deferral — a
+    //   cross-cutting change to the parser and the join-reordering
+    //   infrastructure in `component_ordering.rs`, out of scope for a
+    //   BIND-arithmetic-focused fix. See #198.
     let skip: &[&str] = &[
-        "bind01 - BIND",
-        "bind02 - BIND",
-        "bind03 - BIND",
-        "bind04 - BIND",
-        "bind05 - BIND",
-        "bind06 - BIND",
         "bind07 - BIND",
         "bind08 - BIND",
         "bind10 - BIND scoping - Variable in filter not in scope",
