@@ -17,6 +17,21 @@ pub enum PropertyPath {
     OneOrMore(Box<PropertyPath>),
     /// p? — zero or one hop
     ZeroOrOne(Box<PropertyPath>),
+    /// p{n}, p{n,m}, p{n,}, p{,m} — bounded/unbounded repetition.
+    ///
+    /// `min` is the minimum repeat count; `max` is `Some(m)` for a bounded
+    /// upper limit (`{n,m}`/`{n}` where `m == n`) or `None` for an unbounded
+    /// lower-bounded range (`{n,}`). `{,m}` is represented with `min == 0`.
+    ///
+    /// Unlike `ZeroOrMore`/`OneOrMore` (which use arbitrary-length-path /
+    /// fixed-point reachability semantics — one solution per reachable
+    /// subject/object pair), bounded repetition follows ordinary sequence
+    /// (join) semantics: each distinct walk of an in-range length is its own
+    /// solution, so duplicate rows are expected when multiple walks of the
+    /// same length connect the same endpoints (see W3C property-path tests
+    /// pp20/pp22/pp24/pp26/pp27/pp29, tracked in
+    /// <https://github.com/daghovland/rdf-datalog/issues/203>).
+    Repeat(Box<PropertyPath>, usize, Option<usize>),
     /// !(p1|p2|...) — negated property set
     NegatedSet(Vec<GraphElement>),
 }

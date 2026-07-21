@@ -414,6 +414,128 @@ SELECT * WHERE {
     assert!(vars.contains(&"z".to_string()), "§9: ?z must be projected");
 }
 
+/// SPARQL 1.2 §9.1 / issue #203: bounded repeat `p{n}` — exact hop count.
+///
+/// Chain: alice→bob→carol→dave→eve (all via foaf:knows).
+/// `foaf:knows{2}` from alice is a single, unique 2-hop walk to carol.
+/// Expected: 1 row (?z = carol)
+#[test]
+fn spec_s9_bounded_repeat_exact() {
+    let ds = load("sparql12_paths.ttl");
+    let sparql = r#"
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX ex:   <http://example.org/>
+SELECT ?z WHERE {
+    ex:alice foaf:knows{2} ?z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§9.1 issue #203: foaf:knows{{2}} from alice should reach only carol"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203: bounded repeat `p{n,m}` — range.
+///
+/// `foaf:knows{2,3}` from alice unions the 2-hop (carol) and 3-hop (dave)
+/// walks.
+/// Expected: 2 rows (?z = carol, dave)
+#[test]
+fn spec_s9_bounded_repeat_range() {
+    let ds = load("sparql12_paths.ttl");
+    let sparql = r#"
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX ex:   <http://example.org/>
+SELECT ?z WHERE {
+    ex:alice foaf:knows{2,3} ?z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "§9.1 issue #203: foaf:knows{{2,3}} from alice should reach carol and dave"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203: bounded repeat `p{n,}` — unbounded lower bound.
+///
+/// `foaf:knows{2,}` from alice reaches everything 2 or more hops away:
+/// carol (2), dave (3), eve (4).
+/// Expected: 3 rows (?z = carol, dave, eve)
+#[test]
+fn spec_s9_bounded_repeat_min_only() {
+    let ds = load("sparql12_paths.ttl");
+    let sparql = r#"
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX ex:   <http://example.org/>
+SELECT ?z WHERE {
+    ex:alice foaf:knows{2,} ?z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        3,
+        "§9.1 issue #203: foaf:knows{{2,}} from alice should reach carol, dave, eve"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203: bounded repeat `p{,m}` — up to m, from zero.
+///
+/// `foaf:knows{,2}` from alice includes the zero-hop identity (alice
+/// itself), the 1-hop (bob), and the 2-hop (carol).
+/// Expected: 3 rows (?z = alice, bob, carol)
+#[test]
+fn spec_s9_bounded_repeat_max_only() {
+    let ds = load("sparql12_paths.ttl");
+    let sparql = r#"
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX ex:   <http://example.org/>
+SELECT ?z WHERE {
+    ex:alice foaf:knows{,2} ?z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        3,
+        "§9.1 issue #203: foaf:knows{{,2}} from alice should include alice, bob, carol"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203: bounded repeat uses sequence (join)
+/// semantics, not arbitrary-length-path (set) semantics — so a diamond
+/// graph with two distinct 2-hop walks between the same endpoints produces
+/// two solutions, not one deduplicated solution. This is the exact case
+/// covered by the W3C property-path tests pp20/pp22/pp24/pp26/pp27/pp29
+/// (`tests/testdata/w3c_sparql11/property-path/data-diamond*.ttl`).
+///
+/// Diamond: a→b→z and a→c→z (two distinct 2-hop walks from a to z).
+/// Expected: 2 rows (?z = z, z) — NOT deduplicated to 1.
+#[test]
+fn spec_s9_bounded_repeat_diamond_multiplicity() {
+    let ds = parse_inline_ttl(
+        r#"
+        @prefix : <http://example/> .
+        :a :p :b .
+        :b :p :z .
+        :a :p :c .
+        :c :p :z .
+        "#,
+    );
+    let sparql = r#"
+PREFIX : <http://example/>
+SELECT ?z WHERE {
+    :a :p{2} ?z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "§9.1 issue #203: :p{{2}} over a diamond graph should yield one solution \
+         per distinct 2-hop walk (2), not one deduplicated pair"
+    );
+}
+
 // ── §10  SELECT Modifiers ─────────────────────────────────────────────────────
 
 /// SPARQL 1.2 §10.4: DISTINCT removes duplicate rows.

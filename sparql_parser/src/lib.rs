@@ -797,7 +797,7 @@ fn parse_triple_pattern_statement<'a>(
 // PathSequence    := PathEltOrInverse ( '/' PathEltOrInverse )*
 // PathEltOrInverse:= '^' PathElt | PathElt
 // PathElt         := PathPrimary PathMod?
-// PathMod         := '*' | '+' | '?'
+// PathMod         := '*' | '+' | '?' | '{' Integer? (',' Integer?)? '}'
 // PathPrimary     := IRI | 'a' | '!' NegSet | '(' PathAlternative ')'
 
 fn parse_path_alternative<'a>(
@@ -858,6 +858,12 @@ fn parse_path_elt<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
     move |input| {
         let (input, primary) = parse_path_primary(ctx)(input)?;
+        // Bounded/unbounded repetition (`{n}`, `{n,m}`, `{n,}`, `{,m}`) is
+        // structurally distinct (starts with '{'), so try it before falling
+        // back to the single-char '*'/'+'/'?' modifiers.
+        if let Ok((input, (min, max))) = parse_path_repeat(input) {
+            return Ok((input, PropertyPath::Repeat(Box::new(primary), min, max)));
+        }
         let (input, mod_char) = opt(alt((
             map(char('*'), |_| '*'),
             map(char('+'), |_| '+'),
@@ -872,6 +878,45 @@ fn parse_path_elt<'a>(
                 _ => primary,
             },
         ))
+    }
+}
+
+/// Parse a bounded/unbounded repetition modifier: `{n}`, `{n,m}`, `{n,}`,
+/// `{,m}`. Returns `(min, max)` where `max = None` means unbounded (`{n,}`).
+/// `{n}` (no comma) is shorthand for `{n,n}`, and `{,m}` is `{0,m}`.
+fn parse_path_repeat_count(input: &str) -> IResult<&str, usize> {
+    map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<usize>().unwrap_or(usize::MAX)
+    })(input)
+}
+
+fn parse_path_repeat(input: &str) -> IResult<&str, (usize, Option<usize>)> {
+    let (input, _) = char('{')(input)?;
+    let (input, first) = opt(parse_path_repeat_count)(input)?;
+    let (input, comma) = opt(char(','))(input)?;
+    let (input, second) = if comma.is_some() {
+        opt(parse_path_repeat_count)(input)?
+    } else {
+        (input, None)
+    };
+    let (input, _) = char('}')(input)?;
+
+    match (first, comma, second) {
+        // `{n}` — exact count
+        (Some(n), None, _) => Ok((input, (n, Some(n)))),
+        // `{n,m}`
+        (Some(n), Some(_), Some(m)) => Ok((input, (n, Some(m)))),
+        // `{n,}` — unbounded, at least n
+        (Some(n), Some(_), None) => Ok((input, (n, None))),
+        // `{,m}` — up to m
+        (None, Some(_), Some(m)) => Ok((input, (0, Some(m)))),
+        // `{,}` — no bounds at all; degenerates to unbounded-from-zero (same as `*`)
+        (None, Some(_), None) => Ok((input, (0, None))),
+        // `{}` — no digits, no comma: not a valid repeat modifier
+        (None, None, _) => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Digit,
+        ))),
     }
 }
 
