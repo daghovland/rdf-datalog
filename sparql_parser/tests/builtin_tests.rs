@@ -56,10 +56,10 @@ fn iri_node(s: &str) -> GraphElement {
 const XSD_INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
 #[allow(dead_code)]
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
-#[allow(dead_code)]
 const XSD_BOOLEAN: &str = "http://www.w3.org/2001/XMLSchema#boolean";
-#[allow(dead_code)]
 const XSD_DECIMAL: &str = "http://www.w3.org/2001/XMLSchema#decimal";
+const XSD_DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
+const XSD_FLOAT: &str = "http://www.w3.org/2001/XMLSchema#float";
 const XSD_DATE_TIME: &str = "http://www.w3.org/2001/XMLSchema#dateTime";
 
 // ── String functions ──────────────────────────────────────────────────────────
@@ -236,52 +236,47 @@ fn test_strlang() {
 #[test]
 
 fn test_abs_negative() {
+    // #228: numeric builtins emit `TypedLiteral{xsd:integer, ..}` (matching
+    // real parsed data), not the native `IntegerLiteral` variant, so a
+    // computed result can join against already-interned data of the same
+    // value.
     let result = eval_function(r#"SELECT (ABS(-5) AS ?result) WHERE {}"#);
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(5)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("5", XSD_INTEGER)));
 }
 
 #[test]
 
 fn test_round() {
-    // SPARQL ROUND uses half-to-even; 2.5 rounds to 2 or 3 — accept either
+    // SPARQL ROUND uses half-to-even; 2.5 rounds to 2 or 3 — accept either.
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(r#"SELECT (ROUND(2.5) AS ?result) WHERE {}"#);
-    if let Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n))) = result {
+    if let Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })) =
+        &result
+    {
+        assert_eq!(type_iri.0, XSD_INTEGER);
         assert!(
-            n == BigInt::from(2) || n == BigInt::from(3),
-            "ROUND(2.5) must be 2 or 3, got {n}"
+            literal == "2" || literal == "3",
+            "ROUND(2.5) must be 2 or 3, got {literal}"
         );
     } else {
-        panic!("expected IntegerLiteral from ROUND");
+        panic!("expected TypedLiteral{{xsd:integer, ..}} from ROUND, got {result:?}");
     }
 }
 
 #[test]
 
 fn test_ceil() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(r#"SELECT (CEIL(1.2) AS ?result) WHERE {}"#);
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(2)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("2", XSD_INTEGER)));
 }
 
 #[test]
 
 fn test_floor() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(r#"SELECT (FLOOR(1.9) AS ?result) WHERE {}"#);
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(1)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("1", XSD_INTEGER)));
 }
 
 // ── Logic / control ───────────────────────────────────────────────────────────
@@ -673,67 +668,47 @@ fn test_bare_word_builtin_calls_still_parse_after_reorder() {
 
 #[test]
 fn test_xsd_cast_integer_from_string() {
+    // #228: xsd casts emit `TypedLiteral{type_iri, ..}` (matching real
+    // parsed data), not a native `RdfLiteral` variant, so a cast result can
+    // join against already-interned data of the same value.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer("42") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(42)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("42", XSD_INTEGER)));
 }
 
 #[test]
 fn test_xsd_cast_integer_from_decimal_truncates() {
     // xsd:integer(3.7) truncates toward zero (XPath fn:integer cast rules),
-    // it does not floor/round.
+    // it does not floor/round. See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(3.7) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(3)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("3", XSD_INTEGER)));
 }
 
 #[test]
 fn test_xsd_cast_integer_from_negative_decimal_truncates_toward_zero() {
     // Discriminates truncation from floor: floor(-3.7) == -4, but XPath cast
-    // truncation of -3.7 must be -3.
+    // truncation of -3.7 must be -3. See #228 for the TypedLiteral output
+    // shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(-3.7) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(-3)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("-3", XSD_INTEGER)));
 }
 
 #[test]
 fn test_xsd_cast_integer_from_boolean() {
+    // See #228 for the TypedLiteral output shape.
     let result_true = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(true) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result_true,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(1)
-        )))
-    );
+    assert_eq!(result_true, Some(typed_literal("1", XSD_INTEGER)));
     let result_false = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:integer(false) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result_false,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(0)
-        )))
-    );
+    assert_eq!(result_false, Some(typed_literal("0", XSD_INTEGER)));
 }
 
 #[test]
@@ -777,37 +752,29 @@ fn test_xsd_cast_string_from_decimal() {
 
 #[test]
 fn test_xsd_cast_boolean_from_string_true() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean("true") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
-    );
+    assert_eq!(result, Some(typed_literal("true", XSD_BOOLEAN)));
 }
 
 #[test]
 fn test_xsd_cast_boolean_from_string_zero_is_false() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean("0") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
-            false
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("false", XSD_BOOLEAN)));
 }
 
 #[test]
 fn test_xsd_cast_boolean_from_integer() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:boolean(5) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
-    );
+    assert_eq!(result, Some(typed_literal("true", XSD_BOOLEAN)));
 }
 
 #[test]
@@ -820,28 +787,21 @@ fn test_xsd_cast_boolean_invalid_string_is_unbound() {
 
 #[test]
 fn test_xsd_cast_double_from_string() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:double("12.5") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-            12.5.into()
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("12.5", XSD_DOUBLE)));
 }
 
 #[test]
 fn test_xsd_cast_double_from_integer() {
+    // See #228 for the TypedLiteral output shape. Rust's `f64` Display
+    // omits the trailing ".0" for whole values, so `42.0` renders as `"42"`.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:double(42) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-            42.0.into()
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("42", XSD_DOUBLE)));
 }
 
 #[test]
@@ -854,41 +814,29 @@ fn test_xsd_cast_double_invalid_string_is_unbound() {
 
 #[test]
 fn test_xsd_cast_float_from_string() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:float("2.5") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
-            2.5.into()
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("2.5", XSD_FLOAT)));
 }
 
 #[test]
 fn test_xsd_cast_decimal_from_string() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:decimal("3.25") AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
-            "3.25".parse().unwrap()
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("3.25", XSD_DECIMAL)));
 }
 
 #[test]
 fn test_xsd_cast_decimal_from_integer() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:decimal(7) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
-            "7".parse().unwrap()
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("7", XSD_DECIMAL)));
 }
 
 /// `xsd:boolean(?o)` used directly as a FILTER condition (not just BIND).
@@ -967,12 +915,13 @@ fn test_sum_xsd_integer_strstarts_benchmark_shape() {
         .first()
         .and_then(|row| row.get("count").cloned());
     // "apple" and "avocado" start with "a" → sum should be 2, not 0.
-    assert_eq!(
-        count,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(2)
-        )))
-    );
+    //
+    // Each `xsd:integer(...)` cast now produces `TypedLiteral{xsd:integer,
+    // ..}` rather than the native `IntegerLiteral` variant (#228), so this
+    // also exercises `sum_values` recognizing `TypedLiteral` integers via
+    // `classify_numeric` instead of silently falling back to an `xsd:double`
+    // sum.
+    assert_eq!(count, Some(typed_literal("2", XSD_INTEGER)));
 }
 
 // ── xsd:dateTime cast (#194) ─────────────────────────────────────────────
@@ -988,6 +937,14 @@ fn test_sum_xsd_integer_strstarts_benchmark_shape() {
 // the XPath casting rules).
 // See https://github.com/daghovland/rdf-datalog/issues/194
 
+// #228: `xsd:dateTime(...)` now emits `TypedLiteral{xsd:dateTime,
+// dt.to_rfc3339()}` rather than the native `DateTimeLiteral` variant — the
+// Turtle parser always produces `TypedLiteral` for `xsd:dateTime` data (see
+// `turtle::convert_literal`), so a native cast result could never
+// structurally join against already-interned `xsd:dateTime` data. Note
+// `chrono`'s `to_rfc3339()` always normalizes the UTC offset to `+00:00`
+// (never `Z`), including for `Z`-suffixed input.
+
 #[test]
 fn test_xsd_cast_datetime_from_valid_lexical_form() {
     let result = eval_function(
@@ -998,9 +955,7 @@ fn test_xsd_cast_datetime_from_valid_lexical_form() {
         .with_timezone(&chrono::Utc);
     assert_eq!(
         result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
-            expected
-        )))
+        Some(typed_literal(&expected.to_rfc3339(), XSD_DATE_TIME))
     );
 }
 
@@ -1020,9 +975,7 @@ fn test_xsd_cast_datetime_from_lexical_form_without_timezone() {
         .and_utc();
     assert_eq!(
         result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
-            expected
-        )))
+        Some(typed_literal(&expected.to_rfc3339(), XSD_DATE_TIME))
     );
 }
 
@@ -1038,9 +991,7 @@ fn test_xsd_cast_datetime_from_date_normalizes_to_midnight_utc() {
         .and_utc();
     assert_eq!(
         result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
-            expected
-        )))
+        Some(typed_literal(&expected.to_rfc3339(), XSD_DATE_TIME))
     );
 }
 
@@ -1054,26 +1005,27 @@ fn test_xsd_cast_datetime_from_typed_datetime_literal() {
         .with_timezone(&chrono::Utc);
     assert_eq!(
         result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
-            expected
-        )))
+        Some(typed_literal(&expected.to_rfc3339(), XSD_DATE_TIME))
     );
 }
 
 #[test]
 fn test_xsd_cast_datetime_from_datetime_literal_is_identity() {
-    // `xsd:dateTime(NOW())` casts an already-native `DateTimeLiteral` — the
-    // "identity" input case (mirrors how e.g. `xsd:boolean(xsd:boolean(...))`
-    // round-trips a native BooleanLiteral in the existing cast tests).
+    // `xsd:dateTime(NOW())` casts an already-native `DateTimeLiteral` input.
+    // Per #228 this is no longer a true identity: the *value* passes through
+    // unchanged, but the result is always re-emitted as `TypedLiteral{
+    // xsd:dateTime, ..}` (not the native variant) so a cast result can join
+    // against real interned `xsd:dateTime` data.
     let result = eval_function(
         r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime(NOW()) AS ?result) WHERE {}"#,
     );
     assert!(
         matches!(
-            result,
-            Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(_)))
+            &result,
+            Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, .. }))
+                if type_iri.0 == XSD_DATE_TIME
         ),
-        "xsd:dateTime(NOW()) must stay a DateTimeLiteral; got {result:?}"
+        "xsd:dateTime(NOW()) must be TypedLiteral{{xsd:dateTime, ..}}; got {result:?}"
     );
 }
 

@@ -972,9 +972,20 @@ GROUP BY ?org
         2,
         "§11.4: SUM GROUP BY → 2 organisation rows"
     );
+    // `SUM`'s xsd:integer result now renders in the same
+    // `"value"^^<datatype>` wire form as any other `xsd:integer` value (see
+    // #228, generalizing the arithmetic-result literal-shape fix from
+    // #198/#227 to `sum_values`).
     let mut sums = query_values(&ds, sparql, "total");
     sums.sort();
-    assert_eq!(sums, vec!["30", "30"], "§11.4: org1 sum=30, org2 sum=30");
+    assert_eq!(
+        sums,
+        vec![
+            "\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        ],
+        "§11.4: org1 sum=30, org2 sum=30"
+    );
 }
 
 /// SPARQL 1.2 §11.4: AVG(?price) GROUP BY ?org.
@@ -1507,9 +1518,12 @@ SELECT ?b WHERE {
     BIND(ABS(?delta) AS ?b)
 }
 "#;
+    // `ABS`'s result now renders in the same `"value"^^<datatype>` wire form
+    // as any other `xsd:integer` value (see #228, generalizing the
+    // arithmetic-result literal-shape fix from #198/#227).
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("5".to_string()),
+        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.5: ABS(-5) = 5, preserving integer type"
     );
 }
@@ -1529,9 +1543,11 @@ SELECT ?b WHERE {
     BIND(CEIL(?score) AS ?b)
 }
 "#;
+    // See #228: CEIL's xsd:integer result now renders the same way as any
+    // other xsd:integer value (`"value"^^<datatype>`).
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("4".to_string()),
+        Some("\"4\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.5: CEIL(3.2) = 4"
     );
 }
@@ -1551,9 +1567,10 @@ SELECT ?b WHERE {
     BIND(FLOOR(?score) AS ?b)
 }
 "#;
+    // See #228, as above for CEIL.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("3".to_string()),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.5: FLOOR(3.8) = 3"
     );
 }
@@ -1573,9 +1590,10 @@ SELECT ?b WHERE {
     BIND(ROUND(?score) AS ?b)
 }
 "#;
+    // See #228, as above for CEIL.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("3".to_string()),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.5: ROUND(2.5) = 3 (round half toward positive infinity)"
     );
 }
@@ -1596,9 +1614,10 @@ SELECT ?b WHERE {
     BIND(ROUND(?score) AS ?b)
 }
 "#;
+    // See #228, as above for CEIL.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("-2".to_string()),
+        Some("\"-2\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.5: ROUND(-2.5) = -2 per spec (round half toward +infinity), not -3"
     );
 }
@@ -2078,7 +2097,6 @@ SELECT *
 
 /// Issue #228 repro 1 (verbatim): `ABS(?o)` on an integer must join back
 /// against the same integer value already interned by real data.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_abs_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
@@ -2111,7 +2129,6 @@ SELECT ?z ?s1 WHERE { :s1 :p ?o . BIND(ABS(?o) AS ?z) ?s1 :p ?z }
 /// pattern — same arithmetic and data as reported): `?o + 0.5` on an integer
 /// must produce a decimal that joins against real decimal data of the same
 /// value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_decimal_arithmetic_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2143,7 +2160,6 @@ SELECT ?z ?s2 WHERE { :s2 :p ?o . BIND(?o + 0.5 AS ?z) ?s2 :p ?z }
 /// its output — not silently widen to `xsd:double` — or the join below fails
 /// on a datatype mismatch (both sides display as "2.5" but with different
 /// `type_iri`s, so the resource lookup misses) rather than a value mismatch.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_abs_result_preserves_decimal_type_for_join() {
     let ds = parse_inline_ttl(
@@ -2173,7 +2189,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(ABS(?o) AS ?z) ?t :q ?z }
 /// `eval_arithmetic`'s float branch (triggered by a genuinely `xsd:float`
 /// operand): the sum must join against real `xsd:float` data of the same
 /// value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_float_arithmetic_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2203,7 +2218,6 @@ SELECT ?z ?t WHERE { :s1 :f ?fo . BIND(?fo + 0.5 AS ?z) ?t :q ?z }
 /// `eval_arithmetic`'s double branch (triggered by a genuinely `xsd:double`
 /// operand): the sum must join against real `xsd:double` data of the same
 /// value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_double_arithmetic_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2232,7 +2246,6 @@ SELECT ?z ?t WHERE { :s1 :d ?dv . BIND(?dv + 0.5 AS ?z) ?t :q ?z }
 
 /// Unary minus (`arithmetic_negate`) is the same producer/lookup bug class:
 /// a negated value must join against real data of the same (negative) value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_negate_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2260,7 +2273,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(-?o AS ?z) ?t :q ?z }
 }
 
 /// `CEIL` on a real `xsd:decimal` input must join against real integer data.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_ceil_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
@@ -2288,7 +2300,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(CEIL(?o) AS ?z) ?t :q ?z }
 }
 
 /// `FLOOR` on a real `xsd:decimal` input must join against real integer data.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_floor_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
@@ -2316,7 +2327,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(FLOOR(?o) AS ?z) ?t :q ?z }
 }
 
 /// `ROUND` on a real `xsd:decimal` input must join against real integer data.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_round_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
@@ -2345,7 +2355,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(ROUND(?o) AS ?z) ?t :q ?z }
 
 /// `xsd:integer(...)` cast (truncating a decimal) must join against real
 /// integer data of the truncated value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_integer_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2375,7 +2384,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:integer(?o) AS ?z) ?t :q ?z }
 
 /// `xsd:decimal(...)` cast of an integer must join against real decimal data
 /// of the same value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_decimal_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2405,7 +2413,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:decimal(?o) AS ?z) ?t :q ?z }
 
 /// `xsd:double(...)` cast of an integer must join against real `xsd:double`
 /// data of the same value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_double_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2435,7 +2442,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:double(?o) AS ?z) ?t :q ?z }
 
 /// `xsd:float(...)` cast of an integer must join against real `xsd:float`
 /// data of the same value.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_float_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2465,7 +2471,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:float(?o) AS ?z) ?t :q ?z }
 
 /// `xsd:boolean(...)` cast of a non-zero integer must join against real
 /// `xsd:boolean` `true` data.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_boolean_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
@@ -2496,7 +2501,6 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:boolean(?o) AS ?z) ?t :q ?z }
 /// `xsd:dateTime(...)` cast of a plain string must join against real
 /// `xsd:dateTime` data whose lexical form matches `chrono`'s
 /// `to_rfc3339()` output (`+00:00` offset, not `Z`) for the same instant.
-#[ignore = "TDD red phase for #228 - unignore once the corresponding producer emits TypedLiteral"]
 #[test]
 fn spec_bind_cast_xsd_datetime_result_joins_against_interned_data() {
     let ds = parse_inline_ttl(
