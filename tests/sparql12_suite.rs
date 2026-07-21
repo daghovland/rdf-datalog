@@ -755,6 +755,65 @@ SELECT ?x WHERE {
     );
 }
 
+/// Regression test for issue #199: `FILTER EXISTS` inside a `GRAPH { ... }`
+/// block must check the *active* (currently-selected) named graph, not the
+/// default graph or some other named graph.
+///
+/// Dataset (TriG): the default graph has `:s :p :o1, :o2` (so `:s` would
+/// wrongly satisfy the EXISTS check if it leaked into the default graph),
+/// while named graph `:g` has `:a :p :o1` (no `:o2` — EXISTS fails) and
+/// `:b :p :o1, :o2` (EXISTS succeeds).
+///
+/// Query: `GRAPH :g { ?s ?p :o1 . FILTER EXISTS { ?s ?p :o2 } }`
+///
+/// Expected: exactly one row, `?s = :b` — matching only within `:g`, not
+/// pulled in from the default graph's `:s`. Modelled on the W3C
+/// `data-sparql11/exists/exists03` test ("Exists within graph pattern"),
+/// which failed with "expected 1 rows, got 0" purely because the W3C test
+/// harness (`tests/w3c_sparql11_suite.rs`) never loaded `qt:graphData` at
+/// all — this test exercises the same shape directly against `execute.rs`,
+/// independent of that harness gap, and confirms the underlying
+/// `GRAPH`+`FILTER EXISTS` active-graph threading was already correct.
+#[test]
+fn spec_s5_filter_exists_scoped_to_graph_block() {
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_trig(
+        &mut ds,
+        r#"
+@prefix : <https://example.org/> .
+
+:s :p :o1, :o2 .
+
+:g {
+    :a :p :o1 .
+    :b :p :o1, :o2 .
+}
+"#
+        .as_bytes(),
+    )
+    .expect("inline TriG must parse");
+
+    let sparql = r#"
+PREFIX : <https://example.org/>
+SELECT ?s ?p WHERE {
+    GRAPH :g {
+        ?s ?p :o1 .
+        FILTER EXISTS { ?s ?p :o2 }
+    }
+}
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "s"),
+        Some("<https://example.org/b>".to_string()),
+        "issue #199: EXISTS inside GRAPH must be scoped to that named graph, not the default graph"
+    );
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "issue #199: only :b satisfies EXISTS within graph :g; the default graph's :s must not leak in"
+    );
+}
+
 // ── §2.7  SELECT * ────────────────────────────────────────────────────────────
 
 /// SPARQL 1.2 §2.7: SELECT * projects all visible variables.

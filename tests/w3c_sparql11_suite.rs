@@ -31,7 +31,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Run just this file: `cargo test --test w3c_sparql11_suite`
 
-use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
+use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, GraphElement, RdfLiteral, RdfResource, Triple};
 use dagalog::{load_file, run_sparql_query};
 use ingress::IriReference;
 use sparql_endpoint::sparql_update::parse_update;
@@ -60,6 +60,13 @@ struct SparqlTestEntry {
     action_query: String,
     /// Data file to load before executing the query (qt:data).
     action_data: Option<String>,
+    /// Named-graph data files to load before executing the query
+    /// (`qt:graphData`, multi-valued — see [`parse_sparql_manifest`]).  Each
+    /// file is loaded into a named graph whose IRI is the file's bare
+    /// filename, matching the literal (unresolved) relative IRI a query uses
+    /// to reference it, e.g. `GRAPH <exists02.ttl> { ... }` — see
+    /// [`load_data_into_named_graph`].
+    action_graph_data: Vec<String>,
     /// Expected result file (.srx or .ttl).
     result_file: Option<String>,
 }
@@ -137,7 +144,7 @@ fn parse_sparql_manifest(manifest_path: &Path) -> Vec<SparqlTestEntry> {
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX mf:  <http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#>
         PREFIX qt:  <http://www.w3.org/2001/sw/DataAccess/tests/test-query#>
-        SELECT ?name ?type ?action ?actionQuery ?actionUpdate ?actionData ?result WHERE {
+        SELECT ?entry ?name ?type ?action ?actionQuery ?actionUpdate ?actionData ?result WHERE {
             ?manifest mf:entries/rdf:rest*/rdf:first ?entry .
             ?entry mf:name ?name ;
                    rdf:type ?type ;
@@ -156,6 +163,42 @@ fn parse_sparql_manifest(manifest_path: &Path) -> Vec<SparqlTestEntry> {
             e
         ),
     };
+
+    // `qt:graphData` (named-graph data for the `[ qt:query ... ; qt:graphData
+    // <a.ttl>, <b.ttl> ]` action shape) is multi-valued per entry, so it's
+    // queried separately rather than as another `OPTIONAL` on the query
+    // above — folding it in there would cross-product each entry's row with
+    // every graphData file. `?entry` is a blank node local to `ds`, so it's
+    // used as the join key (`GraphElement` is `Eq + Hash`) instead of
+    // `mf:name`, which isn't yet in scope for this query.
+    let graph_data_sparql = r#"
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX mf:  <http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#>
+        PREFIX qt:  <http://www.w3.org/2001/sw/DataAccess/tests/test-query#>
+        SELECT ?entry ?graphData WHERE {
+            ?manifest mf:entries/rdf:rest*/rdf:first ?entry .
+            ?entry mf:action ?action .
+            ?action qt:graphData ?graphData .
+        }
+    "#;
+    let graph_data_result = match run_sparql_query(&ds, graph_data_sparql) {
+        Ok(r) => r,
+        Err(e) => panic!(
+            "manifest graphData query error for {}: {}",
+            manifest_path.display(),
+            e
+        ),
+    };
+    let mut graph_data_by_entry: HashMap<GraphElement, Vec<String>> = HashMap::new();
+    for row in &graph_data_result.rows {
+        let (Some(entry), Some(path)) = (
+            row.get("entry").cloned(),
+            as_file_path(row.get("graphData")),
+        ) else {
+            continue;
+        };
+        graph_data_by_entry.entry(entry).or_default().push(path);
+    }
 
     let mut entries = Vec::new();
     for row in &result.rows {
@@ -194,6 +237,11 @@ fn parse_sparql_manifest(manifest_path: &Path) -> Vec<SparqlTestEntry> {
             continue;
         };
         let action_data = as_file_path(row.get("actionData"));
+        let action_graph_data = row
+            .get("entry")
+            .and_then(|e| graph_data_by_entry.get(e))
+            .cloned()
+            .unwrap_or_default();
         let result_file = as_file_path(row.get("result"));
 
         entries.push(SparqlTestEntry {
@@ -201,6 +249,7 @@ fn parse_sparql_manifest(manifest_path: &Path) -> Vec<SparqlTestEntry> {
             kind,
             action_query,
             action_data,
+            action_graph_data,
             result_file,
         });
     }
@@ -597,9 +646,66 @@ fn run_eval_test(entry: &SparqlTestEntry, skip: &[&str]) -> Option<String> {
             entry.name, data_path, e
         ));
     }
+    for graph_data_path in &entry.action_graph_data {
+        if let Err(e) = load_data_into_named_graph(&mut ds, std::path::Path::new(graph_data_path)) {
+            return Some(format!(
+                "FAIL {}: cannot load graph data {}: {}",
+                entry.name, graph_data_path, e
+            ));
+        }
+    }
 
     compare_with_srx(&ds, &query_text, srx_path)
         .map(|reason| format!("FAIL {}: {}", entry.name, reason))
+}
+
+/// Load an RDF file's triples into `ds` as a named graph, named by the
+/// file's bare filename (e.g. `exists02.ttl`).
+///
+/// The W3C manifests reference graph-data files with bare relative IRIs
+/// (`qt:graphData <exists02.ttl>`), and queries reference the same graph
+/// with an identical bare relative IRI (`GRAPH <exists02.ttl> { ... }`).
+/// Neither the manifest Turtle parser's base-IRI resolution nor this
+/// project's SPARQL parser resolve relative IRIs against a base (the query
+/// parser has no base-IRI concept at all — see `sparql_parser::parse_iri_ref`),
+/// so the graph name used here must be the same unresolved literal the query
+/// embeds, not the resolved `file://` path used to actually read the file
+/// off disk.
+///
+/// Parses the file into a scratch `Datastore` (reusing [`load_file`]'s
+/// extension-based format dispatch), then re-interns every resolved
+/// `GraphElement` into `ds` and re-asserts each triple under the named
+/// graph's `GraphElementId`.
+fn load_data_into_named_graph(ds: &mut Datastore, path: &Path) -> Result<(), String> {
+    let graph_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| format!("cannot determine filename for {}", path.display()))?;
+
+    let mut scratch = Datastore::new(256);
+    load_file(&mut scratch, path)?;
+
+    let graph_id = ds.add_resource(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+        graph_name.to_string(),
+    ))));
+
+    for quad in scratch.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
+        let subject = scratch.resources.get_graph_element(quad.subject).clone();
+        let predicate = scratch.resources.get_graph_element(quad.predicate).clone();
+        let obj = scratch.resources.get_graph_element(quad.obj).clone();
+        let subject_id = ds.add_resource(subject);
+        let predicate_id = ds.add_resource(predicate);
+        let obj_id = ds.add_resource(obj);
+        ds.add_named_graph_triple(
+            graph_id,
+            Triple {
+                subject: subject_id,
+                predicate: predicate_id,
+                obj: obj_id,
+            },
+        );
+    }
+    Ok(())
 }
 
 fn try_parse_query(path: &str) -> Result<(), String> {
@@ -778,10 +884,17 @@ fn w3c_sparql11_bind() {
 #[test]
 fn w3c_sparql11_exists() {
     let entries = load_sparql_manifest("exists");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine EXISTS-within-graph-pattern
-    // evaluation gap, not a regression from #192.
-    let skip: &[&str] = &["Exists within graph pattern"];
+    // "Exists within graph pattern" (exists03) previously failed with
+    // "expected 1 rows, got 0" — not because `EXISTS`/`NOT EXISTS` mis-scoped
+    // the active graph inside `execute.rs` (that threading was already
+    // correct — see the `GRAPH`+`FILTER EXISTS` regression test in
+    // `sparql12_suite.rs`), but because the manifest-loading harness in this
+    // file never parsed `qt:graphData` at all, so the named-graph data the
+    // test's `GRAPH <exists02.ttl> { ... }` block queries was silently never
+    // loaded. Fixed in issue #199 by teaching `parse_sparql_manifest` /
+    // `run_eval_test` to load `qt:graphData` files into a named graph (see
+    // `load_data_into_named_graph`).
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))
