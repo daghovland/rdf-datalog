@@ -1128,11 +1128,20 @@ GROUP BY (?x + ?y AS ?sum)
         2,
         "GROUP BY (?x + ?y AS ?sum) → 2 distinct sums (5 and 11)"
     );
+    // `?sum` is bound to a `BIND`-style arithmetic result (`?x + ?y`), which
+    // `graph_element_display` now renders in the same `"value"^^<datatype>`
+    // wire form as any other `xsd:integer` value (real parsed data already
+    // displayed this way — see
+    // <https://github.com/daghovland/rdf-datalog/issues/198> for the
+    // arithmetic-result literal-shape fix that made the two consistent).
     let mut sums = query_values(&ds, sparql, "sum");
     sums.sort();
     assert_eq!(
         sums,
-        vec!["11", "5"],
+        vec![
+            "\"11\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            "\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        ],
         "grouping key values must be bound as ?sum in the output"
     );
     let mut counts = query_values(&ds, sparql, "cnt");
@@ -1957,6 +1966,99 @@ SELECT * WHERE {
         "?y is bound to a computed value (1000001) never interned into the store, \
          so `?a ?b ?y` must match zero rows, got {} rows",
         result.rows.len()
+    );
+}
+
+// ── BIND arithmetic/type-coercion + scoping (issue #198) ────────────────────
+//
+// Unit-level equivalents of the W3C SPARQL 1.1 `bind` conformance entries
+// tracked in [#198](https://github.com/daghovland/rdf-datalog/issues/198)
+// (fixtures live at `tests/testdata/w3c_sparql11/bind/bind03..bind10`,
+// exercised end-to-end by
+// `tests/w3c_sparql11_suite.rs::w3c_sparql11_bind`).
+
+/// W3C `bind03`: a `BIND`-computed arithmetic value must be usable as a
+/// constraint in a later triple pattern, matching real interned data — not
+/// silently fail to match because the computed value's internal `RdfLiteral`
+/// representation differs from the one the store interned for the same
+/// value.
+///
+/// Data: `:s1 :p 1`, `:s2 :p 2`, `:s3 :p 3`, `:s4 :p 4`. Query binds
+/// `?z = ?o + 1` then joins `?s1 ?p1 ?z` against the same data, so only
+/// `?o` in `{1,2,3}` produces a `?z` that also appears as some `?p`'s object
+/// (`?o=4` gives `?z=5`, which matches nothing).
+#[test]
+fn spec_bind_arithmetic_result_joins_against_interned_data() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+:s3 :p 3 .
+:s4 :p 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?z ?s1
+{
+  ?s ?p ?o .
+  BIND(?o+1 AS ?z)
+  ?s1 ?p1 ?z
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        3,
+        "W3C bind03: ?z=?o+1 must join back against :p's own values \
+         (o=1→z=2→s2, o=2→z=3→s3, o=3→z=4→s4; o=4→z=5 matches nothing), got {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| (
+                r.get("z").map(graph_element_display),
+                r.get("s1").map(graph_element_display)
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// W3C `bind04`: `BIND` of an expression that references a never-bound
+/// variable must leave the target variable unbound for that solution — the
+/// row itself must survive, per SPARQL 1.1 §18.3 Extend ("if evaluating the
+/// expression raises an error, the variable remains unbound for that
+/// solution"). The previous implementation dropped the whole row instead.
+#[test]
+fn spec_bind_unbound_expression_leaves_alias_unbound_row_survives() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+:s3 :p 3 .
+:s4 :p 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT *
+{
+  ?s ?p ?o .
+  BIND(?nova AS ?z)
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        4,
+        "W3C bind04: every `?s ?p ?o` row must survive even though `?nova` \
+         (and so `?z`) is never bound, got {} rows",
+        result.rows.len()
+    );
+    assert!(
+        result.rows.iter().all(|r| r.get("z").is_none()),
+        "?z must stay unbound in every row since `?nova` is never bound"
     );
 }
 
