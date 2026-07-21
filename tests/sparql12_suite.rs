@@ -1639,9 +1639,13 @@ SELECT ?b WHERE {
     BIND(YEAR(?d) AS ?b)
 }
 "#;
+    // YEAR's xsd:integer result now renders in the same
+    // `"value"^^<datatype>` wire form as any other xsd:integer value (#228,
+    // extended beyond the issue's enumerated scope to the same producer bug
+    // in the date/time component functions).
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("2014".to_string()),
+        Some("\"2014\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.6: YEAR of a dateTime literal"
     );
 }
@@ -1661,9 +1665,10 @@ SELECT ?b WHERE {
     BIND(YEAR(?d) AS ?b)
 }
 "#;
+    // See #228, as above.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("2014".to_string()),
+        Some("\"2014\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.6: YEAR of an xsd:gYear literal"
     );
 }
@@ -1683,9 +1688,10 @@ SELECT ?b WHERE {
     BIND(MONTH(?d) AS ?b)
 }
 "#;
+    // See #228, as above.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("3".to_string()),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.6: MONTH of a date literal"
     );
 }
@@ -1705,9 +1711,10 @@ SELECT ?b WHERE {
     BIND(DAY(?d) AS ?b)
 }
 "#;
+    // See #228, as above.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("5".to_string()),
+        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.6: DAY of a date literal"
     );
 }
@@ -1727,9 +1734,10 @@ SELECT ?b WHERE {
     BIND(DAY(?d) AS ?b)
 }
 "#;
+    // See #228, as above.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("5".to_string()),
+        Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
         "§17.4.6: DAY of a dateTime literal"
     );
 }
@@ -2521,6 +2529,36 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(xsd:dateTime(?o) AS ?z) ?t :q ?z }
         1,
         "xsd:dateTime(\"2021-06-01T00:00:00Z\") must join back against :t1's \
          :q \"2021-06-01T00:00:00+00:00\"^^xsd:dateTime, got {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| r.get("z").map(graph_element_display))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `YEAR(...)` wasn't in #228's enumerated scope, but is the same
+/// producer/lookup bug: a `BIND`-computed date/time component must join
+/// against real interned integer data of the same value.
+#[test]
+fn spec_bind_year_result_joins_against_interned_integer_data() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+:s1 :p "2014-03-05T10:20:30Z"^^xsd:dateTime .
+:t1 :q 2014 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?z ?t WHERE { :s1 :p ?o . BIND(YEAR(?o) AS ?z) ?t :q ?z }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "YEAR(2014-03-05T10:20:30Z) = 2014 must join back against :t1's :q 2014, got {:?}",
         result
             .rows
             .iter()

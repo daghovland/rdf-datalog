@@ -2199,6 +2199,18 @@ fn eval_function_value(
             )))
         }
         // ── Datetime functions ────────────────────────────────────────────────
+        //
+        // YEAR/MONTH/DAY/HOURS/MINUTES/SECONDS weren't in #228's enumerated
+        // scope, but are the exact same producer/lookup bug: extracting a
+        // date/time component and emitting a native `IntegerLiteral`/
+        // `DecimalLiteral` instead of `TypedLiteral` via
+        // `numeric_lit_to_element` would mean `BIND(YEAR(?d) AS ?z) . ?s :p
+        // ?z` fails to join for the same structural-inequality reason ABS
+        // did. Fixed here too rather than left to resurface as issue #4 of
+        // the same recurring pattern (see #228's "recurring pattern"
+        // section). `NOW()`'s native `DateTimeLiteral` is deliberately left
+        // as-is: its value is the current instant, which cannot coincide
+        // with already-interned data, so the join-lookup bug can't manifest.
         "NOW" => Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
             chrono::Utc::now(),
         ))),
@@ -2206,47 +2218,47 @@ fn eval_function_value(
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.year()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.year(),
+            ))))
         }
         "MONTH" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.month()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.month(),
+            ))))
         }
         "DAY" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.day()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.day(),
+            ))))
         }
         "HOURS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.hour()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.hour(),
+            ))))
         }
         "MINUTES" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.minute()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.minute(),
+            ))))
         }
         "SECONDS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+            Some(numeric_lit_to_element(NumericLit::Decimal(
                 rust_decimal::Decimal::from(dt.second()),
             )))
         }

@@ -3,7 +3,6 @@
 //! https://github.com/daghovland/rdf-datalog/issues/52
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource, Triple};
-use num_bigint::BigInt;
 use sparql_parser::{execute, parse_query, NetworkPolicy, ParserContext, QueryResult};
 use std::collections::HashMap;
 
@@ -377,80 +376,58 @@ fn test_now_returns_datetime() {
 
 #[test]
 fn test_year_from_datetime() {
+    // #228 (extended beyond the issue's enumerated scope to the same
+    // producer bug in the date/time component functions): TypedLiteral, not
+    // the native IntegerLiteral variant.
     let result = eval_function(
         r#"SELECT (YEAR("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(2023)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("2023", XSD_INTEGER)));
 }
 
 #[test]
 fn test_month_from_datetime() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"SELECT (MONTH("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(1)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("1", XSD_INTEGER)));
 }
 
 #[test]
 fn test_day_from_datetime() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"SELECT (DAY("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(15)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("15", XSD_INTEGER)));
 }
 
 #[test]
 fn test_hours_from_datetime() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"SELECT (HOURS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(10)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("10", XSD_INTEGER)));
 }
 
 #[test]
 fn test_minutes_from_datetime() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"SELECT (MINUTES("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(30)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("30", XSD_INTEGER)));
 }
 
 #[test]
 fn test_seconds_from_datetime() {
+    // See #228 for the TypedLiteral output shape.
     let result = eval_function(
         r#"SELECT (SECONDS("2023-01-15T10:30:45Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>) AS ?result) WHERE {}"#,
     );
-    assert_eq!(
-        result,
-        Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
-            rust_decimal::Decimal::from(45)
-        )))
-    );
+    assert_eq!(result, Some(typed_literal("45", XSD_DECIMAL)));
 }
 
 #[test]
