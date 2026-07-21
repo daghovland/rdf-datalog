@@ -1959,3 +1959,180 @@ SELECT * WHERE {
         result.rows.len()
     );
 }
+
+// ── Project-expression evaluation (SELECT (expr AS ?var)) ───────────────────
+//
+// Mirrors the four W3C SPARQL 1.1 `project-expression` conformance entries
+// tracked in [#207](https://github.com/daghovland/rdf-datalog/issues/207)
+// (the vendored fixtures live at
+// `tests/testdata/w3c_sparql11/project-expression/projexp01..04`, exercised
+// end-to-end by `tests/w3c_sparql11_suite.rs::w3c_sparql11_project_expression`).
+// These are unit-level equivalents that assert on the raw `GraphElement`
+// binding (not just its display string) so the numeric *type* — not merely
+// its printed value — is checked: a naive fix could return the right number
+// as `xsd:double` instead of `xsd:integer`.
+
+use dag_rdf::{GraphElement, RdfLiteral};
+use ingress::XSD_INTEGER;
+
+/// Assert that `el` is `xsd:integer`-typed with the given value. Accepts
+/// either internal representation of an integer literal — the canonical
+/// `RdfLiteral::IntegerLiteral` (produced by e.g. aggregate/BIND arithmetic)
+/// or the generic `RdfLiteral::TypedLiteral { type_iri: xsd:integer, .. }`
+/// shape (produced by the Turtle and SPARQL literal parsers) — since which
+/// one a given code path returns is an implementation detail; both are
+/// `xsd:integer` on the wire. What must NOT happen is silently promoting to
+/// `xsd:double`, which is the bug this test guards against.
+fn assert_xsd_integer(el: Option<&GraphElement>, expected: i64, msg: &str) {
+    match el {
+        Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n))) => {
+            assert_eq!(n.to_string(), expected.to_string(), "{msg}");
+        }
+        Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal }))
+            if type_iri.0 == XSD_INTEGER =>
+        {
+            assert_eq!(literal.parse::<i64>().ok(), Some(expected), "{msg}");
+        }
+        other => panic!("{msg}: expected xsd:integer {expected}, got {other:?}"),
+    }
+}
+
+/// W3C `project-expression` "Expression is equality": a projected equality
+/// comparison `(?y = ?z AS ?eq)` must produce an `xsd:boolean` value, not
+/// silently vanish. Data: `in:a ex:p 1 ; ex:q 1, 2` — one row where `?y = ?z`
+/// holds, one where it doesn't.
+#[test]
+fn spec_project_expression_equality() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX ex: <http://www.example.org/schema#>
+PREFIX in: <http://www.example.org/instance#>
+in:a ex:p 1 .
+in:a ex:q 1 .
+in:a ex:q 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?z ((?y = ?z) AS ?eq) WHERE {
+  ?x ex:p ?y .
+  ?x ex:q ?z
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 2, "expected one row per ?z value");
+
+    let bools: Vec<bool> = result
+        .rows
+        .iter()
+        .map(|row| match row.get("eq") {
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b))) => *b,
+            other => panic!("expected xsd:boolean ?eq binding, got {other:?}"),
+        })
+        .collect();
+    assert!(
+        bools.contains(&true) && bools.contains(&false),
+        "expected both a true and a false ?eq row, got {bools:?}"
+    );
+}
+
+/// W3C `project-expression` "Expression raise an error": a projected
+/// arithmetic expression that errors during evaluation (`1 + "foobar"`, a
+/// type error per SPARQL's `op:numeric-add`) must leave *only* its own alias
+/// unbound for that solution — sibling projected variables in the same row
+/// are unaffected — while a row where the expression evaluates cleanly must
+/// still get the correctly `xsd:integer`-typed result (not `xsd:double`).
+#[test]
+fn spec_project_expression_arithmetic_error_leaves_alias_unbound() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX ex: <http://www.example.org/schema#>
+PREFIX in: <http://www.example.org/instance#>
+in:a ex:p 1 .
+in:a ex:q 1 .
+in:a ex:q "foobar" .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?z ((?y + ?z) AS ?sum) WHERE {
+  ?x ex:p ?y .
+  ?x ex:q ?z
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 2, "?z should still project on both rows");
+
+    for row in &result.rows {
+        match row.get("z") {
+            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(s))) if s == "foobar" => {
+                assert!(
+                    row.get("sum").is_none(),
+                    "1 + \"foobar\" is a type error; ?sum must be left unbound, got {:?}",
+                    row.get("sum")
+                );
+            }
+            _ => {
+                assert_xsd_integer(row.get("sum"), 2, "1 + 1 must be an xsd:integer 2");
+            }
+        }
+    }
+}
+
+/// W3C `project-expression` "Reuse a project expression variable in select":
+/// a later SELECT item may reference an alias bound by an earlier one in the
+/// same projection list (`(?y + ?z AS ?sum) (2 * ?sum AS ?twice)`), not just
+/// the WHERE-clause bindings.
+#[test]
+fn spec_project_expression_reuse_alias_in_select() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX ex: <http://www.example.org/schema#>
+PREFIX in: <http://www.example.org/instance#>
+in:a ex:p 1 .
+in:a ex:q 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ((?y + ?z) AS ?sum) ((2 * ?sum) AS ?twice) WHERE {
+  ?x ex:p ?y .
+  ?x ex:q ?z
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    let row = &result.rows[0];
+    assert_xsd_integer(row.get("sum"), 3, "?sum = 1 + 2");
+    assert_xsd_integer(
+        row.get("twice"),
+        6,
+        "?twice = 2 * ?sum must see the ?sum alias from the earlier SELECT item",
+    );
+}
+
+/// W3C `project-expression` "Reuse a project expression variable in order
+/// by": `ORDER BY` may reference a `(expr AS ?alias)` projected variable, and
+/// must sort by its (correctly `xsd:integer`-typed) value.
+#[test]
+fn spec_project_expression_reuse_alias_in_order_by() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX ex: <http://www.example.org/schema#>
+PREFIX in: <http://www.example.org/instance#>
+in:a ex:p 1 .
+in:a ex:p 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?y ((?y + ?y) AS ?sum) WHERE {
+  ?x ex:p ?y
+}
+ORDER BY ?sum
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 2);
+    assert_xsd_integer(result.rows[0].get("sum"), 2, "first row (ascending ?sum)");
+    assert_xsd_integer(result.rows[1].get("sum"), 4, "second row (ascending ?sum)");
+}

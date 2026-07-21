@@ -1293,20 +1293,17 @@ fn w3c_sparql11_grouping() {
 
 /// W3C SPARQL 1.1 — project expression (SELECT expr AS ?var) eval tests.
 /// Reference: https://www.w3.org/2009/sparql/docs/tests/data-sparql11/project-expression/
+///
+/// All 4 entries newly-exposed by the #192 manifest-parser fix (see
+/// `w3c_sparql11_bind` for the general explanation) and tracked as genuine
+/// gaps in [#207](https://github.com/daghovland/rdf-datalog/issues/207) —
+/// equality comparisons and arithmetic over projected expressions, and
+/// reusing a projected expression's variable in a later SELECT item or
+/// ORDER BY — are now fixed; no skip-list remains.
 #[test]
 fn w3c_sparql11_project_expression() {
     let entries = load_sparql_manifest("project-expression");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine gaps in projected-expression
-    // evaluation: equality comparisons and arithmetic over projected
-    // expressions, and reusing a projected expression's variable in a later
-    // SELECT item or ORDER BY. Not a regression from #192.
-    let skip: &[&str] = &[
-        "Expression is equality",
-        "Expression raise an error",
-        "Reuse a project expression variable in select",
-        "Reuse a project expression variable in order by",
-    ];
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))
