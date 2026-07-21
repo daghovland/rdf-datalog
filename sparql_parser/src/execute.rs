@@ -18,8 +18,8 @@ use crate::ast::{
 };
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, DEFAULT_GRAPH_ELEMENT_ID};
 use ingress::{
-    IriReference, NetworkPolicy, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_FLOAT, XSD_INTEGER,
-    XSD_STRING,
+    IriReference, NetworkPolicy, XSD_BOOLEAN, XSD_DATE, XSD_DATE_TIME, XSD_DECIMAL, XSD_DOUBLE,
+    XSD_FLOAT, XSD_INTEGER, XSD_STRING,
 };
 use num_bigint::BigInt;
 use std::collections::HashMap;
@@ -1607,12 +1607,16 @@ fn eval_function_value(
     // *resolved* IRI: `xsd:integer(...)` is parsed via `parse_prefixed_name`
     // (or `<http://...#integer>(...)` via `parse_iri_ref`), never as the bare
     // word `xsd:integer` (see #186/PR #189), so dispatch matches the full IRI
-    // rather than joining the uppercase-keyword match below. `xsd:dateTime`
-    // casting is intentionally not implemented — see
-    // https://github.com/daghovland/rdf-datalog/issues/194.
+    // rather than joining the uppercase-keyword match below.
     if matches!(
         name,
-        XSD_STRING | XSD_BOOLEAN | XSD_INTEGER | XSD_DECIMAL | XSD_DOUBLE | XSD_FLOAT
+        XSD_STRING
+            | XSD_BOOLEAN
+            | XSD_INTEGER
+            | XSD_DECIMAL
+            | XSD_DOUBLE
+            | XSD_FLOAT
+            | XSD_DATE_TIME
     ) {
         let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
         return eval_xsd_cast(name, &el);
@@ -2089,6 +2093,31 @@ fn eval_function_value(
     }
 }
 
+/// Parse an `xsd:dateTime` or `xsd:date` lexical form into a `chrono::DateTime<Utc>`.
+/// Accepts full RFC 3339 (`xsd:dateTime` with a timezone/`Z`), a timezone-less
+/// `xsd:dateTime` lexical form (naive datetime, assumed UTC — RFC 3339 alone
+/// requires an offset but the XSD dateTime lexical space does not), and
+/// `xsd:date` (`YYYY-MM-DD`, normalized to midnight UTC). Shared by
+/// `parse_xsd_datetime` (which additionally falls back to bare `xsd:gYear`
+/// for `YEAR`/`MONTH`/`DAY`) and the `xsd:dateTime` cast (`cast_to_xsd_datetime`),
+/// which intentionally does NOT get the gYear fallback — a bare year is not a
+/// valid cast source per the XPath casting rules (see #194).
+fn parse_datetime_or_date_lexical(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    // Full RFC 3339 dateTime (requires a timezone offset or 'Z').
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // xsd:dateTime lexical form without a timezone (naive; assumed UTC).
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(ndt.and_utc());
+    }
+    // xsd:date (YYYY-MM-DD)
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return d.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc());
+    }
+    None
+}
+
 /// Parse an XSD dateTime (or date/gYear) graph element into a `chrono::DateTime<Utc>`.
 /// Handles `DateTimeLiteral`, RFC 3339 `xsd:dateTime` strings, `xsd:date` (YYYY-MM-DD),
 /// and `xsd:gYear` (YYYY) so that YEAR/MONTH/DAY work on all common date types.
@@ -2096,13 +2125,8 @@ fn parse_xsd_datetime(el: &GraphElement) -> Option<chrono::DateTime<chrono::Utc>
     match el {
         GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => Some(*dt),
         GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
-            // Full RFC 3339 dateTime
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(literal.as_str()) {
-                return Some(dt.with_timezone(&chrono::Utc));
-            }
-            // xsd:date (YYYY-MM-DD)
-            if let Ok(d) = chrono::NaiveDate::parse_from_str(literal.as_str(), "%Y-%m-%d") {
-                return d.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc());
+            if let Some(dt) = parse_datetime_or_date_lexical(literal) {
+                return Some(dt);
             }
             // xsd:gYear ("YYYY")
             if let Ok(y) = literal.parse::<i32>() {
@@ -2387,15 +2411,13 @@ fn literal_to_f64(lit: &RdfLiteral) -> Option<f64> {
 // ── XSD datatype constructor/cast functions (SPARQL 1.1 §17.4.2, #190) ────
 //
 // `xsd:integer(v)`, `xsd:decimal(v)`, `xsd:double(v)`, `xsd:float(v)`,
-// `xsd:string(v)`, `xsd:boolean(v)`: given an appropriately-typed input
-// (numeric literal, boolean, string, or matching-lexical-form typed
-// literal), produce a new literal of the target datatype. An invalid
-// conversion returns `None` — per this file's established convention (see
-// `ABS`/`ROUND`/etc. above), that leaves the enclosing expression's result
-// unbound rather than erroring the whole query.
-//
-// `xsd:dateTime(v)` is intentionally not implemented; see
-// https://github.com/daghovland/rdf-datalog/issues/194.
+// `xsd:string(v)`, `xsd:boolean(v)`, `xsd:dateTime(v)` (#194): given an
+// appropriately-typed input (numeric literal, boolean, string, or
+// matching-lexical-form typed literal), produce a new literal of the target
+// datatype. An invalid conversion returns `None` — per this file's
+// established convention (see `ABS`/`ROUND`/etc. above), that leaves the
+// enclosing expression's result unbound rather than erroring the whole
+// query.
 
 /// Dispatch a resolved XSD datatype IRI to its cast implementation.
 fn eval_xsd_cast(target_iri: &str, el: &GraphElement) -> Option<GraphElement> {
@@ -2406,6 +2428,7 @@ fn eval_xsd_cast(target_iri: &str, el: &GraphElement) -> Option<GraphElement> {
         XSD_DECIMAL => cast_to_xsd_decimal(el),
         XSD_DOUBLE => cast_to_xsd_double(el),
         XSD_FLOAT => cast_to_xsd_float(el),
+        XSD_DATE_TIME => cast_to_xsd_datetime(el),
         _ => None,
     }
 }
@@ -2602,6 +2625,35 @@ fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
     Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
         f.into(),
     )))
+}
+
+/// Cast to `xsd:dateTime` (#194): a native `DateTimeLiteral` passes through
+/// unchanged; a string (or `xsd:dateTime`/`xsd:date`/`xsd:string`-typed
+/// literal) is parsed via `parse_datetime_or_date_lexical`, which accepts the
+/// full `xsd:dateTime` lexical space (with or without a timezone) and
+/// normalizes `xsd:date` (`YYYY-MM-DD`) to midnight UTC. Deliberately does
+/// NOT fall back to bare `xsd:gYear` the way `parse_xsd_datetime` (used by
+/// `YEAR`/`MONTH`/`DAY`) does — a bare year is not a valid `xsd:dateTime`
+/// cast source per the XPath casting rules, so it stays unbound.
+fn cast_to_xsd_datetime(el: &GraphElement) -> Option<GraphElement> {
+    let dt = match el {
+        GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => *dt,
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => {
+            parse_datetime_or_date_lexical(s)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+            parse_datetime_or_date_lexical(literal)?
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })
+            if type_iri.0 == XSD_DATE_TIME
+                || type_iri.0 == XSD_DATE
+                || type_iri.0 == XSD_STRING =>
+        {
+            parse_datetime_or_date_lexical(literal)?
+        }
+        _ => return None,
+    };
+    Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)))
 }
 
 /// Equality for `=`/`!=`/`IN`/`NOT IN` (SPARQL 1.1 §17.3, §17.4.1.9).

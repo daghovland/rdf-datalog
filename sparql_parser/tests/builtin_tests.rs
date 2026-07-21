@@ -59,6 +59,7 @@ const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 const XSD_BOOLEAN: &str = "http://www.w3.org/2001/XMLSchema#boolean";
 #[allow(dead_code)]
 const XSD_DECIMAL: &str = "http://www.w3.org/2001/XMLSchema#decimal";
+const XSD_DATE_TIME: &str = "http://www.w3.org/2001/XMLSchema#dateTime";
 
 // ── String functions ──────────────────────────────────────────────────────────
 
@@ -666,9 +667,7 @@ fn test_bare_word_builtin_calls_still_parse_after_reorder() {
 // `xsd:string(v)`, `xsd:boolean(v)`. Follow-up from #186/PR #189, which fixed
 // *parsing* of `prefix:localname(...)` function calls but deliberately left
 // value-casting semantics unimplemented (the call evaluated to unbound).
-// `xsd:dateTime(v)` casting is out of scope here — see the tracking issue
-// referenced next to the `XSD_DATE_TIME`-less dispatch in
-// `sparql_parser/src/execute.rs`.
+// `xsd:dateTime(v)` casting is covered separately below (#194).
 // See https://github.com/daghovland/rdf-datalog/issues/190
 
 #[test]
@@ -972,5 +971,134 @@ fn test_sum_xsd_integer_strstarts_benchmark_shape() {
         Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
             BigInt::from(2)
         )))
+    );
+}
+
+// ── xsd:dateTime cast (#194) ─────────────────────────────────────────────
+//
+// SPARQL 1.1 §17.4.2 datatype constructor/cast semantics: `xsd:dateTime(v)`,
+// deferred from #190 because it needs more involved lexical parsing (full
+// ISO 8601 dateTime lexical space, plus normalizing `xsd:date` to midnight
+// UTC) than the other cast targets. Reuses the lexical parsing that backs
+// `parse_xsd_datetime` (the helper `YEAR`/`MONTH`/`DAY`/etc. already use),
+// factored so the cast gets the strict dateTime/date lexical space (no
+// bare-`xsd:gYear` fallback — that fallback stays specific to the
+// YEAR/MONTH/DAY helpers, since a bare year is not a valid cast source per
+// the XPath casting rules).
+// See https://github.com/daghovland/rdf-datalog/issues/194
+
+#[test]
+fn test_xsd_cast_datetime_from_valid_lexical_form() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15T10:30:45Z") AS ?result) WHERE {}"#,
+    );
+    let expected = chrono::DateTime::parse_from_rfc3339("2023-01-15T10:30:45Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
+            expected
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_from_lexical_form_without_timezone() {
+    // `2004-04-12T13:20:00` (no timezone) is a valid xsd:dateTime lexical
+    // form; `chrono::DateTime::parse_from_rfc3339` alone rejects it (RFC 3339
+    // requires an offset), so the shared parser must fall back to a naive
+    // datetime parse and assume UTC.
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2004-04-12T13:20:00") AS ?result) WHERE {}"#,
+    );
+    let expected = chrono::NaiveDate::from_ymd_opt(2004, 4, 12)
+        .unwrap()
+        .and_hms_opt(13, 20, 0)
+        .unwrap()
+        .and_utc();
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
+            expected
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_from_date_normalizes_to_midnight_utc() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15") AS ?result) WHERE {}"#,
+    );
+    let expected = chrono::NaiveDate::from_ymd_opt(2023, 1, 15)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
+            expected
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_from_typed_datetime_literal() {
+    let result = eval_function(&format!(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2023-01-15T10:30:45Z"^^<{XSD_DATE_TIME}>) AS ?result) WHERE {{}}"#
+    ));
+    let expected = chrono::DateTime::parse_from_rfc3339("2023-01-15T10:30:45Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
+            expected
+        )))
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_from_datetime_literal_is_identity() {
+    // `xsd:dateTime(NOW())` casts an already-native `DateTimeLiteral` — the
+    // "identity" input case (mirrors how e.g. `xsd:boolean(xsd:boolean(...))`
+    // round-trips a native BooleanLiteral in the existing cast tests).
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime(NOW()) AS ?result) WHERE {}"#,
+    );
+    assert!(
+        matches!(
+            result,
+            Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(_)))
+        ),
+        "xsd:dateTime(NOW()) must stay a DateTimeLiteral; got {result:?}"
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_invalid_lexical_form_is_unbound() {
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("not a date") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result, None,
+        "invalid xsd:dateTime cast should leave ?result unbound"
+    );
+}
+
+#[test]
+fn test_xsd_cast_datetime_bare_year_is_unbound() {
+    // A bare `xsd:gYear`-shaped string ("2020") is not a valid xsd:dateTime
+    // or xsd:date lexical form, so it must NOT cast successfully — even
+    // though `parse_xsd_datetime` (used by YEAR/MONTH/DAY) accepts bare
+    // years as a gYear fallback. That fallback is intentionally NOT shared
+    // with the cast, which needs the strict dateTime/date lexical space.
+    let result = eval_function(
+        r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT (xsd:dateTime("2020") AS ?result) WHERE {}"#,
+    );
+    assert_eq!(
+        result, None,
+        "a bare gYear-shaped string is not a valid xsd:dateTime cast source"
     );
 }
