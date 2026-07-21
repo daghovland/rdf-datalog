@@ -1030,6 +1030,7 @@ fn eval_where_pattern(store: &Datastore, pattern: &str) -> Result<Vec<SolutionRo
     let query_text = format!("SELECT * WHERE {{ {pattern} }}");
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(&query_text, &mut ctx)
         .map_err(|e| format!("WHERE clause parse error: {e:?}"))?;
@@ -1050,6 +1051,7 @@ fn parse_template(template: &str) -> Result<Vec<TriplePattern>, String> {
     let query_text = format!("SELECT * WHERE {{ {template} }}");
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) =
         parse_query(&query_text, &mut ctx).map_err(|e| format!("template parse error: {e:?}"))?;

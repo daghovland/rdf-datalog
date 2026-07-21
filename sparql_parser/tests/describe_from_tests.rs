@@ -41,6 +41,7 @@ fn add_named_triple(ds: &mut Datastore, graph: &str, s: &str, p: &str, o: &str) 
 fn ctx() -> ParserContext {
     ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     }
 }
 

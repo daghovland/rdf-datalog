@@ -70,6 +70,7 @@ fn add_iri_quad(ds: &mut Datastore, subject: &str, predicate: &str, object: &str
 fn run_query(ds: &Datastore, query: &str) -> Vec<SolutionRow> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     match execute(&parsed, ds, NetworkPolicy::Deny).expect("query should execute") {

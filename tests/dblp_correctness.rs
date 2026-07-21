@@ -100,6 +100,7 @@ enum QueryOutcome {
 fn run_benchmark_query(datastore: &Datastore, query_str: &str) -> QueryOutcome {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,

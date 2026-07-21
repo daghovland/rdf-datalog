@@ -84,6 +84,7 @@ fn extension_cases_for_query(
 ) -> Vec<(f64, Vec<NavEdgeId>)> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let Ok((_, query)) = parse_query(sparql, &mut ctx) else {
         return vec![];

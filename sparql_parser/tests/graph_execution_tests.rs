@@ -22,6 +22,7 @@ fn add_quad(ds: &mut Datastore, graph: &str, subject: &str, predicate: &str, obj
 fn run_query(ds: &Datastore, query: &str) -> sparql_parser::SelectResult {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     match execute(&parsed, ds, NetworkPolicy::Deny).expect("query should execute") {
@@ -196,6 +197,7 @@ fn construct_wildcard_returns_default_graph_triples() {
     let query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, parsed) = parse_query(query, &mut ctx).expect("should parse");
     let result = execute(&parsed, &ds, NetworkPolicy::Deny).expect("should execute");
@@ -219,6 +221,7 @@ fn service_non_silent_returns_error() {
     let ds = Datastore::new(64);
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = r#"
         SELECT * WHERE {
@@ -241,6 +244,7 @@ fn service_silent_returns_empty() {
     let ds = Datastore::new(64);
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = r#"
         SELECT * WHERE {

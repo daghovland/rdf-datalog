@@ -280,6 +280,7 @@ fn execute_optional_sparql(sparql: &str, ds: &Datastore, n: usize) -> Vec<IndexR
 
     let mut ctx = ParserContext {
         prefixes: HM::new(),
+        base: None,
     };
     let (_, query) = match parse_query(sparql, &mut ctx) {
         Ok(q) => q,

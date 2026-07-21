@@ -298,6 +298,7 @@ async fn run_transactional_query(
     // Execute query against the view (same logic as run_select_query).
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,
@@ -513,6 +514,7 @@ fn format_query_result(result: QueryResult, headers: &HeaderMap, store: &Datasto
 async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState) -> Response {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,

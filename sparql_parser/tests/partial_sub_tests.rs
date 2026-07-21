@@ -55,6 +55,7 @@ fn add_triple(ds: &mut Datastore, subject: &str, predicate: &str, object: GraphE
 fn run_query(ds: &Datastore, sparql: &str) -> Vec<SolutionRow> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, parsed) = parse_query(sparql, &mut ctx).expect("query should parse");
     match execute(&parsed, ds, NetworkPolicy::Deny).expect("query should execute") {

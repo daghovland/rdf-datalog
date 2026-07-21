@@ -10,6 +10,7 @@ fn test_parse_simple_select() {
     let sparql = "SELECT ?title WHERE { <http://example.org/book/book1> <http://purl.org/dc/elements/1.1/title> ?title }";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse");
 
@@ -48,6 +49,7 @@ fn test_parse_with_prefix() {
     ";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse");
 
@@ -89,6 +91,7 @@ fn test_parse_sparql12_graph_clause_with_iri() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 GRAPH clause");
@@ -118,6 +121,7 @@ fn test_parse_sparql12_graph_clause_with_variable_graph_name() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
 
     let (_, query) = parse_query(sparql, &mut ctx)
@@ -157,6 +161,7 @@ fn test_parse_semicolon_comma_and_property_path() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse shorthand and path");
@@ -196,6 +201,7 @@ fn test_parse_semicolon_comma_and_property_path() {
 fn parse_single_path(sparql: &str) -> PropertyPath {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse");
     let Query::Select { where_clause, .. } = query else {
@@ -267,6 +273,7 @@ fn test_parse_sparql12_optional_with_bound_filter() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
 
     let (_, query) =
@@ -293,6 +300,7 @@ fn test_parse_sparql12_union_example() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
 
     let (_, query) = parse_query(sparql, &mut ctx).expect("Should parse SPARQL 1.2 UNION example");
@@ -311,6 +319,7 @@ fn construct_wildcard_spo_parses() {
     let sparql = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("should parse wildcard CONSTRUCT");
     let Query::Construct {
@@ -348,6 +357,7 @@ fn construct_full_form_parses() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
     let Query::Construct {
@@ -371,6 +381,7 @@ fn construct_short_form_parses() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
     let Query::Construct { template, .. } = query else {
@@ -397,6 +408,7 @@ fn construct_blank_node_template_parses() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("should parse");
     let Query::Construct { template, .. } = query else {
@@ -444,6 +456,7 @@ fn construct_iri_template_produces_correct_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -511,6 +524,7 @@ fn construct_blank_node_template_fresh_per_solution() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -560,6 +574,7 @@ fn construct_short_form_returns_all_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -584,6 +599,7 @@ fn construct_no_solutions_produces_empty_result() {
     let sparql = "CONSTRUCT { <http://example.org/s> <http://example.org/p> <http://example.org/o> } WHERE { ?s <http://example.org/missing> ?o }";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -613,6 +629,7 @@ fn construct_unbound_template_variable_is_skipped() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -649,6 +666,7 @@ fn construct_graph_clause_returns_named_graph_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -686,6 +704,7 @@ fn construct_literal_in_subject_is_skipped() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -726,6 +745,7 @@ fn construct_where_with_optional_includes_optional_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -778,6 +798,7 @@ fn construct_where_with_union_includes_all_branches() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -819,6 +840,7 @@ fn construct_where_with_graph_includes_named_graph_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -865,6 +887,7 @@ fn construct_deduplicates_output_triples() {
     "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Construct(triples) =
@@ -901,6 +924,7 @@ fn test_empty_blank_node_subject_finds_classes() {
     let sparql = "SELECT DISTINCT ?c WHERE { [] a ?c } LIMIT 10";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Select(result) = execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
@@ -948,6 +972,7 @@ fn test_class_picker_union_query() {
          } LIMIT 300";
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = parse_query(sparql, &mut ctx).expect("parse");
     let QueryResult::Select(result) = execute(&query, &ds, NetworkPolicy::Deny).expect("execute")
@@ -998,6 +1023,7 @@ SELECT ?person ?label ?age WHERE {
 "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let result = parse_query(sparql, &mut ctx);
     assert!(
@@ -1031,6 +1057,7 @@ WHERE { # begin pattern
 "#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) =
         parse_query(sparql, &mut ctx).expect("Query with inline # comments should parse");
@@ -1061,6 +1088,7 @@ SELECT ?person ?label ?age WHERE {
 }"#;
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let result = parse_query(sparql, &mut ctx);
     assert!(

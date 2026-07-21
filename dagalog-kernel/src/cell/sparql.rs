@@ -8,6 +8,7 @@ use std::collections::HashMap;
 pub fn execute_sparql(ds: &mut Datastore, code: &str) -> Result<Vec<(String, String)>, String> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) =
         parse_query(code, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;

@@ -38,6 +38,7 @@ fn add_quad(ds: &mut Datastore, subject: &str, predicate: &str, object: &str) {
 fn run_query(ds: &Datastore, query: &str) -> Vec<SolutionRow> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (rest, parsed) = parse_query(query, &mut ctx).expect("query should parse");
     assert!(
