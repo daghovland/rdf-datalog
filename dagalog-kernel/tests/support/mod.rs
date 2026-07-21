@@ -73,7 +73,48 @@ impl KernelHarness {
     /// Spawn the kernel binary with `current_dir` set to `repo_root` (mirroring
     /// `--ServerApp.root_dir=.`), connect shell (Dealer) and iopub (Sub) sockets,
     /// and perform the kernel_info "nudge" handshake.
+    ///
+    /// The connection file's 5 ports come from [`free_port()`], which binds
+    /// port 0 to ask the OS for a free one and immediately closes the
+    /// listener — a classic time-of-check-to-time-of-use race: another
+    /// process (a concurrent test, another CI job on a shared runner, or
+    /// ordinary ephemeral-port churn) can grab that exact port before the
+    /// spawned `dagalog-kernel` process gets to bind it moments later,
+    /// causing that bind to fail (see `dagalog-kernel::sockets::run_kernel`,
+    /// which — correctly, mirroring the real Jupyter protocol where the
+    /// frontend picks ports before the kernel exists to have an opinion —
+    /// has no fallback of its own). This surfaced as intermittent CI
+    /// failures across many unrelated PRs, root-caused in
+    /// [#211](https://github.com/daghovland/rdf-datalog/issues/211).
+    ///
+    /// Since the race is about *this test's own* port allocation, not
+    /// anything wrong with the kernel, the fix belongs here: retry the whole
+    /// spawn with a **fresh** set of 5 ports (and a rewritten connection
+    /// file) a bounded number of times before giving up.
     pub async fn start(repo_root: &Path) -> Self {
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut last_err = String::new();
+        for attempt in 1..=MAX_ATTEMPTS {
+            match Self::try_start(repo_root).await {
+                Ok(harness) => return harness,
+                Err(e) => {
+                    eprintln!(
+                        "dagalog-kernel test harness: attempt {attempt}/{MAX_ATTEMPTS} failed: {e}"
+                    );
+                    last_err = e;
+                }
+            }
+        }
+        panic!(
+            "dagalog-kernel test harness: failed to start after {MAX_ATTEMPTS} attempts; \
+             last error: {last_err}"
+        );
+    }
+
+    /// One attempt at spawning the kernel and completing the handshake, with
+    /// a fresh set of ports. Returns `Err` (rather than panicking) on any
+    /// failure so [`start`] can retry with new ports — see its doc comment.
+    async fn try_start(repo_root: &Path) -> Result<Self, String> {
         let shell_port = free_port();
         let iopub_port = free_port();
         let stdin_port = free_port();
@@ -97,30 +138,63 @@ impl KernelHarness {
             std::env::temp_dir().join(format!("dagalog-kernel-test-{}.json", uuid::Uuid::new_v4()));
         std::fs::write(
             &connection_path,
-            serde_json::to_string(&connection).expect("serialize connection file"),
+            serde_json::to_string(&connection)
+                .map_err(|e| format!("serialize connection file: {e}"))?,
         )
-        .expect("write connection file");
+        .map_err(|e| format!("write connection file: {e}"))?;
 
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_dagalog-kernel"))
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_dagalog-kernel"))
             .arg("launch")
             .arg("--connection-file")
             .arg(&connection_path)
             .current_dir(repo_root)
             .spawn()
-            .expect("spawn dagalog-kernel");
+            .map_err(|e| format!("spawn dagalog-kernel: {e}"))?;
+
+        // Give the kernel a moment to attempt its binds before we commit to
+        // connecting — if a port was raced away from under it, it exits
+        // almost immediately, and detecting that directly here is faster and
+        // more precise than waiting out a full connect/nudge timeout only to
+        // find nothing on the other end.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if let Ok(Some(status)) = child.try_wait() {
+            let _ = std::fs::remove_file(&connection_path);
+            return Err(format!(
+                "dagalog-kernel exited early with {status} (likely a port bind race)"
+            ));
+        }
+
+        let connect_deadline = Duration::from_secs(5);
 
         let mut shell = DealerSocket::new();
-        shell
-            .connect(&format!("tcp://127.0.0.1:{shell_port}"))
-            .await
-            .expect("connect shell socket");
+        let shell_connected = tokio::time::timeout(
+            connect_deadline,
+            shell.connect(&format!("tcp://127.0.0.1:{shell_port}")),
+        )
+        .await;
+        let Ok(Ok(())) = shell_connected else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&connection_path);
+            return Err(format!("connect shell socket: {shell_connected:?}"));
+        };
 
         let mut iopub = SubSocket::new();
+        let iopub_connected = tokio::time::timeout(
+            connect_deadline,
+            iopub.connect(&format!("tcp://127.0.0.1:{iopub_port}")),
+        )
+        .await;
+        let Ok(Ok(())) = iopub_connected else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&connection_path);
+            return Err(format!("connect iopub socket: {iopub_connected:?}"));
+        };
         iopub
-            .connect(&format!("tcp://127.0.0.1:{iopub_port}"))
+            .subscribe("")
             .await
-            .expect("connect iopub socket");
-        iopub.subscribe("").await.expect("subscribe to all topics");
+            .map_err(|e| format!("subscribe to all topics: {e}"))?;
 
         let mut harness = Self {
             child,
@@ -129,23 +203,33 @@ impl KernelHarness {
             key: key.into_bytes(),
             session: uuid::Uuid::new_v4().to_string(),
         };
-        harness.nudge().await;
-        harness
+        if let Err(e) = harness.nudge().await {
+            let _ = harness.child.kill();
+            let _ = harness.child.wait();
+            let _ = std::fs::remove_file(&connection_path);
+            return Err(e);
+        }
+        let _ = std::fs::remove_file(&connection_path);
+        Ok(harness)
     }
 
     /// Repeatedly send `kernel_info_request` until both a shell reply and at
     /// least one iopub message are observed, working around the ZMQ PUB/SUB
-    /// "slow joiner" race.
-    async fn nudge(&mut self) {
+    /// "slow joiner" race. Returns `Err` (rather than panicking) on timeout
+    /// so [`try_start`] can retry with fresh ports — see [`start`]'s doc
+    /// comment.
+    async fn nudge(&mut self) -> Result<(), String> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let mut got_shell = false;
         let mut got_iopub = false;
 
         while !(got_shell && got_iopub) {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "kernel did not respond to kernel_info_request nudge within timeout"
-            );
+            if tokio::time::Instant::now() >= deadline {
+                return Err(
+                    "kernel did not respond to kernel_info_request nudge within timeout"
+                        .to_string(),
+                );
+            }
 
             let msg = request("kernel_info_request", &self.session, serde_json::json!({}));
             let frames = encode_message(&msg, &self.key, &[]).expect("encode kernel_info_request");
@@ -166,6 +250,7 @@ impl KernelHarness {
                 got_iopub = true;
             }
         }
+        Ok(())
     }
 
     /// Run one cell's source through `execute_request` and collect its output.
