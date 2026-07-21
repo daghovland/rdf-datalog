@@ -10,6 +10,7 @@ use std::collections::HashMap;
 fn ctx() -> ParserContext {
     ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     }
 }
 

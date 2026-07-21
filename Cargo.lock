@@ -3165,6 +3165,7 @@ dependencies = [
  "nom",
  "num-bigint",
  "ordered-float 4.6.0",
+ "oxiri",
  "rand 0.8.6",
  "regex",
  "rust_decimal",

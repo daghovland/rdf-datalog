@@ -691,6 +691,7 @@ fn run_eval_test(entry: &SparqlTestEntry, skip: &[&str]) -> Option<String> {
 fn load_from_clause_data(ds: &mut Datastore, query_text: &str, query_path: &str) {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let Ok((_, query)) = parse_query(query_text, &mut ctx) else {
         return;
@@ -727,6 +728,7 @@ fn load_from_clause_data(ds: &mut Datastore, query_text: &str, query_path: &str)
 fn compare_construct_with_ttl(ds: &Datastore, sparql: &str, ttl_path: &str) -> Option<String> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) = match parse_query(sparql, &mut ctx) {
         Ok(q) => q,
@@ -832,6 +834,7 @@ fn try_parse_query(path: &str) -> Result<(), String> {
     }
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     parse_query(&text, &mut ctx).map_err(|e| format!("parse error: {:?}", e))?;
     Ok(())

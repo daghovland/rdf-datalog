@@ -8,6 +8,7 @@ nom = "7.1"
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
 iri-string = "0.7"
+oxiri = "0.2"
 log = "0.4"
 num-bigint = "0.4.4"
 ordered-float = "4.2"

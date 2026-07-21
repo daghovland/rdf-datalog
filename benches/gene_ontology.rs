@@ -74,6 +74,7 @@ fn load_go() -> Datastore {
 fn run_sparql_query(ds: &Datastore, query_str: &str) -> usize {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = parse_query(query_str, &mut ctx)
         .expect("query must parse")

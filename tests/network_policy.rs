@@ -27,6 +27,7 @@ fn empty_store() -> Datastore {
 fn ctx() -> ParserContext {
     ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     }
 }
 

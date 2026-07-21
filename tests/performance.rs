@@ -163,6 +163,7 @@ fn run_sparql(
 ) -> Vec<HashMap<String, dag_rdf::GraphElement>> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let query = parse_query(query_str, &mut ctx)
         .expect("SPARQL query must parse")

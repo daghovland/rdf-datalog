@@ -211,6 +211,7 @@ pub fn parse_rules(
 pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectResult, String> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
+        base: None,
     };
     let (_, query) =
         parse_query(sparql, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;

@@ -45,6 +45,27 @@ use std::collections::HashMap;
 
 pub struct ParserContext {
     pub prefixes: HashMap<String, String>,
+    /// The effective base IRI used to resolve relative IRI references
+    /// (`<...>`) anywhere in the query, per SPARQL 1.1 §4.1 / RFC 3986.
+    ///
+    /// - Set this to the query's natural retrieval IRI (e.g. the query
+    ///   file's own path/URL) before calling [`parse_query`] if one is
+    ///   available; leave `None` for queries with no natural location
+    ///   (e.g. submitted as an inline string).
+    /// - A `BASE <iri>` directive inside the query overrides this default
+    ///   for the remainder of the query (matching RFC 3986 base-URI-override
+    ///   semantics), and is itself resolved against whatever base was in
+    ///   effect beforehand (so a caller-supplied default can be extended
+    ///   with a relative `BASE` declaration).
+    /// - If this is `None` and no `BASE` directive is present, relative IRI
+    ///   references are left unresolved (kept verbatim) rather than
+    ///   producing a parse error. This differs from `turtle::parse_turtle`'s
+    ///   stricter no-base behavior (which rejects non-absolute IRIs
+    ///   outright) — several existing regression tests and W3C SPARQL 1.1
+    ///   test-suite `.rq` fixtures already rely on bare relative-looking
+    ///   IRIs (e.g. `GRAPH <exists02.ttl>`) parsing verbatim when no base is
+    ///   supplied; see issue #217 for the full discussion.
+    pub base: Option<String>,
 }
 
 // ── Whitespace + comment skipping ────────────────────────────────────────────
@@ -83,10 +104,23 @@ fn sp1(input: &str) -> IResult<&str, ()> {
 // ── Top-level entry point ────────────────────────────────────────────────────
 
 pub fn parse_query<'a>(input: &'a str, ctx: &'a mut ParserContext) -> IResult<&'a str, Query> {
-    let (input, _) = sp(input)?;
-    // PREFIX declarations — may mutate ctx with new prefix bindings
-    let (mut input, _) = many0(parse_prefix(ctx))(input)?;
-    input = sp(input)?.0;
+    let (mut input, _) = sp(input)?;
+    // Prologue: BASE and PREFIX declarations, in any order, zero or more of
+    // each (SPARQL 1.1 grammar: `Prologue ::= (BaseDecl | PrefixDecl)*`).
+    // Handwritten rather than `many0(alt(...))` because both branches mutate
+    // `ctx` and nom's `alt` cannot hold two simultaneously-live `&mut`
+    // closures over the same context.
+    loop {
+        if let Ok((rest, _)) = parse_base_decl(ctx, input) {
+            input = sp(rest)?.0;
+            continue;
+        }
+        if let Ok((rest, _)) = parse_prefix_decl(ctx, input) {
+            input = sp(rest)?.0;
+            continue;
+        }
+        break;
+    }
     parse_query_body(ctx)(input)
 }
 
@@ -274,22 +308,43 @@ fn parse_query_body<'a>(
     }
 }
 
-// ── Prefix ───────────────────────────────────────────────────────────────────
+// ── Prologue: BASE + PREFIX ──────────────────────────────────────────────────
 
-fn parse_prefix<'a>(ctx: &mut ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, ()> + '_ {
-    move |input| {
-        let (input, _) = sp(input)?;
-        let (input, _) = tag_no_case("PREFIX")(input)?;
-        let (input, _) = sp1(input)?;
-        // prefix name: optional alphanumeric + colon (e.g. "foaf:", ":")
-        let (input, prefix_name) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
-        let (input, _) = char(':')(input)?;
-        let (input, _) = sp(input)?;
-        let (input, iri) = parse_iri_ref(input)?;
-        let (input, _) = opt(char('.'))(input)?;
-        ctx.prefixes.insert(prefix_name.to_string(), iri.0);
-        Ok((input, ()))
-    }
+/// Parse a `BASE <iri>` directive and install it as the new effective base in
+/// `ctx`, resolving the directive's own IRI against whatever base was already
+/// in effect (RFC 3986 base-URI composition — see [`ParserContext::base`]).
+///
+/// Plain function (not a closure factory like [`parse_prefix_decl`]'s
+/// siblings elsewhere in this file) so [`parse_query`] can try it and
+/// `parse_prefix_decl` in a simple loop without holding two live `&mut`
+/// borrows of `ctx` at once, which nom's `alt` combinator cannot express.
+fn parse_base_decl<'a>(ctx: &mut ParserContext, input: &'a str) -> IResult<&'a str, ()> {
+    let (input, _) = sp(input)?;
+    let (input, _) = tag_no_case("BASE")(input)?;
+    let (input, _) = sp1(input)?;
+    let (input, raw_iri) = parse_iri_ref_literal(input)?;
+    let resolved = resolve_iri(ctx.base.as_deref(), &raw_iri).map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+    })?;
+    ctx.base = Some(resolved);
+    Ok((input, ()))
+}
+
+/// Parse a `PREFIX name: <iri>` directive, resolving the IRIREF against the
+/// base currently in effect (per the SPARQL grammar, `PrefixDecl`'s IRIREF is
+/// just another IRI reference and is subject to the same resolution rules).
+fn parse_prefix_decl<'a>(ctx: &mut ParserContext, input: &'a str) -> IResult<&'a str, ()> {
+    let (input, _) = sp(input)?;
+    let (input, _) = tag_no_case("PREFIX")(input)?;
+    let (input, _) = sp1(input)?;
+    // prefix name: optional alphanumeric + colon (e.g. "foaf:", ":")
+    let (input, prefix_name) = take_while(|c: char| c.is_alphanumeric() || c == '_')(input)?;
+    let (input, _) = char(':')(input)?;
+    let (input, _) = sp(input)?;
+    let (input, iri) = parse_iri_ref_resolved(ctx, input)?;
+    let (input, _) = opt(char('.'))(input)?;
+    ctx.prefixes.insert(prefix_name.to_string(), iri.0);
+    Ok((input, ()))
 }
 
 // ── Projection ───────────────────────────────────────────────────────────────
@@ -967,7 +1022,7 @@ fn parse_path_iri<'a>(
                     nom::error::ErrorKind::Tag,
                 )))
             },
-            map(parse_iri_ref, |iri| {
+            map(parse_iri_ref(ctx), |iri| {
                 GraphElement::NodeOrEdge(RdfResource::Iri(iri))
             }),
             map(parse_prefixed_name(ctx), |iri| {
@@ -1041,7 +1096,7 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
             // Variable
             map(preceded(char('?'), parse_varname), Term::Variable),
             // IRI in angle brackets
-            map(parse_iri_ref, |iri| {
+            map(parse_iri_ref(ctx), |iri| {
                 Term::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(iri)))
             }),
             // 'a' shorthand for rdf:type (must come before prefixed-name parser)
@@ -1099,11 +1154,87 @@ fn parse_varname(input: &str) -> IResult<&str, String> {
     )(input)
 }
 
-fn parse_iri_ref(input: &str) -> IResult<&str, IriReference> {
+/// Parse the literal text of an IRIREF token (`<...>`) with no resolution
+/// applied — the raw text between the angle brackets, verbatim.
+fn parse_iri_ref_literal(input: &str) -> IResult<&str, String> {
     map(
         delimited(char('<'), take_while(|c: char| c != '>'), char('>')),
-        |iri: &str| IriReference(iri.to_string()),
+        |iri: &str| iri.to_string(),
     )(input)
+}
+
+/// Parse an IRIREF token (`<...>`) and resolve it against the base IRI
+/// currently in effect (`ctx.base`), per SPARQL 1.1 §4.1 / RFC 3986.
+///
+/// This is the single choke point every `<...>` reference in the grammar
+/// goes through (triple patterns, `PREFIX`/`BASE` IRIs, `GRAPH`/`FROM`
+/// clauses, datatype IRIs, function names, …), so resolving here covers all
+/// of them uniformly. See [`resolve_iri`] for what happens when `ctx.base`
+/// is `None` (no base available at all).
+fn parse_iri_ref<'a>(
+    ctx: &'a ParserContext,
+) -> impl Fn(&'a str) -> IResult<&'a str, IriReference> + 'a {
+    move |input| parse_iri_ref_resolved(ctx, input)
+}
+
+/// Plain-function twin of [`parse_iri_ref`] with `ctx` and the input string
+/// given independent lifetimes, rather than the single shared `'a` the
+/// closure-factory form above ties them to.
+///
+/// Needed by callers (e.g. [`parse_prefix_decl`]) that only hold `ctx` as a
+/// `&mut ParserContext` and must reborrow it immutably for this one call
+/// before mutating it again — the closure-factory form would force that
+/// immutable reborrow to live as long as the returned `IriReference`'s
+/// underlying `&str`, which conflicts with the later mutable use.
+fn parse_iri_ref_resolved<'a>(
+    ctx: &ParserContext,
+    input: &'a str,
+) -> IResult<&'a str, IriReference> {
+    let (rest, raw_iri) = parse_iri_ref_literal(input)?;
+    match resolve_iri(ctx.base.as_deref(), &raw_iri) {
+        Ok(resolved) => Ok((rest, IriReference(resolved))),
+        // A hard `Failure` (not a backtracking `Error`): `parse_iri_ref`
+        // sits inside `alt(...)` in several places, and a resolution
+        // failure here means the input unambiguously matched an IRIREF
+        // but the base+reference combination is unresolvable — letting
+        // `alt` silently fall through to another alternative would
+        // produce a confusing downstream parse error instead of
+        // reporting the real problem.
+        Err(_) => Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        ))),
+    }
+}
+
+/// Resolve a raw IRI reference `raw` against `base`, per RFC 3986, using
+/// `oxiri` (the same crate `turtle`'s underlying `oxttl` parser uses for
+/// `@base`/relative-IRI resolution, kept consistent here rather than
+/// hand-rolling resolution logic).
+///
+/// - If `base` is `Some`, resolve `raw` against it. This also validates and
+///   normalizes an already-absolute `raw` (RFC 3986 §5.3: resolving a
+///   reference that already has a scheme reduces to removing `.`/`..`
+///   segments from its path and returning it unchanged otherwise), and
+///   surfaces a resolution error if `base` itself isn't a valid absolute IRI
+///   or `raw` can't be resolved against it.
+/// - If `base` is `None`, `raw` is returned unchanged, unvalidated. This
+///   deliberately does **not** mirror `turtle::parse_turtle`'s stricter
+///   no-base behavior (which hard-errors on any non-absolute IRI, since
+///   `oxttl`/`oxiri`'s `Iri::parse` rejects relative references outright) —
+///   see [`ParserContext::base`] for why: several existing regression tests
+///   and W3C SPARQL 1.1 test-suite `.rq` fixtures already rely on bare
+///   relative-looking IRIs (e.g. `GRAPH <exists02.ttl>`) parsing verbatim
+///   when the parser is given no base at all, matched against the datastore
+///   by that same literal text
+///   (`tests/w3c_sparql11_suite.rs::load_data_into_named_graph`). Erroring
+///   here would break that harness. See issue #217 for the full discussion.
+fn resolve_iri(base: Option<&str>, raw: &str) -> Result<String, oxiri::IriParseError> {
+    let Some(base) = base else {
+        return Ok(raw.to_string());
+    };
+    let base_iri = oxiri::Iri::parse(base)?;
+    Ok(base_iri.resolve(raw)?.into_inner())
 }
 
 /// Parse the local part of a SPARQL 1.1 prefixed name (PN_LOCAL).
@@ -1293,7 +1424,7 @@ fn parse_string_literal<'a>(
         }
         if input.starts_with("^^") {
             let (input, _) = tag("^^")(input)?;
-            let (input, dt_iri) = alt((parse_iri_ref, parse_prefixed_name(ctx)))(input)?;
+            let (input, dt_iri) = alt((parse_iri_ref(ctx), parse_prefixed_name(ctx)))(input)?;
             return Ok((
                 input,
                 RdfLiteral::TypedLiteral {
@@ -1697,7 +1828,7 @@ fn parse_primary_expression<'a>(
                     }),
                     map(parse_numeric_literal, GraphElement::GraphLiteral),
                     map(parse_boolean_literal, GraphElement::GraphLiteral),
-                    map(parse_iri_ref, |iri| {
+                    map(parse_iri_ref(ctx), |iri| {
                         GraphElement::NodeOrEdge(RdfResource::Iri(iri))
                     }),
                     map(parse_prefixed_name(ctx), |iri| {
@@ -1721,7 +1852,7 @@ fn parse_function_call<'a>(
         // if it were tried first `alt` would commit to that branch and never
         // backtrack into `parse_prefixed_name` — see #186.
         let (input, fname) = alt((
-            map(parse_iri_ref, |iri| iri.0),
+            map(parse_iri_ref(ctx), |iri| iri.0),
             map(parse_prefixed_name(ctx), |iri| iri.0),
             map(
                 take_while1(|c: char| c.is_alphanumeric() || c == '_'),

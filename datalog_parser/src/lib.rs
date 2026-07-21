@@ -110,6 +110,13 @@ impl ParserContext {
     fn to_sparql_context(&self) -> sparql_parser::ParserContext {
         sparql_parser::ParserContext {
             prefixes: self.prefixes.clone(),
+            // This crate's own `@base`/`BASE` directive (see `parse_base_decl`)
+            // was previously tracked but never forwarded, since sparql_parser
+            // had no base-IRI concept to receive it — see issue #217. Now
+            // that it does, forward it so relative IRIs inside FILTER(...)
+            // expressions (which are parsed via sparql_parser's expression
+            // grammar) resolve consistently with the rest of the Datalog file.
+            base: self.base_iri.clone(),
         }
     }
 }
