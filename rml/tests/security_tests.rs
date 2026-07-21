@@ -14,10 +14,27 @@ use rml::sources::xml::XmlSource;
 use rml::{MAX_SOURCE_ROWS, RmlError, apply_rml_mapping};
 use std::path::Path;
 
+// The directory name incorporates a fresh UUID per call so that concurrent
+// `cargo test --workspace` runs (e.g. across multiple `git worktree`
+// checkouts, per this repo's CLAUDE.md workflow) never race on the same
+// path — mirrors the pattern used for connection-file naming in
+// `dagalog-kernel/tests/support/mod.rs` (see #211 / #226).
 fn temp_dir(label: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("rml_security_{label}"));
+    let dir = std::env::temp_dir().join(format!("rml_security_{label}_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+#[test]
+fn temp_dir_is_unique_across_calls_with_same_label() {
+    let a = temp_dir("same_label");
+    let b = temp_dir("same_label");
+    assert_ne!(
+        a, b,
+        "two temp_dir() calls with the same label must not collide"
+    );
+    assert!(a.is_dir());
+    assert!(b.is_dir());
 }
 
 // ── #84 / #85: confine_path unit tests ───────────────────────────────────────
