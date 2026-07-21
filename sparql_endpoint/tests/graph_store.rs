@@ -1692,3 +1692,120 @@ async fn gsp_get_no_param_trig_returns_whole_dataset() {
         "TriG dataset dump must use GRAPH blocks for named graphs, got:\n{body}"
     );
 }
+
+/// I-6: GET (no graph param) + Accept: application/ld+json — returns whole dataset as JSON-LD.
+///
+/// Fuseki extension: no ?default / ?graph= → whole-dataset JSON-LD dump.
+/// Bravo/records relies on this endpoint for JSON-LD serialization; previously
+/// this fell into the catch-all and incorrectly returned 400.
+///
+/// <https://github.com/daghovland/rdf-datalog/issues/219>
+#[tokio::test]
+async fn gsp_get_no_param_jsonld_returns_whole_dataset() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+    let resp = server
+        .client
+        .get(server.gsp_url())
+        .header("accept", "application/ld+json")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp.headers()["content-type"].to_str().unwrap_or("");
+    assert!(
+        ct.contains("application/ld+json"),
+        "expected application/ld+json content-type, got: {ct}"
+    );
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("http://example.org/alice"),
+        "alice (default graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/bob"),
+        "bob (named graph) must appear, got:\n{body}"
+    );
+    assert!(
+        body.contains("http://example.org/ng"),
+        "named-graph IRI must appear, got:\n{body}"
+    );
+
+    // Round-trip: re-parse the response body and confirm both the default-graph
+    // and named-graph quads survive.
+    let mut ds2 = dag_rdf::Datastore::new(256);
+    jsonld_parser::parse_jsonld(&mut ds2, body.as_bytes(), ingress::NetworkPolicy::Deny)
+        .expect("response body must be valid JSON-LD");
+
+    let alice_id = ds2.add_resource(dag_rdf::GraphElement::NodeOrEdge(
+        dag_rdf::RdfResource::Iri(dag_rdf::IriReference("http://example.org/alice".to_owned())),
+    ));
+    assert!(
+        !ds2.quads_matching(
+            Some(dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID),
+            Some(alice_id),
+            None,
+            None
+        )
+        .is_empty(),
+        "alice's triple must round-trip into the default graph"
+    );
+
+    let ng_id = ds2
+        .lookup_named_graph_id("http://example.org/ng")
+        .expect("named graph must round-trip");
+    let bob_id = ds2.add_resource(dag_rdf::GraphElement::NodeOrEdge(
+        dag_rdf::RdfResource::Iri(dag_rdf::IriReference("http://example.org/bob".to_owned())),
+    ));
+    assert!(
+        !ds2.quads_matching(Some(ng_id), Some(bob_id), None, None)
+            .is_empty(),
+        "bob's triple must round-trip into the named graph"
+    );
+}
+
+/// I-7: HEAD (no graph param) + Accept: application/ld+json — mirrors GET: 200,
+/// same Content-Type, empty body.
+///
+/// <https://github.com/daghovland/rdf-datalog/issues/219>
+#[tokio::test]
+async fn gsp_head_no_param_jsonld_returns_200_matching_get() {
+    let server = common::TestServer::start_writable_trig(MIXED_TRIG).await;
+
+    let get_ct = server
+        .client
+        .get(server.gsp_url())
+        .header("accept", "application/ld+json")
+        .send()
+        .await
+        .expect("GET failed")
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+
+    let head_resp = server
+        .client
+        .head(server.gsp_url())
+        .header("accept", "application/ld+json")
+        .send()
+        .await
+        .expect("HEAD failed");
+    assert_eq!(head_resp.status(), 200);
+    let head_ct = head_resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    assert_eq!(
+        get_ct, head_ct,
+        "HEAD Content-Type must match GET Content-Type"
+    );
+    let body = head_resp.bytes().await.expect("body bytes");
+    assert!(
+        body.is_empty(),
+        "HEAD response must have an empty body, got {} bytes",
+        body.len()
+    );
+}

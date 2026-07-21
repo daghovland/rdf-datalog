@@ -405,6 +405,16 @@ pub async fn gsp_get_inner(
                 serialize_trig(&store),
             )
                 .into_response(),
+            // Fuseki extension (Bravo/records compat): whole-dataset JSON-LD.
+            // `serialize_jsonld` already covers the entire Datastore (default
+            // graph plus every named graph, wrapped per JSON-LD's dataset
+            // representation) — see #219.
+            Some(RdfFormat::JsonLd) => (
+                StatusCode::OK,
+                [("content-type", "application/ld+json; charset=utf-8")],
+                jsonld_parser::serialize_jsonld(&store),
+            )
+                .into_response(),
             _ => (
                 StatusCode::BAD_REQUEST,
                 "GET /rdf-graph-store requires ?default or ?graph=<iri>",
@@ -442,6 +452,8 @@ pub async fn gsp_head_inner(
         let ct = match negotiate_rdf_format(accept) {
             Some(RdfFormat::NQuads) => "application/n-quads",
             Some(RdfFormat::TriG) => "application/trig",
+            // Mirrors the JsonLd arm in gsp_get_inner — see #219.
+            Some(RdfFormat::JsonLd) => "application/ld+json; charset=utf-8",
             _ => {
                 return (
                     StatusCode::BAD_REQUEST,
