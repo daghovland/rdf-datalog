@@ -1614,35 +1614,26 @@ fn eval_expression_value_inner(
 }
 
 /// Negate a numeric literal.
+///
+/// Uses `classify_numeric`/`numeric_lit_to_element` (rather than matching
+/// each `RdfLiteral` variant by hand) so that: (1) a real `TypedLiteral{
+/// xsd:decimal, .. }` input stays `xsd:decimal` after negation instead of
+/// being promoted to `xsd:double` (the previous fallback for any non-integer
+/// `TypedLiteral`), and (2) the result is emitted in the same `TypedLiteral`
+/// shape real data uses, so it can join against already-interned data of
+/// the same negated value. See <https://github.com/daghovland/rdf-datalog/issues/228>.
 fn arithmetic_negate(el: GraphElement) -> Option<GraphElement> {
-    match el {
-        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(-n)))
-        }
-        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => {
-            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(-d)))
-        }
-        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => Some(
-            GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral((-d.into_inner()).into())),
-        ),
-        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
-            ref type_iri,
-            ref literal,
-        }) => {
-            if type_iri.0 == XSD_INTEGER {
-                let n: i64 = literal.parse().ok()?;
-                Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                    BigInt::from(-n),
-                )))
-            } else {
-                let f = literal.parse::<f64>().ok()?;
-                Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                    (-f).into(),
-                )))
-            }
-        }
-        _ => None,
-    }
+    let lit = match &el {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    let negated = match classify_numeric(lit)? {
+        NumericLit::Integer(n) => NumericLit::Integer(-n),
+        NumericLit::Decimal(d) => NumericLit::Decimal(-d),
+        NumericLit::Float(f) => NumericLit::Float(-f),
+        NumericLit::Double(f) => NumericLit::Double(-f),
+    };
+    Some(numeric_lit_to_element(negated))
 }
 
 /// A numeric literal normalised to one of SPARQL/XPath's four numeric type
@@ -1661,11 +1652,15 @@ enum NumericLit {
 /// Both the Turtle parser (`turtle::convert_literal`) and the SPARQL
 /// numeric-literal parser (`parse_numeric_literal`, deliberately mirroring
 /// it) always produce the generic `RdfLiteral::TypedLiteral { type_iri,
-/// literal }` shape for numeric data — the canonical `IntegerLiteral` /
-/// `DecimalLiteral` variants are only ever produced internally (e.g. by a
-/// prior arithmetic step). Recognising only the canonical variants here
-/// would mean arithmetic on any real data silently falls through to
-/// `xsd:double` promotion, corrupting `1 + 1` into `2.0e0`. See
+/// literal }` shape for numeric data. The canonical `IntegerLiteral` /
+/// `DecimalLiteral` / `FloatLiteral` / `DoubleLiteral` variants are only ever
+/// produced by aggregates (`SUM`/`COUNT`/`AVG`/etc., which cannot appear
+/// inside `BIND` so never hit the join-lookup bug below) — every scalar
+/// producer (`eval_arithmetic`, `arithmetic_negate`, `ABS`/`CEIL`/`FLOOR`/
+/// `ROUND`, the xsd casts) goes through `numeric_lit_to_element` below to
+/// emit the same `TypedLiteral` shape. Recognising only the canonical
+/// variants here would mean arithmetic on any real data silently falls
+/// through to `xsd:double` promotion, corrupting `1 + 1` into `2.0e0`. See
 /// <https://github.com/daghovland/rdf-datalog/issues/207> (and the sibling
 /// gap in <https://github.com/daghovland/rdf-datalog/issues/198>).
 fn classify_numeric(lit: &RdfLiteral) -> Option<NumericLit> {
@@ -1686,6 +1681,34 @@ fn classify_numeric(lit: &RdfLiteral) -> Option<NumericLit> {
         },
         _ => None,
     }
+}
+
+/// Reconstruct a classified numeric value as the `TypedLiteral { type_iri,
+/// literal }` shape real parsed data always uses (see `classify_numeric`'s
+/// doc comment above), rather than a producer-specific native `RdfLiteral`
+/// variant.
+///
+/// A single normalization point for every scalar numeric producer
+/// (`eval_arithmetic`, `arithmetic_negate`, `ABS`/`CEIL`/`FLOOR`/`ROUND`) so a
+/// `BIND`-computed numeric value used in a later triple-pattern join
+/// position (e.g. `BIND(ABS(?o) AS ?z) . ?s1 ?p1 ?z`) is looked up in
+/// `resource_map` by structural equality (`resolve_match_term`) and actually
+/// finds the already-interned resource, regardless of which function
+/// produced it. Generalizes the integer-only version of this fix in
+/// `eval_arithmetic` (W3C `bind03`,
+/// <https://github.com/daghovland/rdf-datalog/issues/198>) to every other
+/// producer — see <https://github.com/daghovland/rdf-datalog/issues/228>.
+fn numeric_lit_to_element(n: NumericLit) -> GraphElement {
+    let (type_iri, literal) = match n {
+        NumericLit::Integer(i) => (XSD_INTEGER, i.to_string()),
+        NumericLit::Decimal(d) => (XSD_DECIMAL, d.to_string()),
+        NumericLit::Float(f) => (XSD_FLOAT, f.to_string()),
+        NumericLit::Double(f) => (XSD_DOUBLE, f.to_string()),
+    };
+    GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(type_iri.to_string()),
+        literal,
+    })
 }
 
 /// Evaluate a binary arithmetic expression (Add/Sub/Mul/Div), applying the
@@ -1731,41 +1754,39 @@ fn eval_arithmetic(
         };
         // Emit the same `TypedLiteral { type_iri, literal }` shape the
         // Turtle and SPARQL numeric-literal parsers always produce for real
-        // data (see `classify_numeric`'s doc comment above) rather than the
-        // canonical `IntegerLiteral` variant. A `BIND`-computed value used in
-        // a later triple-pattern position (e.g. `BIND(?o+1 AS ?z) . ?s1 ?p1
-        // ?z`) is looked up in `resource_map` by structural equality
+        // data (see `classify_numeric`'s doc comment above), via
+        // `numeric_lit_to_element`, rather than the canonical
+        // `IntegerLiteral` variant. A `BIND`-computed value used in a later
+        // triple-pattern position (e.g. `BIND(?o+1 AS ?z) . ?s1 ?p1 ?z`) is
+        // looked up in `resource_map` by structural equality
         // (`resolve_match_term`); an `IntegerLiteral` never structurally
         // equals the `TypedLiteral` shape under which the same value was
         // actually interned, so the lookup silently failed and the join
         // produced zero rows regardless of whether the value was genuinely
         // present. See W3C `bind03` and
         // <https://github.com/daghovland/rdf-datalog/issues/198>.
-        return Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
-            type_iri: IriReference(XSD_INTEGER.to_string()),
-            literal: result.to_string(),
-        }));
+        return Some(numeric_lit_to_element(NumericLit::Integer(result)));
     }
 
     // A genuinely `xsd:double` operand forces double-precision arithmetic.
+    // See #228: the result must use `numeric_lit_to_element`, not the
+    // native `DoubleLiteral` variant, for the same join-lookup reason as the
+    // integer fast path above.
     if matches!(ln, NumericLit::Double(_)) || matches!(rn, NumericLit::Double(_)) {
         let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
-        return Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-            result.into(),
-        )));
+        return Some(numeric_lit_to_element(NumericLit::Double(result)));
     }
 
     // A genuinely `xsd:float` operand (with no double present) forces
-    // float-precision arithmetic.
+    // float-precision arithmetic. See #228, as above.
     if matches!(ln, NumericLit::Float(_)) || matches!(rn, NumericLit::Float(_)) {
         let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
-        return Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
-            result.into(),
-        )));
+        return Some(numeric_lit_to_element(NumericLit::Float(result)));
     }
 
     // Remaining case: an integer/decimal mix with at least one decimal
-    // operand — exact decimal arithmetic, result stays decimal.
+    // operand — exact decimal arithmetic, result stays decimal. See #228,
+    // as above.
     let ad = numeric_lit_to_decimal(&ln)?;
     let bd = numeric_lit_to_decimal(&rn)?;
     let result = match op {
@@ -1780,9 +1801,7 @@ fn eval_arithmetic(
         }
         _ => return None,
     };
-    Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
-        result,
-    )))
+    Some(numeric_lit_to_element(NumericLit::Decimal(result)))
 }
 
 /// Widen a classified numeric literal to `f64` for float/double arithmetic.
@@ -2072,83 +2091,86 @@ fn eval_function_value(
             )))
         }
         // ── Numeric functions ─────────────────────────────────────────────────
+        //
+        // ABS/CEIL/FLOOR/ROUND all go through `classify_numeric` for their
+        // input (rather than matching `RdfLiteral` variants by hand) and
+        // `numeric_lit_to_element` for their output. This matters on both
+        // ends (#228): `classify_numeric` recognizes a real `TypedLiteral{
+        // xsd:decimal/xsd:float/xsd:double, .. }` input for what it actually
+        // is instead of falling through to an `xsd:double`-promoting
+        // catch-all (the bug `ABS` had — a real `xsd:decimal` input silently
+        // became `xsd:double` output), and `numeric_lit_to_element` emits the
+        // `TypedLiteral` shape real data uses so the result can join against
+        // already-interned data of the same value.
         "ABS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            match el {
-                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        if n < BigInt::from(0) { -n } else { n },
-                    )))
+            let lit = match &el {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            };
+            let abs = match classify_numeric(lit)? {
+                NumericLit::Integer(n) => {
+                    NumericLit::Integer(if n < BigInt::from(0) { -n } else { n })
                 }
-                GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => Some(
-                    GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d.abs())),
-                ),
-                GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => {
-                    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                        d.into_inner().abs().into(),
-                    )))
-                }
-                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
-                    ref type_iri,
-                    ref literal,
-                }) if type_iri.0 == XSD_INTEGER => {
-                    let n: i64 = literal.parse().ok()?;
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        BigInt::from(n.abs()),
-                    )))
-                }
-                GraphElement::GraphLiteral(lit) => {
-                    let f = literal_to_f64(&lit)?;
-                    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                        f.abs().into(),
-                    )))
-                }
-                _ => None,
-            }
+                NumericLit::Decimal(d) => NumericLit::Decimal(d.abs()),
+                NumericLit::Float(f) => NumericLit::Float(f.abs()),
+                NumericLit::Double(f) => NumericLit::Double(f.abs()),
+            };
+            Some(numeric_lit_to_element(abs))
         }
+        // CEIL/FLOOR/ROUND always produce an `xsd:integer` result regardless
+        // of input type (a spec deviation from `fn:round`/`fn:ceiling`/
+        // `fn:floor`, which preserve the operand's numeric type — out of
+        // scope for #228, tracked separately if it ever bites). An already-
+        // integer input is passed through exactly via `classify_numeric`
+        // rather than round-tripping through `f64` (avoiding precision loss
+        // for values outside `f64`'s exact integer range).
         "ROUND" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            match el {
-                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+            let lit = match &el {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            };
+            match classify_numeric(lit)? {
+                NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
+                other => {
+                    let f = numeric_lit_to_f64(&other);
+                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                        (f + 0.5).floor() as i64,
+                    ))))
                 }
-                GraphElement::GraphLiteral(lit) => {
-                    let f = literal_to_f64(&lit)?;
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        BigInt::from((f + 0.5).floor() as i64),
-                    )))
-                }
-                _ => None,
             }
         }
         "CEIL" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            match el {
-                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+            let lit = match &el {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            };
+            match classify_numeric(lit)? {
+                NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
+                other => {
+                    let f = numeric_lit_to_f64(&other);
+                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                        f.ceil() as i64,
+                    ))))
                 }
-                GraphElement::GraphLiteral(lit) => {
-                    let f = literal_to_f64(&lit)?;
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        BigInt::from(f.ceil() as i64),
-                    )))
-                }
-                _ => None,
             }
         }
         "FLOOR" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            match el {
-                GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => {
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+            let lit = match &el {
+                GraphElement::GraphLiteral(lit) => lit,
+                _ => return None,
+            };
+            match classify_numeric(lit)? {
+                NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
+                other => {
+                    let f = numeric_lit_to_f64(&other);
+                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                        f.floor() as i64,
+                    ))))
                 }
-                GraphElement::GraphLiteral(lit) => {
-                    let f = literal_to_f64(&lit)?;
-                    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                        BigInt::from(f.floor() as i64),
-                    )))
-                }
-                _ => None,
             }
         }
         // ── Logic / control ───────────────────────────────────────────────────
@@ -2226,6 +2248,18 @@ fn eval_function_value(
             )))
         }
         // ── Datetime functions ────────────────────────────────────────────────
+        //
+        // YEAR/MONTH/DAY/HOURS/MINUTES/SECONDS weren't in #228's enumerated
+        // scope, but are the exact same producer/lookup bug: extracting a
+        // date/time component and emitting a native `IntegerLiteral`/
+        // `DecimalLiteral` instead of `TypedLiteral` via
+        // `numeric_lit_to_element` would mean `BIND(YEAR(?d) AS ?z) . ?s :p
+        // ?z` fails to join for the same structural-inequality reason ABS
+        // did. Fixed here too rather than left to resurface as issue #4 of
+        // the same recurring pattern (see #228's "recurring pattern"
+        // section). `NOW()`'s native `DateTimeLiteral` is deliberately left
+        // as-is: its value is the current instant, which cannot coincide
+        // with already-interned data, so the join-lookup bug can't manifest.
         "NOW" => Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(
             chrono::Utc::now(),
         ))),
@@ -2233,47 +2267,47 @@ fn eval_function_value(
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.year()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.year(),
+            ))))
         }
         "MONTH" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.month()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.month(),
+            ))))
         }
         "DAY" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Datelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.day()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.day(),
+            ))))
         }
         "HOURS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.hour()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.hour(),
+            ))))
         }
         "MINUTES" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                BigInt::from(dt.minute()),
-            )))
+            Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
+                dt.minute(),
+            ))))
         }
         "SECONDS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let dt = parse_xsd_datetime(&el)?;
             use chrono::Timelike;
-            Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(
+            Some(numeric_lit_to_element(NumericLit::Decimal(
                 rust_decimal::Decimal::from(dt.second()),
             )))
         }
@@ -2758,7 +2792,14 @@ fn cast_to_xsd_boolean(el: &GraphElement) -> Option<GraphElement> {
         }
         _ => return None,
     };
-    Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+    // Emit `TypedLiteral{xsd:boolean, "true"/"false"}` — the shape
+    // `parse_boolean_literal` produces for real `true`/`false` literals —
+    // rather than the native `BooleanLiteral` variant, so a cast result can
+    // join against real interned boolean data. See #228.
+    Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(XSD_BOOLEAN.to_string()),
+        literal: b.to_string(),
+    }))
 }
 
 /// Cast to `xsd:integer` per XPath fn:integer casting rules: numeric sources
@@ -2791,7 +2832,8 @@ fn cast_to_xsd_integer(el: &GraphElement) -> Option<GraphElement> {
         }
         _ => return None,
     };
-    Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)))
+    // TypedLiteral, not the native IntegerLiteral variant — see #228.
+    Some(numeric_lit_to_element(NumericLit::Integer(n)))
 }
 
 /// Cast to `xsd:decimal`. Converts via the source's string form (rather than
@@ -2831,7 +2873,8 @@ fn cast_to_xsd_decimal(el: &GraphElement) -> Option<GraphElement> {
         }
         _ => return None,
     };
-    Some(GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)))
+    // TypedLiteral, not the native DecimalLiteral variant — see #228.
+    Some(numeric_lit_to_element(NumericLit::Decimal(d)))
 }
 
 /// Shared numeric extraction for `xsd:double`/`xsd:float` casts: handles
@@ -2860,20 +2903,19 @@ fn extract_f64_for_cast(el: &GraphElement) -> Option<f64> {
     }
 }
 
-/// Cast to `xsd:double`.
+/// Cast to `xsd:double`. Emits `TypedLiteral{xsd:double, ..}`, not the native
+/// `DoubleLiteral` variant, so the result can join against real interned
+/// `xsd:double` data — see #228.
 fn cast_to_xsd_double(el: &GraphElement) -> Option<GraphElement> {
     let f = extract_f64_for_cast(el)?;
-    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-        f.into(),
-    )))
+    Some(numeric_lit_to_element(NumericLit::Double(f)))
 }
 
-/// Cast to `xsd:float`.
+/// Cast to `xsd:float`. Emits `TypedLiteral{xsd:float, ..}`, not the native
+/// `FloatLiteral` variant — see #228, as above.
 fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
     let f = extract_f64_for_cast(el)?;
-    Some(GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(
-        f.into(),
-    )))
+    Some(numeric_lit_to_element(NumericLit::Float(f)))
 }
 
 /// Cast to `xsd:dateTime` (#194): a native `DateTimeLiteral` passes through
@@ -2884,6 +2926,16 @@ fn cast_to_xsd_float(el: &GraphElement) -> Option<GraphElement> {
 /// NOT fall back to bare `xsd:gYear` the way `parse_xsd_datetime` (used by
 /// `YEAR`/`MONTH`/`DAY`) does — a bare year is not a valid `xsd:dateTime`
 /// cast source per the XPath casting rules, so it stays unbound.
+///
+/// The result is emitted as `TypedLiteral{xsd:dateTime, dt.to_rfc3339()}`,
+/// not the native `DateTimeLiteral` variant — the Turtle parser always
+/// produces `TypedLiteral` for `xsd:dateTime` data (only `xsd:string`
+/// literals get a dedicated variant; see `turtle::convert_literal`), so a
+/// native `DateTimeLiteral` cast result could never structurally match
+/// already-interned `xsd:dateTime` data in a later triple-pattern join. See
+/// #228. Note `chrono`'s `to_rfc3339()` always normalizes the UTC offset to
+/// `+00:00` (never `Z`), so real data joined against a cast result must use
+/// the same `+00:00` lexical form.
 fn cast_to_xsd_datetime(el: &GraphElement) -> Option<GraphElement> {
     let dt = match el {
         GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => *dt,
@@ -2902,21 +2954,26 @@ fn cast_to_xsd_datetime(el: &GraphElement) -> Option<GraphElement> {
         }
         _ => return None,
     };
-    Some(GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)))
+    Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+        type_iri: IriReference(XSD_DATE_TIME.to_string()),
+        literal: dt.to_rfc3339(),
+    }))
 }
 
 /// Equality for `=`/`!=`/`IN`/`NOT IN` (SPARQL 1.1 §17.3, §17.4.1.9).
 ///
-/// Computed results elsewhere in this module (unary minus, binary arithmetic,
-/// `ABS`/`CEIL`/`FLOOR`/`ROUND`, string predicates like `STRSTARTS`, xsd
-/// casts) produce the native `RdfLiteral` variants (`IntegerLiteral`,
-/// `DecimalLiteral`, `DoubleLiteral`, `FloatLiteral`, `BooleanLiteral`), while
-/// literals parsed directly from SPARQL query text (e.g. bare `42`, `true`)
-/// become `TypedLiteral { type_iri, literal }` (`parse_numeric_literal`/
-/// `parse_boolean_literal` in `lib.rs`, matching what the `turtle` crate
-/// produces for parsed Turtle data). A raw Rust `==` sees these as different
-/// enum variants even when they denote the same value, so e.g.
-/// `(1 + 1) = 2` wrongly compared unequal (#208).
+/// As of #228, every scalar computed-value producer in this module (unary
+/// minus, binary arithmetic, `ABS`/`CEIL`/`FLOOR`/`ROUND`, the xsd casts)
+/// emits the same `TypedLiteral { type_iri, literal }` shape that literals
+/// parsed directly from SPARQL query text or Turtle data use
+/// (`parse_numeric_literal`/`parse_boolean_literal` in `lib.rs`,
+/// `turtle::convert_literal`) — see `numeric_lit_to_element`. Only
+/// aggregates (`SUM`/`COUNT`/`AVG`/etc., which cannot appear inside `BIND`)
+/// still produce the native `RdfLiteral` variants (`IntegerLiteral`,
+/// `DecimalLiteral`, `DoubleLiteral`, `FloatLiteral`, `BooleanLiteral`). A
+/// raw Rust `==` sees these as different enum variants even when they denote
+/// the same value, so e.g. `SUM(?x) = 2` could wrongly compare unequal
+/// against a `TypedLiteral` (#208).
 ///
 /// This normalizes numeric and boolean literals across both representations,
 /// then falls back to plain equality for every other RDF term shape (IRIs,
@@ -4056,42 +4113,60 @@ fn eval_aggregate_value(
     }
 }
 
-/// Sum a list of numeric `GraphElement` values, returning an `IntegerLiteral` if
-/// all inputs are integers or a `DoubleLiteral` for mixed/floating-point inputs.
+/// Sum a list of numeric `GraphElement` values, applying the same
+/// SPARQL/XPath numeric type-promotion rules `eval_arithmetic` uses:
+/// `xsd:integer` stays exact if every value is an integer, an integer/decimal
+/// mix stays exact `xsd:decimal`, and only a genuinely `xsd:double`/
+/// `xsd:float` value forces floating-point.
+///
+/// Uses `classify_numeric` (rather than matching only the native
+/// `IntegerLiteral` variant, as a prior version of this function did) so a
+/// `TypedLiteral{xsd:integer, ..}` input — which is what every numeric BIND
+/// function/cast now produces (#228) as well as what real parsed data always
+/// uses — is recognized as an integer instead of silently falling through to
+/// the floating-point path (e.g. `SUM(xsd:integer(...))` wrongly summing to
+/// an `xsd:double`).
 fn sum_values(values: &[GraphElement]) -> Option<GraphElement> {
     if values.is_empty() {
-        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            BigInt::from(0),
-        )));
+        return Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(0))));
     }
-    // Try integer-only sum first
-    let mut int_sum = BigInt::from(0);
-    let mut all_int = true;
+    let mut classified = Vec::with_capacity(values.len());
     for v in values {
-        match v {
-            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => int_sum += n,
-            _ => {
-                all_int = false;
-                break;
+        let lit = match v {
+            GraphElement::GraphLiteral(lit) => lit,
+            _ => return None,
+        };
+        classified.push(classify_numeric(lit)?);
+    }
+    if classified
+        .iter()
+        .any(|n| matches!(n, NumericLit::Double(_)))
+    {
+        let sum: f64 = classified.iter().map(numeric_lit_to_f64).sum();
+        return Some(numeric_lit_to_element(NumericLit::Double(sum)));
+    }
+    if classified.iter().any(|n| matches!(n, NumericLit::Float(_))) {
+        let sum: f64 = classified.iter().map(numeric_lit_to_f64).sum();
+        return Some(numeric_lit_to_element(NumericLit::Float(sum)));
+    }
+    if classified
+        .iter()
+        .all(|n| matches!(n, NumericLit::Integer(_)))
+    {
+        let mut int_sum = BigInt::from(0);
+        for n in &classified {
+            if let NumericLit::Integer(i) = n {
+                int_sum += i;
             }
         }
+        return Some(numeric_lit_to_element(NumericLit::Integer(int_sum)));
     }
-    if all_int {
-        return Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-            int_sum,
-        )));
+    // Remaining case: an integer/decimal mix with at least one decimal value.
+    let mut dec_sum = rust_decimal::Decimal::from(0);
+    for n in &classified {
+        dec_sum += numeric_lit_to_decimal(n)?;
     }
-    // Fall back to f64 sum
-    let mut f_sum = 0.0f64;
-    for v in values {
-        match v {
-            GraphElement::GraphLiteral(lit) => f_sum += literal_to_f64(lit)?,
-            _ => return None,
-        }
-    }
-    Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-        f_sum.into(),
-    )))
+    Some(numeric_lit_to_element(NumericLit::Decimal(dec_sum)))
 }
 
 /// Resolve a template term to a concrete `GraphElement`, remapping blank nodes per solution.
