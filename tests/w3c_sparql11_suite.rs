@@ -1369,58 +1369,66 @@ fn w3c_sparql11_construct() {
 #[test]
 fn w3c_sparql11_functions() {
     let entries = load_sparql_manifest("functions");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine builtin-function gaps: several
-    // string/numeric/date builtins don't match expected results exactly
-    // (STRDT, STRLANG and their type-error variants, isNumeric, CEIL, FLOOR,
-    // ROUND, CONCAT, SUBSTR, UCASE, LCASE, the date-part accessors HOURS/
-    // MINUTES/SECONDS/YEAR/MONTH/DAY/TIMEZONE, BNODE with and without an
-    // argument, STRBEFORE/STRAFTER and their datatyping variants, REPLACE,
-    // COALESCE), `IN`/`NOT IN` and ASK-form tests aren't supported by
-    // `run_sparql_query` (IN 1/2, NOT IN 1/2, NOW, RAND), `IRI()`/`URI()`
-    // and `IF()` fail to parse in this position, and `UUID()`/`STRUUID()`
-    // pattern-matching isn't implemented. Not a regression from #192.
+    // Most of the original #205 skip-list has been fixed (STRDT, STRLANG,
+    // isNumeric, BNODE-without-arg semantics aside, CEIL/FLOOR/ROUND
+    // type-preservation, all date-part accessors, TIMEZONE, the string
+    // functions' lang/datatype propagation, STRBEFORE/STRAFTER's
+    // "found empty vs. not found" tag rule, REPLACE, CONCAT, IN/NOT IN,
+    // COALESCE's integer/integer division promotion, isNumeric's boolean-
+    // context dispatch, REGEX's real regex matching, NOW/UUID/STRUUID via
+    // the DATATYPE(DateTimeLiteral) and REGEX fixes). Five entries remain,
+    // for reasons that don't fit the "narrow builtin bug" pattern the rest
+    // did — see the tracking comment on each for specifics:
     let skip: &[&str] = &[
-        "STRDT()",
+        // IRI()/URI() must resolve a relative-IRI string argument against
+        // the query's effective base IRI (`BASE <...>` or the caller-
+        // supplied default) at *evaluation* time. Relative-IRI resolution
+        // today only happens at parse time for IRIs written directly in
+        // query syntax (`ParserContext::base`, see #217); a string computed
+        // at runtime and passed through `IRI()`/`URI()` never sees that
+        // base. Fixing this needs the effective base threaded from `Query`
+        // down through `execute`/`eval_expression_value_inner`/
+        // `eval_function_value` — plumbing, not a self-contained function
+        // fix. Tracked as a follow-up to #205.
+        "IRI()/URI()",
+        // STRDT()/STRLANG() TypeErrors: per SPARQL 1.1 §17.4.3.5/6, both
+        // functions must error when their first argument is anything other
+        // than a *simple* literal (no language tag, no datatype — not even
+        // `xsd:string`). The fixtures' error case uses a genuinely
+        // `"..."^^xsd:string`-typed input, but `turtle::convert_literal`
+        // (turtle_parser/src/lib.rs) deliberately collapses any
+        // `^^xsd:string` literal into the plain `RdfLiteral::LiteralString`
+        // variant at parse time (RDF 1.1 simple-literal/xsd:string
+        // equivalence) — so by the time STRDT/STRLANG see it, the datatype
+        // distinction the spec asks them to reject is already gone from the
+        // in-memory representation. Making STRDT/STRLANG spec-correct here
+        // would require *not* collapsing xsd:string at ingestion (a bigger,
+        // riskier representation change with its own blast radius), so this
+        // is left as a known representation-level gap rather than patched
+        // narrowly. Tracked as a follow-up to #205.
         "STRDT() TypeErrors",
-        "STRLANG()",
         "STRLANG() TypeErrors",
-        "isNumeric()",
-        "CEIL()",
-        "FLOOR()",
-        "ROUND()",
-        "CONCAT() 2",
-        "SUBSTR() (3-argument)",
-        "SUBSTR() (2-argument)",
-        "UCASE()",
-        "LCASE()",
+        // BNODE()/BNODE(str) and plus-1/plus-2: all four fixtures fail only
+        // because this test harness's SRX comparator (`gel_to_srx`/
+        // `compare_with_srx` above) matches blank nodes by their exact
+        // numeric label (`Bnode(format!("b{}", id))`) rather than up to
+        // blank-node isomorphism — which is what RDF/SPARQL result
+        // equivalence actually requires (blank node labels are arbitrary).
+        // `BNODE()`'s own counter (a process-wide `AtomicU32` static) also
+        // doesn't reset per query and isn't tied to the datastore's own
+        // blank-node counter, so which literal labels come out depends on
+        // process-wide test execution order, not just the query — real
+        // engine behavior (fresh, distinct blank nodes) is correct, but the
+        // exact labels this harness demands aren't reproducible. Fixing this
+        // properly means either (a) teaching the harness isomorphism-based
+        // blank-node comparison, or (b) scoping `BNODE()`'s numbering to a
+        // single query evaluation seeded from the datastore's own counter —
+        // both bigger than a builtin-function fix. Tracked as a follow-up to
+        // #205.
+        "BNODE()",
+        "BNODE(str)",
         "plus-1",
         "plus-2",
-        "HOURS()",
-        "MINUTES()",
-        "SECONDS()",
-        "YEAR()",
-        "MONTH()",
-        "DAY()",
-        "TIMEZONE()",
-        "BNODE(str)",
-        "IN 1",
-        "IN 2",
-        "NOT IN 1",
-        "NOT IN 2",
-        "NOW()",
-        "RAND()",
-        "BNODE()",
-        "IRI()/URI()",
-        "IF()",
-        "COALESCE()",
-        "STRBEFORE()",
-        "STRBEFORE() datatyping",
-        "STRAFTER()",
-        "STRAFTER() datatyping",
-        "REPLACE()",
-        "UUID() pattern match",
-        "STRUUID() pattern match",
     ];
     let failures: Vec<_> = entries
         .iter()

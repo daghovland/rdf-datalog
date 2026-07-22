@@ -246,36 +246,29 @@ fn test_abs_negative() {
 #[test]
 
 fn test_round() {
-    // SPARQL ROUND uses half-to-even; 2.5 rounds to 2 or 3 — accept either.
-    // See #228 for the TypedLiteral output shape.
+    // `2.5` (a dotted numeric literal with no exponent) parses as
+    // `xsd:decimal` per the SPARQL grammar, and per §17.4.5 ROUND preserves
+    // its operand's numeric type (#205) — so the result stays `xsd:decimal`,
+    // not `xsd:integer`. SPARQL's `fn:round` breaks ties toward positive
+    // infinity (not half-to-even), so `ROUND(2.5)` is exactly `3`.
     let result = eval_function(r#"SELECT (ROUND(2.5) AS ?result) WHERE {}"#);
-    if let Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal })) =
-        &result
-    {
-        assert_eq!(type_iri.0, XSD_INTEGER);
-        assert!(
-            literal == "2" || literal == "3",
-            "ROUND(2.5) must be 2 or 3, got {literal}"
-        );
-    } else {
-        panic!("expected TypedLiteral{{xsd:integer, ..}} from ROUND, got {result:?}");
-    }
+    assert_eq!(result, Some(typed_literal("3", XSD_DECIMAL)));
 }
 
 #[test]
 
 fn test_ceil() {
-    // See #228 for the TypedLiteral output shape.
+    // See #205: CEIL preserves the `xsd:decimal` operand's type.
     let result = eval_function(r#"SELECT (CEIL(1.2) AS ?result) WHERE {}"#);
-    assert_eq!(result, Some(typed_literal("2", XSD_INTEGER)));
+    assert_eq!(result, Some(typed_literal("2", XSD_DECIMAL)));
 }
 
 #[test]
 
 fn test_floor() {
-    // See #228 for the TypedLiteral output shape.
+    // See #205: FLOOR preserves the `xsd:decimal` operand's type.
     let result = eval_function(r#"SELECT (FLOOR(1.9) AS ?result) WHERE {}"#);
-    assert_eq!(result, Some(typed_literal("1", XSD_INTEGER)));
+    assert_eq!(result, Some(typed_literal("1", XSD_DECIMAL)));
 }
 
 // ── Logic / control ───────────────────────────────────────────────────────────
