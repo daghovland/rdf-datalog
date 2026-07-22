@@ -1115,17 +1115,32 @@ fn w3c_sparql11_subquery() {
     //     which recognizes `[ pred obj ; ... ]`/`[]` in object position and
     //     rewrites it to a fresh internal blank-node variable plus extra
     //     `QueryComponent`s for the nested pred-obj pairs, recursing for
-    //     nested property lists. `sq13`'s manifest entry also pointed at the
-    //     wrong fixture files (`sq11.rq`/`sq11.srx` instead of
-    //     `sq13.rq`/`sq13.srx`, an apparent copy-paste error, since
-    //     `sq13.rq`/`sq13.srx` existed on disk but were never referenced) —
-    //     corrected in `manifest.ttl`.
+    //     nested property lists. `sq13`'s `mf:action` genuinely does point at
+    //     `sq11.rq`/`sq11.ttl`/`sq11.srx` rather than the on-disk (but
+    //     unreferenced) `sq13.rq`/`sq13.ttl`/`sq13.srx` — confirmed against
+    //     the upstream manifest at
+    //     https://www.w3.org/2009/sparql/docs/tests/data-sparql11/subquery/manifest.ttl,
+    //     so this isn't a local transcription bug — it's just approved
+    //     under both `mf:name`s. (`sq11.rq`'s own outer/subquery `?O` is
+    //     shared *and* projected on both sides, so that query alone is an
+    //     ordinary join, not proof of isolation; the isolation property is
+    //     separately covered by `spec_subquery_isolation_cartesian_product`
+    //     in `sparql12_suite.rs`, built from `sq13.rq`'s actual shape — an
+    //     outer/subquery-internal `?L` that must NOT leak across the
+    //     subquery boundary.) Left `manifest.ttl` untouched.
     // Still failing, out of scope for #201: `.rdf` (RDF/XML) data/graphData
     // files aren't parseable by the vendored Turtle parser at all — sq01,
     // sq02, sq03, sq05, sq07 load `sq01.rdf`/`sq05.rdf` as `qt:graphData`,
-    // and sq04, sq06, sq08, sq09, sq10 load an RDF/XML file as `qt:data` —
-    // so all ten remain skipped pending RDF/XML parser support (a separate,
-    // much larger feature; see #201's follow-up comment).
+    // and sq04, sq06, sq08, sq09, sq10 load an RDF/XML file as `qt:data`.
+    // RDF/XML support is a separate, much larger feature (see #201's
+    // follow-up comment). The `GRAPH ?g { { SELECT ... } }` scoping these
+    // entries additionally exercise was spot-checked with Turtle/TriG-only
+    // data instead (`spec_subquery_within_graph_pattern` in
+    // `sparql12_suite.rs`) and works correctly there, but that's only the
+    // basic case — it does NOT specifically cover sq04's "default graph
+    // does not apply inside `GRAPH ?g { subquery }`" nuance, which still
+    // has no independent regression coverage. All ten remain skipped
+    // pending RDF/XML parser support.
     let skip: &[&str] = &[
         "sq01 - Subquery within graph pattern",
         "sq02 - Subquery within graph pattern, graph variable is bound",

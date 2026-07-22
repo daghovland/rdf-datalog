@@ -413,7 +413,14 @@ fn collect_vars_from_term(term: &Term, vars: &mut Vec<String>) {
 }
 
 fn is_internal_variable(var: &str) -> bool {
-    var.starts_with("__path_")
+    // `__path_*` — fresh variables introduced for property-path midpoints.
+    // `__bn_*` — fresh variables standing in for blank nodes introduced by
+    // the `[...]`/`[]` property-list shorthand (subject or object position;
+    // see `parse_object_term` / `parse_group_graph_pattern_contents` in
+    // `lib.rs`). Neither should ever leak into a `SELECT *` projection: they
+    // don't appear in the query text, so a user has no name to reference
+    // them by. See [#201](https://github.com/daghovland/rdf-datalog/issues/201).
+    var.starts_with("__path_") || var.starts_with("__bn_")
 }
 
 /// Returns `Some(endpoint_iri)` for the first non-SILENT SERVICE node found,

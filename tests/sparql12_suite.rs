@@ -3351,3 +3351,139 @@ WHERE {
         "blank-node property list in object position must parse alongside a nested subquery"
     );
 }
+
+/// `SELECT *` must not leak the internal `__bn_N` variable a blank-node
+/// property list in object position introduces — same guarantee
+/// `is_internal_variable` already provided for `__path_*` (property-path
+/// midpoints); widened to cover `__bn_*` alongside the object-position fix
+/// above, since a `[...]` object is far more common than a `[...]` subject
+/// and would otherwise leak a name the query text never mentions.
+#[test]
+fn spec_bnode_property_list_object_position_select_star_no_leak() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:a :hasItem [ :label "widget" ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT * WHERE { ?s :hasItem [ :label ?label ] . }
+"#;
+    let vars = query_vars(&ds, sparql);
+    assert!(
+        vars.iter().all(|v| !v.starts_with("__bn_")),
+        "SELECT * must not project the internal blank-node variable, got: {vars:?}"
+    );
+    assert_eq!(
+        vars.len(),
+        2,
+        "SELECT * should project exactly ?s and ?label, got: {vars:?}"
+    );
+}
+
+/// Subquery isolation (W3C `sq13`'s actual query shape, `sq13.rq` on disk —
+/// not the fixture `sq13`'s `mf:action` resolves to, see the comment in
+/// `w3c_sparql11_subquery`): a subquery is evaluated independently of the
+/// outer pattern's bindings, so a variable used *inside* the subquery but
+/// NOT in its own projection (here `?L`) must not leak out and constrain the
+/// outer pattern's use of that same variable name. Only the subquery's
+/// projected variable (`?O2`) is visible to the outer join; `?O1`/outer `?L`
+/// and the subquery's internal `?L` are unrelated. If isolation holds, every
+/// outer `?O1` (each with its own `?L`) pairs with every subquery-selected
+/// `?O2` — the full 2x2 cross product, not just the pairs whose `?L`
+/// happens to coincide (which a bugged "subquery bindings leak out"
+/// evaluator would collapse to).
+#[test]
+fn spec_subquery_isolation_cartesian_product() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://www.example.org> .
+:order1 :hasItem [ :label "first" ] .
+:order2 :hasItem [ :label "second" ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://www.example.org>
+SELECT ?O1 ?O2
+WHERE {
+ ?O1 :hasItem [ :label ?L ] .
+ {
+ SELECT ?O2
+ WHERE { ?O2 :hasItem [ :label ?L ] . }
+ }
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        4,
+        "the subquery's internal ?L must not leak out and constrain the outer ?L — \
+         expected the full 2x2 cross product of ?O1 x ?O2"
+    );
+}
+
+/// W3C `sq06`-style pattern (Turtle-only regression, since `sq06` itself is
+/// skipped pending RDF/XML support — see `w3c_sparql11_subquery`): a bare
+/// `{ SELECT ... }` subquery directly in the outer WHERE clause, with no
+/// enclosing `GRAPH` block, over data loaded into a named graph via `FROM
+/// NAMED`. Exercises the same subquery-in-group parsing path as the
+/// GRAPH-wrapped `sq01`-`sq05`/`sq07` variants without depending on RDF/XML
+/// fixture data.
+#[test]
+fn spec_subquery_bare_in_group_over_named_graph() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix ex: <http://www.example.org/schema#> .
+@prefix in: <http://www.example.org/instance#> .
+in:a ex:p in:b .
+in:c ex:q in:d .
+"#,
+    );
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?x ?p WHERE {
+  { SELECT * WHERE { ?x ?p ?y } }
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "a bare subquery directly in the outer WHERE clause should see all default-graph triples"
+    );
+}
+
+/// W3C `sq01`-style pattern (Turtle/TriG-only regression, since `sq01` itself
+/// is skipped pending RDF/XML support): a `{ SELECT ... }` subquery nested
+/// *inside* a `GRAPH ?g { ... }` block, over data loaded into a genuinely
+/// named (non-default) graph. This is the specific scoping combination
+/// `sq01`-`sq03`/`sq05`-`sq07` exercise and that this crate's #201 fix does
+/// NOT independently re-verify for the RDF/XML-blocked entries (see the
+/// hedge in `w3c_sparql11_subquery`'s doc comment) — this test at least
+/// confirms the combination isn't broken outright when reachable via
+/// Turtle-loadable data.
+#[test]
+fn spec_subquery_within_graph_pattern() {
+    let mut ds = Datastore::new(10_000);
+    let trig = r#"
+@prefix ex: <http://www.example.org/schema#> .
+@prefix in: <http://www.example.org/instance#> .
+<http://www.example.org/instance#g1> {
+    in:a ex:p in:b .
+    in:c ex:q in:d .
+}
+"#;
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("inline TriG must parse");
+    let sparql = r#"
+PREFIX ex: <http://www.example.org/schema#>
+SELECT ?x ?p WHERE {
+  GRAPH ?g {
+    { SELECT * WHERE { ?x ?p ?y } }
+  }
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "a subquery nested inside GRAPH ?g {{ ... }} should see the named graph's triples"
+    );
+}
