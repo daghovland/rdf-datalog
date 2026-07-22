@@ -1290,26 +1290,46 @@ fn w3c_sparql11_property_path() {
     // for the general explanation). Bounded/unbounded repetition path syntax
     // (`{n}`, `{n,m}`, `{n,}`, `{,m}`) is now implemented (issue #203:
     // `PropertyPath::Repeat` in `sparql_parser`), fixing pp20/pp22/pp24/pp26/
-    // pp27/pp29 (no longer skipped below). Remaining genuine gaps, still
-    // tracked by #203:
-    // - pp04, pp05, pp13, pp15: zero-length-path identity semantics (`{0}`
-    //   and the zero-hop case of `*`/`?` don't enumerate
-    //   `subject = object = x` for every `x` when both endpoints are
-    //   unbound — see `zero_hop_solutions` in `sparql_parser/src/execute.rs`)
-    // - pp07, pp34, pp35: property paths across named graphs / `GRAPH`
-    //   blocks have evaluation gaps
-    // - pp08: reverse path (`^path`) as an ASK query — `run_sparql_query`
-    //   doesn't support ASK at all
-    let skip: &[&str] = &[
-        "(pp04) Variable length path with loop",
-        "(pp05) Zero length path",
-        "(pp07) Path with one graph",
-        "(pp08) Reverse path",
-        "(pp13) Zero Length Paths with Literals",
-        "(pp15) Zero Length Paths on an empty graph",
-        "(pp34) Named Graph 1",
-        "(pp35) Named Graph 2",
-    ];
+    // pp27/pp29 (no longer skipped below).
+    //
+    // All remaining gaps tracked by #203 are now fixed too:
+    // - pp04, pp05, pp13, pp15 (zero-length-path identity semantics) are not
+    //   actually reachable here: they're commented out of this manifest's
+    //   own `mf:entries` list upstream ("removed by 3LC"), so they never ran
+    //   through this test regardless of the skip-list. The underlying
+    //   `zero_hop_solutions` gap they were meant to guard (both endpoints
+    //   unbound not enumerating `subject = object = x` for every node `x` in
+    //   the active graph) is fixed anyway and covered by dedicated unit
+    //   tests in `tests/sparql12_suite.rs`
+    //   (`spec_s9_zero_length_path_both_unbound_enumerates_all_nodes`,
+    //   `spec_s9_zero_length_path_bound_endpoint_empty_graph`,
+    //   `spec_s9_variable_length_path_with_loop`).
+    // - pp07, pp34 already passed with no engine change needed — GRAPH
+    //   <fixed-iri> scoping for path patterns worked correctly already.
+    // - pp35 (`GRAPH ?g` with an *unbound* graph variable over a property
+    //   path) was a real gap: `transitive_closure`'s both-endpoints-unbound
+    //   branch collapsed the active-graph lookup to an unconstrained scan
+    //   and never bound `?g`, so a subsequent `FILTER (?g = ...)` always
+    //   dropped every row. Fixed by enumerating every named graph and
+    //   binding `?g` per graph (see `transitive_closure` and the new
+    //   `zero_hop_all_nodes`/`distinct_graph_ids`/`graph_nodes` helpers in
+    //   `sparql_parser/src/execute.rs`). Covered by
+    //   `spec_s9_property_path_graph_variable_binds_and_filters` /
+    //   `spec_s9_property_path_scoped_to_named_graph`.
+    // - pp08 (reverse path as ASK) already passed — the skip-list comment's
+    //   claim that `run_sparql_query` doesn't support ASK is true of that
+    //   helper specifically, but this harness's `compare_ask_with_srx`
+    //   already calls `sparql_parser::execute` directly, which has always
+    //   supported `Query::Ask`. Covered by `spec_s9_reverse_path_ask`.
+    //
+    // In fixing pp35, a genuine, independent bug was also found and fixed:
+    // property-path `Sequence` bridge variables were named positionally
+    // (`__path_seq_{i}`), which collides when a `Sequence` is evaluated
+    // while nested inside another `Sequence` (e.g. `eval_repeat_path`'s
+    // `{n,}` desugaring nested under a top-level `/` composition) — see
+    // `fresh_bridge_var` in `sparql_parser/src/execute.rs` and
+    // `spec_s9_variable_length_path_with_loop`.
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))

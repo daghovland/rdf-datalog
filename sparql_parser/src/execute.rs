@@ -3241,27 +3241,55 @@ fn compare_graph_elements_total(a: &GraphElement, b: &GraphElement) -> std::cmp:
 
 // ── Property path evaluation ──────────────────────────────────────────────────
 
+/// Generate a fresh, globally-unique internal bridge-variable name for
+/// property-path `Sequence` evaluation.
+///
+/// Previously these were named positionally (`__path_seq_{i}`, `i` being the
+/// step index *within a single `Sequence` call*). That collides when a
+/// `Sequence` is evaluated while nested inside another `Sequence`'s
+/// evaluation — e.g. `(p1/p2){1,}/(p3/p4){1,}`, a 2-step outer `Sequence`
+/// whose own step-0 bridge variable is (by the old scheme) always named
+/// `__path_seq_0`, while `eval_repeat_path`'s `{1,}` desugaring
+/// (`inner`/`inner*`) independently builds a *nested* 2-step `Sequence` that
+/// also names its own step-0 bridge `__path_seq_0`. Both variables end up
+/// sharing one substitution-map entry, so the outer target variable gets
+/// silently aliased to an unrelated intermediate node — see
+/// <https://github.com/daghovland/rdf-datalog/issues/203> (the W3C `pp04`
+/// "Variable length path with loop" scenario). A process-wide counter makes
+/// every bridge variable unique regardless of nesting depth.
+fn fresh_bridge_var() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    format!("__path_bridge_{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
 /// Evaluate a property path pattern against the datastore, extending one solution.
 /// Zero-hop ("identity") solutions for a path pattern: subject and object
 /// must denote the same node. Used by `?` (`ZeroOrOne`) and by the `k == 0`
 /// case of bounded repetition (`{0}`, `{0,m}`).
 ///
-/// Note: when both endpoints are unbound variables this currently returns
-/// no solutions rather than enumerating `subject = object = x` for every
-/// node `x` in the active graph — a pre-existing gap shared with
-/// `ZeroOrOne`, tracked (along with the other zero-length-path semantics
-/// gaps) in <https://github.com/daghovland/rdf-datalog/issues/203>.
+/// Per SPARQL 1.1's arbitrary-length-path semantics, when both endpoints are
+/// unbound variables the zero-length path connects every node `x` that
+/// appears (as a subject or object) in the active graph to itself — see
+/// [`graph_nodes`]. When the active graph is itself an unbound `GRAPH ?g`
+/// variable, this also enumerates every named graph, binding `?g` per node
+/// (mirroring the non-path-pattern `GRAPH ?g` binding behaviour in
+/// [`eval_triple_pattern_core`]). See
+/// <https://github.com/daghovland/rdf-datalog/issues/203>.
 fn zero_hop_solutions(
     subject_term: &Term,
     object_term: &Term,
     sub: &PartialSub,
     datastore: &Datastore,
+    active_graph: &ActiveGraph,
 ) -> Vec<PartialSub> {
     let s_gel = resolve_term_to_gel(subject_term, sub, datastore);
     let o_gel = resolve_term_to_gel(object_term, sub, datastore);
     match (s_gel, o_gel) {
         // Both bound: must be equal
         (Some(s), Some(o)) if s == o => vec![sub.clone()],
+        // Both bound but distinct: no zero-hop solution
+        (Some(_), Some(_)) => Vec::new(),
         // Subject bound, object unbound: bind object = subject
         (Some(s), None) => {
             if let Term::Variable(v) = object_term {
@@ -3282,8 +3310,84 @@ fn zero_hop_solutions(
                 Vec::new()
             }
         }
-        _ => Vec::new(),
+        // Both unbound: one solution per node in the active graph, with
+        // subject = object = that node.
+        (None, None) => match (subject_term, object_term) {
+            (Term::Variable(sv), Term::Variable(ov)) => {
+                zero_hop_all_nodes(sv, ov, sub, datastore, active_graph)
+            }
+            _ => Vec::new(),
+        },
     }
+}
+
+/// All distinct RDF terms appearing as a subject or object of some quad in
+/// graph `graph` (`None` = every graph, matching [`Datastore::quads_matching`]'s
+/// wildcard convention).
+fn graph_nodes(datastore: &Datastore, graph: Option<GraphElementId>) -> HashSet<GraphElement> {
+    datastore
+        .quads_matching(graph, None, None, None)
+        .into_iter()
+        .flat_map(|q| {
+            [
+                datastore.resources.get_graph_element(q.subject).clone(),
+                datastore.resources.get_graph_element(q.obj).clone(),
+            ]
+        })
+        .collect()
+}
+
+/// Every distinct graph id that owns at least one quad (used to enumerate an
+/// unbound `GRAPH ?g` variable). Includes the default graph id if it holds
+/// any quads, matching the existing (non-path-pattern) `GRAPH ?g` binding
+/// behaviour in [`eval_triple_pattern_core`], which likewise scans with an
+/// unconstrained graph argument.
+fn distinct_graph_ids(datastore: &Datastore) -> HashSet<GraphElementId> {
+    datastore
+        .quads_matching(None, None, None, None)
+        .into_iter()
+        .map(|q| q.triple_id)
+        .collect()
+}
+
+/// Zero-hop solutions when both path endpoints are unbound variables:
+/// bind `subj_var = obj_var = x` for every node `x` in the active graph. If
+/// `active_graph` is an unbound `GRAPH ?g` variable, iterate every named
+/// graph and bind `?g` accordingly (see [`distinct_graph_ids`]).
+fn zero_hop_all_nodes(
+    subj_var: &str,
+    obj_var: &str,
+    sub: &PartialSub,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    let push_for_graph = |results: &mut Vec<PartialSub>,
+                          graph_binding: Option<(&str, GraphElementId)>,
+                          gid: Option<GraphElementId>| {
+        for gel in graph_nodes(datastore, gid) {
+            let mut new_sub = sub.clone();
+            if let Some((gvar, id)) = graph_binding {
+                new_sub.insert(gvar.to_string(), PartialSubValue::Interned(id));
+            }
+            new_sub.insert(subj_var.to_string(), PartialSubValue::Computed(gel.clone()));
+            new_sub.insert(obj_var.to_string(), PartialSubValue::Computed(gel));
+            results.push(new_sub);
+        }
+    };
+
+    let mut results = Vec::new();
+    match active_graph {
+        ActiveGraph::Fixed(id) => push_for_graph(&mut results, None, Some(*id)),
+        ActiveGraph::Variable(gvar) => match sub.get(gvar).and_then(|val| val.to_id(datastore)) {
+            Some(id) => push_for_graph(&mut results, None, Some(id)),
+            None => {
+                for gid in distinct_graph_ids(datastore) {
+                    push_for_graph(&mut results, Some((gvar, gid)), Some(gid));
+                }
+            }
+        },
+    }
+    results
 }
 
 /// Evaluate a bounded/unbounded repetition path (`p{n}`, `p{n,m}`, `p{n,}`,
@@ -3362,7 +3466,7 @@ fn eval_exact_repeat(
     k: usize,
 ) -> Vec<PartialSub> {
     if k == 0 {
-        zero_hop_solutions(subject_term, object_term, &sub, datastore)
+        zero_hop_solutions(subject_term, object_term, &sub, datastore, active_graph)
     } else {
         let steps: Vec<PropertyPath> = (0..k).map(|_| inner.clone()).collect();
         let seq = PropertyPath::Sequence(steps);
@@ -3400,14 +3504,22 @@ fn eval_path_pattern(
                 return vec![sub];
             }
             // Chain: introduce fresh bridge variables for intermediate nodes.
+            // Each bridge variable is freshly generated (see
+            // `fresh_bridge_var`) rather than named positionally, so nested
+            // `Sequence` evaluations (e.g. from `eval_repeat_path`'s `{n,}`
+            // desugaring) can never collide with an outer `Sequence`'s own
+            // bridge/target variables (issue #203, W3C `pp04`).
             let mut current_subject = subject_term.clone();
             let mut current_subs = vec![sub];
             let n = steps.len();
+            let mut bridge_names: Vec<String> = Vec::new();
             for (i, step) in steps.iter().enumerate() {
                 let current_object = if i + 1 == n {
                     object_term.clone()
                 } else {
-                    Term::Variable(format!("__path_seq_{}", i))
+                    let name = fresh_bridge_var();
+                    bridge_names.push(name.clone());
+                    Term::Variable(name)
                 };
                 current_subs = current_subs
                     .into_iter()
@@ -3428,8 +3540,8 @@ fn eval_path_pattern(
             current_subs
                 .into_iter()
                 .map(|mut s| {
-                    for i in 0..n - 1 {
-                        s.remove(&format!("__path_seq_{}", i));
+                    for name in &bridge_names {
+                        s.remove(name);
                     }
                     s
                 })
@@ -3471,7 +3583,8 @@ fn eval_path_pattern(
 
         PropertyPath::ZeroOrOne(inner) => {
             // Zero hops: subject == object
-            let zero_hop = zero_hop_solutions(subject_term, object_term, &sub, datastore);
+            let zero_hop =
+                zero_hop_solutions(subject_term, object_term, &sub, datastore, active_graph);
             let one_hop = eval_path_pattern(
                 subject_term,
                 inner,
@@ -3719,43 +3832,88 @@ fn transitive_closure(
             }
         }
         (None, None) => {
-            // Both unbound: enumerate all nodes reachable from any node in graph.
-            // For each subject node, find all objects reachable from it.
-            // This is expensive; for now use the bound-subject BFS for each node.
-            let all_subjects: Vec<GraphElement> = {
-                let g = match active_graph {
-                    ActiveGraph::Fixed(id) => Some(*id),
-                    ActiveGraph::Variable(v) => sub.get(v).and_then(|val| val.to_id(datastore)),
-                };
-                datastore
-                    .quads_matching(g, None, None, None)
-                    .into_iter()
-                    .flat_map(|q| {
-                        [
-                            datastore.resources.get_graph_element(q.subject).clone(),
-                            datastore.resources.get_graph_element(q.obj).clone(),
-                        ]
-                    })
-                    .collect::<HashSet<_>>()
-                    .into_iter()
-                    .collect()
-            };
+            // Both unbound: enumerate all nodes reachable from any node in
+            // each active graph. For each subject node, find all objects
+            // reachable from it. This is expensive; for now use the
+            // bound-subject BFS for each node.
+            //
+            // When `active_graph` is an unbound `GRAPH ?g` variable, this
+            // must range over every named graph and bind `?g` per graph
+            // (rather than collapsing to a single unscoped, un-bound scan,
+            // which silently left `?g` unbound in every produced solution —
+            // see https://github.com/daghovland/rdf-datalog/issues/203,
+            // W3C `pp35`).
             let (subj_var, obj_var) = match (subject_term, object_term) {
                 (Term::Variable(s), Term::Variable(o)) => (s, o),
                 _ => return Vec::new(),
             };
+
+            let reachable_from_in = |start_gel: GraphElement,
+                                     base_sub: &PartialSub,
+                                     ag: &ActiveGraph|
+             -> Vec<GraphElement> {
+                let mut visited: HashSet<GraphElement> = HashSet::new();
+                let mut queue = vec![start_gel.clone()];
+                while let Some(current) = queue.pop() {
+                    let current_term = Term::Constant(current.clone());
+                    let next_subs = eval_path_pattern(
+                        &current_term,
+                        path,
+                        &Term::Variable("__tc_next".to_string()),
+                        base_sub.clone(),
+                        datastore,
+                        ag,
+                    );
+                    for s in next_subs {
+                        if let Some(next_val) = s.get("__tc_next") {
+                            let next_gel = next_val.resolve(datastore);
+                            if visited.insert(next_gel.clone()) {
+                                queue.push(next_gel);
+                            }
+                        }
+                    }
+                }
+                if include_zero {
+                    visited.insert(start_gel);
+                }
+                visited.into_iter().collect()
+            };
+
+            // One (base_sub, resolved_active_graph, graph_id) tuple per
+            // graph to scan.
+            let graph_scopes: Vec<(PartialSub, ActiveGraph, Option<GraphElementId>)> =
+                match active_graph {
+                    ActiveGraph::Fixed(id) => vec![(sub.clone(), active_graph.clone(), Some(*id))],
+                    ActiveGraph::Variable(v) => {
+                        match sub.get(v).and_then(|val| val.to_id(datastore)) {
+                            Some(id) => vec![(sub.clone(), active_graph.clone(), Some(id))],
+                            None => distinct_graph_ids(datastore)
+                                .into_iter()
+                                .map(|id| {
+                                    let mut s2 = sub.clone();
+                                    s2.insert(v.clone(), PartialSubValue::Interned(id));
+                                    (s2, ActiveGraph::Fixed(id), Some(id))
+                                })
+                                .collect(),
+                        }
+                    }
+                };
+
             let mut results = Vec::new();
-            for s_gel in all_subjects {
-                let reachable = reachable_from(s_gel.clone());
-                for o_gel in reachable {
-                    let mut new_sub = sub.clone();
-                    new_sub.insert(subj_var.clone(), PartialSubValue::Computed(s_gel.clone()));
-                    new_sub.insert(obj_var.clone(), PartialSubValue::Computed(o_gel));
-                    if !results
-                        .iter()
-                        .any(|r| partial_subs_equal(r, &new_sub, datastore))
-                    {
-                        results.push(new_sub);
+            for (base_sub, ag, gid) in graph_scopes {
+                let all_subjects = graph_nodes(datastore, gid);
+                for s_gel in all_subjects {
+                    let reachable = reachable_from_in(s_gel.clone(), &base_sub, &ag);
+                    for o_gel in reachable {
+                        let mut new_sub = base_sub.clone();
+                        new_sub.insert(subj_var.clone(), PartialSubValue::Computed(s_gel.clone()));
+                        new_sub.insert(obj_var.clone(), PartialSubValue::Computed(o_gel));
+                        if !results
+                            .iter()
+                            .any(|r| partial_subs_equal(r, &new_sub, datastore))
+                        {
+                            results.push(new_sub);
+                        }
                     }
                 }
             }
