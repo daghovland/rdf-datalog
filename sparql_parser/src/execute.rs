@@ -1741,34 +1741,39 @@ fn eval_arithmetic(
     let ln = classify_numeric(l_lit)?;
     let rn = classify_numeric(r_lit)?;
 
-    // Exact fast path: integer op integer stays integer.
+    // Exact fast path: integer op integer stays integer for Add/Sub/Mul.
+    // `Div` is deliberately excluded: SPARQL/XPath's `op:numeric-divide`
+    // always promotes an integer/integer division to `xsd:decimal`, even
+    // when both operands are integers (e.g. `2/2` is `1.0`, not the
+    // integer-division result `1`) — falls through to the decimal path
+    // below instead. See W3C `coalesce01` (#205): a prior version used
+    // truncating `BigInt` division and emitted `xsd:integer`, which both
+    // computed the wrong value for non-exact quotients and used the wrong
+    // datatype for exact ones.
     if let (NumericLit::Integer(a), NumericLit::Integer(b)) = (&ln, &rn) {
-        let result = match op {
-            BinaryOp::Add => a + b,
-            BinaryOp::Sub => a - b,
-            BinaryOp::Mul => a * b,
-            BinaryOp::Div => {
-                if b == &BigInt::from(0) {
-                    return None;
-                }
-                a / b
-            }
-            _ => return None,
-        };
-        // Emit the same `TypedLiteral { type_iri, literal }` shape the
-        // Turtle and SPARQL numeric-literal parsers always produce for real
-        // data (see `classify_numeric`'s doc comment above), via
-        // `numeric_lit_to_element`, rather than the canonical
-        // `IntegerLiteral` variant. A `BIND`-computed value used in a later
-        // triple-pattern position (e.g. `BIND(?o+1 AS ?z) . ?s1 ?p1 ?z`) is
-        // looked up in `resource_map` by structural equality
-        // (`resolve_match_term`); an `IntegerLiteral` never structurally
-        // equals the `TypedLiteral` shape under which the same value was
-        // actually interned, so the lookup silently failed and the join
-        // produced zero rows regardless of whether the value was genuinely
-        // present. See W3C `bind03` and
-        // <https://github.com/daghovland/rdf-datalog/issues/198>.
-        return Some(numeric_lit_to_element(NumericLit::Integer(result)));
+        if !matches!(op, BinaryOp::Div) {
+            let result = match op {
+                BinaryOp::Add => a + b,
+                BinaryOp::Sub => a - b,
+                BinaryOp::Mul => a * b,
+                _ => return None,
+            };
+            // Emit the same `TypedLiteral { type_iri, literal }` shape the
+            // Turtle and SPARQL numeric-literal parsers always produce for
+            // real data (see `classify_numeric`'s doc comment above), via
+            // `numeric_lit_to_element`, rather than the canonical
+            // `IntegerLiteral` variant. A `BIND`-computed value used in a
+            // later triple-pattern position (e.g. `BIND(?o+1 AS ?z) . ?s1
+            // ?p1 ?z`) is looked up in `resource_map` by structural equality
+            // (`resolve_match_term`); an `IntegerLiteral` never structurally
+            // equals the `TypedLiteral` shape under which the same value was
+            // actually interned, so the lookup silently failed and the join
+            // produced zero rows regardless of whether the value was
+            // genuinely present. See W3C `bind03` and
+            // <https://github.com/daghovland/rdf-datalog/issues/198>.
+            return Some(numeric_lit_to_element(NumericLit::Integer(result)));
+        }
+        // `Div`: fall through to the decimal path below (see comment above).
     }
 
     // A genuinely `xsd:double` operand forces double-precision arithmetic.
@@ -1898,39 +1903,62 @@ fn eval_function_value(
             let b = eval_string_predicate(upper.as_str(), args, sub, datastore)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
         }
+        // STRBEFORE/STRAFTER (SPARQL 1.1 §17.4.3.13/14, `fn:substring-before`/
+        // `fn:substring-after`): the result carries arg1's simple/lang/
+        // xsd:string tag regardless of whether the separator is found, and
+        // the two operands must be "argument compatible" (§17.1) — arg2 may
+        // be a simple literal or `xsd:string` (compatible with anything), or
+        // must share arg1's exact language tag; any other combination
+        // (e.g. arg1 plain, arg2 language-tagged) is an error. A prior
+        // implementation always emitted a plain simple literal and never
+        // checked compatibility, failing the "datatyping" W3C fixtures (#205).
         "STRBEFORE" => {
             let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let text = graph_element_to_string(&text_el)?;
+            let (text, tag1) = literal_str_tag(&text_el)?;
             let sep_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
-            let sep = graph_element_to_string(&sep_el)?;
-            let result = if sep.is_empty() {
-                String::new()
-            } else {
-                match text.find(sep.as_str()) {
-                    Some(idx) => text[..idx].to_string(),
-                    None => String::new(),
-                }
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
+            let (sep, tag2) = literal_str_tag(&sep_el)?;
+            if !str_args_compatible(&tag1, &tag2) {
+                return None;
+            }
+            // Per the W3C-approved `strbefore01a`/`strafter01a` revision: an
+            // empty *separator* still yields arg1's tag (§17.4.3.13's
+            // explicit empty-`B` case), but a separator that simply isn't
+            // found in the text falls back to an untagged plain empty
+          // literal, discarding arg1's tag — a distinct case from "found
+            // an empty match". A prior version applied arg1's tag to both.
+            if sep.is_empty() {
+                return Some(str_tag_to_element(String::new(), tag1));
+            }
+            match text.find(sep.as_str()) {
+                Some(idx) => Some(str_tag_to_element(text[..idx].to_string(), tag1)),
+                None => Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    String::new(),
+                ))),
+            }
         }
         "STRAFTER" => {
             let text_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let text = graph_element_to_string(&text_el)?;
+            let (text, tag1) = literal_str_tag(&text_el)?;
             let sep_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
-            let sep = graph_element_to_string(&sep_el)?;
-            let result = if sep.is_empty() {
-                text.clone()
-            } else {
-                match text.find(sep.as_str()) {
-                    Some(idx) => text[idx + sep.len()..].to_string(),
-                    None => String::new(),
-                }
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
+            let (sep, tag2) = literal_str_tag(&sep_el)?;
+            if !str_args_compatible(&tag1, &tag2) {
+                return None;
+            }
+            // See `STRBEFORE`'s comment above: empty separator preserves
+            // arg1's tag (returns arg1 unchanged), but "not found" falls back
+            // to an untagged plain empty literal.
+            if sep.is_empty() {
+                return Some(str_tag_to_element(text.clone(), tag1));
+            }
+            match text.find(sep.as_str()) {
+                Some(idx) => Some(str_tag_to_element(
+                    text[idx + sep.len()..].to_string(),
+                    tag1,
+                )),
+                None => Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    String::new(),
+                ))),
+            }
         }
         "STR" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
@@ -1986,6 +2014,20 @@ fn eval_function_value(
                 }
                 GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(_)) => XSD_FLOAT.to_string(),
                 GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(_)) => XSD_DOUBLE.to_string(),
+                // `NOW()` produces a native `DateTimeLiteral` (see its own
+                // comment below), so `DATATYPE(NOW())` must recognise it too
+                // rather than falling through to `None` — otherwise
+                // `FILTER(DATATYPE(?n) = xsd:dateTime)` always fails (W3C
+                // `now01`, #205).
+                GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(_)) => {
+                    ingress::XSD_DATE_TIME.to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::DateLiteral(_)) => {
+                    ingress::XSD_DATE.to_string()
+                }
+                GraphElement::GraphLiteral(RdfLiteral::TimeLiteral(_)) => {
+                    ingress::XSD_TIME.to_string()
+                }
                 _ => return None,
             };
             Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
@@ -1993,33 +2035,71 @@ fn eval_function_value(
             )))
         }
         // ── String functions ──────────────────────────────────────────────────
+        // UCASE/LCASE/SUBSTR (SPARQL 1.1 §17.4.3.7/8/10) preserve the
+        // operand's simple/lang/xsd:string tag on output — a prior version
+        // always emitted a plain simple literal, dropping `@lang`/
+        // `^^xsd:string`, and failed every W3C fixture using a tagged
+        // operand (#205). Falls back to the untagged `graph_element_to_string`
+        // path for any other literal shape (numbers, IRIs, etc.) that isn't
+        // strictly a string literal per spec but which earlier callers may
+        // still rely on.
         "UCASE" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                s.to_uppercase(),
-            )))
+            if let Some((s, tag)) = literal_str_tag(&el) {
+                Some(str_tag_to_element(s.to_uppercase(), tag))
+            } else {
+                let s = graph_element_to_string(&el)?;
+                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    s.to_uppercase(),
+                )))
+            }
         }
         "LCASE" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                s.to_lowercase(),
-            )))
+            if let Some((s, tag)) = literal_str_tag(&el) {
+                Some(str_tag_to_element(s.to_lowercase(), tag))
+            } else {
+                let s = graph_element_to_string(&el)?;
+                Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    s.to_lowercase(),
+                )))
+            }
         }
+        // CONCAT (SPARQL 1.1 §17.4.3.9, `fn:concat` with CONCAT's own
+        // datatyping addendum): the result is `xsd:string` if every argument
+        // is `xsd:string`; a shared language tag if every argument carries
+        // that same language tag; otherwise a plain simple literal. Any
+        // non-string-literal argument (e.g. an integer) is an error.
         "CONCAT" => {
             let mut result = String::new();
+            let mut tags = Vec::with_capacity(args.len());
             for arg in args {
                 let el = eval_expression_value_inner(arg, sub, datastore)?;
-                result.push_str(&graph_element_to_string(&el)?);
+                let (s, tag) = literal_str_tag(&el)?;
+                result.push_str(&s);
+                tags.push(tag);
             }
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
+            let out_tag = if !tags.is_empty() && tags.iter().all(|t| *t == StrLitTag::XsdString) {
+                StrLitTag::XsdString
+            } else if let Some(StrLitTag::Lang(first_lang)) = tags.first() {
+                if tags
+                    .iter()
+                    .all(|t| matches!(t, StrLitTag::Lang(l) if l == first_lang))
+                {
+                    StrLitTag::Lang(first_lang.clone())
+                } else {
+                    StrLitTag::Plain
+                }
+            } else {
+                StrLitTag::Plain
+            };
+            Some(str_tag_to_element(result, out_tag))
         }
         "SUBSTR" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let s: Vec<char> = graph_element_to_string(&el)?.chars().collect();
+            let (text, tag) = literal_str_tag(&el)
+                .or_else(|| graph_element_to_string(&el).map(|s| (s, StrLitTag::Plain)))?;
+            let s: Vec<char> = text.chars().collect();
             let start_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let start: usize = element_to_usize(&start_el)?.saturating_sub(1);
             let result: String = if let Some(len_expr) = args.get(2) {
@@ -2029,9 +2109,7 @@ fn eval_function_value(
             } else {
                 s.iter().skip(start).collect()
             };
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
-                result,
-            )))
+            Some(str_tag_to_element(result, tag))
         }
         // ── Term construction ─────────────────────────────────────────────────
         "IRI" | "URI" => {
@@ -2041,9 +2119,19 @@ fn eval_function_value(
                 IriReference(iri_str),
             )))
         }
+        // STRDT/STRLANG (SPARQL 1.1 §17.4.3.5/6, `fn:strdt`/`STRLANG`)
+        // require their first argument to be a *simple* literal — no
+        // language tag, no datatype (not even `xsd:string`) — and error
+        // otherwise. A prior implementation accepted any literal (or even an
+        // IRI) via `graph_element_to_string`, silently succeeding on
+        // already-typed/lang-tagged/non-literal input where the spec
+        // mandates an error (W3C `strdt03`/`strlang03`, #205).
         "STRDT" => {
             let lex_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let literal = graph_element_to_string(&lex_el)?;
+            let literal = match lex_el {
+                GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s,
+                _ => return None,
+            };
             let dt_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let type_iri = match dt_el {
                 GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => iri,
@@ -2056,7 +2144,10 @@ fn eval_function_value(
         }
         "STRLANG" => {
             let lex_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let literal = graph_element_to_string(&lex_el)?;
+            let literal = match lex_el {
+                GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => s,
+                _ => return None,
+            };
             let lang_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let lang = graph_element_to_string(&lang_el)?;
             Some(GraphElement::GraphLiteral(RdfLiteral::LangLiteral {
@@ -2121,13 +2212,19 @@ fn eval_function_value(
             };
             Some(numeric_lit_to_element(abs))
         }
-        // CEIL/FLOOR/ROUND always produce an `xsd:integer` result regardless
-        // of input type (a spec deviation from `fn:round`/`fn:ceiling`/
-        // `fn:floor`, which preserve the operand's numeric type — out of
-        // scope for #228, tracked separately if it ever bites). An already-
-        // integer input is passed through exactly via `classify_numeric`
-        // rather than round-tripping through `f64` (avoiding precision loss
-        // for values outside `f64`'s exact integer range).
+        // CEIL/FLOOR/ROUND preserve the operand's numeric type (SPARQL 1.1
+        // §17.4.5's `fn:round`/`fn:ceiling`/`fn:floor` semantics): an
+        // `xsd:integer` input passes through unchanged, an `xsd:decimal`
+        // input stays `xsd:decimal` (rounded to a whole-number *value*, not
+        // cast to `xsd:integer` — e.g. `ROUND("-1.6"^^xsd:decimal)` is
+        // `"-2"^^xsd:decimal`, not `"-2"^^xsd:integer`), and float/double
+        // stay float/double. An earlier version always promoted the result
+        // to `xsd:integer` regardless of input type, which failed the W3C
+        // `round01`/`ceil01`/`floor01` fixtures on exact-datatype comparison
+        // (#205). An already-integer input is passed through exactly via
+        // `classify_numeric` rather than round-tripping through `f64`
+        // (avoiding precision loss for values outside `f64`'s exact integer
+        // range).
         "ROUND" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let lit = match &el {
@@ -2136,12 +2233,15 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
-                other => {
-                    let f = numeric_lit_to_f64(&other);
-                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
-                        (f + 0.5).floor() as i64,
-                    ))))
-                }
+                NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
+                    d.round_dp_with_strategy(0, rust_decimal::RoundingStrategy::MidpointAwayFromZero),
+                ))),
+                NumericLit::Float(f) => Some(numeric_lit_to_element(NumericLit::Float(
+                    (f + 0.5 * f.signum()).trunc(),
+                ))),
+                NumericLit::Double(f) => Some(numeric_lit_to_element(NumericLit::Double(
+                    (f + 0.5 * f.signum()).trunc(),
+                ))),
             }
         }
         "CEIL" => {
@@ -2152,11 +2252,14 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
-                other => {
-                    let f = numeric_lit_to_f64(&other);
-                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
-                        f.ceil() as i64,
-                    ))))
+                NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
+                    d.ceil(),
+                ))),
+                NumericLit::Float(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Float(f.ceil())))
+                }
+                NumericLit::Double(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Double(f.ceil())))
                 }
             }
         }
@@ -2168,11 +2271,14 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
-                other => {
-                    let f = numeric_lit_to_f64(&other);
-                    Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
-                        f.floor() as i64,
-                    ))))
+                NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
+                    d.floor(),
+                ))),
+                NumericLit::Float(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Float(f.floor())))
+                }
+                NumericLit::Double(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Double(f.floor())))
                 }
             }
         }
@@ -2216,9 +2322,13 @@ fn eval_function_value(
             }
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(out)))
         }
+        // REPLACE (SPARQL 1.1 §17.4.3.15, `fn:replace`) requires its subject
+        // to be a genuine string literal (errors on e.g. a numeric operand —
+        // W3C `replace01`'s `:s7` case) and preserves that operand's
+        // simple/lang/xsd:string tag on output (#205).
         "REPLACE" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let s = graph_element_to_string(&el)?;
+            let (s, tag) = literal_str_tag(&el)?;
             let pat_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
             let pat = graph_element_to_string(&pat_el)?;
             let rep_el = eval_expression_value_inner(args.get(2)?, sub, datastore)?;
@@ -2238,9 +2348,10 @@ fn eval_function_value(
                 pat
             };
             let re = regex::Regex::new(&pattern).ok()?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+            Some(str_tag_to_element(
                 re.replace_all(&s, rep.as_str()).into_owned(),
-            )))
+                tag,
+            ))
         }
         // ── Numeric functions (random) ────────────────────────────────────────
         "RAND" => {
@@ -2292,7 +2403,7 @@ fn eval_function_value(
         }
         "HOURS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let dt = parse_xsd_datetime(&el)?;
+            let dt = parse_xsd_datetime_local(&el)?;
             use chrono::Timelike;
             Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
                 dt.hour(),
@@ -2300,7 +2411,7 @@ fn eval_function_value(
         }
         "MINUTES" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let dt = parse_xsd_datetime(&el)?;
+            let dt = parse_xsd_datetime_local(&el)?;
             use chrono::Timelike;
             Some(numeric_lit_to_element(NumericLit::Integer(BigInt::from(
                 dt.minute(),
@@ -2308,7 +2419,7 @@ fn eval_function_value(
         }
         "SECONDS" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
-            let dt = parse_xsd_datetime(&el)?;
+            let dt = parse_xsd_datetime_local(&el)?;
             use chrono::Timelike;
             Some(numeric_lit_to_element(NumericLit::Decimal(
                 rust_decimal::Decimal::from(dt.second()),
@@ -2320,6 +2431,42 @@ fn eval_function_value(
             Some(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
                 tz_str,
             )))
+        }
+        // `TIMEZONE()` (SPARQL 1.1 §17.4.4, `fn:timezone-from-dateTime`)
+        // differs from `TZ()`: it returns an `xsd:dayTimeDuration` value
+        // (e.g. `"-PT8H"`, `"PT0S"`) and, per the spec, is an *error* (so the
+        // whole expression is unbound) when the operand has no timezone —
+        // whereas `TZ()` returns the empty string for that case. Genuinely
+        // missing prior to #205 (only `TZ` existed).
+        "TIMEZONE" => {
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+            let tz_str = extract_tz_string(&el)?;
+            if tz_str.is_empty() {
+                return None;
+            }
+            let (sign, hh, mm) = if tz_str == "Z" {
+                ('+', 0i64, 0i64)
+            } else {
+                let sign = if tz_str.starts_with('-') { '-' } else { '+' };
+                let rest = &tz_str[1..];
+                let mut parts = rest.split(':');
+                let hh: i64 = parts.next()?.parse().ok()?;
+                let mm: i64 = parts.next().unwrap_or("0").parse().ok()?;
+                (sign, hh, mm)
+            };
+            let duration = if hh == 0 && mm == 0 {
+                "PT0S".to_string()
+            } else if mm == 0 {
+                format!("{sign}PT{hh}H")
+            } else {
+                format!("{sign}PT{hh}H{mm}M")
+            };
+            Some(GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                type_iri: IriReference(
+                    "http://www.w3.org/2001/XMLSchema#dayTimeDuration".to_string(),
+                ),
+                literal: duration,
+            }))
         }
         // ── Hash functions ────────────────────────────────────────────────────
         "MD5" => {
@@ -2419,6 +2566,36 @@ fn parse_xsd_datetime(el: &GraphElement) -> Option<chrono::DateTime<chrono::Utc>
                 return chrono::NaiveDate::from_ymd_opt(y, 1, 1)
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                     .map(|ndt| ndt.and_utc());
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Parse an XSD dateTime graph element into a `chrono::DateTime<FixedOffset>`
+/// that preserves the *lexical* timezone offset instead of normalising to
+/// UTC. SPARQL 1.1 §17.4.4's `HOURS`/`MINUTES`/`SECONDS` (`fn:hours-from-dateTime`
+/// etc.) report the time-of-day components as written in the source literal,
+/// not shifted to UTC — e.g. `HOURS("2010-12-21T15:38:02-08:00"^^xsd:dateTime)`
+/// is `15`, not `23`. `parse_xsd_datetime`'s `with_timezone(&Utc)` conversion
+/// is correct for `YEAR`/`MONTH`/`DAY` in every W3C fixture (none of them
+/// cross a date boundary under UTC normalisation) but silently breaks HOURS
+/// whenever the offset is non-zero (W3C `hours-01`, #205). A native
+/// `DateTimeLiteral` (produced only by `NOW()`) has no separate offset to
+/// preserve, so it is treated as UTC (offset `+00:00`).
+fn parse_xsd_datetime_local(el: &GraphElement) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => Some(dt.fixed_offset()),
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(literal) {
+                return Some(dt);
+            }
+            // Timezone-less xsd:dateTime lexical form: treat as UTC.
+            if let Ok(ndt) =
+                chrono::NaiveDateTime::parse_from_str(literal, "%Y-%m-%dT%H:%M:%S%.f")
+            {
+                return Some(ndt.and_utc().fixed_offset());
             }
             None
         }
@@ -2582,13 +2759,29 @@ fn eval_function_bool(
                 String::new()
             };
 
-            let case_insensitive = flags.contains('i');
-            let matches = if case_insensitive {
-                text.to_lowercase().contains(&pattern.to_lowercase())
-            } else {
-                text.contains(pattern.as_str())
-            };
-            Some(matches)
+            // SPARQL 1.1 §17.4.3.14: REGEX performs a genuine XPath-style
+            // regular-expression match (`fn:matches`), not a substring test.
+            // A prior `text.contains(pattern)` implementation silently
+            // treated every pattern as a literal substring, so anchors
+            // (`^`/`$`), character classes (`[0-9A-F]`), and repetition
+          // (`{8}`) never worked — e.g. UUID-shape validation in the W3C
+            // `uuid01`/`struuid01` fixtures always failed. See #205.
+            let mut pattern_str = pattern.clone();
+            let mut inline_flags = String::new();
+            for f in flags.chars() {
+                match f {
+                    'i' => inline_flags.push('i'),
+                    's' => inline_flags.push('s'),
+                    'm' => inline_flags.push('m'),
+                    'x' => inline_flags.push('x'),
+                    _ => {}
+                }
+            }
+            if !inline_flags.is_empty() {
+                pattern_str = format!("(?{inline_flags}){pattern_str}");
+            }
+            let re = regex::Regex::new(&pattern_str).ok()?;
+            Some(re.is_match(&text))
         }
         "LANGMATCHES" => {
             let lang_el = eval_expression_value_inner(args.first()?, sub, datastore)?;
@@ -2621,7 +2814,24 @@ fn eval_function_bool(
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             Some(matches!(el, dag_rdf::GraphElement::GraphLiteral(_)))
         }
-        _ => None,
+        // Fallback: any function not given a dedicated boolean-context arm
+        // above (e.g. `ISNUMERIC`, `SAMETERM`) may still be usable in a
+        // boolean position (`FILTER isNumeric(?x)`) if `eval_function_value`
+        // computes an `xsd:boolean`-typed result for it. Without this, such
+        // functions silently evaluate to `None` in `FILTER`/boolean contexts
+        // even though they work fine inside `BIND`/projections, which used to
+        // make `FILTER isNumeric(?num)` reject every row (see #205).
+        _ => {
+            let el = eval_function_value(name, args, sub, datastore)?;
+            match el {
+                GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(b),
+                GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                    ref type_iri,
+                    ref literal,
+                }) if type_iri.0 == XSD_BOOLEAN => Some(literal == "true"),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -2672,6 +2882,68 @@ fn graph_element_to_string(el: &GraphElement) -> Option<String> {
         }
         GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => Some(iri.0.clone()),
         _ => None,
+    }
+}
+
+/// A string-valued literal's "tag": whether it's a simple literal, has a
+/// language tag, or is explicitly `xsd:string`-typed. SPARQL 1.1 §17.4.3's
+/// string functions (`UCASE`, `LCASE`, `SUBSTR`, `STRBEFORE`, `STRAFTER`,
+/// `REPLACE`, `CONCAT`) must propagate this tag from their input(s) to their
+/// output rather than always emitting a plain simple literal — losing it
+/// caused every W3C string-function fixture that used a language-tagged or
+/// `xsd:string`-typed operand to fail on exact-datatype comparison (#205).
+#[derive(Clone, PartialEq, Eq)]
+enum StrLitTag {
+    Plain,
+    Lang(String),
+    XsdString,
+}
+
+/// Extract a string literal's lexical value and `StrLitTag`. Returns `None`
+/// for anything that isn't a simple/lang/xsd:string literal (IRIs, numbers,
+/// booleans, dates, blank nodes, other typed literals) — per spec, the
+/// string functions this feeds are only defined over string-valued operands
+/// and must error (propagate `None`) on anything else.
+fn literal_str_tag(el: &GraphElement) -> Option<(String, StrLitTag)> {
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some((s.clone(), StrLitTag::Plain)),
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, lang }) => {
+            Some((literal.clone(), StrLitTag::Lang(lang.clone())))
+        }
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, type_iri })
+            if type_iri.0 == XSD_STRING =>
+        {
+            Some((literal.clone(), StrLitTag::XsdString))
+        }
+        _ => None,
+    }
+}
+
+/// Reconstruct a `GraphElement` from a computed string value and the
+/// `StrLitTag` it should carry.
+fn str_tag_to_element(s: String, tag: StrLitTag) -> GraphElement {
+    match tag {
+        StrLitTag::Plain => GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)),
+        StrLitTag::Lang(lang) => {
+            GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, literal: s })
+        }
+        StrLitTag::XsdString => GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_STRING.to_string()),
+            literal: s,
+        }),
+    }
+}
+
+/// SPARQL 1.1 §17.1's "argument compatibility" rule for two string operands
+/// (used by `STRBEFORE`/`STRAFTER`'s second argument, and by other
+/// string-comparison builtins): compatible if `arg2` has no language tag (is
+/// a simple literal or `xsd:string`), or if both share the exact same
+/// language tag. Two literals with *different* language tags are not
+/// compatible, and the containing function must error (`None`).
+fn str_args_compatible(tag1: &StrLitTag, tag2: &StrLitTag) -> bool {
+    match tag2 {
+        StrLitTag::Plain | StrLitTag::XsdString => true,
+        StrLitTag::Lang(l2) => matches!(tag1, StrLitTag::Lang(l1) if l1 == l2),
     }
 }
 
