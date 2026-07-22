@@ -2124,11 +2124,11 @@ SELECT ?b WHERE {
     BIND(CEIL(?score) AS ?b)
 }
 "#;
-    // See #228: CEIL's xsd:integer result now renders the same way as any
-    // other xsd:integer value (`"value"^^<datatype>`).
+    // CEIL/FLOOR/ROUND preserve the operand's numeric type per §17.4.5 (an
+    // `xsd:decimal` input stays `xsd:decimal`) — see #205.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"4\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("\"4\"^^<http://www.w3.org/2001/XMLSchema#decimal>".to_string()),
         "§17.4.5: CEIL(3.2) = 4"
     );
 }
@@ -2148,10 +2148,10 @@ SELECT ?b WHERE {
     BIND(FLOOR(?score) AS ?b)
 }
 "#;
-    // See #228, as above for CEIL.
+    // See #205, as above for CEIL: the decimal input's type is preserved.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#decimal>".to_string()),
         "§17.4.5: FLOOR(3.8) = 3"
     );
 }
@@ -2171,10 +2171,10 @@ SELECT ?b WHERE {
     BIND(ROUND(?score) AS ?b)
 }
 "#;
-    // See #228, as above for CEIL.
+    // See #205, as above for CEIL: the decimal input's type is preserved.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#decimal>".to_string()),
         "§17.4.5: ROUND(2.5) = 3 (round half toward positive infinity)"
     );
 }
@@ -2195,10 +2195,10 @@ SELECT ?b WHERE {
     BIND(ROUND(?score) AS ?b)
 }
 "#;
-    // See #228, as above for CEIL.
+    // See #205, as above for CEIL: the decimal input's type is preserved.
     assert_eq!(
         query_single_value(&ds, sparql, "b"),
-        Some("\"-2\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        Some("\"-2\"^^<http://www.w3.org/2001/XMLSchema#decimal>".to_string()),
         "§17.4.5: ROUND(-2.5) = -2 per spec (round half toward +infinity), not -3"
     );
 }
@@ -2861,14 +2861,17 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(-?o AS ?z) ?t :q ?z }
     );
 }
 
-/// `CEIL` on a real `xsd:decimal` input must join against real integer data.
+/// `CEIL` on a real `xsd:decimal` input must join against real decimal data.
+/// (CEIL/FLOOR/ROUND preserve the operand's numeric type per SPARQL 1.1
+/// §17.4.5 — an `xsd:decimal` input stays `xsd:decimal` — so the join target
+/// here is `xsd:decimal`, not `xsd:integer`; see #205.)
 #[test]
 fn spec_bind_ceil_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
         r#"
 PREFIX : <http://example.org/>
 :s1 :p "2.3"^^<http://www.w3.org/2001/XMLSchema#decimal> .
-:t1 :q 3 .
+:t1 :q "3"^^<http://www.w3.org/2001/XMLSchema#decimal> .
 "#,
     );
     let sparql = r#"
@@ -2879,7 +2882,7 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(CEIL(?o) AS ?z) ?t :q ?z }
     assert_eq!(
         result.rows.len(),
         1,
-        "CEIL(2.3) = 3 must join back against :t1's :q 3, got {:?}",
+        "CEIL(2.3) = 3 (xsd:decimal) must join back against :t1's :q 3, got {:?}",
         result
             .rows
             .iter()
@@ -2888,14 +2891,14 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(CEIL(?o) AS ?z) ?t :q ?z }
     );
 }
 
-/// `FLOOR` on a real `xsd:decimal` input must join against real integer data.
+/// `FLOOR` on a real `xsd:decimal` input must join against real decimal data.
 #[test]
 fn spec_bind_floor_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
         r#"
 PREFIX : <http://example.org/>
 :s1 :p "2.7"^^<http://www.w3.org/2001/XMLSchema#decimal> .
-:t1 :q 2 .
+:t1 :q "2"^^<http://www.w3.org/2001/XMLSchema#decimal> .
 "#,
     );
     let sparql = r#"
@@ -2906,7 +2909,7 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(FLOOR(?o) AS ?z) ?t :q ?z }
     assert_eq!(
         result.rows.len(),
         1,
-        "FLOOR(2.7) = 2 must join back against :t1's :q 2, got {:?}",
+        "FLOOR(2.7) = 2 (xsd:decimal) must join back against :t1's :q 2, got {:?}",
         result
             .rows
             .iter()
@@ -2915,14 +2918,14 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(FLOOR(?o) AS ?z) ?t :q ?z }
     );
 }
 
-/// `ROUND` on a real `xsd:decimal` input must join against real integer data.
+/// `ROUND` on a real `xsd:decimal` input must join against real decimal data.
 #[test]
 fn spec_bind_round_result_joins_against_interned_integer_data() {
     let ds = parse_inline_ttl(
         r#"
 PREFIX : <http://example.org/>
 :s1 :p "2.5"^^<http://www.w3.org/2001/XMLSchema#decimal> .
-:t1 :q 3 .
+:t1 :q "3"^^<http://www.w3.org/2001/XMLSchema#decimal> .
 "#,
     );
     let sparql = r#"
@@ -2933,7 +2936,7 @@ SELECT ?z ?t WHERE { :s1 :p ?o . BIND(ROUND(?o) AS ?z) ?t :q ?z }
     assert_eq!(
         result.rows.len(),
         1,
-        "ROUND(2.5) = 3 must join back against :t1's :q 3, got {:?}",
+        "ROUND(2.5) = 3 (xsd:decimal) must join back against :t1's :q 3, got {:?}",
         result
             .rows
             .iter()
@@ -3637,5 +3640,281 @@ SELECT ?x ?p WHERE {
         query_rows(&ds, sparql),
         2,
         "a subquery nested inside GRAPH ?g {{ ... }} should see the named graph's triples"
+    );
+}
+
+// ── Builtin function fixes (#205) ───────────────────────────────────────────
+//
+// Unit-level regressions for the W3C SPARQL 1.1 `functions`-suite gaps fixed
+// alongside issue #205 (see `tests/w3c_sparql11_suite.rs::w3c_sparql11_functions`
+// for the end-to-end fixtures these mirror).
+
+/// REGEX previously did a plain substring `.contains()` check instead of a
+/// real regular-expression match, so anchors/character-classes/repetition
+/// never worked (W3C `uuid01`/`struuid01` rely on exactly this).
+#[test]
+fn spec_regex_performs_real_pattern_match() {
+    let ds = parse_inline_ttl(
+        r#"@prefix : <http://example.org/> . :s1 <http://example.org/p> "abc123" ."#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?o WHERE { :s1 <http://example.org/p> ?o . FILTER(REGEX(?o, "^[a-z]+[0-9]{3}$")) }
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "REGEX with anchors/char-classes/repetition must match structurally, not as a substring"
+    );
+    let sparql_no_match = r#"
+PREFIX : <http://example.org/>
+SELECT ?o WHERE { :s1 <http://example.org/p> ?o . FILTER(REGEX(?o, "^[0-9]+$")) }
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql_no_match),
+        0,
+        "a pattern that doesn't match the whole anchored expression must not match"
+    );
+}
+
+/// `DATATYPE(NOW())` must be `xsd:dateTime`: `NOW()` produces a native
+/// `DateTimeLiteral` GraphElement variant, which `DATATYPE()` previously had
+/// no arm for (falling through to `None`/unbound).
+#[test]
+fn spec_datatype_of_now_is_xsd_datetime() {
+    use sparql_parser::{
+        NetworkPolicy, ParserContext, QueryResult, execute as run_execute, parse_query,
+    };
+    let ds = parse_inline_ttl("");
+    let sparql = r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+ASK { BIND(NOW() AS ?n) FILTER(DATATYPE(?n) = xsd:dateTime) }
+"#;
+    let mut ctx = ParserContext {
+        prefixes: std::collections::HashMap::new(),
+        base: None,
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("query must parse");
+    let result = run_execute(&query, &ds, NetworkPolicy::Deny).expect("query must execute");
+    match result {
+        QueryResult::Ask(b) => assert!(b, "DATATYPE(NOW()) must equal xsd:dateTime"),
+        QueryResult::Select(_) => panic!("expected an ASK result, got Select"),
+        QueryResult::Construct(_) => panic!("expected an ASK result, got Construct"),
+        QueryResult::Describe(_) => panic!("expected an ASK result, got Describe"),
+    }
+}
+
+/// `FILTER isNumeric(?x)` previously always rejected every row:
+/// `eval_function_bool` had no arm for `ISNUMERIC` and no fallback to
+/// `eval_function_value`, so the filter condition evaluated to `None` (=
+/// false) regardless of the operand.
+#[test]
+fn spec_filter_is_numeric_accepts_numeric_literals() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:n1 :p 1 .
+:n2 :p 1.5 .
+:s1 :p "not a number" .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?o WHERE { ?s :p ?o . FILTER isNumeric(?o) }
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "FILTER isNumeric(?o) must select only the two numeric-literal rows"
+    );
+}
+
+/// CEIL/FLOOR/ROUND preserve the operand's numeric type instead of always
+/// promoting to `xsd:integer` (SPARQL 1.1 §17.4.5, `fn:round`/`fn:ceiling`/
+/// `fn:floor`): an `xsd:decimal` input stays `xsd:decimal`.
+#[test]
+fn spec_round_ceil_floor_preserve_decimal_type() {
+    use dag_rdf::{GraphElement, RdfLiteral};
+    use ingress::XSD_DECIMAL;
+    let ds = parse_inline_ttl("");
+    for (func, expected) in [("ROUND", "-2"), ("CEIL", "-1"), ("FLOOR", "-2")] {
+        let sparql = format!(
+            r#"PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT (({func}("-1.6"^^xsd:decimal)) AS ?r) WHERE {{}}"#
+        );
+        let result = run_sparql_query(&ds, &sparql).expect("query should parse and execute");
+        let el = result.rows[0].get("r").expect("?r must be bound");
+        match el {
+            GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal }) => {
+                assert_eq!(
+                    type_iri.0, XSD_DECIMAL,
+                    "{func}(-1.6 as xsd:decimal) must stay xsd:decimal"
+                );
+                assert_eq!(literal, expected, "{func}(-1.6) value mismatch");
+            }
+            other => panic!("{func} result should be a TypedLiteral, got {:?}", other),
+        }
+    }
+}
+
+/// HOURS/MINUTES/SECONDS report the time-of-day components as written in the
+/// literal's own timezone offset, not shifted to UTC first (W3C `hours-01`:
+/// `HOURS("2010-12-21T15:38:02-08:00"^^xsd:dateTime)` is `15`, not `23`).
+#[test]
+fn spec_hours_uses_literal_timezone_not_utc() {
+    let ds = parse_inline_ttl("");
+    let sparql = r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT (HOURS("2010-12-21T15:38:02-08:00"^^xsd:dateTime) AS ?h) WHERE {}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    let el = result.rows[0].get("h").expect("?h must be bound");
+    assert_eq!(
+        graph_element_display(el),
+        "\"15\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+        "HOURS must read the hour as written in the literal's own offset, not after UTC normalisation"
+    );
+}
+
+/// TIMEZONE() (distinct from TZ()) returns an `xsd:dayTimeDuration`.
+#[test]
+fn spec_timezone_returns_daytimeduration() {
+    use dag_rdf::{GraphElement, RdfLiteral};
+    let ds = parse_inline_ttl("");
+    let sparql = r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT (TIMEZONE("2010-12-21T15:38:02-08:00"^^xsd:dateTime) AS ?tz) WHERE {}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    let el = result.rows[0].get("tz").expect("?tz must be bound");
+    match el {
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal }) => {
+            assert_eq!(
+                type_iri.0, "http://www.w3.org/2001/XMLSchema#dayTimeDuration",
+                "TIMEZONE() must return xsd:dayTimeDuration"
+            );
+            assert_eq!(literal, "-PT8H");
+        }
+        other => panic!("TIMEZONE result should be a TypedLiteral, got {:?}", other),
+    }
+}
+
+/// UCASE/LCASE/SUBSTR propagate the operand's language tag to the output
+/// (SPARQL 1.1 §17.4.3.7/8/10) instead of always emitting a plain literal.
+#[test]
+fn spec_string_functions_preserve_lang_tag() {
+    use dag_rdf::{GraphElement, RdfLiteral};
+    let ds = parse_inline_ttl(
+        r#"@prefix : <http://example.org/> . :s1 <http://example.org/p> "bar"@en ."#,
+    );
+    for (func, args, expected) in [
+        ("UCASE", "?o", "BAR"),
+        ("LCASE", "?o", "bar"),
+        ("SUBSTR", "?o,2", "ar"),
+    ] {
+        let sparql = format!(
+            r#"PREFIX : <http://example.org/>
+SELECT ({func}({args}) AS ?r) WHERE {{ :s1 <http://example.org/p> ?o }}"#
+        );
+        let result = run_sparql_query(&ds, &sparql).expect("query should parse and execute");
+        let el = result.rows[0].get("r").expect("?r must be bound");
+        match el {
+            GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, lang }) => {
+                assert_eq!(literal, expected, "{func} value mismatch");
+                assert_eq!(lang, "en", "{func} must preserve the input's language tag");
+            }
+            other => panic!(
+                "{func} result should be a LangLiteral, got {:?} (lang tag not propagated)",
+                other
+            ),
+        }
+    }
+}
+
+/// STRBEFORE/STRAFTER propagate arg1's tag when a match is found, but fall
+/// back to an untagged plain empty literal when the separator isn't found in
+/// the text at all (distinct from an *empty* separator, which still
+/// preserves arg1's tag) — see the W3C `strbefore01a`/`strafter01a` revision.
+#[test]
+fn spec_strbefore_strafter_tag_propagation() {
+    use dag_rdf::{GraphElement, RdfLiteral};
+    let ds = parse_inline_ttl(
+        r#"@prefix : <http://example.org/> . :s1 <http://example.org/p> "abc"@en ."#,
+    );
+
+    // Found: propagates arg1's tag.
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT (STRBEFORE(?o,"b") AS ?r) WHERE { :s1 <http://example.org/p> ?o }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    match result.rows[0].get("r").expect("?r must be bound") {
+        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, lang }) => {
+            assert_eq!(literal, "a");
+            assert_eq!(lang, "en");
+        }
+        other => panic!("expected a LangLiteral, got {:?}", other),
+    }
+
+    // Not found: untagged plain empty literal.
+    let sparql_not_found = r#"
+PREFIX : <http://example.org/>
+SELECT (STRAFTER(?o,"z") AS ?r) WHERE { :s1 <http://example.org/p> ?o }
+"#;
+    let result = run_sparql_query(&ds, sparql_not_found).expect("query should parse and execute");
+    match result.rows[0].get("r").expect("?r must be bound") {
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => {
+            assert_eq!(s, "", "not-found result must be the empty string");
+        }
+        other => panic!(
+            "a not-found STRAFTER result must be an untagged plain literal, got {:?}",
+            other
+        ),
+    }
+}
+
+/// Integer/integer division promotes to `xsd:decimal` (SPARQL/XPath's
+/// `op:numeric-divide` always does, even for exact quotients) instead of
+/// truncating like `BigInt` division and staying `xsd:integer`.
+#[test]
+fn spec_integer_division_promotes_to_decimal() {
+    use dag_rdf::{GraphElement, RdfLiteral};
+    use ingress::XSD_DECIMAL;
+    let ds = parse_inline_ttl("");
+    let sparql = r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ((4 / 2) AS ?r) WHERE {}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    match result.rows[0].get("r").expect("?r must be bound") {
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { type_iri, literal }) => {
+            assert_eq!(
+                type_iri.0, XSD_DECIMAL,
+                "integer/integer division must promote to xsd:decimal even for an exact quotient"
+            );
+            assert_eq!(literal, "2");
+        }
+        other => panic!("division result should be a TypedLiteral, got {:?}", other),
+    }
+}
+
+/// STRDT/STRLANG require a simple-literal (no lang tag, no datatype) first
+/// argument and must error (leave the projected variable unbound) on
+/// anything else — e.g. an already language-tagged literal.
+#[test]
+fn spec_strdt_strlang_error_on_non_simple_literal() {
+    let ds = parse_inline_ttl(
+        r#"@prefix : <http://example.org/> . :s1 <http://example.org/p> "bar"@en ."#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?s (STRDT(?o,xsd:string) AS ?r) WHERE { :s1 <http://example.org/p> ?o }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(result.rows.len(), 1);
+    assert!(
+        !result.rows[0].contains_key("r"),
+        "STRDT on an already language-tagged literal must leave ?r unbound"
     );
 }

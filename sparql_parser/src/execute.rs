@@ -1924,7 +1924,7 @@ fn eval_function_value(
             // empty *separator* still yields arg1's tag (§17.4.3.13's
             // explicit empty-`B` case), but a separator that simply isn't
             // found in the text falls back to an untagged plain empty
-          // literal, discarding arg1's tag — a distinct case from "found
+            // literal, discarding arg1's tag — a distinct case from "found
             // an empty match". A prior version applied arg1's tag to both.
             if sep.is_empty() {
                 return Some(str_tag_to_element(String::new(), tag1));
@@ -2233,14 +2233,22 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
+                // SPARQL/XPath `fn:round` breaks ties toward positive
+                // infinity (`ROUND(2.5) = 3`, `ROUND(-2.5) = -2`, NOT -3) —
+                // i.e. `floor(d + 0.5)`, not `rust_decimal`'s
+                // `MidpointAwayFromZero` (which rounds -2.5 to -3). Computed
+                // in exact `Decimal` arithmetic (add 1/2, then floor) rather
+                // than round-tripping through `f64`, matching the spec test
+                // already covering this exact case
+                // (`spec_s17_round_negative_half_toward_positive_infinity`).
                 NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
-                    d.round_dp_with_strategy(0, rust_decimal::RoundingStrategy::MidpointAwayFromZero),
+                    (d + rust_decimal::Decimal::new(5, 1)).floor(),
                 ))),
-                NumericLit::Float(f) => Some(numeric_lit_to_element(NumericLit::Float(
-                    (f + 0.5 * f.signum()).trunc(),
-                ))),
+                NumericLit::Float(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Float((f + 0.5).floor())))
+                }
                 NumericLit::Double(f) => Some(numeric_lit_to_element(NumericLit::Double(
-                    (f + 0.5 * f.signum()).trunc(),
+                    (f + 0.5).floor(),
                 ))),
             }
         }
@@ -2252,15 +2260,11 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
-                NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
-                    d.ceil(),
-                ))),
-                NumericLit::Float(f) => {
-                    Some(numeric_lit_to_element(NumericLit::Float(f.ceil())))
+                NumericLit::Decimal(d) => {
+                    Some(numeric_lit_to_element(NumericLit::Decimal(d.ceil())))
                 }
-                NumericLit::Double(f) => {
-                    Some(numeric_lit_to_element(NumericLit::Double(f.ceil())))
-                }
+                NumericLit::Float(f) => Some(numeric_lit_to_element(NumericLit::Float(f.ceil()))),
+                NumericLit::Double(f) => Some(numeric_lit_to_element(NumericLit::Double(f.ceil()))),
             }
         }
         "FLOOR" => {
@@ -2271,12 +2275,10 @@ fn eval_function_value(
             };
             match classify_numeric(lit)? {
                 NumericLit::Integer(n) => Some(numeric_lit_to_element(NumericLit::Integer(n))),
-                NumericLit::Decimal(d) => Some(numeric_lit_to_element(NumericLit::Decimal(
-                    d.floor(),
-                ))),
-                NumericLit::Float(f) => {
-                    Some(numeric_lit_to_element(NumericLit::Float(f.floor())))
+                NumericLit::Decimal(d) => {
+                    Some(numeric_lit_to_element(NumericLit::Decimal(d.floor())))
                 }
+                NumericLit::Float(f) => Some(numeric_lit_to_element(NumericLit::Float(f.floor()))),
                 NumericLit::Double(f) => {
                     Some(numeric_lit_to_element(NumericLit::Double(f.floor())))
                 }
@@ -2592,8 +2594,7 @@ fn parse_xsd_datetime_local(el: &GraphElement) -> Option<chrono::DateTime<chrono
                 return Some(dt);
             }
             // Timezone-less xsd:dateTime lexical form: treat as UTC.
-            if let Ok(ndt) =
-                chrono::NaiveDateTime::parse_from_str(literal, "%Y-%m-%dT%H:%M:%S%.f")
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(literal, "%Y-%m-%dT%H:%M:%S%.f")
             {
                 return Some(ndt.and_utc().fixed_offset());
             }
@@ -2764,7 +2765,7 @@ fn eval_function_bool(
             // A prior `text.contains(pattern)` implementation silently
             // treated every pattern as a literal substring, so anchors
             // (`^`/`$`), character classes (`[0-9A-F]`), and repetition
-          // (`{8}`) never worked — e.g. UUID-shape validation in the W3C
+            // (`{8}`) never worked — e.g. UUID-shape validation in the W3C
             // `uuid01`/`struuid01` fixtures always failed. See #205.
             let mut pattern_str = pattern.clone();
             let mut inline_flags = String::new();
@@ -2906,7 +2907,9 @@ enum StrLitTag {
 /// and must error (propagate `None`) on anything else.
 fn literal_str_tag(el: &GraphElement) -> Option<(String, StrLitTag)> {
     match el {
-        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some((s.clone(), StrLitTag::Plain)),
+        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => {
+            Some((s.clone(), StrLitTag::Plain))
+        }
         GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, lang }) => {
             Some((literal.clone(), StrLitTag::Lang(lang.clone())))
         }
