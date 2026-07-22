@@ -158,7 +158,7 @@
          [ qt:query  <sq11.rq> ;
            qt:data   <sq11.ttl> ] ;
     mf:result  <sq11.srx>
-    . 
+    .
 
   :subquery14 rdf:type mf:QueryEvaluationTest ;
     mf:name    "sq14 - limit by resource" ;

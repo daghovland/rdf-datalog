@@ -603,7 +603,8 @@ fn parse_group_graph_pattern_contents<'a>(
                 let (r, _) = sp(r)?;
                 let bn_var = Term::Variable(format!("__bn_{}", blank_node_counter));
                 blank_node_counter += 1;
-                let (r, inner_comps) = parse_predobj_pairs(ctx, &bn_var, r)?;
+                let (r, inner_comps) =
+                    parse_predobj_pairs(ctx, &mut blank_node_counter, &bn_var, r)?;
                 for comp in inner_comps {
                     match comp {
                         QueryComponent::BGP(tps) => current_triples.extend(tps),
@@ -631,7 +632,8 @@ fn parse_group_graph_pattern_contents<'a>(
                 let bn_var = Term::Variable(format!("__bn_{}", blank_node_counter));
                 blank_node_counter += 1;
                 // Parse predicate-object pairs inside [ ... ] with the blank node as subject
-                let (r, inner_comps) = parse_predobj_pairs(ctx, &bn_var, r)?;
+                let (r, inner_comps) =
+                    parse_predobj_pairs(ctx, &mut blank_node_counter, &bn_var, r)?;
                 for comp in inner_comps {
                     match comp {
                         QueryComponent::BGP(tps) => current_triples.extend(tps),
@@ -653,7 +655,7 @@ fn parse_group_graph_pattern_contents<'a>(
             }
 
             // Triple / path pattern statement
-            match parse_triple_pattern_statement(ctx, remaining) {
+            match parse_triple_pattern_statement(ctx, &mut blank_node_counter, remaining) {
                 Ok((r, comps)) => {
                     for comp in comps {
                         match comp {
@@ -692,8 +694,42 @@ fn flush_triples(components: &mut Vec<QueryComponent>, triples: &mut Vec<TripleP
 ///
 /// Used for blank-node property lists `[ pred obj ; pred obj ]` where the blank
 /// node is already known.  Stops at `]` without consuming it.
+/// Parse a term in *object* position, additionally accepting a blank-node
+/// property list (`[ pred obj ; pred obj ]`, or its empty form `[]`) per the
+/// SPARQL grammar's `TriplesNode` production. A property list in object
+/// position is equivalent to a fresh anonymous blank node bound to a new
+/// internal variable (`counter` keeps these names unique within the group),
+/// with the pred-obj pairs inside emitted as extra `QueryComponent`s
+/// alongside the enclosing triple. Nested property lists (an object that is
+/// itself a property list) are handled by `parse_predobj_pairs` recursing
+/// back into this function. See [#201](https://github.com/daghovland/rdf-datalog/issues/201).
+fn parse_object_term<'a>(
+    ctx: &'a ParserContext,
+    counter: &mut usize,
+    input: &'a str,
+) -> IResult<&'a str, (Term, Vec<QueryComponent>)> {
+    if input.starts_with('[') {
+        if let Some(rest) = input.strip_prefix("[]") {
+            let bn_var = Term::Variable(format!("__bn_{}", *counter));
+            *counter += 1;
+            return Ok((rest, (bn_var, Vec::new())));
+        }
+        let (r, _) = char('[')(input)?;
+        let (r, _) = sp(r)?;
+        let bn_var = Term::Variable(format!("__bn_{}", *counter));
+        *counter += 1;
+        let (r, inner_comps) = parse_predobj_pairs(ctx, counter, &bn_var, r)?;
+        let (r, _) = sp(r)?;
+        let (r, _) = char(']')(r)?;
+        return Ok((r, (bn_var, inner_comps)));
+    }
+    let (r, t) = parse_term(ctx)(input)?;
+    Ok((r, (t, Vec::new())))
+}
+
 fn parse_predobj_pairs<'a>(
     ctx: &'a ParserContext,
+    counter: &mut usize,
     subject: &Term,
     input: &'a str,
 ) -> IResult<&'a str, Vec<QueryComponent>> {
@@ -711,9 +747,10 @@ fn parse_predobj_pairs<'a>(
             Err(_) => break,
         };
         let (r, _) = sp1(r)?;
-        let (mut r, first_obj) = parse_term(ctx)(r)?;
+        let (mut r, (first_obj, first_extra)) = parse_object_term(ctx, counter, r)?;
 
         let mut objects = vec![first_obj];
+        let mut extra_comps: Vec<QueryComponent> = first_extra;
         loop {
             let (rws, _) = sp(r)?;
             if !rws.starts_with(',') {
@@ -722,8 +759,9 @@ fn parse_predobj_pairs<'a>(
             }
             let (rc, _) = char(',')(rws)?;
             let (rc, _) = sp(rc)?;
-            let (rn, obj) = parse_term(ctx)(rc)?;
+            let (rn, (obj, extra)) = parse_object_term(ctx, counter, rc)?;
             objects.push(obj);
+            extra_comps.extend(extra);
             r = rn;
         }
 
@@ -745,6 +783,7 @@ fn parse_predobj_pairs<'a>(
                 }
             }
         }
+        comps.extend(extra_comps);
 
         let (rws, _) = sp(r)?;
         if !rws.starts_with(';') {
@@ -769,6 +808,7 @@ fn parse_predobj_pairs<'a>(
 /// `PathPattern(s, path, o)` for complex property paths.
 fn parse_triple_pattern_statement<'a>(
     ctx: &'a ParserContext,
+    counter: &mut usize,
     input: &'a str,
 ) -> IResult<&'a str, Vec<QueryComponent>> {
     let (input, _) = sp(input)?;
@@ -801,9 +841,10 @@ fn parse_triple_pattern_statement<'a>(
         };
 
         let (r, _) = sp1(r)?;
-        let (mut r, first_object) = parse_term(ctx)(r)?;
+        let (mut r, (first_object, first_extra)) = parse_object_term(ctx, counter, r)?;
 
         let mut objects = vec![first_object];
+        let mut extra_comps: Vec<QueryComponent> = first_extra;
         loop {
             let (r_ws, _) = sp(r)?;
             if !r_ws.starts_with(',') {
@@ -812,8 +853,9 @@ fn parse_triple_pattern_statement<'a>(
             }
             let (r_after_comma, _) = char(',')(r_ws)?;
             let (r_after_comma, _) = sp(r_after_comma)?;
-            let (r_next, obj) = parse_term(ctx)(r_after_comma)?;
+            let (r_next, (obj, extra)) = parse_object_term(ctx, counter, r_after_comma)?;
             objects.push(obj);
+            extra_comps.extend(extra);
             r = r_next;
         }
 
@@ -843,6 +885,7 @@ fn parse_triple_pattern_statement<'a>(
                 }
             }
         }
+        components.extend(extra_comps);
 
         let (r_ws, _) = sp(r)?;
         if !r_ws.starts_with(';') {
