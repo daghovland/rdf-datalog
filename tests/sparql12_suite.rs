@@ -3212,3 +3212,142 @@ SELECT ?sum ?twice WHERE {
         "?twice = 2 * ?sum must see the ?sum alias from the earlier subquery SELECT item",
     );
 }
+
+// ── Blank-node property lists in object position (issue #201) ──────────────
+//
+// `TriplesNode`/`PropertyListNotEmpty` (`[ pred obj ; pred obj ]`, or its
+// empty form `[]`) is valid wherever a term may appear per the SPARQL
+// grammar, including *object* position — e.g. `?s :p [ :q ?v ]`. Before
+// #201, `parse_term` (used for objects) only recognized `_:label` blank
+// nodes; the `[...]`/`[]` shorthand was handled only inline in
+// `parse_group_graph_pattern_contents`, and only for *subject* position, so
+// `?s :p [ :q ?v ] .` failed to parse at all. Fixed by `parse_object_term`,
+// which recognizes the property-list/empty-blank-node shorthand in object
+// position too, rewriting it to a fresh internal blank-node variable plus
+// extra triples for the nested pred-obj pairs (recursing for nested lists).
+// This is what the W3C subquery-suite entries sq11/sq13 exercise
+// (`?O :hasItem [ rdfs:label ?L ] .`).
+
+/// A single pred-obj pair inside an object-position blank node property
+/// list: `?s :p [ :q ?v ]` must behave exactly like
+/// `?s :p _:fresh . _:fresh :q ?v .`
+#[test]
+fn spec_bnode_property_list_object_position_single_pred() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:a :hasItem [ :label "widget" ] .
+:b :hasItem [ :label "gadget" ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?label WHERE { ?s :hasItem [ :label ?label ] . } ORDER BY ?s
+"#;
+    assert_eq!(
+        query_values(&ds, sparql, "label"),
+        vec!["\"widget\"", "\"gadget\""],
+        "blank-node property list in object position must bind the nested predicate"
+    );
+}
+
+/// Multiple pred-obj pairs (separated by `;`) inside an object-position
+/// blank node property list.
+#[test]
+fn spec_bnode_property_list_object_position_multi_pred() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:a :hasItem [ :label "widget" ; :qty 3 ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?label ?qty WHERE { ?s :hasItem [ :label ?label ; :qty ?qty ] . }
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    let row = &result.rows[0];
+    assert_eq!(
+        row.get("label").map(graph_element_display),
+        Some("\"widget\"".to_string())
+    );
+    assert_xsd_integer(row.get("qty"), 3, "?qty = 3 from the nested property list");
+}
+
+/// The empty blank node shorthand `[]` in object position must match any
+/// blank node without binding any of its properties.
+#[test]
+fn spec_bnode_empty_object_position() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:a :hasItem [ :label "widget" ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s WHERE { ?s :hasItem [] . }
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "[] in object position should match the anonymous blank node without further constraint"
+    );
+}
+
+/// A blank-node property list in object position whose own object is itself
+/// a nested blank node property list — recursion in `parse_object_term`.
+#[test]
+fn spec_bnode_property_list_object_position_nested() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:a :hasItem [ :label "widget" ; :part [ :name "screw" ] ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?partName WHERE { ?s :hasItem [ :label ?label ; :part [ :name ?partName ] ] . }
+"#;
+    assert_eq!(
+        query_values(&ds, sparql, "partName"),
+        vec!["\"screw\""],
+        "nested blank-node property lists in object position must recurse correctly"
+    );
+}
+
+/// W3C subquery-suite `sq11`/`sq13` fixture pattern: blank-node property
+/// list in object position combined with a nested `{ SELECT ... }`
+/// subquery in the same group — the exact combination that failed to parse
+/// before #201.
+#[test]
+fn spec_bnode_property_list_object_position_with_subquery() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://www.example.org> .
+:order1 a :Order .
+:order2 a :Order .
+:order1 :hasItem [ :label "first" ] .
+:order2 :hasItem [ :label "second" ] .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://www.example.org>
+SELECT ?L
+WHERE {
+ ?O :hasItem [ :label ?L ] .
+ {
+ SELECT DISTINCT ?O
+ WHERE { ?O a :Order }
+ ORDER BY ?O
+ LIMIT 2
+ }
+} ORDER BY ?L
+"#;
+    assert_eq!(
+        query_values(&ds, sparql, "L"),
+        vec!["\"first\"", "\"second\""],
+        "blank-node property list in object position must parse alongside a nested subquery"
+    );
+}

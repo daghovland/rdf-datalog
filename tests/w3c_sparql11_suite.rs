@@ -1095,14 +1095,37 @@ fn w3c_sparql11_subquery() {
     // The `sq12`/`sq14` entries were already skip-listed before #192, but
     // under the wrong names — this table was dead code while the manifest
     // parser dropped every entry in this suite, so the mismatch was never
-    // noticed. Corrected here to the actual `mf:name` values. The rest are
-    // newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind):
-    // CONSTRUCT-result comparison isn't implemented (sq12, sq14), several
-    // `.rdf`/XML data files aren't parseable by the vendored Turtle parser
-    // (sq04, sq06, sq08, sq09, sq10 — RDF/XML support, not Turtle, is
-    // missing), subquery-in-graph-pattern evaluation has gaps (sq01, sq02,
-    // sq03, sq05, sq07), and subquery-with-LIMIT-inside-a-blank-node-pattern
-    // doesn't parse (sq11, sq13). None of these are regressions from #192.
+    // noticed. Corrected here to the actual `mf:name` values. The rest were
+    // newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind).
+    // Fixed under #201:
+    //   - sq12 ("Subquery in CONSTRUCT with built-ins") and sq14 ("limit by
+    //     resource") turned out to already work once un-skipped —
+    //     `compare_construct_with_ttl` (added for #204) already handles
+    //     CONSTRUCT-result comparison, so this was a stale skip-list entry,
+    //     not an engine gap.
+    //   - sq11 ("Subquery limit per resource") and sq13 ("Subqueries don't
+    //     inject bindings") failed to parse at all: `?O :hasItem [
+    //     rdfs:label ?L ] .` uses a blank-node property list
+    //     (`TriplesNode`/`PropertyListNotEmpty`) in *object* position, which
+    //     `parse_term` never handled — only bare `_:label` blank nodes and a
+    //     subject-position `[...]`/`[]` shorthand (handled inline in
+    //     `parse_group_graph_pattern_contents`) were supported. Fixed by
+    //     adding `parse_object_term`, used everywhere an object term is
+    //     parsed (`parse_triple_pattern_statement`, `parse_predobj_pairs`),
+    //     which recognizes `[ pred obj ; ... ]`/`[]` in object position and
+    //     rewrites it to a fresh internal blank-node variable plus extra
+    //     `QueryComponent`s for the nested pred-obj pairs, recursing for
+    //     nested property lists. `sq13`'s manifest entry also pointed at the
+    //     wrong fixture files (`sq11.rq`/`sq11.srx` instead of
+    //     `sq13.rq`/`sq13.srx`, an apparent copy-paste error, since
+    //     `sq13.rq`/`sq13.srx` existed on disk but were never referenced) —
+    //     corrected in `manifest.ttl`.
+    // Still failing, out of scope for #201: `.rdf` (RDF/XML) data/graphData
+    // files aren't parseable by the vendored Turtle parser at all — sq01,
+    // sq02, sq03, sq05, sq07 load `sq01.rdf`/`sq05.rdf` as `qt:graphData`,
+    // and sq04, sq06, sq08, sq09, sq10 load an RDF/XML file as `qt:data` —
+    // so all ten remain skipped pending RDF/XML parser support (a separate,
+    // much larger feature; see #201's follow-up comment).
     let skip: &[&str] = &[
         "sq01 - Subquery within graph pattern",
         "sq02 - Subquery within graph pattern, graph variable is bound",
@@ -1114,10 +1137,6 @@ fn w3c_sparql11_subquery() {
         "sq08 - Subquery with aggregate",
         "sq09 - Nested Subqueries",
         "sq10 - Subquery with exists",
-        "sq11 - Subquery limit per resource",
-        "sq12 - Subquery in CONSTRUCT with built-ins",
-        "sq13 - Subqueries don't inject bindings",
-        "sq14 - limit by resource",
     ];
     let failures: Vec<_> = entries
         .iter()
