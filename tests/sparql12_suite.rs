@@ -1185,6 +1185,137 @@ SELECT ?s ?o {
     );
 }
 
+// ── §15 ValuesClause variable visibility (PR #231 review) ───────────────────
+//
+// A trailing ValuesClause is joined into the pattern *before* the final
+// `Project` (SPARQL 1.1 §18.2.4.3) — so a ValuesClause variable that isn't in
+// the explicit SELECT list must still take part in the join (bind/restrict
+// solutions exactly like any other WHERE-clause-only variable) but must NOT
+// appear in the output header/rows unless the query uses `SELECT *` (which
+// projects every visible variable). An earlier version of this fix
+// incorrectly force-added every ValuesClause variable name to the output
+// header regardless of projection; see
+// https://github.com/daghovland/rdf-datalog/pull/231#pullrequestreview.
+
+/// A ValuesClause variable not in the SELECT list must not appear in the
+/// output header, even though `?x` (which *is* selected) still does.
+#[test]
+fn spec_s15_post_query_values_unselected_var_hidden_from_header() {
+    let ds = Datastore::new(10);
+    let sparql = "SELECT ?x WHERE { BIND(1 AS ?x) } VALUES ?y { 2 }";
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1, "the single solution should survive");
+    assert!(
+        result.variables.contains(&"x".to_string()),
+        "?x is explicitly selected, so it must appear in the header"
+    );
+    assert!(
+        !result.variables.contains(&"y".to_string()),
+        "?y is only introduced by the ValuesClause and never selected, so it must not appear in the header"
+    );
+}
+
+/// The un-selected ValuesClause variable must still genuinely participate in
+/// the join (restrict/filter solutions), not merely be hidden from the
+/// header — proven by binding `?y` inside the WHERE clause and observing
+/// that a *mismatching* VALUES row for `?y` drops the solution entirely,
+/// while a matching one keeps it (both with `?y` absent from the header).
+#[test]
+fn spec_s15_post_query_values_unselected_var_still_filters() {
+    let ds = Datastore::new(10);
+
+    let matching = "SELECT ?x WHERE { BIND(1 AS ?x) BIND(2 AS ?y) } VALUES ?y { 2 }";
+    let result = run_sparql_query(&ds, matching).expect("query should execute");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "?y = 2 (BIND) is compatible with VALUES ?y {{ 2 }}, so the solution survives"
+    );
+    assert!(!result.variables.contains(&"y".to_string()));
+
+    let mismatching = "SELECT ?x WHERE { BIND(1 AS ?x) BIND(2 AS ?y) } VALUES ?y { 3 }";
+    let result = run_sparql_query(&ds, mismatching).expect("query should execute");
+    assert_eq!(
+        result.rows.len(),
+        0,
+        "?y = 2 (BIND) conflicts with VALUES ?y {{ 3 }}, so the join must drop the solution \
+         even though ?y is never in the output header"
+    );
+}
+
+/// `SELECT *` projects every visible variable, including one introduced
+/// solely by a trailing ValuesClause.
+#[test]
+fn spec_s15_post_query_values_select_star_projects_values_var() {
+    let ds = Datastore::new(10);
+    let sparql = "SELECT * WHERE { BIND(1 AS ?x) } VALUES ?y { 2 }";
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.variables.contains(&"x".to_string()));
+    assert!(
+        result.variables.contains(&"y".to_string()),
+        "SELECT * must project ?y even though it's only bound by the ValuesClause"
+    );
+    assert_eq!(
+        result.rows[0]
+            .get("y")
+            .map(graph_element_display)
+            .as_deref(),
+        Some("\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>")
+    );
+}
+
+/// A subquery's own trailing ValuesClause variable, when not in the
+/// subquery's (non-Star) projection, must not leak out to the outer query —
+/// `QueryComponent::Subquery` merges every key present in the subquery's
+/// result rows into the outer solution unconditionally, so an un-projected
+/// key here would incorrectly become visible outside the subquery's scope.
+/// Mirrors `spec_s15_post_query_values_unselected_var_hidden_from_header` /
+/// `..._still_filters` one level down.
+#[test]
+fn spec_s15_post_subquery_values_unselected_var_not_leaked() {
+    let ds = Datastore::new(10);
+
+    let matching =
+        "SELECT ?s WHERE { { SELECT ?s WHERE { BIND(1 AS ?s) BIND(2 AS ?y) } VALUES ?y { 2 } } }";
+    let result = run_sparql_query(&ds, matching).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    assert!(
+        !result.variables.contains(&"y".to_string()),
+        "the subquery never selected ?y, so it must not leak into the outer header"
+    );
+
+    let mismatching =
+        "SELECT ?s WHERE { { SELECT ?s WHERE { BIND(1 AS ?s) BIND(2 AS ?y) } VALUES ?y { 3 } } }";
+    let result = run_sparql_query(&ds, mismatching).expect("query should execute");
+    assert_eq!(
+        result.rows.len(),
+        0,
+        "the subquery's internal ValuesClause join must still filter its own solutions \
+         even though ?y is never exposed to the outer query"
+    );
+}
+
+/// When a subquery uses `SELECT *`, a ValuesClause variable it introduces
+/// (not otherwise bound in its WHERE clause) crosses the subquery boundary
+/// and is genuinely available to the outer query — contrast with the
+/// non-Star leak test above.
+#[test]
+fn spec_s15_post_subquery_values_select_star_crosses_boundary() {
+    let ds = Datastore::new(10);
+    let sparql = "SELECT ?y WHERE { { SELECT * WHERE { BIND(1 AS ?s) } VALUES ?y { 2 } } }";
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(
+        result.rows[0]
+            .get("y")
+            .map(graph_element_display)
+            .as_deref(),
+        Some("\"2\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+        "the subquery's SELECT * exposes ?y (bound only by its own ValuesClause) to the outer query"
+    );
+}
+
 // ── §11  Aggregates ───────────────────────────────────────────────────────────
 //
 // Data: tests/testdata/sparql12_aggregates.ttl

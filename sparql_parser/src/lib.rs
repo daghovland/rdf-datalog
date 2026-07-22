@@ -276,7 +276,7 @@ fn parse_query_body<'a>(
 
         // Group graph pattern
         let (input, _) = sp(input)?;
-        let (input, where_clause) = parse_group_graph_pattern(ctx)(input)?;
+        let (input, mut where_clause) = parse_group_graph_pattern(ctx)(input)?;
         let (input, _) = sp(input)?;
 
         // Optional modifiers: GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
@@ -294,13 +294,22 @@ fn parse_query_body<'a>(
         // ValuesClause ::= ( 'VALUES' DataBlock )? — a trailing VALUES block
         // after the solution modifiers, applying to both a top-level
         // SelectQuery and a nested SubSelect (`{ SELECT ... } VALUES ...}`
-        // shares this same production). See issue #200.
+        // shares this same production). Per SPARQL 1.1 §18.2.4.3 this joins
+        // into the pattern algebra *before* the final Project — i.e. exactly
+        // like any other WHERE-clause-only variable, it can bind/restrict
+        // solutions even when it's not in the SELECT list, but it is only
+        // itself projected out under `SELECT *`. Representing it by
+        // appending the parsed `QueryComponent::Values` onto `where_clause`
+        // (rather than a separate post-modifier field) gets this ordering,
+        // the GROUP BY/HAVING/ORDER BY interaction, and the SELECT-projection
+        // boundary (including the subquery-scoping case) for free from the
+        // exact same machinery that already evaluates an inline `VALUES`
+        // block. See issue #200.
         let (input, values_component) = opt(|i| parse_values(ctx)(i))(input)?;
         let (input, _) = sp(input)?;
-        let values_clause = values_component.map(|c| match c {
-            QueryComponent::Values(vars, rows) => (vars, rows),
-            _ => unreachable!("parse_values always returns QueryComponent::Values"),
-        });
+        if let Some(values_component) = values_component {
+            where_clause.push(values_component);
+        }
 
         Ok((
             input,
@@ -314,7 +323,6 @@ fn parse_query_body<'a>(
                 limit,
                 offset,
                 distinct,
-                values_clause,
             },
         ))
     }
