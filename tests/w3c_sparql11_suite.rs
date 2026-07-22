@@ -539,7 +539,19 @@ fn gel_lit_to_srx(lit: &RdfLiteral) -> SrxValue {
 }
 
 /// Normalise an `SrxValue` so that xsd:string typed literals compare equal to
-/// plain literals, and numeric strings are normalised (e.g. leading zeros).
+/// plain literals, and numeric strings are normalised (e.g. leading zeros,
+/// scientific vs. plain notation).
+///
+/// Applied to *both* the expected (parsed from the vendored `.srx` fixture)
+/// and actual (produced by the executor) rows before comparison, so this only
+/// needs to be a deterministic function of numeric value, not a true
+/// XSD-canonical-lexical-form formatter: parsing "3.21E4" and "32100" as `f64`
+/// and re-emitting via `f64::to_string` (Rust's shortest round-trippable
+/// representation) collapses both to the same string. Production code (the
+/// real executor / `sparql_endpoint` result serializers) never sees this
+/// function and is untouched — this is comparison-strictness relief in the
+/// test harness only, not a canonical-XSD-double-formatting feature. See
+/// <https://github.com/daghovland/rdf-datalog/issues/202>.
 fn normalise_srx(v: SrxValue) -> SrxValue {
     match v {
         SrxValue::TypedLiteral { value, datatype }
@@ -559,13 +571,69 @@ fn normalise_srx(v: SrxValue) -> SrxValue {
                 datatype,
             }
         }
+        SrxValue::TypedLiteral { value, datatype }
+            if datatype == ingress::XSD_DOUBLE
+                || datatype == "http://www.w3.org/2001/XMLSchema#double"
+                || datatype == ingress::XSD_FLOAT
+                || datatype == "http://www.w3.org/2001/XMLSchema#float"
+                || datatype == ingress::XSD_DECIMAL
+                || datatype == "http://www.w3.org/2001/XMLSchema#decimal" =>
+        {
+            // NOTE: `ingress::XSD_DOUBLE`/`XSD_FLOAT`/`XSD_DECIMAL` referenced
+            // by fully-qualified path (not `use`d at module scope) since the
+            // sibling `use ingress::{...}` above is scoped inside
+            // `gel_lit_to_srx`, not at file scope.
+            let n: Option<f64> = value.trim().parse().ok();
+            SrxValue::TypedLiteral {
+                value: n.map(|x| x.to_string()).unwrap_or(value),
+                datatype,
+            }
+        }
         other => other,
+    }
+}
+
+/// Compare an ASK query's boolean result against an SRX expected-result
+/// file's `<boolean>true|false</boolean>` element.
+///
+/// `run_sparql_query` (used by the SELECT path below) hard-rejects
+/// `QueryResult::Ask`, so this calls `execute` directly instead — mirroring
+/// `compare_construct_with_ttl`'s direct-`execute` pattern for
+/// CONSTRUCT/DESCRIBE. Several W3C aggregates entries (e.g. `GROUP_CONCAT 1`,
+/// `GROUP_CONCAT with SEPARATOR`, `SAMPLE`) wrap the aggregate in a subquery
+/// and assert on it via `ASK { { SELECT ... } FILTER(...) }` rather than
+/// projecting it directly, so ASK support is required to evaluate them at
+/// all. See <https://github.com/daghovland/rdf-datalog/issues/202>.
+fn compare_ask_with_srx(ds: &Datastore, sparql: &str, srx_text: &str) -> Option<String> {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+        base: None,
+    };
+    let (_, query) = match parse_query(sparql, &mut ctx) {
+        Ok(q) => q,
+        Err(e) => return Some(format!("parse error: {:?}", e)),
+    };
+    let actual = match execute(&query, ds, NetworkPolicy::Deny) {
+        Ok(QueryResult::Ask(b)) => b,
+        Ok(_) => return Some("expected an ASK result".to_string()),
+        Err(e) => return Some(format!("execute error: {}", e)),
+    };
+    let expected = srx_text.contains("<boolean>true</boolean>");
+    if actual == expected {
+        None
+    } else {
+        Some(format!("expected ASK={}, got ASK={}", expected, actual))
     }
 }
 
 /// Compare SPARQL query results against an SRX expected-result file.
 /// Returns `None` on match, `Some(reason)` on mismatch.
 fn compare_with_srx(ds: &Datastore, sparql: &str, srx_path: &str) -> Option<String> {
+    if let Ok(text) = std::fs::read_to_string(srx_path)
+        && text.contains("<boolean>")
+    {
+        return compare_ask_with_srx(ds, sparql, &text);
+    }
     let result = match run_sparql_query(ds, sparql) {
         Ok(r) => r,
         Err(e) => return Some(format!("query error: {}", e)),
@@ -1131,36 +1199,26 @@ fn w3c_sparql11_subquery() {
 #[test]
 fn w3c_sparql11_aggregates() {
     let entries = load_sparql_manifest("aggregates");
-    // Newly-exposed by the #192 manifest-parser fix (see w3c_sparql11_bind
-    // for the general explanation). Genuine gaps: ASK queries aren't
-    // supported by `run_sparql_query` (GROUP_CONCAT 1/2/with SEPARATOR,
-    // SAMPLE), numeric aggregate results don't match the exact xsd:double
-    // formatting/rounding the expected SRX uses (AVG, SUM and their
-    // GROUP-BY variants, COUNT 8b, MIN with GROUP BY), a nested-aggregate
-    // FILTER expression fails to parse (GROUP_CONCAT 2), aggregate error
-    // propagation isn't implemented (Error in AVG, Protect from error in
-    // AVG), and empty-group aggregation doesn't produce the single
-    // unbound-variable row required by the spec. Not a regression from #192.
-    // `:agg-empty-group` carries two `mf:name` triples in the vendored
-    // manifest itself ("agg empty group" and "Aggregate over empty group
-    // resulting in a row with unbound variables") — both name the same
-    // underlying entry/gap, so both are listed here.
-    let skip: &[&str] = &[
-        "COUNT 8b",
-        "GROUP_CONCAT 1",
-        "GROUP_CONCAT 2",
-        "GROUP_CONCAT with SEPARATOR",
-        "AVG",
-        "AVG with GROUP BY",
-        "MIN with GROUP BY",
-        "SUM",
-        "SUM with GROUP BY",
-        "SAMPLE",
-        "Error in AVG",
-        "Protect from error in AVG",
-        "agg empty group",
-        "Aggregate over empty group resulting in a row with unbound variables",
-    ];
+    // All entries pass as of #202. Fixes: `compare_with_srx` gained an
+    // ASK-vs-SELECT dispatch (`compare_ask_with_srx`) since `run_sparql_query`
+    // only supports SELECT (GROUP_CONCAT 1, GROUP_CONCAT with SEPARATOR,
+    // SAMPLE); `parse_predobj_pairs` (the `[]`/blank-node-property-list
+    // parser) gained the same variable-predicate special-case
+    // `parse_triple_pattern_statement` already had, fixing `[] ?p ?o`
+    // (GROUP_CONCAT 2); `Aggregate::Avg`/`eval_binary_value` now preserve
+    // `xsd:decimal` instead of forcing `xsd:double` (AVG, AVG with GROUP BY,
+    // SUM, SUM with GROUP BY, COUNT 8b, MIN with GROUP BY -- the numeric
+    // comparison itself was also relaxed in the test harness's
+    // `normalise_srx`, see its doc comment); `Aggregate::Min`/`Max` now treat
+    // an incomparable pair (e.g. numeric literal vs. blank node) as an
+    // aggregate error (unbound), not a silent fallback (Error in AVG, Protect
+    // from error in AVG); and `group_by_solutions` now yields a single empty
+    // group -- rather than zero groups -- when GROUP BY is present but the
+    // WHERE clause matches nothing (agg empty group / Aggregate over empty
+    // group resulting in a row with unbound variables -- two `mf:name`s for
+    // the same manifest entry). See
+    // <https://github.com/daghovland/rdf-datalog/issues/202>.
+    let skip: &[&str] = &[];
     let failures: Vec<_> = entries
         .iter()
         .filter_map(|e| run_eval_test(e, skip))
