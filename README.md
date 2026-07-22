@@ -25,6 +25,7 @@ Almost all implementation is done by LLM-based agents.
 - **OWL parsing** — Turtle-encoded OWL ontologies and OWL 2 Manchester Syntax (`.omn`)
 - **SHACL** — SHACL Core validation via Datalog translation
 - **RML** — map CSV, JSON, JSONL, and XML to RDF ([guide](docs/user/rml-mapping.md))
+- **OTTR** — reusable, typed RDF templates (stOTTR), expandable in-process, over HTTP, or from Jupyter ([guide](docs/user/ottr-templates.md))
 - **HTTP server** — SPARQL 1.1 Protocol, Graph Store Protocol, multi-dataset (Fuseki-compatible) routing, VoID, ETag caching ([deployment](docs/user/deployment.md))
 - **Transactions** — `BEGIN`/`COMMIT`/`ROLLBACK` API for atomic multi-statement updates
 - **Persistence** — durable `redb`-backed changelog, or pure in-memory
@@ -165,6 +166,67 @@ apply_rml_mapping(Path::new("mapping.ttl"), Path::new("."), &mut ds).unwrap();
 **Proven by:** [`tests/rml_integration.rs`](tests/rml_integration.rs) (CSV, `cargo test --test rml_integration`),
 [`tests/rml_json_integration.rs`](tests/rml_json_integration.rs), and
 [`tests/rml_xml_integration.rs`](tests/rml_xml_integration.rs).
+
+---
+
+## OTTR: reusable RDF templates
+
+The `ottr` crate implements [OTTR (Reasonable Ontology Templates)](https://ottr.xyz/)'s
+stOTTR text syntax: define a typed, parameterised triple-pattern template once, then call
+it for each instance instead of repeating triples by hand. See the
+[OTTR templates guide](docs/user/ottr-templates.md) for the full syntax reference —
+nested template calls, `none` arguments, and the `cross`/`zipMin` list expanders.
+
+```stottr
+@prefix ex:   <http://example.com/> .
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+ex:Person [ ottr:IRI ?person, xsd:string ?name ] :: {
+  ottr:Triple (?person, rdf:type,  foaf:Person),
+  ottr:Triple (?person, foaf:name, ?name)
+} .
+
+ex:Person(<http://example.com/alice>, "Alice") .
+ex:Person(<http://example.com/bob>,   "Bob")   .
+```
+
+```rust
+use dag_rdf::Datastore;
+use ottr::{expand_documents, parser::parse_stottr};
+
+let src = r#"
+@prefix ex:   <http://example.com/> .
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+ex:Person [ ottr:IRI ?person, xsd:string ?name ] :: {
+  ottr:Triple (?person, rdf:type,  foaf:Person),
+  ottr:Triple (?person, foaf:name, ?name)
+} .
+
+ex:Person(<http://example.com/alice>, "Alice") .
+"#;
+
+let mut ds = Datastore::new(100_000);
+let doc = parse_stottr(src).unwrap();
+expand_documents(&[doc], &mut ds).unwrap();
+```
+
+Templates also expand over HTTP — `POST /{dataset}/ottr` with one or more stOTTR document
+parts as `multipart/form-data` materialises the expansion directly into the named dataset:
+
+```sh
+curl -F "document=@templates.stottr" -F "document=@instances.stottr" \
+     http://localhost:3030/mydataset/ottr
+```
+
+...and inline in a [Jupyter notebook](docs/user/jupyter.md) via the `%%ottr` cell magic.
+
+**Proven by:** [`ottr/tests/`](ottr/tests/) (parser, expansion, list expanders — `cargo test -p ottr`)
+and [`sparql_endpoint/tests/ottr_endpoint.rs`](sparql_endpoint/tests/ottr_endpoint.rs) (HTTP endpoint).
 
 ---
 

@@ -206,6 +206,38 @@ SELECT ?person ?name WHERE { ?person foaf:name ?name }
 
 ---
 
+## HTTP endpoint
+
+`POST /{dataset}/ottr` expands stOTTR templates/instances directly into a named dataset on
+a running server (`dagalog --serve`) — mirroring the existing `/{dataset}/rml` endpoint.
+The body is `multipart/form-data` with one or more parts; each part is an independent (or
+partial) stOTTR document, and all parts are merged (templates pooled, instances
+concatenated) before expansion — so a template library and its instance data can be sent
+as separate parts in one request, or combined in a single part.
+
+```sh
+# One self-contained document
+curl -F "document=@templates_and_instances.stottr" \
+     http://localhost:3030/mydataset/ottr
+
+# Template library and instance data as separate parts
+curl -F "templates=@person_template.stottr" \
+     -F "instances=@person_instances.stottr" \
+     http://localhost:3030/mydataset/ottr
+```
+
+Part *names* (`document`, `templates`, `instances` above) carry no meaning — every part is
+parsed independently and all resulting documents are pooled before expansion.
+
+On success, responds `200 OK` with the number of triples inserted. The endpoint requires
+write permission (same guard as `/rml` and `/update`) and returns `400` for malformed
+stOTTR syntax or an undefined template reference, `404` if the dataset doesn't exist. See
+[`docs/plans/OTTR_HTTP_ENDPOINT_PLAN.md`](../plans/OTTR_HTTP_ENDPOINT_PLAN.md) for the full
+design, including why a single-call multipart shape was chosen over a stateful
+upload-then-trigger flow.
+
+---
+
 ## Combining with OWL-RL reasoning
 
 OTTR templates expand into plain triples and integrate transparently with reasoning.
@@ -225,6 +257,7 @@ If the ontology says `foaf:Person rdfs:subClassOf ex:Agent`, reasoning infers
 ## See also
 
 - [Jupyter kernel guide](jupyter.md) — all `%%` magics
+- [Deployment](deployment.md) — running `dagalog --serve` and the HTTP API generally
 - [RML mapping](rml-mapping.md) — for CSV / JSON / XML sources
 - [Reasoning and rules](reasoning.md) — OWL-RL + Datalog
 - [OTTR spec](https://spec.ottr.xyz/stOTTR/0.1/) — full stOTTR language reference
