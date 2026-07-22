@@ -3803,6 +3803,17 @@ fn group_by_solutions(
     if group_by.is_empty() {
         return vec![solutions.to_vec()];
     }
+    // Special case per SPARQL 1.1 §11.4.1 (see the "agg empty group" / "Aggregate
+    // over empty group resulting in a row with unbound variables" W3C test,
+    // <http://answers.semanticweb.com/questions/17410/>, tracked in
+    // <https://github.com/daghovland/rdf-datalog/issues/202>): when the WHERE
+    // clause produces zero solutions, an explicit GROUP BY still yields exactly
+    // one (empty) group rather than zero groups. Every GROUP BY key and
+    // aggregate is then evaluated over that empty group, leaving them (and any
+    // GROUP BY alias) unbound in the single output row.
+    if solutions.is_empty() {
+        return vec![vec![]];
+    }
     let mut map: Vec<(Vec<Option<GraphElement>>, Vec<PartialSub>)> = Vec::new();
     'outer: for sub in solutions {
         let key: Vec<Option<GraphElement>> = group_by
@@ -3899,55 +3910,77 @@ fn eval_expr_in_group(
     }
 }
 
-/// Evaluate a binary operation between two already-resolved values.
+/// Evaluate a binary operation between two already-resolved values, e.g. an
+/// arithmetic expression combining two aggregate results in a SELECT/HAVING
+/// clause (`(MIN(?p) + MAX(?p)) / 2`).
+///
+/// Applies the same SPARQL/XPath numeric type-promotion rules as
+/// `eval_arithmetic` (integer < decimal < float < double, result takes the
+/// widest operand type) via the shared `classify_numeric`/
+/// `numeric_lit_to_element` machinery, rather than the previous
+/// integer-fast-path-or-else-`f64` split, which silently forced every
+/// non-integer/integer combination (including a plain integer/decimal mix)
+/// to `xsd:double` and lost `xsd:decimal` precision/typing. One deliberate
+/// divergence from `eval_arithmetic`: `Div` between two integers here
+/// produces an exact `xsd:decimal` (per SPARQL/XPath `op:numeric-divide`,
+/// which never returns integer), rather than `eval_arithmetic`'s truncating
+/// integer division — this only affects aggregate-expression arithmetic
+/// (matching the W3C `aggregates` suite's `agg-err-01` expectation), not the
+/// general BIND/FILTER arithmetic path. See
+/// <https://github.com/daghovland/rdf-datalog/issues/202>.
 fn eval_binary_value(l: &GraphElement, op: &BinaryOp, r: &GraphElement) -> Option<GraphElement> {
-    match (l, r) {
-        (
-            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(a)),
-            GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(b)),
-        ) => {
-            let result = match op {
-                BinaryOp::Add => a + b,
-                BinaryOp::Sub => a - b,
-                BinaryOp::Mul => a * b,
-                BinaryOp::Div => {
-                    if b == &BigInt::from(0) {
-                        return None;
-                    }
-                    a / b
-                }
-                _ => return None,
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(
-                result,
-            )))
-        }
-        _ => {
-            let af = literal_to_f64(match l {
-                GraphElement::GraphLiteral(lit) => lit,
-                _ => return None,
-            })?;
-            let bf = literal_to_f64(match r {
-                GraphElement::GraphLiteral(lit) => lit,
-                _ => return None,
-            })?;
-            let result = match op {
-                BinaryOp::Add => af + bf,
-                BinaryOp::Sub => af - bf,
-                BinaryOp::Mul => af * bf,
-                BinaryOp::Div => {
-                    if bf == 0.0 {
-                        return None;
-                    }
-                    af / bf
-                }
-                _ => return None,
-            };
-            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                result.into(),
-            )))
-        }
+    let l_lit = match l {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    let r_lit = match r {
+        GraphElement::GraphLiteral(lit) => lit,
+        _ => return None,
+    };
+    let ln = classify_numeric(l_lit)?;
+    let rn = classify_numeric(r_lit)?;
+
+    if matches!(ln, NumericLit::Double(_)) || matches!(rn, NumericLit::Double(_)) {
+        let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
+        return Some(numeric_lit_to_element(NumericLit::Double(result)));
     }
+    if matches!(ln, NumericLit::Float(_)) || matches!(rn, NumericLit::Float(_)) {
+        let result = apply_f64_op(op, numeric_lit_to_f64(&ln), numeric_lit_to_f64(&rn))?;
+        return Some(numeric_lit_to_element(NumericLit::Float(result)));
+    }
+    if let (NumericLit::Integer(a), NumericLit::Integer(b)) = (&ln, &rn) {
+        return match op {
+            BinaryOp::Add => Some(numeric_lit_to_element(NumericLit::Integer(a + b))),
+            BinaryOp::Sub => Some(numeric_lit_to_element(NumericLit::Integer(a - b))),
+            BinaryOp::Mul => Some(numeric_lit_to_element(NumericLit::Integer(a * b))),
+            BinaryOp::Div => {
+                if b == &BigInt::from(0) {
+                    return None;
+                }
+                let ad = numeric_lit_to_decimal(&ln)?;
+                let bd = numeric_lit_to_decimal(&rn)?;
+                Some(numeric_lit_to_element(NumericLit::Decimal(ad / bd)))
+            }
+            _ => None,
+        };
+    }
+    // Remaining case: an integer/decimal mix with at least one decimal
+    // operand — exact decimal arithmetic, result stays decimal.
+    let ad = numeric_lit_to_decimal(&ln)?;
+    let bd = numeric_lit_to_decimal(&rn)?;
+    let result = match op {
+        BinaryOp::Add => ad + bd,
+        BinaryOp::Sub => ad - bd,
+        BinaryOp::Mul => ad * bd,
+        BinaryOp::Div => {
+            if bd.is_zero() {
+                return None;
+            }
+            ad / bd
+        }
+        _ => return None,
+    };
+    Some(numeric_lit_to_element(NumericLit::Decimal(result)))
 }
 
 /// Evaluate a HAVING expression as a boolean, with aggregates computed over the group.
@@ -4057,31 +4090,81 @@ fn eval_aggregate_value(
                 return None;
             }
             let sum = sum_values(&values)?;
-            let count = values.len() as f64;
-            let sum_f = literal_to_f64(match &sum {
+            let sum_lit = match &sum {
                 GraphElement::GraphLiteral(lit) => lit,
                 _ => return None,
-            })?;
-            Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
-                (sum_f / count).into(),
-            )))
+            };
+            let sum_n = classify_numeric(sum_lit)?;
+            let count = values.len();
+            // Divide, preserving the same integer < decimal < float < double
+            // type-promotion `sum_values` already applied to the sum: a
+            // `double`/`float` sum stays floating-point, otherwise the
+            // division is exact `xsd:decimal` (never plain `xsd:integer` —
+            // SPARQL/XPath `op:numeric-divide` never returns integer,
+            // matching AVG/AVG-with-GROUP-BY's expected `xsd:decimal` results
+            // rather than the previous unconditional `xsd:double`). See
+            // <https://github.com/daghovland/rdf-datalog/issues/202>.
+            match sum_n {
+                NumericLit::Double(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Double(f / count as f64)))
+                }
+                NumericLit::Float(f) => {
+                    Some(numeric_lit_to_element(NumericLit::Float(f / count as f64)))
+                }
+                _ => {
+                    let sum_d = numeric_lit_to_decimal(&sum_n)?;
+                    let count_d = rust_decimal::Decimal::from(count);
+                    Some(numeric_lit_to_element(NumericLit::Decimal(sum_d / count_d)))
+                }
+            }
         }
 
-        Aggregate::Min(expr, _) => group
-            .iter()
-            .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
-            .reduce(|a, b| match compare_graph_elements(&a, &b) {
-                Some(ord) if ord <= 0 => a,
-                _ => b,
-            }),
+        // MIN/MAX use the `<` operator's comparison semantics
+        // (`compare_graph_elements`, which returns `None` for operand pairs
+        // with no defined ordering — e.g. a numeric literal against a blank
+        // node), not `ORDER BY`'s total extended ordering
+        // (`compare_graph_elements_total`). Per SPARQL 1.1, if `<` is
+        // undefined for any pair of values in the group, the aggregate itself
+        // errors and produces no binding, rather than silently falling back
+        // to one of the two operands as the previous `reduce`-with-`_ => b`
+        // fallback did. See the W3C `aggregates` suite's "Error in AVG"
+        // (`agg-err-01`, mixed numeric-literal/blank-node group under `:y`)
+        // and <https://github.com/daghovland/rdf-datalog/issues/202>.
+        Aggregate::Min(expr, _) => {
+            let mut values = group
+                .iter()
+                .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore));
+            let mut current = values.next()?;
+            for v in values {
+                match compare_graph_elements(&current, &v) {
+                    Some(ord) => {
+                        if ord > 0 {
+                            current = v;
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            Some(current)
+        }
 
-        Aggregate::Max(expr, _) => group
-            .iter()
-            .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore))
-            .reduce(|a, b| match compare_graph_elements(&a, &b) {
-                Some(ord) if ord >= 0 => a,
-                _ => b,
-            }),
+        Aggregate::Max(expr, _) => {
+            let mut values = group
+                .iter()
+                .filter_map(|sub| eval_expression_value_inner(expr, sub, datastore));
+            let mut current = values.next()?;
+            for v in values {
+                match compare_graph_elements(&current, &v) {
+                    Some(ord) => {
+                        if ord < 0 {
+                            current = v;
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            Some(current)
+        }
 
         Aggregate::Sample(expr, _) => group
             .iter()

@@ -1593,6 +1593,158 @@ GROUP BY (?x + ?y AS ?sum)
     );
 }
 
+/// SPARQL 1.2 §11.4.1 / W3C `aggregates` suite "agg empty group": an explicit
+/// `GROUP BY` over a `WHERE` clause that matches zero solutions still yields
+/// exactly one (empty) output row, not zero rows — every `GROUP BY` key and
+/// aggregate is left unbound in that single row. This is a special case:
+/// distinct from the no-`GROUP BY` empty-group case (already covered by
+/// `spec_s11_implicit_group_no_group_by`), which always produced one implicit
+/// group regardless.
+///
+/// Tracked by https://github.com/daghovland/rdf-datalog/issues/202.
+#[test]
+fn spec_s11_group_by_empty_input_one_unbound_row() {
+    let ds = parse_inline_ttl("@prefix : <http://example.org/> .\n");
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?x (MAX(?value) AS ?max)
+WHERE { ?x :p ?value }
+GROUP BY ?x
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "§11.4.1: GROUP BY over zero solutions → exactly one row"
+    );
+    assert_eq!(
+        query_single_value(&ds, sparql, "max"),
+        None,
+        "the single row's aggregate must be unbound, not defaulted to some value"
+    );
+    assert_eq!(
+        query_single_value(&ds, sparql, "x"),
+        None,
+        "the single row's GROUP BY key must be unbound too"
+    );
+}
+
+/// SPARQL 1.2 §11.4 / W3C `aggregates` suite "Error in AVG" (`agg-err-01`):
+/// an aggregate expression combining `MIN`/`MAX` over a group that mixes a
+/// numeric literal with a blank node must be unbound in the output row,
+/// mirroring `agg-err-01`'s `((MIN(?p) + MAX(?p)) / 2 AS ?c)` over its `:y`
+/// group.
+///
+/// Deliberately asserts only this composite-expression shape, which is what
+/// the W3C fixture actually pins down — not that a *raw* `MIN(?p)` alone
+/// must be unbound for such a group. This project's `Aggregate::Min`/`Max`
+/// happen to implement that stronger behavior too (an incomparable pair
+/// makes the whole aggregate error, via the `<`-operator semantics in
+/// `compare_graph_elements`), but no W3C `aggregates` entry exercises raw
+/// `MIN`/`MAX` in isolation over a non-comparable group: `agg-err-01` always
+/// wraps them in arithmetic, whose own non-`GraphLiteral` guard in
+/// `eval_binary_value` would independently produce an unbound result even
+/// under the alternative ORDER-BY-total-ordering reading (where MIN would
+/// return the blank node itself, then `blanknode + ...` fails to be
+/// numeric). Locking in the raw-alone case is left to
+/// <https://github.com/daghovland/rdf-datalog/issues/202> as a follow-up
+/// once that semantics is verified against the spec/reference behavior.
+///
+/// Tracked by https://github.com/daghovland/rdf-datalog/issues/202.
+#[test]
+fn spec_s11_min_max_arithmetic_unbound_on_incomparable_types() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:x :p 1, 2, 3 .
+:y :p 1, _:b1, 3 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?g ((MIN(?p) + MAX(?p)) / 2 AS ?c)
+WHERE { ?g :p ?p . }
+GROUP BY ?g
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should execute");
+    assert_eq!(result.rows.len(), 2, "two groups: :x and :y");
+    for row in &result.rows {
+        let g = row.get("g").map(graph_element_display).unwrap_or_default();
+        if g.contains("/y") {
+            assert!(
+                row.get("c").is_none(),
+                "group :y mixes a numeric literal with a blank node — (MIN+MAX)/2 must be unbound, got {:?}",
+                row.get("c").map(graph_element_display)
+            );
+        } else {
+            assert!(
+                row.get("c").is_some(),
+                "group :x is all-numeric — (MIN+MAX)/2 must be bound"
+            );
+        }
+    }
+}
+
+/// SPARQL 1.2 §11.4: `AVG` over `xsd:integer`/`xsd:decimal` inputs must stay
+/// `xsd:decimal` (per SPARQL/XPath `op:numeric-divide`, which never returns
+/// `xsd:integer`), not unconditionally promote to `xsd:double`. Only a
+/// genuinely `xsd:double`/`xsd:float` input should force floating point.
+///
+/// Tracked by https://github.com/daghovland/rdf-datalog/issues/202.
+#[test]
+fn spec_s11_avg_preserves_decimal_type() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:s :p 1, 2, 3, 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT (AVG(?p) AS ?avg)
+WHERE { :s :p ?p . }
+"#;
+    let avg = query_single_value(&ds, sparql, "avg").expect("avg should be bound");
+    assert!(
+        avg.contains("XMLSchema#decimal"),
+        "AVG of xsd:integer inputs must be xsd:decimal, got {}",
+        avg
+    );
+    assert!(
+        avg.contains("2.5"),
+        "AVG(1,2,3,4) should be 2.5, got {}",
+        avg
+    );
+}
+
+/// SPARQL 1.2 §5.4 / W3C `aggregates` suite "GROUP_CONCAT 2": a blank-node
+/// property list `[] ?p ?o` with a *variable* predicate must parse — the
+/// `[]`/`[...]` shorthand's predicate-object-pair parser
+/// (`parse_predobj_pairs`) previously only accepted property-path predicates
+/// (bare IRIs, `^`/`|`/`/` expressions), not a variable, unlike the ordinary
+/// (non-bracketed) triple-pattern parser which already special-cased it.
+///
+/// Tracked by https://github.com/daghovland/rdf-datalog/issues/202.
+#[test]
+fn spec_s5_blank_node_property_list_variable_predicate() {
+    let ds = parse_inline_ttl(
+        r#"
+@prefix : <http://example.org/> .
+:s1 :p1 1 .
+:s2 :p2 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT (COUNT(*) AS ?c)
+WHERE { [] ?p ?o }
+"#;
+    assert_eq!(
+        query_single_value(&ds, sparql, "c").as_deref(),
+        Some("2"),
+        "`[] ?p ?o` (variable predicate inside blank-node property list) must parse and match both triples"
+    );
+}
+
 // ── §9 (extended)  Property Paths ────────────────────────────────────────────
 //
 // Data: tests/testdata/sparql12_paths.ttl

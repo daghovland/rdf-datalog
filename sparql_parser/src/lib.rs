@@ -742,9 +742,31 @@ fn parse_predobj_pairs<'a>(
             break;
         }
         let (r, _) = sp(remaining)?;
-        let (r, path) = match parse_path_alternative(ctx)(r) {
-            Ok(x) => x,
-            Err(_) => break,
+        // If the predicate is a variable (e.g. `?p`), parse it directly as a
+        // `Term` rather than a property-path expression — variables are not
+        // valid property path expressions but are valid BGP predicates. This
+        // mirrors `parse_triple_pattern_statement`'s handling of variable
+        // predicates; without it, `[] ?p ?o` (a blank-node property list with
+        // a variable predicate, e.g. W3C `aggregates` suite's
+        // `GROUP_CONCAT 2`) failed to parse at all. See
+        // <https://github.com/daghovland/rdf-datalog/issues/202>.
+        let predicate_is_var = r.starts_with('?') || r.starts_with('$');
+        let (r, pred_var_opt) = if predicate_is_var {
+            let (r, t) = match parse_term(ctx)(r) {
+                Ok(x) => x,
+                Err(_) => break,
+            };
+            (r, Some(t))
+        } else {
+            (r, None)
+        };
+        let (r, path) = if pred_var_opt.is_none() {
+            match parse_path_alternative(ctx)(r) {
+                Ok((r, p)) => (r, Some(p)),
+                Err(_) => break,
+            }
+        } else {
+            (r, None)
         };
         let (r, _) = sp1(r)?;
         let (mut r, (first_obj, first_extra)) = parse_object_term(ctx, counter, r)?;
@@ -766,20 +788,28 @@ fn parse_predobj_pairs<'a>(
         }
 
         for object in objects {
-            match &path {
-                PropertyPath::Iri(gel) => {
-                    comps.push(QueryComponent::BGP(vec![TriplePattern {
-                        subject: subject.clone(),
-                        predicate: Term::Constant(gel.clone()),
-                        object: object.clone(),
-                    }]));
-                }
-                _ => {
-                    comps.push(QueryComponent::PathPattern(
-                        subject.clone(),
-                        Box::new(path.clone()),
-                        object.clone(),
-                    ));
+            if let Some(ref pred_var) = pred_var_opt {
+                comps.push(QueryComponent::BGP(vec![TriplePattern {
+                    subject: subject.clone(),
+                    predicate: pred_var.clone(),
+                    object: object.clone(),
+                }]));
+            } else if let Some(ref path) = path {
+                match path {
+                    PropertyPath::Iri(gel) => {
+                        comps.push(QueryComponent::BGP(vec![TriplePattern {
+                            subject: subject.clone(),
+                            predicate: Term::Constant(gel.clone()),
+                            object: object.clone(),
+                        }]));
+                    }
+                    _ => {
+                        comps.push(QueryComponent::PathPattern(
+                            subject.clone(),
+                            Box::new(path.clone()),
+                            object.clone(),
+                        ));
+                    }
                 }
             }
         }
