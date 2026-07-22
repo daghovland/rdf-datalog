@@ -1200,8 +1200,9 @@ fn w3c_sparql11_subquery() {
     // files aren't parseable by the vendored Turtle parser at all — sq01,
     // sq02, sq03, sq05, sq07 load `sq01.rdf`/`sq05.rdf` as `qt:graphData`,
     // and sq04, sq06, sq08, sq09, sq10 load an RDF/XML file as `qt:data`.
-    // RDF/XML support is a separate, much larger feature (see #201's
-    // follow-up comment). The `GRAPH ?g { { SELECT ... } }` scoping these
+    // RDF/XML support is tracked as its own epic:
+    // [#240](https://github.com/daghovland/rdf-datalog/issues/240). The
+    // `GRAPH ?g { { SELECT ... } }` scoping these
     // entries additionally exercise was spot-checked with Turtle/TriG-only
     // data instead (`spec_subquery_within_graph_pattern` in
     // `sparql12_suite.rs`) and works correctly there, but that's only the
