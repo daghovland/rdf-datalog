@@ -774,7 +774,7 @@ pub async fn gsp_post_inner(
     }
 
     // ── Case 3: no param — create a new graph with a server-assigned IRI ─────
-    if fmt == UploadFormat::TriG || fmt == UploadFormat::NQuads {
+    if fmt == UploadFormat::TriG || fmt == UploadFormat::NQuads || fmt == UploadFormat::JsonLd {
         let mut store = state.store.write().await;
         if let Some(ref changelog) = state.changelog {
             let entries: Vec<_> = tmp
