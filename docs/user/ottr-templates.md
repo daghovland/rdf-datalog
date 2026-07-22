@@ -238,6 +238,28 @@ upload-then-trigger flow.
 
 ---
 
+## CLI
+
+The `dagalog` binary supports a repeatable `--ottr <FILE>` flag ([#247](https://github.com/daghovland/rdf-datalog/issues/247)).
+Each file is parsed independently and all resulting documents are pooled before expansion —
+so a template library and its instance data can be split across files, or combined in one:
+
+```sh
+# Templates and instances in separate files
+dagalog --ottr person_template.stottr --ottr person_instances.stottr \
+        --query "SELECT ?person ?name WHERE { ?person <http://xmlns.com/foaf/0.1/name> ?name }"
+
+# Or a single self-contained file
+dagalog --ottr combined.stottr --query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+```
+
+`--ottr` runs after `--data`/`--mapping` and before `--ontology`/`--rules`, so
+template-expanded triples participate in OWL-RL reasoning and Datalog rule evaluation.
+See the [CLI usage section of the README](../../README.md#cli-usage) for how it composes
+with the other flags.
+
+---
+
 ## Combining with OWL-RL reasoning
 
 OTTR templates expand into plain triples and integrate transparently with reasoning.

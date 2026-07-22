@@ -341,6 +341,9 @@ dagalog --data data.ttl --rules rules.datalog --query "..."
 # RML mapping
 dagalog --mapping mapping.ttl --query "SELECT ?name WHERE { ?p <http://example.com/name> ?name }"
 
+# OTTR template expansion
+dagalog --ottr templates.stottr --ottr instances.stottr --query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+
 # Output format
 dagalog -d data.ttl -Q q.sparql --format csv    # table (default), csv, or json
 
@@ -348,9 +351,9 @@ dagalog -d data.ttl -Q q.sparql --format csv    # table (default), csv, or json
 dagalog --data data.ttl --ontology schema.ttl --serve
 ```
 
-Multiple `--data`, `--ontology`, `--rules`, and `--mapping` flags may be given; mappings
-run after `--data` and before `--ontology`/`--rules`, so mapped triples participate in
-reasoning.
+Multiple `--data`, `--ontology`, `--rules`, `--mapping`, and `--ottr` flags may be given;
+they run in the order `--data` → `--mapping` → `--ottr` → `--ontology`/`--rules`, so mapped
+and template-expanded triples participate in reasoning.
 
 **Proven by:** [`tests/cli_integration.rs`](tests/cli_integration.rs) — `cargo test --test cli_integration`.
 
