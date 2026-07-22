@@ -353,6 +353,12 @@ fn must_bind_vars(comp: &QueryComponent) -> HashSet<String> {
             }
             vars
         }
+        // A bare nested `{ ... }` group is a mandatory join: every variable
+        // it guarantees internally is guaranteed to the enclosing scope too
+        // once it succeeds (unlike `OPTIONAL`/`MINUS`, a non-matching group
+        // drops the outer row entirely rather than leaving it unbound). See
+        // issue #198.
+        QueryComponent::Group(inner) => must_bind_sequence(inner),
         QueryComponent::Values(names, rows) => names
             .iter()
             .enumerate()
@@ -488,7 +494,8 @@ fn collect_component_vars(comp: &QueryComponent, vars: &mut HashSet<String>) {
         }
         QueryComponent::Optional(inner)
         | QueryComponent::Minus(inner)
-        | QueryComponent::Service(_, inner, _) => {
+        | QueryComponent::Service(_, inner, _)
+        | QueryComponent::Group(inner) => {
             for c in inner {
                 collect_component_vars(c, vars);
             }
