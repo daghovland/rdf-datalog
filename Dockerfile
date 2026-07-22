@@ -2,6 +2,7 @@
 FROM rust:1-slim AS builder
 WORKDIR /build
 COPY . .
+RUN apt-get update && apt-get install -y ca-certificates
 RUN cargo build --release --bin dagalog
 
 # ── runtime ───────────────────────────────────────────────────────────────────
