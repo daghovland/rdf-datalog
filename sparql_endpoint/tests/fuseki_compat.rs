@@ -155,6 +155,33 @@ const SIMPLE_JSONLD: &str = r#"
 }
 "#;
 
+/// JSON-LD dataset with two named graphs — a data graph and a metadata graph —
+/// mirroring the "Bravo/records" upload shape from issue #234, where a record's
+/// metadata graph must survive a whole-dataset JSON-LD upload.
+const TWO_NAMED_GRAPHS_JSONLD: &str = r#"
+{
+  "@context": {
+    "ex": "http://example.org/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "dcterms": "http://purl.org/dc/terms/"
+  },
+  "@graph": [
+    {
+      "@id": "ex:jsonld-graph-a",
+      "@graph": [
+        { "@id": "ex:alice", "foaf:name": "Alice" }
+      ]
+    },
+    {
+      "@id": "ex:jsonld-metadata-graph",
+      "@graph": [
+        { "@id": "ex:record1", "dcterms:created": "2026-01-01" }
+      ]
+    }
+  ]
+}
+"#;
+
 // ── A: Per-dataset query endpoint — Phase F1 ─────────────────────────────────
 //
 // Fuseki exposes `/{name}/sparql` and `/{name}/query` as aliases for the
@@ -1512,6 +1539,70 @@ async fn fuseki_gsp_post_graph_jsonld_is_accepted() {
     assert!(
         body.contains("http://example.org/jsonld-subject"),
         "expected JSON-LD subject in graph, got:\n{body}"
+    );
+}
+
+/// G-11: POST `/{name}/data` (no params) with JSON-LD preserves named graphs.
+///
+/// Regression test for issue #234: uploading a JSON-LD dataset containing
+/// named graphs (e.g. a data graph plus a metadata graph, as produced by the
+/// "Bravo/records" integration) via `POST /{name}/data` with no `?graph`/
+/// `?default` query param must NOT collapse everything into one
+/// server-assigned graph. Both named graphs must remain independently
+/// retrievable afterwards, matching the existing TriG/N-Quads behavior
+/// (see G-8/G-9 above).
+#[tokio::test]
+async fn fuseki_gsp_post_data_no_params_jsonld_preserves_named_graphs() {
+    let server = common::TestServer::start_writable("").await;
+
+    let post = server
+        .client
+        .post(server.dataset_data_url(DS))
+        .header("Content-Type", "application/ld+json")
+        .body(TWO_NAMED_GRAPHS_JSONLD)
+        .send()
+        .await
+        .expect("POST failed");
+    assert!(
+        post.status() == 201 || post.status() == 204 || post.status() == 200,
+        "JSON-LD POST must return 201/204/200, got {}",
+        post.status()
+    );
+
+    let graph_a = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/jsonld-graph-a"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET jsonld-graph-a failed");
+    assert_eq!(
+        graph_a.status(),
+        200,
+        "jsonld-graph-a must exist after JSON-LD POST"
+    );
+    let graph_a_body = graph_a.text().await.expect("response body");
+    assert!(
+        graph_a_body.contains("http://example.org/alice"),
+        "expected alice in jsonld-graph-a, got:\n{graph_a_body}"
+    );
+
+    let metadata_graph = server
+        .client
+        .get(server.dataset_data_graph_url(DS, "http://example.org/jsonld-metadata-graph"))
+        .header("Accept", "text/turtle")
+        .send()
+        .await
+        .expect("GET jsonld-metadata-graph failed");
+    assert_eq!(
+        metadata_graph.status(),
+        200,
+        "jsonld-metadata-graph must exist (not collapsed away) after JSON-LD POST with no params"
+    );
+    let metadata_body = metadata_graph.text().await.expect("response body");
+    assert!(
+        metadata_body.contains("http://example.org/record1"),
+        "expected record1 in jsonld-metadata-graph, got:\n{metadata_body}"
     );
 }
 
