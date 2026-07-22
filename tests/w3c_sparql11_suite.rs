@@ -1063,10 +1063,17 @@ fn w3c_sparql11_bindings() {
     // so these entries evaluated as if the VALUES clause were absent. Fixed
     // by parsing an optional `ValuesClause` at the end of `parse_query_body`
     // (shared by both top-level `SelectQuery` and nested `SubSelect`, which
-    // is why the "Post-subquery VALUES" grammar gap needed no separate
-    // fix) and joining it into the solution set as the final step, after
-    // all other solution modifiers (see `join_solutions_with_values` in
-    // `sparql_parser::execute`). Along the way, a latent bug in
+    // is why the "Post-subquery VALUES" grammar gap needed no separate fix)
+    // and appending it directly onto the query's/subquery's own
+    // `where_clause` (see `join_solutions_with_values` in
+    // `sparql_parser::execute`, which already evaluates an inline `VALUES`
+    // block). Per SPARQL 1.1 §18.2.4.3 this join happens *before* the final
+    // `Project`, so a ValuesClause variable can bind/restrict solutions even
+    // when it isn't in the SELECT list, but is itself projected out only
+    // under `SELECT *` — appending onto `where_clause` gets that ordering,
+    // the GROUP BY/HAVING/ORDER BY interaction, and the subquery-projection
+    // scoping boundary for free, rather than needing a separate post-join
+    // code path to keep in sync. Along the way, a latent bug in
     // `parse_values_row` (inferring the parenthesised-row-vs-bare-value
     // grammar choice from `vars.len() == 1` rather than from whether the var
     // list itself used `InlineDataFull`'s parens) was also fixed — it broke
