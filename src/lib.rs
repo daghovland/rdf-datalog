@@ -168,6 +168,24 @@ pub fn apply_rml_mappings(datastore: &mut Datastore, paths: &[PathBuf]) -> Resul
     Ok(())
 }
 
+// ── OTTR templates ────────────────────────────────────────────────────────────
+
+/// Expand one or more stOTTR files (templates and/or instances) into `datastore`.
+///
+/// Templates and instances may be split across files or combined in a single
+/// file; all documents are parsed, then merged and expanded together via
+/// [`ottr::expand_documents`], so a template defined in one file can be
+/// instantiated by instances in another.
+pub fn apply_ottr_templates(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<(), String> {
+    let mut docs = Vec::with_capacity(paths.len());
+    for path in paths {
+        let doc = ottr::load_stottr_file(path)
+            .map_err(|e| format!("OTTR error in {}: {}", path.display(), e))?;
+        docs.push(doc);
+    }
+    ottr::expand_documents(&docs, datastore).map_err(|e| format!("OTTR expansion error: {}", e))
+}
+
 // ── Datalog rules ─────────────────────────────────────────────────────────────
 
 /// Parse and apply Datalog rules from one or more `.datalog` files.

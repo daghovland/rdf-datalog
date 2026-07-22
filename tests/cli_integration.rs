@@ -20,8 +20,8 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::Datastore;
 use dagalog::{
-    OutputFormat, apply_ontologies, apply_rml_mappings, format_results, graph_element_display,
-    load_file, run_sparql_query,
+    OutputFormat, apply_ontologies, apply_ottr_templates, apply_rml_mappings, format_results,
+    graph_element_display, load_file, run_sparql_query,
 };
 use std::path::Path;
 
@@ -494,4 +494,96 @@ fn apply_rml_mappings_nonexistent_file_returns_error() {
         &[Path::new("/nonexistent/mapping.ttl").to_path_buf()],
     );
     assert!(result.is_err(), "should fail on nonexistent mapping file");
+}
+
+// ── OTTR template expansion (CLI --ottr flag) ─────────────────────────────────
+
+#[test]
+fn apply_ottr_templates_split_across_files_is_queryable() {
+    // Template definition and instance calls live in separate files, mirroring
+    // the --ottr flag being given multiple times on the CLI. expand_documents
+    // pools all documents before expanding, so the template from one file must
+    // resolve the instances declared in the other.
+    let mut ds = Datastore::new(10_000);
+    apply_ottr_templates(
+        &mut ds,
+        &[
+            testdata("ottr_person_template.stottr"),
+            testdata("ottr_person_instances.stottr"),
+        ],
+    )
+    .expect("should expand OTTR templates across files");
+
+    let result = run_sparql_query(
+        &ds,
+        "PREFIX foaf: <http://xmlns.com/foaf/0.1/> \
+         SELECT ?name WHERE { ?p a foaf:Person ; foaf:name ?name . }",
+    )
+    .expect("query should succeed");
+
+    let names: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("name"))
+        .map(graph_element_display)
+        .collect();
+    assert_eq!(names.len(), 2, "Alice and Bob should both be expanded");
+    assert!(names.contains(&"\"Alice\"".to_string()));
+    assert!(names.contains(&"\"Bob\"".to_string()));
+}
+
+#[test]
+fn apply_ottr_templates_single_combined_file_is_queryable() {
+    let mut ds = Datastore::new(10_000);
+    apply_ottr_templates(&mut ds, &[testdata("ottr_combined.stottr")])
+        .expect("should expand OTTR templates from a single combined file");
+
+    let result = run_sparql_query(
+        &ds,
+        "PREFIX foaf: <http://xmlns.com/foaf/0.1/> \
+         SELECT ?name WHERE { ?p a foaf:Person ; foaf:name ?name . }",
+    )
+    .expect("query should succeed");
+
+    let names: Vec<_> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("name"))
+        .map(graph_element_display)
+        .collect();
+    assert_eq!(names, vec!["\"Carol\"".to_string()]);
+}
+
+#[test]
+fn apply_ottr_templates_combines_with_preloaded_data_and_ontology() {
+    // OTTR-expanded triples should participate in OWL-RL reasoning just like
+    // any other triples in the datastore, proving the pipeline order
+    // (--data -> --mapping -> --ottr -> --ontology) makes template output
+    // visible to reasoning.
+    let mut ds = Datastore::new(10_000);
+    apply_ottr_templates(
+        &mut ds,
+        &[
+            testdata("ottr_person_template.stottr"),
+            testdata("ottr_person_instances.stottr"),
+        ],
+    )
+    .expect("should expand OTTR templates");
+
+    let persons = run_sparql_query(
+        &ds,
+        "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?p WHERE { ?p a foaf:Person . }",
+    )
+    .expect("query should succeed");
+    assert_eq!(persons.rows.len(), 2);
+}
+
+#[test]
+fn apply_ottr_templates_nonexistent_file_returns_error() {
+    let mut ds = Datastore::new(1000);
+    let result = apply_ottr_templates(
+        &mut ds,
+        &[Path::new("/nonexistent/templates.stottr").to_path_buf()],
+    );
+    assert!(result.is_err(), "should fail on nonexistent OTTR file");
 }

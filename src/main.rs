@@ -16,6 +16,7 @@ Contact: hovlanddag@gmail.com
 //! Options:
 //!   -d, --data <FILE>          Turtle/TriG data file(s) to load [repeatable]
 //!   -m, --mapping <FILE>       RML mapping file(s) to apply [repeatable]
+//!       --ottr <FILE>          stOTTR template/instance file(s) to expand [repeatable]
 //!   -o, --ontology <FILE>      OWL ontology file(s) → OWL-RL reasoning [repeatable]
 //!   -r, --rules <FILE>         Datalog rules file(s) [repeatable]
 //!   -Q, --query <SPARQL|FILE>  Inline SPARQL SELECT or path to .sparql file
@@ -31,8 +32,8 @@ Contact: hovlanddag@gmail.com
 use clap::Parser;
 use dag_rdf::Datastore;
 use dagalog::{
-    OutputFormat, apply_ontologies, apply_rml_mappings, apply_rules, format_results, load_file,
-    parse_rules, run_sparql_query,
+    OutputFormat, apply_ontologies, apply_ottr_templates, apply_rml_mappings, apply_rules,
+    format_results, load_file, parse_rules, run_sparql_query,
 };
 use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, OidcConfig};
@@ -55,6 +56,11 @@ struct Cli {
     /// RML mapping file(s) to apply — maps CSV/JSON/XML sources to RDF (repeatable)
     #[arg(short = 'm', long = "mapping", value_name = "FILE")]
     mapping: Vec<PathBuf>,
+
+    /// stOTTR template/instance file(s) to expand — templates and instances may be
+    /// split across files or combined in one (repeatable)
+    #[arg(long = "ottr", value_name = "FILE")]
+    ottr: Vec<PathBuf>,
 
     /// OWL ontology file(s) — loads and applies OWL-RL reasoning (repeatable)
     #[arg(short = 'o', long = "ontology", value_name = "FILE")]
@@ -306,6 +312,26 @@ fn run(cli: Cli) -> Result<(), String> {
         }
     }
 
+    if !cli.ottr.is_empty() {
+        if cli.verbose {
+            for p in &cli.ottr {
+                eprintln!("expanding OTTR templates: {}", p.display());
+            }
+        }
+        let triples_before = datastore.named_graphs.quad_count;
+        apply_ottr_templates(&mut datastore, &cli.ottr)?;
+        if cli.verbose {
+            eprintln!(
+                "Triples after OTTR expansion: {} (+{})",
+                datastore.named_graphs.quad_count,
+                datastore
+                    .named_graphs
+                    .quad_count
+                    .saturating_sub(triples_before)
+            );
+        }
+    }
+
     if !cli.ontology.is_empty() {
         if cli.verbose {
             for p in &cli.ontology {
@@ -399,6 +425,7 @@ fn run(cli: Cli) -> Result<(), String> {
         print!("{}", format_results(&result, &format));
     } else if cli.data.is_empty()
         && cli.mapping.is_empty()
+        && cli.ottr.is_empty()
         && cli.ontology.is_empty()
         && cli.rules.is_empty()
     {
