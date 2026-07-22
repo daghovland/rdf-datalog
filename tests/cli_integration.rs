@@ -559,7 +559,10 @@ fn apply_ottr_templates_combines_with_preloaded_data_and_ontology() {
     // OTTR-expanded triples should participate in OWL-RL reasoning just like
     // any other triples in the datastore, proving the pipeline order
     // (--data -> --mapping -> --ottr -> --ontology) makes template output
-    // visible to reasoning.
+    // visible to reasoning: ottr_person_ontology.ttl declares
+    // `foaf:Person rdfs:subClassOf ex:Agent`, so every person the template
+    // expands to `a foaf:Person` should be inferred as `a ex:Agent` once
+    // apply_ontologies runs afterwards.
     let mut ds = Datastore::new(10_000);
     apply_ottr_templates(
         &mut ds,
@@ -576,6 +579,22 @@ fn apply_ottr_templates_combines_with_preloaded_data_and_ontology() {
     )
     .expect("query should succeed");
     assert_eq!(persons.rows.len(), 2);
+
+    apply_ontologies(&mut ds, &[testdata("ottr_person_ontology.ttl")])
+        .expect("should apply OWL-RL reasoning over the ontology plus expanded triples");
+
+    let agents = run_sparql_query(
+        &ds,
+        "PREFIX ex: <http://example.com/> SELECT ?p WHERE { ?p a ex:Agent . }",
+    )
+    .expect("query should succeed");
+    assert_eq!(
+        agents.rows.len(),
+        2,
+        "both OTTR-expanded persons should be inferred as ex:Agent via \
+         foaf:Person rdfs:subClassOf ex:Agent, proving expanded triples \
+         participate in reasoning"
+    );
 }
 
 #[test]
