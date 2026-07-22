@@ -369,7 +369,9 @@ fn collect_vars_from_components(components: &[QueryComponent], vars: &mut Vec<St
                     }
                 }
             }
-            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
+            QueryComponent::Optional(inner)
+            | QueryComponent::Minus(inner)
+            | QueryComponent::Group(inner) => {
                 collect_vars_from_components(inner, vars);
             }
             QueryComponent::Union(left, right) => {
@@ -681,41 +683,65 @@ fn eval_components_budgeted(
     active_graph: ActiveGraph,
     budget: Option<usize>,
 ) -> Vec<PartialSub> {
-    let ordered: Vec<&QueryComponent> = if crate::component_ordering::should_reorder(components) {
-        let already_bound: HashSet<String> = solutions
-            .first()
-            .map(|sub| sub.keys().cloned().collect())
-            .unwrap_or_default();
-        // Correctness-critical, unlike `already_bound` above: variables
-        // guaranteed bound on *every* incoming row, not just the first one.
-        // Hoisting a conjunct across an `OPTIONAL`/`MINUS` barrier (issue
-        // #174) must never be permitted based on a variable that's only
-        // *conditionally* bound (e.g. bound in one `UNION` arm but not
-        // another feeding into this call) — see
-        // `component_ordering::order_components` for why an
-        // over-approximation here is unsound, not just imprecise.
-        let guaranteed_bound: HashSet<String> = {
-            let mut rows = solutions.iter();
-            match rows.next() {
-                None => HashSet::new(),
-                Some(first) => {
-                    let mut acc: HashSet<String> = first.keys().cloned().collect();
-                    for sub in rows {
-                        acc.retain(|k| sub.contains_key(k));
+    // SPARQL 1.1 §18.2.2.8: every `FILTER` in a `GroupGraphPatternSub`
+    // applies after ALL of that same scope's other elements have been
+    // joined, regardless of the `FILTER`'s textual position among them (W3C
+    // `bind08` — a `FILTER` written before a `BIND` it depends on must still
+    // see that `BIND`'s result). Stable-partition `components` into
+    // non-filters and filters, preserving each partition's relative order;
+    // the non-filters are reordered/evaluated exactly as before, and the
+    // filters are appended at the end so they always run last, over the
+    // fully joined result of this scope. This does NOT reach into nested
+    // scopes (`OPTIONAL`/`MINUS`/`UNION`/`Group`/`GRAPH`/`SERVICE` bodies are
+    // evaluated recursively via their own call to this same function, so
+    // their own filters are deferred only to the end of *their own* scope).
+    let non_filters: Vec<QueryComponent> = components
+        .iter()
+        .filter(|c| !matches!(c, QueryComponent::Filter(_)))
+        .cloned()
+        .collect();
+    let filters: Vec<&QueryComponent> = components
+        .iter()
+        .filter(|c| matches!(c, QueryComponent::Filter(_)))
+        .collect();
+
+    let mut ordered: Vec<&QueryComponent> =
+        if crate::component_ordering::should_reorder(&non_filters) {
+            let already_bound: HashSet<String> = solutions
+                .first()
+                .map(|sub| sub.keys().cloned().collect())
+                .unwrap_or_default();
+            // Correctness-critical, unlike `already_bound` above: variables
+            // guaranteed bound on *every* incoming row, not just the first one.
+            // Hoisting a conjunct across an `OPTIONAL`/`MINUS` barrier (issue
+            // #174) must never be permitted based on a variable that's only
+            // *conditionally* bound (e.g. bound in one `UNION` arm but not
+            // another feeding into this call) — see
+            // `component_ordering::order_components` for why an
+            // over-approximation here is unsound, not just imprecise.
+            let guaranteed_bound: HashSet<String> = {
+                let mut rows = solutions.iter();
+                match rows.next() {
+                    None => HashSet::new(),
+                    Some(first) => {
+                        let mut acc: HashSet<String> = first.keys().cloned().collect();
+                        for sub in rows {
+                            acc.retain(|k| sub.contains_key(k));
+                        }
+                        acc
                     }
-                    acc
                 }
-            }
+            };
+            crate::component_ordering::order_components(
+                &non_filters,
+                &already_bound,
+                &guaranteed_bound,
+                datastore,
+            )
+        } else {
+            non_filters.iter().collect()
         };
-        crate::component_ordering::order_components(
-            components,
-            &already_bound,
-            &guaranteed_bound,
-            datastore,
-        )
-    } else {
-        components.iter().collect()
-    };
+    ordered.extend(filters);
 
     let mut current = solutions;
     let last = ordered.len().saturating_sub(1);
@@ -727,6 +753,39 @@ fn eval_components_budgeted(
         }
     }
     current
+}
+
+/// Evaluate `inner` as its own independent scope (SPARQL 1.1 §18.2.2.8) —
+/// starting from a single empty solution, never seeded with `outer_solutions`
+/// — and then natural-join the result back against `outer_solutions` (a
+/// compatibility-checked merge per outer row, mirroring the `Subquery` arm's
+/// nested-loop join above).
+///
+/// This is the correct semantics for both `UNION` arms and a bare nested
+/// `{ ... }` group: a `BIND`/`FILTER` positioned *inside* `inner` must not be
+/// able to see a variable that is only bound *outside* it (W3C `bind07`/
+/// `bind10`), which a "thread the outer solutions straight into `inner`'s
+/// evaluation" approach would incorrectly allow. Since SPARQL join is
+/// commutative/associative, this produces byte-identical results to the old
+/// threaded approach whenever `inner` contains no such cross-scope
+/// visibility trap — the difference is only observable (and only matters)
+/// exactly in those trap cases. See issue #198.
+fn eval_independent_then_join(
+    inner: &[QueryComponent],
+    outer_solutions: Vec<PartialSub>,
+    datastore: &Datastore,
+    active_graph: &ActiveGraph,
+) -> Vec<PartialSub> {
+    let inner_sols = eval_components(inner, vec![HashMap::new()], datastore, active_graph.clone());
+    outer_solutions
+        .into_iter()
+        .flat_map(|outer_sub| {
+            inner_sols
+                .iter()
+                .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn eval_component(
@@ -778,11 +837,21 @@ fn eval_component(
 
         QueryComponent::Union(left, right) => {
             let left_sols =
-                eval_components(left, solutions.clone(), datastore, (*active_graph).clone());
-            let right_sols = eval_components(right, solutions, datastore, (*active_graph).clone());
+                eval_independent_then_join(left, solutions.clone(), datastore, active_graph);
+            let right_sols = eval_independent_then_join(right, solutions, datastore, active_graph);
             let mut result = left_sols;
             result.extend(right_sols);
             result
+        }
+
+        // A bare nested `{ ... }` group: its own scope (SPARQL 1.1
+        // §18.2.2.8), evaluated independently of the outer solutions and
+        // then joined back in, exactly like a `UNION` arm — see
+        // `eval_independent_then_join`. Unlike `OPTIONAL`, a non-matching
+        // inner solution drops the outer row entirely (this is a mandatory
+        // join, not a left join). See issue #198.
+        QueryComponent::Group(inner) => {
+            eval_independent_then_join(inner, solutions, datastore, active_graph)
         }
 
         QueryComponent::Minus(inner) => {
@@ -3313,7 +3382,9 @@ fn collect_bgps_from_components(components: &[QueryComponent]) -> Vec<TriplePatt
     for comp in components {
         match comp {
             QueryComponent::BGP(tps) => out.extend(tps.clone()),
-            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
+            QueryComponent::Optional(inner)
+            | QueryComponent::Minus(inner)
+            | QueryComponent::Group(inner) => {
                 out.extend(collect_bgps_from_components(inner));
             }
             QueryComponent::Union(left, right) => {

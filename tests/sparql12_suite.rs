@@ -4147,3 +4147,190 @@ SELECT ?s (STRDT(?o,xsd:string) AS ?r) WHERE { :s1 <http://example.org/p> ?o }
         "STRDT on an already language-tagged literal must leave ?r unbound"
     );
 }
+
+// ── SPARQL 1.1 §18.2.2.8 group-graph-pattern scoping (issue #198, remaining
+// scope: bind07/bind08/bind10) ──────────────────────────────────────────────
+//
+// A bare nested `{ ... }` group graph pattern establishes its own evaluation
+// scope: it is evaluated independently of whatever is already bound outside
+// it, and only *afterwards* joined (compatibility-merged) back with the
+// outer solutions. Likewise every `FILTER` in a single (non-nested)
+// `GroupGraphPatternSub` applies after ALL of that same scope's other
+// elements have been joined, regardless of the FILTER's textual position
+// relative to them. `UNION` arms are exactly the same kind of independent
+// scope. Unit-level equivalents of the corresponding W3C
+// `tests/testdata/w3c_sparql11/bind/bind07.rq` / `bind08.rq` / `bind10.rq`
+// fixtures (exercised end-to-end by
+// `tests/w3c_sparql11_suite.rs::w3c_sparql11_bind`).
+
+/// W3C `bind07`: each `UNION` arm is `{ BIND(?o+expr AS ?z) }` — a bare group
+/// containing only a `BIND` that references the OUTER `?o`. Since a `UNION`
+/// arm is its own scope, evaluated independently of the outer bindings and
+/// only joined afterwards, `?o` is not yet bound when the arm's own `BIND`
+/// expression is evaluated; the expression errors, and per SPARQL 1.1 §18.3
+/// Extend the row survives with `?z` left unbound. `?z` must therefore be
+/// unbound in every one of the 8 result rows (4 subjects × 2 union arms).
+#[test]
+fn spec_union_arm_bind_cannot_see_outer_binding() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+:s3 :p 3 .
+:s4 :p 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?p ?o ?z
+{
+  ?s ?p ?o .
+  { BIND(?o+1 AS ?z) } UNION { BIND(?o+2 AS ?z) }
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        8,
+        "4 subjects x 2 union arms = 8 rows, got {}",
+        result.rows.len()
+    );
+    assert!(
+        result.rows.iter().all(|r| !r.contains_key("z")),
+        "W3C bind07: ?z must stay unbound in every row — the UNION arm's own \
+         BIND cannot see the outer ?o binding, so its expression always errors"
+    );
+}
+
+/// W3C `bind08`: `FILTER(?z = 3)` is written BEFORE `BIND(?o+1 AS ?z)` in the
+/// same (non-nested) group. Per SPARQL 1.1 §18.2.2.8, every `FILTER` in a
+/// `GroupGraphPatternSub` applies after all of that group's other elements
+/// have been joined, regardless of textual position — so the `FILTER` must
+/// still see `?z` as bound by the `BIND` that textually follows it. Only the
+/// `?o=2` row (giving `?z=3`) should survive.
+#[test]
+fn spec_filter_sees_bind_that_textually_follows_it() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+:s3 :p 3 .
+:s4 :p 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?p ?o ?z
+{
+  ?s ?p ?o .
+  FILTER(?z = 3 )
+  BIND(?o+1 AS ?z)
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "W3C bind08: FILTER(?z=3) must be evaluated after the BIND that \
+         textually follows it in the same group, so only ?o=2 (?z=3) survives; \
+         got {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| (
+                r.get("o").map(graph_element_display),
+                r.get("z").map(graph_element_display)
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        result.rows[0].get("z").map(graph_element_display),
+        Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string())
+    );
+}
+
+/// W3C `bind10`: `BIND(4 AS ?z)` precedes a bare nested `{ ... }` group whose
+/// own `FILTER(?v = ?z)` references `?z`. Since the nested group is its own
+/// scope, evaluated independently of what precedes it and only joined
+/// afterwards, `?z` is NOT in scope for the inner `FILTER` — the filter must
+/// always fail, so the query has no results at all.
+#[test]
+fn spec_nested_group_filter_cannot_see_preceding_outer_bind() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+:s3 :p 3 .
+:s4 :p 4 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?v ?z
+{
+  BIND(4 AS ?z)
+  {
+    ?s :p ?v . FILTER(?v = ?z)
+  }
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        0,
+        "W3C bind10: ?z from the outer BIND must not be in scope for the \
+         nested group's own FILTER, so no row can ever match; got {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| (
+                r.get("s").map(graph_element_display),
+                r.get("v").map(graph_element_display),
+                r.get("z").map(graph_element_display)
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Sanity companion to `bind10`: a bare nested group's OWN bindings must
+/// still be visible to the OUTER scope once the group is joined back in —
+/// only bindings that only exist *outside* the group must stay invisible to
+/// expressions evaluated strictly inside it. This guards against an
+/// over-broad fix that isolates the group's results entirely instead of
+/// just its *input* visibility.
+#[test]
+fn spec_nested_group_own_bindings_still_visible_outside() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX : <http://example.org/>
+:s1 :p 1 .
+:s2 :p 2 .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+SELECT ?s ?v
+{
+  { ?s :p ?v }
+  FILTER(?v = 2)
+}
+"#;
+    let result = run_sparql_query(&ds, sparql).expect("query should parse and execute");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "the nested group's own ?v binding must be visible to the outer \
+         FILTER, got {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| (
+                r.get("s").map(graph_element_display),
+                r.get("v").map(graph_element_display)
+            ))
+            .collect::<Vec<_>>()
+    );
+}

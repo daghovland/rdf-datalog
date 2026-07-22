@@ -97,6 +97,16 @@ pub enum QueryComponent {
     Minus(Vec<QueryComponent>),
     Graph(Term, Vec<QueryComponent>),
     Service(Term, Vec<QueryComponent>, bool), // bool is silent
+    /// A bare nested `{ ... }` group graph pattern (SPARQL 1.1 §18.2.2.8's
+    /// `GroupGraphPattern`, not otherwise tagged as `OPTIONAL`/`MINUS`/`GRAPH`/
+    /// `SERVICE`/a `UNION` operand/a subquery). It establishes its own
+    /// evaluation scope: it is evaluated independently of whatever is already
+    /// bound outside it (an expression inside — a `FILTER`/`BIND` — must not
+    /// see a variable that is only bound *outside* the group), and its
+    /// resulting solutions are then joined (compatibility-merged) back with
+    /// the outer solutions, exactly like `UNION`'s arms. See
+    /// [#198](https://github.com/daghovland/rdf-datalog/issues/198).
+    Group(Vec<QueryComponent>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

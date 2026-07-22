@@ -589,8 +589,13 @@ fn parse_group_graph_pattern_contents<'a>(
                     components.push(QueryComponent::Union(left, right));
                     remaining = r;
                 } else {
-                    // Inline sub-group: flatten into current components
-                    components.extend(left);
+                    // A bare nested `{ ... }` group graph pattern establishes
+                    // its own scope (SPARQL 1.1 §18.2.2.8): it must NOT be
+                    // flattened into the parent's component list, or a
+                    // variable bound only inside it would incorrectly appear
+                    // "in scope" for an expression outside it (and vice
+                    // versa). See issue #198.
+                    components.push(QueryComponent::Group(left));
                     remaining = r;
                 }
                 continue;
