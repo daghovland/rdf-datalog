@@ -21,6 +21,8 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::Datastore;
 use dagalog::{graph_element_display, load_file, run_sparql_query};
+use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, execute, parse_query};
+use std::collections::HashMap;
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -42,6 +44,14 @@ fn parse_inline_ttl(ttl: &str) -> Datastore {
     ds
 }
 
+/// Like [`parse_inline_ttl`], but for TriG input with `<graph-iri> { ... }`
+/// named-graph blocks (plain Turtle has no such syntax).
+fn parse_inline_trig(trig: &str) -> Datastore {
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_trig(&mut ds, trig.as_bytes()).expect("inline TriG must parse");
+    ds
+}
+
 fn query_rows(ds: &Datastore, sparql: &str) -> usize {
     run_sparql_query(ds, sparql)
         .expect("query should execute")
@@ -54,6 +64,22 @@ fn query_vars(ds: &Datastore, sparql: &str) -> Vec<String> {
         .expect("query should execute")
         .variables
         .clone()
+}
+
+/// Execute an ASK query and return its boolean result. `run_sparql_query`
+/// only supports SELECT (it rejects ASK/CONSTRUCT/DESCRIBE), so ASK tests go
+/// through `sparql_parser::execute` directly — same route the W3C suite
+/// harness's `compare_ask_with_srx` uses (see issue #203, pp08 triage).
+fn query_ask(ds: &Datastore, sparql: &str) -> bool {
+    let mut ctx = ParserContext {
+        prefixes: HashMap::new(),
+        base: None,
+    };
+    let (_, query) = parse_query(sparql, &mut ctx).expect("query should parse");
+    match execute(&query, ds, NetworkPolicy::Deny).expect("query should execute") {
+        QueryResult::Ask(b) => b,
+        _ => panic!("expected an ASK result"),
+    }
 }
 
 fn query_values(ds: &Datastore, sparql: &str, variable: &str) -> Vec<String> {
@@ -533,6 +559,209 @@ SELECT ?z WHERE {
         2,
         "§9.1 issue #203: :p{{2}} over a diamond graph should yield one solution \
          per distinct 2-hop walk (2), not one deduplicated pair"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp13` ("Zero Length Paths with
+/// Literals"): `?X :p{0} ?Y` with both endpoints unbound must enumerate
+/// `X = Y` for *every* node in the graph, including literals in object
+/// position — not just the subjects/objects of an explicit BGP.
+///
+/// Graph: `:s :p "o"`. Nodes: `:s`, `"o"`.
+/// Expected: 2 rows — (s,s) and ("o","o").
+#[test]
+fn spec_s9_zero_length_path_both_unbound_enumerates_all_nodes() {
+    let ds = parse_inline_ttl(
+        r#"
+        @prefix : <http://ex.org/> .
+        :s :p "o".
+        "#,
+    );
+    let sparql = r#"
+PREFIX : <http://ex.org/>
+SELECT * WHERE { ?X :p{0} ?Y }
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        2,
+        "issue #203 (W3C pp13): {{0}} with both endpoints unbound should bind \
+         X=Y for every node in the graph (:s and the literal \"o\")"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp15` ("Zero Length Paths on an empty
+/// graph"): zero-length paths with one bound endpoint must bind the other
+/// endpoint to the same term even when the graph is completely empty — this
+/// case never queries `nodes(G)` at all, since one side is already known.
+///
+/// Expected: 1 row, X="o", Y=:o, Z=:s.
+#[test]
+fn spec_s9_zero_length_path_bound_endpoint_empty_graph() {
+    let ds = parse_inline_ttl("");
+    let sparql = r#"
+PREFIX : <http://www.example.org/>
+SELECT * WHERE {
+    ?X :p{0} "o" .
+    ?Y :p{0} :o .
+    :s :p{0} ?Z .
+}
+"#;
+    assert_eq!(
+        query_rows(&ds, sparql),
+        1,
+        "issue #203 (W3C pp15): a bound zero-length-path endpoint must bind \
+         the other side to the same term, even on an empty graph"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp04` ("Variable length path with
+/// loop"): `{1,}` sequence over a self-looping/branching structure — a
+/// sanity check that unbounded-lower-bound repeat (`p{1,}` = `p` followed by
+/// `p*`) still resolves correctly when composed via `/` with another such
+/// path.
+///
+/// Graph: a→b (ex:p1), b→a (ex:p2) [so ex:p1/ex:p2 loops back to a], and
+/// a→c (ex:p3), c→a (ex:p4) [so ex:p3/ex:p4 also loops back to a].
+/// `(ex:p1/ex:p2){1,}/(ex:p3/ex:p4){1,}` from :a must still terminate and
+/// reach :a (each `{1,}` sub-path is a self-loop back to :a).
+#[test]
+fn spec_s9_variable_length_path_with_loop() {
+    let ds = parse_inline_ttl(
+        r#"
+        @prefix ex: <http://www.example.org/schema#> .
+        @prefix in: <http://www.example.org/instance#> .
+        in:a ex:p1 in:b .
+        in:b ex:p2 in:a .
+        in:a ex:p3 in:c .
+        in:c ex:p4 in:a .
+        "#,
+    );
+    let sparql = r#"
+prefix ex: <http://www.example.org/schema#>
+prefix in: <http://www.example.org/instance#>
+select * where {
+in:a (ex:p1/ex:p2){1,}/(ex:p3/ex:p4){1,} ?x
+}
+"#;
+    let xs = query_values(&ds, sparql, "x");
+    assert_eq!(
+        xs,
+        vec!["<http://www.example.org/instance#a>".to_string()],
+        "issue #203 (W3C pp04): looping {{1,}} composition must terminate \
+         and land back on :a"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp07`/`pp34`/`pp35`: a property path
+/// evaluated inside `GRAPH <iri> { ... }` must be scoped to that named
+/// graph's quads only, not the whole dataset.
+///
+/// `<g1>` has `:a :p1/:p2 :c`; `<g2>` has an unrelated triple with the same
+/// predicates but a different final object, so a leaking (unscoped)
+/// evaluation would also see `<g2>`'s object.
+#[test]
+fn spec_s9_property_path_scoped_to_named_graph() {
+    let ds = parse_inline_trig(
+        r#"
+        @prefix : <http://www.example.org/> .
+        @prefix ex: <http://www.example.org/schema#> .
+        @prefix in: <http://www.example.org/instance#> .
+        <http://example.org/g1> {
+            in:a ex:p1 in:b .
+            in:b ex:p2 in:c .
+        }
+        <http://example.org/g2> {
+            in:a ex:p1 in:x .
+            in:x ex:p2 in:y .
+        }
+        "#,
+    );
+    let sparql = r#"
+prefix ex: <http://www.example.org/schema#>
+prefix in: <http://www.example.org/instance#>
+select ?x where {
+graph <http://example.org/g1> { in:a ex:p1/ex:p2 ?x }
+}
+"#;
+    assert_eq!(
+        query_values(&ds, sparql, "x"),
+        vec!["<http://www.example.org/instance#c>".to_string()],
+        "issue #203 (W3C pp07): a property path inside GRAPH <iri> {{ }} must \
+         only see that named graph's quads"
+    );
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp35`: a property path evaluated
+/// inside `GRAPH ?g { ... }` with an *unbound* graph variable must both (a)
+/// range over every named graph and (b) actually bind `?g` per graph, so
+/// that a subsequent `FILTER (?g = <iri>)` can select just one of them.
+///
+/// Before the fix, the zero-hop/reachability enumeration for `?s :p1* ?t`
+/// with both endpoints unbound collapsed the active-graph lookup to `None`
+/// (unconstrained across all graphs) without ever binding `?g`, so the
+/// `FILTER` always dropped every row.
+#[test]
+fn spec_s9_property_path_graph_variable_binds_and_filters() {
+    let ds = parse_inline_trig(
+        r#"
+        @prefix : <http://www.example.org/> .
+        <http://example.org/ng-01> { :a :p1 :b . }
+        <http://example.org/ng-02> { :a :p1 :c . }
+        "#,
+    );
+    let sparql = r#"
+prefix : <http://www.example.org/>
+select ?t where {
+  graph ?g {
+    ?s :p1* ?t }
+  FILTER (?g = <http://example.org/ng-01>)
+}
+"#;
+    let mut ts = query_values(&ds, sparql, "t");
+    ts.sort();
+    assert_eq!(
+        ts,
+        vec![
+            "<http://www.example.org/a>".to_string(),
+            "<http://www.example.org/b>".to_string(),
+            "<http://www.example.org/b>".to_string(),
+        ],
+        "issue #203 (W3C pp35): GRAPH ?g with an unbound graph variable must \
+         bind ?g per named graph so FILTER(?g = ...) can select one of them \
+         — expect the zero-hop pair (a,a), the one-hop pair (a,b), and the \
+         zero-hop pair (b,b) for node b (itself only reachable as an object)"
+    );
+    assert_eq!(ts.len(), 3);
+}
+
+/// SPARQL 1.2 §9.1 / issue #203, W3C `pp08` ("Reverse path") as an ASK
+/// query. Triage note: the W3C-suite skip comment claimed
+/// `run_sparql_query` "doesn't support ASK at all" — true for that specific
+/// helper (it only accepts SELECT), but the actual query engine
+/// (`sparql_parser::execute`) has always supported `Query::Ask` /
+/// `QueryResult::Ask`; the W3C harness's `compare_ask_with_srx` already
+/// calls `execute` directly and passed pp08 with no engine change needed.
+/// This regression test exercises the same `^path` + ASK combination
+/// through that same direct-execute route.
+#[test]
+fn spec_s9_reverse_path_ask() {
+    let ds = parse_inline_ttl(
+        r#"
+        @prefix ex: <http://www.example.org/schema#> .
+        @prefix in: <http://www.example.org/instance#> .
+        in:a ex:p in:b .
+        "#,
+    );
+    let sparql = r#"
+prefix ex: <http://www.example.org/schema#>
+prefix in: <http://www.example.org/instance#>
+ask {
+in:b ^ex:p in:a
+}
+"#;
+    assert!(
+        query_ask(&ds, sparql),
+        "issue #203 (W3C pp08): ASK {{ in:b ^ex:p in:a }} should be true given in:a ex:p in:b"
     );
 }
 
