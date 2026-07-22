@@ -322,6 +322,13 @@ impl TestServer {
         format!("{}/rml/map", self.base_url)
     }
 
+    /// `POST /{name}/ottr` — expand stOTTR templates/instances
+    /// (multipart/form-data, one or more document parts) into a dataset.
+    pub fn dataset_ottr_url(&self, dataset: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/ottr", self.base_url)
+    }
+
     /// `GET/PUT/POST/DELETE/HEAD /{name}/data` — Fuseki GSP read-write endpoint.
     pub fn dataset_data_url(&self, dataset: &str) -> String {
         let name = dataset.trim_start_matches('/');

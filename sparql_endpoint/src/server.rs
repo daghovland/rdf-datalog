@@ -132,6 +132,11 @@ pub fn build_router(state: AppState) -> Router {
             "/rml/map",
             post(crate::rml_endpoint::rml_map_post).layer(rml_body_limit),
         )
+        // ── Per-dataset OTTR expansion (`/{name}/ottr`) ──────────────────────
+        .route(
+            "/{name}/ottr",
+            post(crate::ottr_endpoint::dataset_ottr_post),
+        )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",
