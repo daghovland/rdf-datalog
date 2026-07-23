@@ -618,12 +618,11 @@ fn has_datatype(data: &Datastore, id: GraphElementId, dt_iri: &str) -> bool {
 }
 
 fn literal_datatype_iri(lit: &RdfLiteral) -> &str {
-    use ingress::{XSD_BOOLEAN, XSD_INTEGER};
+    use ingress::{RDF_LANG_STRING, XSD_BOOLEAN, XSD_INTEGER};
     match lit {
         RdfLiteral::TypedLiteral { type_iri, .. } => &type_iri.0,
-        RdfLiteral::LiteralString(_) | RdfLiteral::LangLiteral { .. } => {
-            "http://www.w3.org/2001/XMLSchema#string"
-        }
+        RdfLiteral::LiteralString(_) => "http://www.w3.org/2001/XMLSchema#string",
+        RdfLiteral::LangLiteral { .. } => RDF_LANG_STRING,
         RdfLiteral::BooleanLiteral(_) => XSD_BOOLEAN,
         RdfLiteral::IntegerLiteral(_) => XSD_INTEGER,
         RdfLiteral::DecimalLiteral(_) => "http://www.w3.org/2001/XMLSchema#decimal",

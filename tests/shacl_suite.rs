@@ -59,6 +59,9 @@ fn shacl_testdata_parses() {
         "shacl_s4_class_shapes.ttl",
         "shacl_s4_datatype_data.ttl",
         "shacl_s4_datatype_shapes.ttl",
+        "shacl_s4_datatype_langstring_data.ttl",
+        "shacl_s4_datatype_xsdstring_shapes.ttl",
+        "shacl_s4_datatype_langstring_shapes.ttl",
         "shacl_s4_nodekind_data.ttl",
         "shacl_s4_nodekind_shapes.ttl",
         "shacl_s4_mincount_data.ttl",
@@ -281,6 +284,46 @@ fn spec_s4_1_2_datatype() {
         report.results.len(),
         2,
         "ex:Bob and ex:Carol each produce 1 violation"
+    );
+}
+
+/// Regression test for issue #259 — `sh:datatype xsd:string` must not conflate
+/// `rdf:langString` (language-tagged literals) with `xsd:string` (plain literals).
+///
+/// `ex:Dave ex:name "hello"@en` is language-tagged, so its datatype is
+/// `rdf:langString`, not `xsd:string` → violates.
+/// `ex:Erin ex:name "hello"` is a plain literal, so its datatype is
+/// `xsd:string` → conforms.
+#[test]
+fn regression_259_datatype_xsd_string_excludes_lang_tagged() {
+    let data = load("shacl_s4_datatype_langstring_data.ttl");
+    let shapes = load("shacl_s4_datatype_xsdstring_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Dave (lang-tagged) should violate sh:datatype xsd:string"
+    );
+}
+
+/// Regression test for issue #259 — `sh:datatype rdf:langString` must not
+/// accept a plain (non-language-tagged) literal.
+///
+/// `ex:Dave ex:name "hello"@en` is language-tagged → datatype is
+/// `rdf:langString` → conforms.
+/// `ex:Erin ex:name "hello"` is a plain literal, so its datatype is
+/// `xsd:string`, not `rdf:langString` → violates.
+#[test]
+fn regression_259_datatype_langstring_excludes_plain_string() {
+    let data = load("shacl_s4_datatype_langstring_data.ttl");
+    let shapes = load("shacl_s4_datatype_langstring_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Erin (plain string) should violate sh:datatype rdf:langString"
     );
 }
 

@@ -1,0 +1,8 @@
+# Regression data for issue #259 — sh:datatype must distinguish
+# rdf:langString from xsd:string.
+# ex:Dave  ex:name "hello"@en  → language-tagged literal → datatype is rdf:langString.
+# ex:Erin  ex:name "hello"     → plain literal → datatype is xsd:string.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Dave ex:name "hello"@en .
+ex:Erin ex:name "hello" .
