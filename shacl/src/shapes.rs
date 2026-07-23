@@ -141,8 +141,13 @@ pub struct ParsedShape {
     pub or_inners: Vec<InnerShapeRef>,
     /// `sh:xone (s1 s2 …)`.
     pub xone_inners: Vec<InnerShapeRef>,
-    /// `sh:class C` at the node (not property) level.
-    pub node_class: Option<String>,
+    /// Value constraints declared directly on the shape node itself (no `sh:path`),
+    /// e.g. `ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:datatype xsd:integer .`
+    /// These apply to each focus node directly, rather than to path-traversed
+    /// values. Only populated when the shape has no `sh:path` (see `parse_one_shape`);
+    /// `sh:nodeKind` is excluded here since it is already handled by the dedicated
+    /// `node_kind` field below. See [#260](https://github.com/daghovland/rdf-datalog/issues/260).
+    pub node_constraints: Vec<PropConstraint>,
     /// `sh:nodeKind NK` at the node level.
     pub node_kind: Option<NodeKindValue>,
 }
@@ -184,6 +189,7 @@ fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> 
 
     // A sh:PropertyShape may have sh:path + constraints directly on the shape node
     // (rather than inside a sh:property block). Detect and handle this case.
+    let has_direct_path = graph::get_object(shapes, shape_id, SH_PATH).is_some();
     if let Some(path_id) = graph::get_object(shapes, shape_id, SH_PATH)
         && let Some(path_iri) = graph::iri_string(shapes, path_id)
     {
@@ -199,15 +205,28 @@ fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> 
     }
     let closed = parse_closed(shapes, shape_id, &property_shapes);
 
+    // Node-level (pathless) value constraints, e.g. `sh:datatype`/`sh:in`/`sh:class`
+    // directly on the shape node with no `sh:path`. These apply to the focus node
+    // itself. Only parsed when there is no `sh:path` on this shape node — a shape
+    // node that also declares `sh:path` is itself a property shape whose direct
+    // constraints (parsed above) apply to path-traversed values, not the focus
+    // node. `sh:nodeKind` is filtered out to avoid double-counting against the
+    // dedicated `node_kind` field/mechanism below. See #260.
+    let node_constraints: Vec<PropConstraint> = if has_direct_path {
+        Vec::new()
+    } else {
+        parse_prop_constraints(shapes, shape_id)
+            .into_iter()
+            .filter(|c| !matches!(c, PropConstraint::NodeKind(_)))
+            .collect()
+    };
+
     let not_inner =
         graph::get_object(shapes, shape_id, SH_NOT).map(|id| InnerShapeRef { shapes_id: id });
 
     let and_inners = shape_list_refs(shapes, shape_id, SH_AND);
     let or_inners = shape_list_refs(shapes, shape_id, SH_OR);
     let xone_inners = shape_list_refs(shapes, shape_id, SH_XONE);
-
-    let node_class =
-        graph::get_object(shapes, shape_id, SH_CLASS).and_then(|id| graph::iri_string(shapes, id));
 
     let node_kind = graph::get_object(shapes, shape_id, SH_NODE_KIND)
         .and_then(|id| graph::iri_string(shapes, id))
@@ -223,7 +242,7 @@ fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> 
         and_inners,
         or_inners,
         xone_inners,
-        node_class,
+        node_constraints,
         node_kind,
     }
 }
