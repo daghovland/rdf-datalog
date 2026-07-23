@@ -15,6 +15,7 @@ Always create tests that cover new functionality before creating the functionali
 ## Github backlog
 
 The backlog and progress overview is in the github project "Dagalog" https://github.com/users/daghovland/projects/11. 
+All issues must be made under the Dagalog project, and they must either be epics, or sub-issues of epics. 
 Documentation and architecture can be in local markdown, but information about what is complete, what is planned, what is in progress is 
 in issues under this project in github. 
 The top-level issues under the project are larger "epics". Most concrete work will be on a sub-issue and not on the top-level.
