@@ -6,9 +6,11 @@ use turtle::{parse_turtle, parse_turtle_with_base};
 
 use crate::RmlError;
 use crate::ast::{
-    GraphMap, JoinConditionRef, LogicalSource, LogicalSourceRef, MappingDocument, ObjectMap,
-    PredicateObjectMap, ReferenceFormulation, SubjectMap, TermMap, TermType, TriplesMap,
+    FunctionCall, FunctionParameter, GraphMap, JoinConditionRef, LogicalSource, LogicalSourceRef,
+    MappingDocument, ObjectMap, PredicateObjectMap, ReferenceFormulation, SubjectMap, TermMap,
+    TermType, TriplesMap,
 };
+use crate::functions::{FNML_FUNCTION_VALUE, FNO_EXECUTES};
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RML: &str = "http://w3id.org/rml/";
@@ -87,7 +89,50 @@ fn all_objs(ds: &Datastore, subject: GraphElementId, predicate_iri: &str) -> Vec
         .collect()
 }
 
+/// Extract an `fnml:functionValue [ ... ]` node into a `FunctionCall`: one
+/// `rml:predicateObjectMap` whose `rml:predicate` is `fno:executes` supplies
+/// the function IRI (via its `rml:objectMap`'s `rml:constant`); every other
+/// `rml:predicateObjectMap` becomes a named parameter. See
+/// `docs/plans/RML_FNML_PLAN.md`.
+fn extract_function_call(ds: &Datastore, fm_id: GraphElementId) -> FunctionCall {
+    let mut function_iri = IriReference(String::new());
+    let mut parameters = Vec::new();
+
+    for pom_id in all_objs(ds, fm_id, &rml("predicateObjectMap")) {
+        let Some(pred_iri) = all_objs(ds, pom_id, &rml("predicate"))
+            .into_iter()
+            .find_map(|id| get_iri(ds, id).map(|s| s.to_string()))
+        else {
+            continue;
+        };
+        let Some(om_id) = first_obj(ds, pom_id, &rml("objectMap")) else {
+            continue;
+        };
+
+        if pred_iri == FNO_EXECUTES {
+            if let Some(iri) = first_obj(ds, om_id, &rml("constant")).and_then(|id| get_iri(ds, id))
+            {
+                function_iri = IriReference(iri.to_string());
+            }
+        } else {
+            let value_map = extract_term_map(ds, om_id);
+            parameters.push(FunctionParameter {
+                param_iri: IriReference(pred_iri),
+                value_map,
+            });
+        }
+    }
+
+    FunctionCall {
+        function_iri,
+        parameters,
+    }
+}
+
 fn extract_term_map(ds: &Datastore, node: GraphElementId) -> TermMap {
+    if let Some(fm_id) = first_obj(ds, node, FNML_FUNCTION_VALUE) {
+        return TermMap::FunctionCall(extract_function_call(ds, fm_id));
+    }
     if let Some(s) = first_obj(ds, node, &rml("template")).and_then(|id| get_literal_string(ds, id))
     {
         return TermMap::Template(s.to_string());
@@ -256,7 +301,9 @@ fn extract_predicate_object_maps(ds: &Datastore, tm_id: GraphElementId) -> Vec<P
                     TermType::Literal
                 } else {
                     match &term_map {
-                        TermMap::Reference(_) => TermType::Literal,
+                        // GREL/FnO functions return plain strings by default,
+                        // same as rml:reference — see docs/plans/RML_FNML_PLAN.md.
+                        TermMap::Reference(_) | TermMap::FunctionCall(_) => TermType::Literal,
                         _ => TermType::Iri,
                     }
                 };

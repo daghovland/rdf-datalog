@@ -1,0 +1,60 @@
+@prefix rml: <http://w3id.org/rml/> .
+@prefix fnml: <http://semweb.mmlab.be/ns/fnml#> .
+@prefix fno: <https://w3id.org/function/ontology#> .
+@prefix grel: <https://users.ugent.be/~bjdmeest/function/grel.ttl#> .
+@prefix ex: <http://example.com/> .
+
+<http://example.com/TriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "person.csv" ;
+        rml:referenceFormulation rml:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:nameUpper ;
+        rml:objectMap [
+            fnml:functionValue [
+                rml:predicateObjectMap [
+                    rml:predicate fno:executes ;
+                    rml:objectMap [ rml:constant grel:toUpperCase ]
+                ] ;
+                rml:predicateObjectMap [
+                    rml:predicate grel:valueParam ;
+                    rml:objectMap [ rml:reference "name" ]
+                ]
+            ]
+        ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:nameLower ;
+        rml:objectMap [
+            fnml:functionValue [
+                rml:predicateObjectMap [
+                    rml:predicate fno:executes ;
+                    rml:objectMap [ rml:constant grel:toLowerCase ]
+                ] ;
+                rml:predicateObjectMap [
+                    rml:predicate grel:valueParam ;
+                    rml:objectMap [ rml:reference "name" ]
+                ]
+            ]
+        ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate ex:cityTrimmed ;
+        rml:objectMap [
+            fnml:functionValue [
+                rml:predicateObjectMap [
+                    rml:predicate fno:executes ;
+                    rml:objectMap [ rml:constant grel:string_trim ]
+                ] ;
+                rml:predicateObjectMap [
+                    rml:predicate grel:valueParam ;
+                    rml:objectMap [ rml:reference "city" ]
+                ]
+            ]
+        ]
+    ] .

@@ -78,6 +78,31 @@ pub enum TermMap {
     Template(String),
     Constant(GraphElement),
     Reference(String),
+    /// `fnml:functionValue [ ... ]` — invoke a named function against
+    /// parameter values sourced from ordinary term maps. See
+    /// [`docs/plans/RML_FNML_PLAN.md`](../../docs/plans/RML_FNML_PLAN.md) and
+    /// [#27](https://github.com/daghovland/rdf-datalog/issues/27).
+    FunctionCall(FunctionCall),
+}
+
+/// The parsed shape of an `fnml:functionValue [ ... ]` node: which function
+/// to invoke (`fno:executes`) and its parameter bindings (every other
+/// `rml:predicateObjectMap` inside the function-map node).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionCall {
+    /// The `fno:executes` object — the function IRI, e.g. `grel:toUpperCase`.
+    pub function_iri: IriReference,
+    /// One entry per non-`fno:executes` `rml:predicateObjectMap`.
+    pub parameters: Vec<FunctionParameter>,
+}
+
+/// A single named-parameter binding on a `FunctionCall`. `value_map` is
+/// restricted to `Template`/`Reference`/`Constant` in this pass — nested
+/// function composition is deferred, see the plan doc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionParameter {
+    pub param_iri: IriReference,
+    pub value_map: TermMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
