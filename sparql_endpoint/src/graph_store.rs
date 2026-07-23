@@ -158,12 +158,19 @@ pub(crate) fn negotiate_rdf_format(accept: Option<&str>) -> Option<RdfFormat> {
 }
 
 /// Recognised RDF upload content-types.
+///
+/// `application/rdf+xml` is deliberately NOT mapped to `UploadFormat::Turtle`
+/// (or any other variant) — RDF/XML parsing isn't implemented yet (tracked
+/// under epic #240), and silently feeding RDF/XML bytes to the Turtle parser
+/// produces at best a parse error, at worst near-silent data loss. Falling
+/// through to `None` here gives callers the same honest 415 rejection every
+/// other unrecognised content-type already gets, matching the explicit
+/// "not yet supported" error `sparql_update.rs`'s `LOAD` handler already
+/// returns for the same content-type. See #251.
 pub(crate) fn rdf_upload_format(ct: &str) -> Option<UploadFormat> {
     let mime = ct.split(';').next().unwrap_or("").trim();
     match mime {
-        "text/turtle" | "application/x-turtle" | "application/rdf+xml" => {
-            Some(UploadFormat::Turtle)
-        }
+        "text/turtle" | "application/x-turtle" => Some(UploadFormat::Turtle),
         "application/n-triples" => Some(UploadFormat::NTriples),
         "application/n-quads" => Some(UploadFormat::NQuads),
         "application/trig" => Some(UploadFormat::TriG),

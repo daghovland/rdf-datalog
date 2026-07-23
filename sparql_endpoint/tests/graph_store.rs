@@ -808,6 +808,33 @@ async fn gsp_post_to_graph_store_creates_new_graph_returns_201() {
     assert_eq!(resp.status(), 201);
 }
 
+/// Regression test for issue #251: `Content-Type: application/rdf+xml` must
+/// be rejected with 415, not silently parsed as Turtle. RDF/XML parsing
+/// isn't implemented yet (epic #240); until it is, this content-type must
+/// behave like any other unsupported one rather than aliasing to Turtle and
+/// risking a parse error or silent data loss on genuine RDF/XML input.
+#[tokio::test]
+async fn gsp_post_rdf_xml_content_type_is_rejected_not_parsed_as_turtle() {
+    let server = common::TestServer::start_writable("").await;
+    let resp = server
+        .client
+        .post(server.gsp_url())
+        .header("content-type", "application/rdf+xml")
+        .body(
+            r#"<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/">
+  <rdf:Description rdf:about="http://example.org/alice">
+    <ex:name>Alice</ex:name>
+  </rdf:Description>
+</rdf:RDF>"#,
+        )
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 415);
+}
+
 /// D-8: POST to Graph Store — response includes a Location header.
 ///
 /// Spec §5.5: "The new graph IRI should be specified in the Location HTTP
