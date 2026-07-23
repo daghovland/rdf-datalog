@@ -1,0 +1,15 @@
+# Regression shapes for issue #259 — sh:datatype rdf:langString must not
+# accept a plain (non-language-tagged) literal (its datatype is xsd:string, not rdf:langString).
+# ex:Dave (lang-tagged "hello"@en) → conforms.
+# ex:Erin (plain "hello")          → violates.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:LangStringShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Dave, ex:Erin ;
+    sh:property [
+        sh:path ex:name ;
+        sh:datatype rdf:langString ;
+    ] .
