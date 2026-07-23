@@ -20,7 +20,6 @@ const TURTLE: &str = r#"
 // ── Route availability ────────────────────────────────────────────────────────
 
 /// `GET /.well-known/void` → 200 with RDF content.
-#[ignore]
 #[tokio::test]
 async fn well_known_void_returns_200() {
     let server = common::TestServer::start(TURTLE).await;
@@ -36,7 +35,6 @@ async fn well_known_void_returns_200() {
 }
 
 /// `GET /void` → 200 with RDF content (alias).
-#[ignore]
 #[tokio::test]
 async fn void_alias_returns_200() {
     let server = common::TestServer::start(TURTLE).await;
@@ -54,7 +52,6 @@ async fn void_alias_returns_200() {
 // ── Content-Type ──────────────────────────────────────────────────────────────
 
 /// VoID response must have a Turtle content-type by default.
-#[ignore]
 #[tokio::test]
 async fn void_default_content_type_is_turtle() {
     let server = common::TestServer::start(TURTLE).await;
@@ -76,7 +73,6 @@ async fn void_default_content_type_is_turtle() {
 // ── Required VoID vocabulary ──────────────────────────────────────────────────
 
 /// VoID response must declare a `void:Dataset`.
-#[ignore]
 #[tokio::test]
 async fn void_declares_dataset_type() {
     let server = common::TestServer::start(TURTLE).await;
@@ -96,7 +92,6 @@ async fn void_declares_dataset_type() {
 }
 
 /// VoID response must advertise the SPARQL endpoint.
-#[ignore]
 #[tokio::test]
 async fn void_advertises_sparql_endpoint() {
     let server = common::TestServer::start(TURTLE).await;
@@ -121,7 +116,6 @@ async fn void_advertises_sparql_endpoint() {
 }
 
 /// VoID response must include a triple count (`void:triples`).
-#[ignore]
 #[tokio::test]
 async fn void_includes_triple_count() {
     let server = common::TestServer::start(TURTLE).await;
@@ -141,7 +135,6 @@ async fn void_includes_triple_count() {
 }
 
 /// Triple count in VoID must match the actual store contents.
-#[ignore]
 #[tokio::test]
 async fn void_triple_count_matches_store() {
     let server = common::TestServer::start(TURTLE).await;
@@ -163,7 +156,6 @@ async fn void_triple_count_matches_store() {
 }
 
 /// VoID for an empty store should report 0 triples.
-#[ignore]
 #[tokio::test]
 async fn void_empty_store_reports_zero_triples() {
     let server = common::TestServer::start("").await;

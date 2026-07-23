@@ -1,6 +1,5 @@
-//! Red-phase tests for DESCRIBE query form (#49) and FROM / FROM NAMED dataset
-//! clauses (#50).  All tests are `#[ignore]`'d until implementation is complete.
-//! See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md.
+//! Tests for the DESCRIBE query form (#49) and FROM / FROM NAMED dataset
+//! clauses (#50). See docs/plans/SPARQL_MISSING_FEATURES_PLAN.md.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, Quad, RdfResource};
 use sparql_parser::{ast::*, execute, parse_query, NetworkPolicy, ParserContext, QueryResult};

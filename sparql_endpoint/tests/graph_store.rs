@@ -8,10 +8,6 @@ Contact: hovlanddag@gmail.com
 
 //! Integration tests for the SPARQL 1.1 Graph Store HTTP Protocol (GSP).
 //!
-//! All tests are marked `#[ignore]` — the `/rdf-graph-store` endpoint is not
-//! yet implemented. Remove `#[ignore]` from a group as the corresponding
-//! operation is implemented. See `SERVER.md` §1 for the implementation plan.
-//!
 //! **Specification:** W3C Recommendation 21 March 2013
 //! <https://www.w3.org/TR/sparql11-http-rdf-update/>
 //!
