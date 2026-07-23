@@ -25,7 +25,7 @@ Reference the current working branch of the repository in the issue when working
 
 When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to one or more issues or epics that will fix it
 
-When creating an issue mark it as TODO. When working on it mark it as In Progress, use a worktree to create a new branch and note the agent and worktree id in the issue. 
+When creating an issue mark it as TODO and leave it unlabeled — it needs the `ready` label from the user before any agent may pick it up (see "Implementation workflow" below). When working on it mark it as In Progress, use a worktree to create a new branch and note the agent and worktree id in the issue. 
 
 The environment the agents and subagents run in is prone to token limitation and rebooots.
 Agents should therefore early in the work create a branch, push that branch to the repo and create a pull request.
@@ -38,7 +38,7 @@ When finished finalize the pull request between that branch and main before remo
 
 All code changes (bug fixes, features) follow this workflow:
 
-1. **Pick an issue** from the [Dagalog backlog](https://github.com/users/daghovland/projects/11). Mark it In Progress and post the working branch name as a comment.
+1. **Pick an issue** from the [Dagalog backlog](https://github.com/users/daghovland/projects/11) — **only an issue labeled `ready`**. This label is applied by the user (Dag) after reviewing the issue; an agent (including Claude when orchestrating other agents) must never start work on an issue that lacks it, no matter how well-scoped or obviously-correct the issue looks. If you write an issue yourself (e.g. after finding a bug or filing a follow-up), leave it unlabeled and tell the user it's awaiting review — do not add the `ready` label yourself and do not start work on it in the same session. Mark the issue In Progress and post the working branch name as a comment once you do start.
 2. **Create a worktree** for isolation:
    ```bash
    git worktree add .claude/worktrees/<branch-name> -b <branch-name>
@@ -51,7 +51,7 @@ All code changes (bug fixes, features) follow this workflow:
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
-6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. Do not merge — the user reviews.
+6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you."
 7. **Remove the worktree** once the PR merges (keep it around until then — conflict-resolution or review-feedback commits may still need to land on the branch):
    ```bash
    git worktree remove .claude/worktrees/<branch-name>
