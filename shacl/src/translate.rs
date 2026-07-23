@@ -300,27 +300,21 @@ fn prop_constraint_rules(
     match constraint {
         // §4.2.1 sh:minCount
         PropConstraint::MinCount(0) => vec![],
-        PropConstraint::MinCount(1) => {
+        PropConstraint::MinCount(n) => {
+            // n >= 1: has_val(node, true) :- target(node), N pairwise-distinct
+            // values of `path` co-occur on `node`. For n = 1 this degenerates to
+            // exactly the original single-value existence check (no inequality
+            // atoms at all). Violation fires when the target node does NOT have
+            // N distinct values, i.e. fewer than N values are present.
             let has_val = graph::intern_iri(work, &int_has_val(si, pi));
-            // has_val(n, true) :- target(n, true), [n, path, ?v]
+            let ok_body = n_distinct_values_body(*n, "n", target_pred, true_id, path_id);
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
                     Term::Resource(has_val),
                     Term::Resource(true_id),
                 )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v".into()),
-                    ),
-                ],
+                body: ok_body,
             });
             let viol = graph::intern_iri(work, &viol_min_count(si, pi));
             // violation: target(n), NOT has_val(n)
@@ -344,10 +338,6 @@ fn prop_constraint_rules(
                 ],
             });
             vec![viol]
-        }
-        PropConstraint::MinCount(n) => {
-            log::warn!("sh:minCount {n} > 1 not yet implemented (Phase 2)");
-            vec![]
         }
 
         // §4.2.2 sh:maxCount
@@ -374,38 +364,19 @@ fn prop_constraint_rules(
             });
             vec![viol]
         }
-        PropConstraint::MaxCount(_n) => {
-            // maxCount N ≥ 1: violation if two DISTINCT values exist.
-            // This correctly handles maxCount 1 exactly; for N > 1 it is conservative
-            // (fires even if only 2 values exist, not N+1) — noted in SHACL_PLAN.md.
+        PropConstraint::MaxCount(n) => {
+            // maxCount N ≥ 1: violation iff N+1 pairwise-distinct values co-occur
+            // on the target node's `path`. For N = 1 this degenerates to exactly
+            // the original two-distinct-values check.
             let viol = graph::intern_iri(work, &viol_max_count(si, pi));
+            let body = n_distinct_values_body(*n + 1, "n", target_pred, true_id, path_id);
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
                     Term::Resource(viol),
                     Term::Resource(true_id),
                 )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v1".into()),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v2".into()),
-                    ),
-                    RuleAtom::NotEqualsAtom(
-                        Term::Variable("v1".into()),
-                        Term::Variable("v2".into()),
-                    ),
-                ],
+                body,
             });
             vec![viol]
         }
@@ -641,6 +612,53 @@ fn pos(s: Term, p: Term, o: Term) -> RuleAtom {
 
 fn neg(s: Term, p: Term, o: Term) -> RuleAtom {
     RuleAtom::NotPattern(dgp(s, p, o))
+}
+
+/// Build the body atoms asserting that `count` pairwise-distinct values of
+/// `path_id` co-occur on `node_var`, which must be a `target_pred` instance:
+///
+/// `target(node_var, true) ∧ path(node_var, v1) ∧ … ∧ path(node_var, v_count)
+///   ∧ (vi ≠ vj for all 1 ≤ i < j ≤ count)`
+///
+/// `count = 0` yields just the target check (no path/inequality atoms);
+/// `count = 1` yields the target check plus a single existence atom (no
+/// inequalities, since there is nothing to compare).
+///
+/// This is the shared N-ary co-occurrence pattern behind both `sh:maxCount N`
+/// (violation fires when `count = N+1` distinct values are found) and
+/// `sh:minCount N` (an "ok" predicate fires when `count = N` distinct values
+/// are found; the constraint is violated when that predicate does NOT hold).
+/// See the "Cardinality for N > 1" section of `docs/plans/SHACL_PLAN.md`.
+fn n_distinct_values_body(
+    count: u64,
+    node_var: &str,
+    target_pred: GraphElementId,
+    true_id: GraphElementId,
+    path_id: GraphElementId,
+) -> Vec<RuleAtom> {
+    let vars: Vec<String> = (1..=count).map(|i| format!("{node_var}_v{i}")).collect();
+
+    let mut body = vec![pos(
+        Term::Variable(node_var.into()),
+        Term::Resource(target_pred),
+        Term::Resource(true_id),
+    )];
+    for v in &vars {
+        body.push(pos(
+            Term::Variable(node_var.into()),
+            Term::Resource(path_id),
+            Term::Variable(v.clone()),
+        ));
+    }
+    for i in 0..vars.len() {
+        for j in (i + 1)..vars.len() {
+            body.push(RuleAtom::NotEqualsAtom(
+                Term::Variable(vars[i].clone()),
+                Term::Variable(vars[j].clone()),
+            ));
+        }
+    }
+    body
 }
 
 fn fact(s: GraphElementId, p: GraphElementId, o: GraphElementId) -> Rule {
