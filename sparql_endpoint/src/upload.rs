@@ -6,7 +6,8 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! Handler for POST /upload — accepts Turtle RDF and merges into the default graph.
+//! Handler for POST /upload — accepts Turtle RDF and merges into the default
+//! graph, or into a named graph when `?graph=<iri>` is given.
 //!
 //! This is a convenience endpoint for interactive use via the browser UI.
 //! It will be superseded by the SPARQL Graph Store HTTP Protocol (see SERVER.md).
@@ -16,15 +17,34 @@ use crate::{
     persistence::{LogEntry, to_repr},
 };
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use dag_rdf::{Datastore, ingress::DEFAULT_GRAPH_ELEMENT_ID};
-use std::io::Cursor;
+use dag_rdf::{Datastore, GraphElement, GraphElementId, IriReference, RdfResource};
+use dag_rdf::{ingress::DEFAULT_GRAPH_ELEMENT_ID, ingress::Quad};
+use std::{collections::HashMap, io::Cursor};
+
+/// Validate that `iri` is an absolute IRI (has a syntactically valid scheme).
+///
+/// Mirrors `graph_store::is_absolute_iri` — kept local since that helper is
+/// private to `graph_store` and this endpoint predates the GSP module.
+fn is_absolute_iri(iri: &str) -> bool {
+    iri.find(':').is_some_and(|colon| {
+        colon > 0
+            && iri[..colon].chars().enumerate().all(|(i, c)| {
+                if i == 0 {
+                    c.is_ascii_alphabetic()
+                } else {
+                    c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.'
+                }
+            })
+    })
+}
 
 pub async fn upload_turtle(
     State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
@@ -45,6 +65,18 @@ pub async fn upload_turtle(
             .into_response();
     }
 
+    // Optional named-graph target (issue #44). An absent or empty value
+    // falls back to the default graph, preserving prior behavior.
+    let graph_iri: Option<String> = match params.get("graph") {
+        Some(iri) if !iri.is_empty() => {
+            if !is_absolute_iri(iri) {
+                return (StatusCode::BAD_REQUEST, "graph IRI must be absolute").into_response();
+            }
+            Some(iri.clone())
+        }
+        _ => None,
+    };
+
     // Parse into a temporary store so we can enumerate the inserted quads for
     // the persistence changelog before applying them to the real store.
     // Use body length / 50 as a rough triple-count estimate (~50 bytes/triple in Turtle).
@@ -56,12 +88,24 @@ pub async fn upload_turtle(
 
     let mut store = state.store.write().await;
 
+    // Resolve (and, if necessary, intern) the target graph id. Named graphs
+    // are created on first upload — this is a convenience endpoint, so we
+    // don't require the graph to pre-exist (unlike the GSP PUT/POST 404
+    // behavior for indirect graph identification).
+    let target_graph_id: GraphElementId = match &graph_iri {
+        None => DEFAULT_GRAPH_ELEMENT_ID,
+        Some(iri) => {
+            let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
+            store.add_resource(elem)
+        }
+    };
+
     if let Some(ref changelog) = state.changelog {
         let entries: Vec<_> = tmp
             .named_graphs
             .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
             .map(|q| LogEntry::InsertQuad {
-                graph: None,
+                graph: graph_iri.clone(),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),
                 o: to_repr(tmp.resources.get_graph_element(q.obj)),
@@ -77,7 +121,7 @@ pub async fn upload_turtle(
         }
     }
 
-    // Copy parsed triples from tmp into the real store's default graph.
+    // Copy parsed triples from tmp into the real store's target graph.
     let quads: Vec<_> = tmp
         .named_graphs
         .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
@@ -86,8 +130,8 @@ pub async fn upload_turtle(
         let s = store.add_resource(tmp.resources.get_graph_element(q.subject).clone());
         let p = store.add_resource(tmp.resources.get_graph_element(q.predicate).clone());
         let o = store.add_resource(tmp.resources.get_graph_element(q.obj).clone());
-        store.named_graphs.add_quad(dag_rdf::ingress::Quad {
-            triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+        store.named_graphs.add_quad(Quad {
+            triple_id: target_graph_id,
             subject: s,
             predicate: p,
             obj: o,

@@ -632,6 +632,79 @@ async fn upload_panel_has_drag_drop_zone() {
     driver.quit().await.unwrap();
 }
 
+/// Filling in the "Target graph" field and uploading routes the data into
+/// that named graph rather than the default graph.
+/// See <https://github.com/daghovland/rdf-datalog/issues/44>.
+#[tokio::test]
+async fn upload_with_target_graph_lands_in_named_graph() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start_writable("").await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let target_graph = "http://example.org/upload-target-graph";
+
+    driver
+        .find(By::Css("#turtle"))
+        .await
+        .unwrap()
+        .send_keys(FIXTURE)
+        .await
+        .unwrap();
+    driver
+        .find(By::Css("#upload-target-graph"))
+        .await
+        .unwrap()
+        .send_keys(target_graph)
+        .await
+        .unwrap();
+    driver
+        .find(By::Css("#upload-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_text(&driver, "#upload-result", 5000).await,
+        "upload result message never appeared"
+    );
+
+    driver.quit().await.unwrap();
+
+    // Verify via the Graph Store Protocol: data landed in the named graph,
+    // not the default graph.
+    let named_resp = server
+        .client
+        .get(server.gsp_named_graph_url(target_graph))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(named_resp.status(), 200);
+    let named_body = named_resp.text().await.unwrap();
+    assert!(
+        named_body.contains("Alice"),
+        "named graph should contain uploaded data, got: {named_body}"
+    );
+
+    let default_resp = server
+        .client
+        .get(server.gsp_default_url())
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(default_resp.status(), 200);
+    let default_body = default_resp.text().await.unwrap();
+    assert!(
+        !default_body.contains("Alice"),
+        "default graph should NOT contain uploaded data, got: {default_body}"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Visual Query Builder — browser tests (Layer 3a + 3b).
 // All ignored; activate a phase with:

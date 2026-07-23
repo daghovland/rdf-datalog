@@ -356,9 +356,14 @@
         <div class="drop-overlay">Drop file to load</div>
       </div>
       <div class="actions">
+        <label for="upload-target-graph" class="hint" style="margin-right:0.25rem">Target graph (optional):</label>
+        <input type="text" id="upload-target-graph" placeholder="http://example.org/my-graph"
+          style="flex:1;min-width:12rem" />
+      </div>
+      <div class="actions">
         <button id="upload-btn" onclick="uploadData()">Upload Turtle</button>
         <button class="sample-btn" onclick="loadSampleData()" title="Pre-fill with a small example dataset">Load sample data</button>
-        <span class="hint">Parsed and merged into the default graph</span>
+        <span class="hint">Parsed and merged into the default graph, or the named graph above if set</span>
       </div>
       <div class="result-area" id="upload-result"></div>
     </div>
@@ -1188,12 +1193,16 @@
     async function uploadData() {
       const turtle    = document.getElementById('turtle').value.trim();
       if (!turtle) return;
+      const targetGraph = document.getElementById('upload-target-graph').value.trim();
+      const url = targetGraph
+        ? '/upload?graph=' + encodeURIComponent(targetGraph)
+        : '/upload';
       const btn       = document.getElementById('upload-btn');
       const container = document.getElementById('upload-result');
       btn.disabled    = true;
       btn.textContent = 'Uploading…';
       try {
-        const resp = await fetch('/upload', {
+        const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/turtle; charset=utf-8', ...getAuthHeaders() },
           body: turtle,
