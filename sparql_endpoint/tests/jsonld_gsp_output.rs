@@ -24,7 +24,6 @@ const TURTLE: &str = r#"
 // ── GET /rdf-graph-store?default with JSON-LD output ─────────────────────────
 
 /// `GET /rdf-graph-store?default` with `Accept: application/ld+json` → JSON-LD.
-#[ignore]
 #[tokio::test]
 async fn gsp_get_default_graph_as_jsonld() {
     let server = common::TestServer::start(TURTLE).await;
@@ -64,7 +63,6 @@ async fn gsp_get_default_graph_as_jsonld() {
 
 /// `GET /rdf-graph-store?default` with `Accept: application/ld+json` →
 /// the result parses as valid JSON.
-#[ignore]
 #[tokio::test]
 async fn gsp_jsonld_output_is_valid_json() {
     let server = common::TestServer::start(TURTLE).await;
@@ -87,7 +85,6 @@ async fn gsp_jsonld_output_is_valid_json() {
 // ── ETag / caching headers ────────────────────────────────────────────────────
 
 /// A read-only query returns an `ETag` header.
-#[ignore]
 #[tokio::test]
 async fn sparql_select_response_has_etag() {
     let server = common::TestServer::start(TURTLE).await;
@@ -108,7 +105,6 @@ async fn sparql_select_response_has_etag() {
 }
 
 /// Two identical queries return the same ETag (stable between reads).
-#[ignore]
 #[tokio::test]
 async fn sparql_select_etag_is_stable() {
     let server = common::TestServer::start(TURTLE).await;
@@ -135,7 +131,6 @@ async fn sparql_select_etag_is_stable() {
 }
 
 /// After an INSERT DATA update, the ETag changes.
-#[ignore]
 #[tokio::test]
 async fn etag_changes_after_update() {
     let server = common::TestServer::start_writable(TURTLE).await;

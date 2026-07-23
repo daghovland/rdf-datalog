@@ -32,7 +32,6 @@ WHERE     { ?s <http://xmlns.com/foaf/0.1/name> ?name }
 // ── SELECT: XML ──────────────────────────────────────────────────────────────
 
 /// SELECT with `Accept: application/sparql-results+xml` → valid SPARQL XML.
-#[ignore]
 #[tokio::test]
 async fn select_accept_xml_returns_xml() {
     let server = common::TestServer::start(TURTLE).await;
@@ -68,7 +67,6 @@ async fn select_accept_xml_returns_xml() {
 }
 
 /// SELECT with `Accept: application/xml` (alias) → SPARQL XML.
-#[ignore]
 #[tokio::test]
 async fn select_accept_application_xml_alias() {
     let server = common::TestServer::start(TURTLE).await;
@@ -91,7 +89,6 @@ async fn select_accept_application_xml_alias() {
 
 /// SELECT with `Accept: application/sparql-results+xml, application/sparql-results+json;q=0.5`
 /// → XML (higher preference comes first, ignoring q= weights).
-#[ignore]
 #[tokio::test]
 async fn select_xml_preferred_over_json_by_order() {
     let server = common::TestServer::start(TURTLE).await;
@@ -118,7 +115,6 @@ async fn select_xml_preferred_over_json_by_order() {
 // ── SELECT: CSV ──────────────────────────────────────────────────────────────
 
 /// SELECT with `Accept: text/csv` → RFC 4180 CSV with a header row.
-#[ignore]
 #[tokio::test]
 async fn select_accept_csv_returns_csv() {
     let server = common::TestServer::start(TURTLE).await;
@@ -159,7 +155,6 @@ async fn select_accept_csv_returns_csv() {
 // ── SELECT: 406 Not Acceptable ────────────────────────────────────────────────
 
 /// SELECT with `Accept: application/pdf` → 406 Not Acceptable.
-#[ignore]
 #[tokio::test]
 async fn select_unrecognised_accept_returns_406() {
     let server = common::TestServer::start(TURTLE).await;
@@ -180,7 +175,6 @@ async fn select_unrecognised_accept_returns_406() {
 }
 
 /// `Accept: */*` → JSON (fallback, spec allows any format).
-#[ignore]
 #[tokio::test]
 async fn select_wildcard_accept_returns_json() {
     let server = common::TestServer::start(TURTLE).await;
@@ -204,7 +198,6 @@ async fn select_wildcard_accept_returns_json() {
 // ── ASK: XML ─────────────────────────────────────────────────────────────────
 
 /// ASK with `Accept: application/sparql-results+xml` → XML boolean response.
-#[ignore]
 #[tokio::test]
 async fn ask_accept_xml_returns_xml() {
     let server = common::TestServer::start(TURTLE).await;
@@ -238,7 +231,6 @@ async fn ask_accept_xml_returns_xml() {
 ///
 /// This is a regression test for the bug where the CONSTRUCT arm labelled
 /// N-Triples output as `text/turtle`.
-#[ignore]
 #[tokio::test]
 async fn construct_returns_correct_content_type() {
     let server = common::TestServer::start(TURTLE).await;
