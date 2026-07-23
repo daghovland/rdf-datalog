@@ -1,0 +1,5 @@
+# Issue #260 — node-level sh:class data graph.
+# ex:n is ex:Thing, not ex:Person → the focus node itself violates sh:class.
+PREFIX ex: <http://example.com/ns#>
+
+ex:n a ex:Thing .

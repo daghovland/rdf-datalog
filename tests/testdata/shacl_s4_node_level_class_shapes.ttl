@@ -1,0 +1,8 @@
+# Issue #260 — node-level (pathless) sh:class directly on a sh:NodeShape.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NodeLevelClassShape
+    a sh:NodeShape ;
+    sh:targetNode ex:n ;
+    sh:class ex:Person .

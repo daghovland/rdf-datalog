@@ -1,0 +1,10 @@
+# Issue #260 — node-level (pathless) sh:datatype directly on a sh:NodeShape.
+# The shape has no sh:path; sh:datatype applies to the focus node itself.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:NodeLevelDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:n ;
+    sh:datatype xsd:integer .

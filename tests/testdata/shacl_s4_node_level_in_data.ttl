@@ -1,0 +1,5 @@
+# Issue #260 — node-level sh:in data graph.
+# ex:n is not ex:A or ex:B → the focus node itself violates sh:in.
+PREFIX ex: <http://example.com/ns#>
+
+ex:n a ex:Thing .

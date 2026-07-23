@@ -1,0 +1,6 @@
+# Issue #260 — node-level sh:hasValue data graph.
+# ex:n itself is not ex:Expected → violation. ex:Expected itself conforms.
+PREFIX ex: <http://example.com/ns#>
+
+ex:n a ex:Thing .
+ex:Expected a ex:Thing .
