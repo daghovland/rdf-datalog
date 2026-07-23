@@ -1,0 +1,18 @@
+# Regression data for issue #256 — sh:minCount N (N > 1).
+# minCount 2 group:
+#   ex:Gina2 has exactly 2 distinct ex:tag values -> conforms
+#   ex:Hank2 has only 1 ex:tag value              -> minCount 2 violated
+#   ex:Ivy2  has 3 distinct ex:tag values          -> conforms (no upper bound)
+# minCount 3 group:
+#   ex:Gina3 has exactly 3 distinct ex:tag values -> conforms
+#   ex:Hank3 has only 2 ex:tag values              -> minCount 3 violated
+#   ex:Ivy3  has 4 distinct ex:tag values          -> conforms (no upper bound)
+PREFIX ex: <http://example.com/ns#>
+
+ex:Gina2 ex:tag "a", "b" .
+ex:Hank2 ex:tag "a" .
+ex:Ivy2  ex:tag "a", "b", "c" .
+
+ex:Gina3 ex:tag "a", "b", "c" .
+ex:Hank3 ex:tag "a", "b" .
+ex:Ivy3  ex:tag "a", "b", "c", "d" .

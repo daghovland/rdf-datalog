@@ -155,6 +155,14 @@ Note: Cardinality > 1 and maxCount ≥ 1 require either a counting built-in
 (`COUNT(?v) > N`) or the N-ary rules pattern. The N-ary pattern is simple for small N
 (the common case); a counting built-in is added to the engine for arbitrary N.
 
+`shacl/src/translate.rs`'s `n_distinct_values_body` helper implements the N-ary
+co-occurrence pattern generically (any `N`, not hardcoded for small values):
+it builds `N` (or `N+1`) fresh variables bound to the path's values plus all
+`C(N, 2)` pairwise `!=` atoms. `sh:maxCount N`'s violation rule uses `N+1`
+distinct values directly; `sh:minCount N`'s violation rule is the negation of
+an "N distinct values co-occur" ok-predicate built from the same helper —
+see [#256](https://github.com/daghovland/rdf-datalog/issues/256).
+
 #### §4.3 Value Range Constraint Components
 
 All four range constraints use comparison built-ins:

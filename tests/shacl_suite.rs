@@ -65,6 +65,10 @@ fn shacl_testdata_parses() {
         "shacl_s4_mincount_shapes.ttl",
         "shacl_s4_maxcount_data.ttl",
         "shacl_s4_maxcount_shapes.ttl",
+        "shacl_s4_mincount_n_data.ttl",
+        "shacl_s4_mincount_n_shapes.ttl",
+        "shacl_s4_maxcount_n_data.ttl",
+        "shacl_s4_maxcount_n_shapes.ttl",
         "shacl_s4_range_data.ttl",
         "shacl_s4_range_shapes.ttl",
         "shacl_s4_minlength_data.ttl",
@@ -339,6 +343,80 @@ fn spec_s4_2_2_maxcount() {
         report.results.len(),
         1,
         "ex:Carol has 2 birthDate values → maxCount 1 violated"
+    );
+}
+
+/// Regression test for issue #256 — `sh:maxCount N` with `N > 1` must require
+/// `N + 1` distinct values to fire a violation, not just 2 (the bug: the old
+/// translation hardcoded a 2-distinct-value check regardless of `N`).
+///
+/// `MaxCount2ExampleShape` (`sh:maxCount 2`): `ex:Dave2` has exactly 2
+/// distinct `ex:tag` values (conforms), `ex:Eve2` has 3 (violates),
+/// `ex:Frank2` has 1 (conforms).
+/// `MaxCount3ExampleShape` (`sh:maxCount 3`): `ex:Dave3` has exactly 3
+/// (conforms), `ex:Eve3` has 4 (violates), `ex:Frank3` has 1 (conforms).
+#[test]
+fn regression_issue_256_maxcount_n() {
+    let data = load("shacl_s4_maxcount_n_data.ttl");
+    let shapes = load("shacl_s4_maxcount_n_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        2,
+        "only ex:Eve2 (3 > maxCount 2) and ex:Eve3 (4 > maxCount 3) should violate; \
+         nodes with exactly N or fewer than N values must conform, got: {:?}",
+        report.results
+    );
+    let focus_nodes: Vec<&str> = report
+        .results
+        .iter()
+        .filter_map(|r| r.focus_node.as_deref())
+        .collect();
+    assert!(
+        focus_nodes.iter().any(|f| f.contains("Eve2")),
+        "expected a violation for ex:Eve2, got {focus_nodes:?}"
+    );
+    assert!(
+        focus_nodes.iter().any(|f| f.contains("Eve3")),
+        "expected a violation for ex:Eve3, got {focus_nodes:?}"
+    );
+}
+
+/// Regression test for issue #256 — `sh:minCount N` with `N > 1` must fire a
+/// violation when fewer than `N` distinct values are present (the bug: the
+/// old translation emitted zero rules for `N > 1`, silently never violating).
+///
+/// `MinCount2ExampleShape` (`sh:minCount 2`): `ex:Gina2` has exactly 2
+/// distinct `ex:tag` values (conforms), `ex:Hank2` has 1 (violates),
+/// `ex:Ivy2` has 3 (conforms — no upper bound from minCount).
+/// `MinCount3ExampleShape` (`sh:minCount 3`): `ex:Gina3` has exactly 3
+/// (conforms), `ex:Hank3` has 2 (violates), `ex:Ivy3` has 4 (conforms).
+#[test]
+fn regression_issue_256_mincount_n() {
+    let data = load("shacl_s4_mincount_n_data.ttl");
+    let shapes = load("shacl_s4_mincount_n_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        2,
+        "only ex:Hank2 (1 < minCount 2) and ex:Hank3 (2 < minCount 3) should violate; \
+         nodes with exactly N or more than N values must conform, got: {:?}",
+        report.results
+    );
+    let focus_nodes: Vec<&str> = report
+        .results
+        .iter()
+        .filter_map(|r| r.focus_node.as_deref())
+        .collect();
+    assert!(
+        focus_nodes.iter().any(|f| f.contains("Hank2")),
+        "expected a violation for ex:Hank2, got {focus_nodes:?}"
+    );
+    assert!(
+        focus_nodes.iter().any(|f| f.contains("Hank3")),
+        "expected a violation for ex:Hank3, got {focus_nodes:?}"
     );
 }
 

@@ -1,0 +1,18 @@
+# Regression data for issue #256 — sh:maxCount N (N > 1).
+# maxCount 2 group:
+#   ex:Dave2  has exactly 2 ex:tag values  -> conforms
+#   ex:Eve2   has 3 distinct ex:tag values -> maxCount 2 violated
+#   ex:Frank2 has 1 ex:tag value           -> conforms
+# maxCount 3 group:
+#   ex:Dave3  has exactly 3 ex:tag values  -> conforms
+#   ex:Eve3   has 4 distinct ex:tag values -> maxCount 3 violated
+#   ex:Frank3 has 1 ex:tag value           -> conforms
+PREFIX ex: <http://example.com/ns#>
+
+ex:Dave2  ex:tag "a", "b" .
+ex:Eve2   ex:tag "a", "b", "c" .
+ex:Frank2 ex:tag "a" .
+
+ex:Dave3  ex:tag "a", "b", "c" .
+ex:Eve3   ex:tag "a", "b", "c", "d" .
+ex:Frank3 ex:tag "a" .
