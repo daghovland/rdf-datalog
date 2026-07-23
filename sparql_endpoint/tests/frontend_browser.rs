@@ -90,6 +90,24 @@ async fn wait_for_element(driver: &WebDriver, selector: &str, timeout_ms: u64) -
     }
 }
 
+/// Polls `script` (a `return`-ing expression) until it evaluates truthy, or
+/// times out. Used to wait on async page state (e.g. the Cytoscape.js graph
+/// instance, loaded from a CDN) that has no DOM element to key off of.
+async fn wait_for_js(driver: &WebDriver, script: &str, timeout_ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if let Ok(ret) = driver.execute(script, Vec::new()).await
+            && ret.json().as_bool().unwrap_or(false)
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 // ── Resource browser ──────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -350,6 +368,212 @@ async fn two_variable_query_has_no_graph_tab() {
         tab.is_err(),
         "Graph tab should NOT appear for 2-variable query"
     );
+    driver.quit().await.unwrap();
+}
+
+// ── Graph layout persistence (issue #46) ──────────────────────────────────────
+//
+// Simulating a real mouse drag through WebDriver is awkward and flaky across
+// browsers, so these tests move a node via Cytoscape's own `.position()` API
+// and then manually `.emit('dragfree')` on it — the same event `renderGraph`
+// listens for at the end of a real drag (`cyInstance.on('dragfree', 'node',
+// ...)` in frontend.html). This exercises the exact save/restore code path
+// without depending on native input-event simulation.
+//
+// `renderGraph` keeps `cyInstance` as a page-scope `let` (not a `window`
+// property) and also mirrors it to `window.cyInstance` specifically so this
+// kind of external script-injection test can reach it — WebDriver's
+// `executeScript` runs against the `window` global, not the page's lexical
+// scope, so a bare `cyInstance` reference here would be `undefined`. For the
+// same reason, the layout's localStorage key (which is normally computed via
+// the page-local `layoutKey()`/`lastGraphQuery`) is found here by scanning
+// `localStorage` for the `dagalog-layout-` prefix instead.
+const FIND_LAYOUT_KEY_JS: &str =
+    "Object.keys(localStorage).find(k => k.startsWith('dagalog-layout-'))";
+
+#[tokio::test]
+async fn graph_layout_persists_across_reload() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    let url = format!("{}/?query={}", server.base_url, urlencoding::encode(query));
+
+    driver.goto(&url).await.unwrap();
+    assert!(
+        wait_for_element(&driver, "#tab-graph", 4000).await,
+        "graph tab never appeared"
+    );
+    driver
+        .find(By::Css("#tab-graph"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(
+            &driver,
+            "return !!(window.cyInstance && window.cyInstance.nodes().length > 0);",
+            8000
+        )
+        .await,
+        "cytoscape graph never populated (CDN load or renderGraph regression?)"
+    );
+
+    let node_id = driver
+        .execute("return window.cyInstance.nodes()[0].id();", Vec::new())
+        .await
+        .unwrap()
+        .json()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Move the node and fire the same event a real drag-end would.
+    let moved = driver
+        .execute(
+            "const n = window.cyInstance.nodes()[0]; \
+             n.position({ x: 321, y: 654 }); \
+             n.emit('dragfree'); \
+             return true;",
+            Vec::new(),
+        )
+        .await
+        .unwrap()
+        .json()
+        .as_bool()
+        .unwrap_or(false);
+    assert!(moved, "failed to move node via Cytoscape API");
+
+    // The moved position should now be saved under this query's layout key.
+    assert!(
+        wait_for_js(&driver, &format!("return !!({FIND_LAYOUT_KEY_JS});"), 2000).await,
+        "dragfree did not persist a layout to localStorage"
+    );
+    let saved_str = driver
+        .execute(
+            &format!("const k = {FIND_LAYOUT_KEY_JS}; return k ? localStorage.getItem(k) : null;"),
+            Vec::new(),
+        )
+        .await
+        .unwrap()
+        .json()
+        .as_str()
+        .unwrap()
+        .to_string();
+    let saved: serde_json::Value = serde_json::from_str(&saved_str).unwrap();
+    assert_eq!(saved[&node_id]["x"].as_f64().unwrap().round() as i64, 321);
+    assert_eq!(saved[&node_id]["y"].as_f64().unwrap().round() as i64, 654);
+
+    // Reload the SAME query: renderGraph should restore the saved position
+    // (via the 'preset' layout) instead of re-running 'cose'.
+    driver.goto(&url).await.unwrap();
+    assert!(wait_for_element(&driver, "#tab-graph", 4000).await);
+    driver
+        .find(By::Css("#tab-graph"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(
+            &driver,
+            "return !!(window.cyInstance && window.cyInstance.nodes().length > 0);",
+            8000
+        )
+        .await
+    );
+
+    let get_pos_script = format!(
+        "const n = window.cyInstance.getElementById({}); return n.position();",
+        serde_json::to_string(&node_id).unwrap()
+    );
+    let restored = driver
+        .execute(&get_pos_script, Vec::new())
+        .await
+        .unwrap()
+        .json()
+        .clone();
+    assert_eq!(
+        restored["x"].as_f64().unwrap().round() as i64,
+        321,
+        "x position not restored from saved layout"
+    );
+    assert_eq!(
+        restored["y"].as_f64().unwrap().round() as i64,
+        654,
+        "y position not restored from saved layout"
+    );
+
+    driver.quit().await.unwrap();
+}
+
+#[tokio::test]
+async fn graph_reset_layout_button_clears_saved_position() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    let query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    driver
+        .goto(&format!(
+            "{}/?query={}",
+            server.base_url,
+            urlencoding::encode(query)
+        ))
+        .await
+        .unwrap();
+    assert!(wait_for_element(&driver, "#tab-graph", 4000).await);
+    driver
+        .find(By::Css("#tab-graph"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(
+            &driver,
+            "return !!(window.cyInstance && window.cyInstance.nodes().length > 0);",
+            8000
+        )
+        .await
+    );
+
+    driver
+        .execute(
+            "const n = window.cyInstance.nodes()[0]; \
+             n.position({ x: 111, y: 222 }); \
+             n.emit('dragfree'); \
+             return true;",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(&driver, &format!("return !!({FIND_LAYOUT_KEY_JS});"), 2000).await,
+        "layout was not saved before reset"
+    );
+
+    assert!(wait_for_element(&driver, "#cy-reset-layout-btn", 2000).await);
+    driver
+        .find(By::Css("#cy-reset-layout-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_js(&driver, &format!("return !({FIND_LAYOUT_KEY_JS});"), 2000).await,
+        "Reset layout button did not clear the saved layout"
+    );
+
     driver.quit().await.unwrap();
 }
 
