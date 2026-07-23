@@ -625,6 +625,13 @@
     const PREFIXES_KEY = 'dagalog-prefixes';
     const HISTORY_KEY  = 'dagalog-history';
     const GRAPH_NODE_LIMIT = 200;
+    const LAYOUT_KEY_PREFIX = 'dagalog-layout-';
+    // Force-directed layout options shared by initial render and "Reset layout".
+    const COSE_LAYOUT_OPTIONS = {
+      name: 'cose', padding: 30, animate: false, nodeOverlap: 20,
+      componentSpacing: 50, nodeRepulsion: () => 8000,
+      edgeElasticity: () => 100, idealEdgeLength: () => 80,
+    };
     // Default page size applied to SELECT queries that carry no explicit
     // LIMIT/OFFSET, so a query over a large store returns a bounded first
     // page with Prev/Next pagination instead of every row (issue #165).
@@ -913,10 +920,65 @@
     }
 
     // ── Graph view (P2) ────────────────────────────────────────────────────────
-    let cyInstance  = null;
-    let lastResults = null;
+    let cyInstance     = null;
+    let lastResults    = null;
+    let lastGraphQuery = null;
 
     function isGraphLike(vars) { return vars.length === 3; }
+
+    // Deterministic (non-cryptographic) 32-bit string hash (FNV-1a), used to
+    // key saved node layouts per query text so switching queries never mixes
+    // up positions saved for a different query (issue #46).
+    function hashString(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      return (h >>> 0).toString(16);
+    }
+
+    function layoutKey(queryText) { return LAYOUT_KEY_PREFIX + hashString(queryText || ''); }
+
+    // Returns { [nodeId]: {x, y} } or null when nothing is saved / storage is
+    // unavailable / the entry is corrupt.
+    function loadLayout(queryText) {
+      try {
+        const raw = localStorage.getItem(layoutKey(queryText));
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    }
+
+    function saveLayout(queryText, positions) {
+      try { localStorage.setItem(layoutKey(queryText), JSON.stringify(positions)); }
+      catch { /* storage unavailable/full: silently skip persistence */ }
+    }
+
+    function clearLayout(queryText) {
+      try { localStorage.removeItem(layoutKey(queryText)); } catch { /* ignore */ }
+    }
+
+    // Persists the current node positions for the graph query in progress.
+    function saveCurrentLayout() {
+      if (!cyInstance || !lastGraphQuery) return;
+      const positions = {};
+      cyInstance.nodes().forEach(n => { positions[n.id()] = n.position(); });
+      saveLayout(lastGraphQuery, positions);
+    }
+
+    // Discards the saved layout for the current graph query and re-runs the
+    // force-directed layout.
+    function resetGraphLayout() {
+      if (!cyInstance) return;
+      clearLayout(lastGraphQuery);
+      cyInstance.layout(COSE_LAYOUT_OPTIONS).run();
+    }
+
+    async function saveGraphPng() {
+      if (!cyInstance) return;
+      const blob = cyInstance.png({ output: 'blob', full: true });
+      triggerDownload(blob, 'graph.png', 'image/png');
+    }
 
     let cytoscapeLoading = null;
     function ensureCytoscape() {
@@ -998,14 +1060,25 @@
 
       if (nodes.length === 0) { container.textContent = 'No nodes to display.'; return; }
 
+      // Restore a saved layout only when it has a position for every node
+      // currently in view; a partial match (e.g. new nodes appeared since
+      // the layout was saved) falls back to the auto-layout instead of
+      // guessing positions for the unmatched nodes (issue #46).
+      const savedPositions = loadLayout(lastGraphQuery);
+      const usableSaved = savedPositions && nodes.every(n => savedPositions[n.id]);
+
       const elements = [
-        ...nodes.map(n => ({ group: 'nodes', data: { id: n.id, label: n.label, iri: n.iri } })),
+        ...nodes.map(n => ({
+          group: 'nodes',
+          data: { id: n.id, label: n.label, iri: n.iri },
+          ...(usableSaved ? { position: { x: savedPositions[n.id].x, y: savedPositions[n.id].y } } : {}),
+        })),
         ...edges.map((e, i) => ({
           group: 'edges', data: { id: 'e' + i, source: e.s, target: e.o, label: e.p },
         })),
       ];
 
-      if (cyInstance) { cyInstance.destroy(); cyInstance = null; }
+      if (cyInstance) { cyInstance.destroy(); cyInstance = null; window.cyInstance = null; }
 
       cyInstance = cytoscape({
         container,
@@ -1028,17 +1101,20 @@
             'arrow-scale': 0.9, width: 1.5,
           }},
         ],
-        layout: {
-          name: 'cose', padding: 30, animate: false, nodeOverlap: 20,
-          componentSpacing: 50, nodeRepulsion: () => 8000,
-          edgeElasticity: () => 100, idealEdgeLength: () => 80,
-        },
+        layout: usableSaved ? { name: 'preset', fit: true, padding: 30 } : COSE_LAYOUT_OPTIONS,
       });
+      // Exposed on window (in addition to the module-local `let`) so
+      // WebDriver-style test automation, which evaluates scripts against the
+      // `window` global rather than this page's lexical scope, can drive it.
+      window.cyInstance = cyInstance;
 
       cyInstance.on('tap', 'node', e => {
         const iri = e.target.data('iri');
         if (iri) location.href = '/?resource=' + encodeURIComponent(iri);
       });
+
+      // Persist positions whenever a drag ends on a node (issue #46).
+      cyInstance.on('dragfree', 'node', () => saveCurrentLayout());
     }
 
     // ── Graph fullscreen ───────────────────────────────────────────────────────
@@ -1137,8 +1213,10 @@
       btn.disabled    = true;
       btn.textContent = 'Running…';
       container.innerHTML = '';
-      cyInstance  = null;
-      lastResults = null;
+      cyInstance     = null;
+      window.cyInstance = null;
+      lastResults    = null;
+      lastGraphQuery = null;
       try {
         const data  = await sparqlFetch(query);
 
@@ -1156,7 +1234,8 @@
         const count = data.results?.bindings?.length ?? null;
 
         if (isGraphLike(vars)) {
-          lastResults = data;
+          lastResults    = data;
+          lastGraphQuery = rawQuery;
           container.innerHTML =
             '<div class="tab-bar">' +
               '<button class="tab active" id="tab-table" onclick="showTab(\'table\')">Table</button>' +
@@ -1167,6 +1246,8 @@
               '<p id="graph-warning" class="msg err" style="display:none;margin-bottom:0.5rem"></p>' +
               '<div id="cy-fullscreen-wrap" class="cy-wrap">' +
                 '<div class="cy-toolbar">' +
+                  '<button id="cy-reset-layout-btn" class="btn-graph-action" onclick="resetGraphLayout()">Reset layout</button>' +
+                  '<button id="cy-save-png-btn" class="btn-graph-action" onclick="saveGraphPng()">Save PNG</button>' +
                   '<button id="cy-fs-btn" class="btn-graph-action" onclick="toggleGraphFullscreen()">Fullscreen</button>' +
                 '</div>' +
                 '<div id="cy"></div>' +
