@@ -6,9 +6,10 @@ use ingress::{GraphElement, IriReference};
 
 use crate::RmlError;
 use crate::ast::{ReferenceFormulation, TermType};
+use crate::functions;
 use crate::plan::{
-    FormatFunction, GenerationLogic, LogicalJoin, LogicalPlan, LogicalProjection, LogicalScan,
-    OutputAttr, TermPattern,
+    FormatFunction, FunctionCallLogic, GenerationLogic, LogicalJoin, LogicalPlan,
+    LogicalProjection, LogicalScan, OutputAttr, ParamSource, TermPattern,
 };
 use crate::sandbox::confine_path;
 use crate::sources::SourceRow;
@@ -222,7 +223,75 @@ fn eval_logic(
     match logic {
         GenerationLogic::Constant(elem) => Some(ds.add_resource(elem.clone())),
         GenerationLogic::Dynamic(ff) => eval_format_function(ff, row, ds),
+        GenerationLogic::Function(fc) => eval_function_call(fc, row, ds),
     }
+}
+
+/// Evaluate a single function parameter's value-producing side against the
+/// current row, mirroring `eval_format_function`'s Template/Reference
+/// handling (no IRI percent-encoding here — function parameters are plain
+/// string inputs, not IRI components).
+fn eval_param_source(source: &ParamSource, row: &dyn SourceRow) -> Option<String> {
+    match source {
+        ParamSource::Template(t) => expand_template(t, row, false),
+        ParamSource::Reference(key) => row.get_str(key),
+        ParamSource::Constant(elem) => match elem {
+            GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(s))) => Some(s.clone()),
+            GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s.clone()),
+            GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
+                Some(literal.clone())
+            }
+            GraphElement::GraphLiteral(RdfLiteral::LangLiteral { literal, .. }) => {
+                Some(literal.clone())
+            }
+            _ => None,
+        },
+    }
+}
+
+fn eval_function_call(
+    fc: &FunctionCallLogic,
+    row: &dyn SourceRow,
+    ds: &mut Datastore,
+) -> Option<GraphElementId> {
+    // All built-in functions in this pass are unary: evaluate the first
+    // declared parameter's value. See docs/plans/RML_FNML_PLAN.md.
+    let (_, source) = fc.params.first()?;
+    let input = eval_param_source(source, row)?;
+    let lexical = functions::apply(fc.function, &input);
+
+    let encode = matches!(fc.term_type, TermType::Iri);
+    let lexical = if encode {
+        crate::template::percent_encode(&lexical)
+    } else {
+        lexical
+    };
+
+    let id = match fc.term_type {
+        TermType::Iri => {
+            if !is_valid_iri_scheme(&lexical) {
+                return None;
+            }
+            let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(lexical)));
+            ds.add_resource(elem)
+        }
+        TermType::BlankNode => ds.resources.get_or_create_named_anon_resource(lexical),
+        TermType::Literal => {
+            let lit = match (&fc.language, &fc.datatype) {
+                (Some(lang), _) => RdfLiteral::LangLiteral {
+                    lang: lang.clone(),
+                    literal: lexical,
+                },
+                (_, Some(dt)) => RdfLiteral::TypedLiteral {
+                    type_iri: dt.clone(),
+                    literal: lexical,
+                },
+                _ => RdfLiteral::LiteralString(lexical),
+            };
+            ds.add_literal_resource(lit)
+        }
+    };
+    Some(id)
 }
 
 fn eval_format_function(

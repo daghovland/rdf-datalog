@@ -52,7 +52,7 @@ fn translate_one_predicate_object_map_yields_one_plan() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     assert_eq!(plans.len(), 1);
 }
 
@@ -80,7 +80,7 @@ fn translate_two_predicate_object_maps_yield_two_plans() {
     let doc = MappingDocument {
         triples_maps: vec![tm],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     assert_eq!(plans.len(), 2);
 }
 
@@ -94,7 +94,7 @@ fn translate_class_shorthand_adds_extra_plan() {
     let doc = MappingDocument {
         triples_maps: vec![tm],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     // 1 data triple plan + 1 rdf:type triple plan from rml:class
     assert_eq!(plans.len(), 2);
 }
@@ -109,7 +109,7 @@ fn translate_class_plan_has_constant_rdf_type_predicate() {
     let doc = MappingDocument {
         triples_maps: vec![tm],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
 
     // Find the plan whose Predicate is Constant(rdf:type)
     let rdf_type_plan = plans.iter().find(|p| {
@@ -139,7 +139,7 @@ fn translate_subject_template_with_column_is_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     if let LogicalPlan::Projection(proj) = &plans[0] {
         let (attr, logic) = proj
             .attrs
@@ -163,7 +163,7 @@ fn translate_constant_term_map_is_constant_in_plan() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     if let LogicalPlan::Projection(proj) = &plans[0] {
         let (_, pred_logic) = proj
             .attrs
@@ -187,7 +187,7 @@ fn constant_fold_leaves_column_template_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
-    let plans = constant_fold(translate(&doc));
+    let plans = constant_fold(translate(&doc).unwrap());
     if let LogicalPlan::Projection(proj) = &plans[0] {
         let (_, logic) = proj
             .attrs
@@ -219,7 +219,7 @@ fn constant_fold_converts_no_placeholder_template_to_constant() {
     let doc = MappingDocument {
         triples_maps: vec![tm],
     };
-    let plans = constant_fold(translate(&doc));
+    let plans = constant_fold(translate(&doc).unwrap());
 
     if let LogicalPlan::Projection(proj) = &plans[0] {
         let (_, obj_logic) = proj
@@ -242,7 +242,7 @@ fn constant_fold_already_constant_term_maps_unchanged() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
     };
-    let before = translate(&doc);
+    let before = translate(&doc).unwrap();
     let after = constant_fold(before.clone());
     // Predicate was already Constant; folding must not change it
     let get_pred = |plans: &[LogicalPlan]| {
@@ -267,7 +267,7 @@ fn translate_sets_scan_from_logical_source() {
             "http://example.com/{id}",
         )],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     if let LogicalPlan::Projection(proj) = &plans[0] {
         assert!(
             matches!(&*proj.input, LogicalPlan::Scan(s) if s.source == LogicalSourceRef::File(PathBuf::from("students.csv")))
@@ -319,7 +319,7 @@ fn translate_object_map_with_parent_triples_map_yields_join_plan() {
     let doc = MappingDocument {
         triples_maps: vec![tm, sport_parent_triples_map()],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     assert!(
         plans.iter().any(|p| matches!(
             p,
@@ -354,7 +354,7 @@ fn translate_join_condition_maps_child_to_left_parent_to_right() {
     let doc = MappingDocument {
         triples_maps: vec![tm, sport_parent_triples_map()],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     let join = find_join(&plans);
     assert_eq!(join.conditions.len(), 1);
     assert_eq!(join.conditions[0].left_column, "Sport");
@@ -379,7 +379,7 @@ fn translate_multi_column_join_condition_preserves_all_conditions() {
     let doc = MappingDocument {
         triples_maps: vec![tm, sport_parent_triples_map()],
     };
-    let plans = translate(&doc);
+    let plans = translate(&doc).unwrap();
     let join = find_join(&plans);
     assert_eq!(join.conditions.len(), 2);
 }

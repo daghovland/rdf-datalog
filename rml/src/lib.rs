@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod engine;
+pub mod functions;
 pub mod loader;
 pub mod optimizer;
 pub mod plan;
@@ -59,6 +60,10 @@ pub enum RmlError {
     /// Iterator or reference expression is structurally unsafe (e.g. exponential XPath).
     /// See [#88](https://github.com/daghovland/rdf-datalog/issues/88).
     UnsafeExpression(String),
+    /// An `fno:executes` function IRI that isn't in the built-in FNML
+    /// registry. See `docs/plans/RML_FNML_PLAN.md` and
+    /// [#27](https://github.com/daghovland/rdf-datalog/issues/27).
+    UnknownFunction(String),
 }
 
 impl fmt::Display for RmlError {
@@ -101,6 +106,9 @@ impl fmt::Display for RmlError {
                 )
             }
             RmlError::UnsafeExpression(s) => write!(f, "unsafe expression rejected: {s}"),
+            RmlError::UnknownFunction(iri) => {
+                write!(f, "unknown FNML function: {iri}")
+            }
         }
     }
 }
@@ -133,7 +141,7 @@ pub fn apply_rml_mapping(
     // their sources confined to base_dir.
     // See [#84](https://github.com/daghovland/rdf-datalog/issues/84).
     validate_mapping_sources(&mapping, base_dir)?;
-    let plans = translate::translate(&mapping);
+    let plans = translate::translate(&mapping)?;
     let plans = optimizer::constant_fold(plans);
     engine::execute(&plans, base_dir, datastore)
 }
