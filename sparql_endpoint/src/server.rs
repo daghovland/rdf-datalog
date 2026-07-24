@@ -22,6 +22,12 @@ pub fn build_router(state: AppState) -> Router {
     // Override it for just these two routes; every other route keeps 2 MB.
     let rml_body_limit = DefaultBodyLimit::max(state.config.max_rml_upload_bytes);
 
+    // RDF write routes accept whole RDF graphs / SHACL shapes graphs as a raw
+    // request body, which routinely exceed axum's server-wide 2 MB
+    // DefaultBodyLimit for realistic datasets. Override it for these routes;
+    // every other route keeps 2 MB. See #274.
+    let rdf_body_limit = DefaultBodyLimit::max(state.config.max_rdf_upload_bytes);
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([
@@ -46,7 +52,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
-        .route("/upload", post(crate::upload::upload_turtle))
+        .route(
+            "/upload",
+            post(crate::upload::upload_turtle).layer(rdf_body_limit),
+        )
         // ── VQS productive-extension index (query-builder support) ──────────
         .route(
             "/vqs/productive-values",
@@ -75,7 +84,8 @@ pub fn build_router(state: AppState) -> Router {
                 .head(crate::graph_store::gsp_head)
                 .put(crate::graph_store::gsp_put)
                 .post(crate::graph_store::gsp_post)
-                .delete(crate::graph_store::gsp_delete),
+                .delete(crate::graph_store::gsp_delete)
+                .layer(rdf_body_limit),
         )
         // ── Direct graph identification (§4.1) ───────────────────────────────
         .route(
@@ -84,7 +94,8 @@ pub fn build_router(state: AppState) -> Router {
                 .head(crate::graph_store::direct_gsp_head)
                 .put(crate::graph_store::direct_gsp_put)
                 .post(crate::graph_store::direct_gsp_post)
-                .delete(crate::graph_store::direct_gsp_delete),
+                .delete(crate::graph_store::direct_gsp_delete)
+                .layer(rdf_body_limit),
         )
         // ── Admin API (`/$/...`) ─────────────────────────────────────────────
         .route(
@@ -120,7 +131,7 @@ pub fn build_router(state: AppState) -> Router {
         // ── Per-dataset SHACL validation (`/{name}/shacl`) ───────────────────
         .route(
             "/{name}/shacl",
-            post(crate::shacl_endpoint::dataset_shacl_post),
+            post(crate::shacl_endpoint::dataset_shacl_post).layer(rdf_body_limit),
         )
         // ── Per-dataset RML mapping (`/{name}/rml`) ──────────────────────────
         .route(
@@ -144,7 +155,8 @@ pub fn build_router(state: AppState) -> Router {
                 .head(crate::dataset_routes::dataset_data_head)
                 .put(crate::dataset_routes::dataset_data_put)
                 .post(crate::dataset_routes::dataset_data_post)
-                .delete(crate::dataset_routes::dataset_data_delete),
+                .delete(crate::dataset_routes::dataset_data_delete)
+                .layer(rdf_body_limit),
         )
         .route(
             "/{name}/get",

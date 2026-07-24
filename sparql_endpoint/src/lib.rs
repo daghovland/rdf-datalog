@@ -173,6 +173,20 @@ pub struct Config {
     /// `DefaultBodyLimit`. This field overrides the limit for just those two
     /// routes; every other route keeps the 2 MB default.
     pub max_rml_upload_bytes: usize,
+    /// Maximum request body size for the RDF write routes
+    /// (`POST`/`PUT /{name}/data`, `POST`/`PUT /rdf-graph-store`,
+    /// `POST`/`PUT`/`DELETE /rdf-graphs/{*path}`, `POST /upload`,
+    /// `POST /{name}/shacl`), in bytes.
+    ///
+    /// These routes accept whole RDF graphs (Turtle/TriG/JSON-LD/N-Quads) or
+    /// SHACL shapes graphs as a raw request body, which routinely exceed
+    /// axum's server-wide 2 MB `DefaultBodyLimit` for realistic datasets.
+    /// This field overrides the limit for just those routes; every other
+    /// route keeps the 2 MB default.
+    ///
+    /// Configurable via `--max-rdf-upload-bytes` / `DAGALOG_MAX_RDF_UPLOAD_BYTES`.
+    /// See [#274](https://github.com/daghovland/rdf-datalog/issues/274).
+    pub max_rdf_upload_bytes: usize,
     /// Datalog rules for incremental reasoning.
     ///
     /// When non-empty, an [`IncrementalReasoner`] is created from these rules
@@ -204,6 +218,7 @@ impl Default for Config {
             auth: AuthConfig::None,
             data_dir: None,
             max_rml_upload_bytes: 64 * 1024 * 1024,
+            max_rdf_upload_bytes: 64 * 1024 * 1024,
             initial_rules: Vec::new(),
             network_policy: NetworkPolicy::Deny,
         }
