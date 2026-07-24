@@ -55,6 +55,8 @@ fn shacl_testdata_parses() {
         "shacl_s2_target_subjects_shapes.ttl",
         "shacl_s2_target_objects_data.ttl",
         "shacl_s2_target_objects_shapes.ttl",
+        "shacl_s261_lexical_form_data.ttl",
+        "shacl_s261_lexical_form_shapes.ttl",
         "shacl_s4_class_data.ttl",
         "shacl_s4_class_shapes.ttl",
         "shacl_s4_datatype_data.ttl",
@@ -1464,5 +1466,201 @@ fn regression_issue_262_active_shape_still_violates() {
     assert!(
         has_violation(&report, &ex("nActive")),
         "this shape is not deactivated, so sh:minCount 1 must still be checked and violate"
+    );
+}
+
+// ── lexical_form for IRI and blank-node value nodes ─────────────────────────
+//
+// Per the normative SHACL §4.4.1-4.4.3 text (verified against the W3C SHACL
+// spec's own SPARQL definitions, which test `str($value)` guarded by
+// `!isBlank($value)`): sh:minLength/sh:maxLength/sh:pattern "can be applied
+// to any literals and IRIs, but not to blank nodes" - an IRI value node is
+// tested against its own string form, while a blank node value node ALWAYS
+// produces a violation regardless of the bound/pattern.
+//
+// `lexical_form` previously returned None for every non-literal (including
+// IRIs), and the string-constraint evaluators treated None as "skip this
+// value node" instead of "test the IRI string" / "always violate for blank
+// nodes", so a non-matching IRI or any blank node silently conformed.
+// See https://github.com/daghovland/rdf-datalog/issues/261
+
+#[test]
+fn regression_issue_261_pattern_iri_match_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nIriPatternMatch")),
+        "an IRI value node whose string form matches sh:pattern must \
+         conform - IRIs are tested by their own string form"
+    );
+}
+
+#[test]
+fn regression_issue_261_pattern_iri_non_match_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nIriPatternNonMatch")),
+        "the issue's original repro: an IRI value node whose string form \
+         does not match sh:pattern must violate instead of being silently \
+         skipped"
+    );
+}
+
+#[test]
+fn regression_issue_261_pattern_blank_node_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nBlankPattern")),
+        "a blank-node value node must always violate sh:pattern per SHACL \
+         §4.4.3, even against a pattern that matches everything"
+    );
+}
+
+#[test]
+fn regression_issue_261_pattern_literal_match_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nLiteralPatternMatch")),
+        "control case: a literal value node whose lexical form matches \
+         sh:pattern must still conform - the fix must not break literals"
+    );
+}
+
+#[test]
+fn regression_issue_261_pattern_literal_non_match_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nLiteralPatternNonMatch")),
+        "control case: a literal value node whose lexical form does not \
+         match sh:pattern must still violate"
+    );
+}
+
+#[test]
+fn regression_issue_261_min_length_iri_ok_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nIriMinLenOk")),
+        "an IRI value node long enough to satisfy sh:minLength must \
+         conform - IRIs are tested by their own string form"
+    );
+}
+
+#[test]
+fn regression_issue_261_min_length_iri_too_short_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nIriMinLenTooShort")),
+        "an IRI value node too short (string form) for sh:minLength must \
+         violate"
+    );
+}
+
+#[test]
+fn regression_issue_261_min_length_blank_node_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nBlankMinLen")),
+        "a blank-node value node must always violate sh:minLength per SHACL \
+         §4.4.1, even with the loosest possible bound (0)"
+    );
+}
+
+#[test]
+fn regression_issue_261_min_length_literal_ok_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nLiteralMinLenOk")),
+        "control case: a literal long enough to satisfy sh:minLength must \
+         still conform"
+    );
+}
+
+#[test]
+fn regression_issue_261_min_length_literal_too_short_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nLiteralMinLenTooShort")),
+        "control case: a literal too short for sh:minLength must still \
+         violate"
+    );
+}
+
+#[test]
+fn regression_issue_261_max_length_iri_ok_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nIriMaxLenOk")),
+        "an IRI value node short enough to satisfy sh:maxLength must \
+         conform - IRIs are tested by their own string form"
+    );
+}
+
+#[test]
+fn regression_issue_261_max_length_iri_too_long_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nIriMaxLenTooLong")),
+        "an IRI value node too long (string form) for sh:maxLength must \
+         violate"
+    );
+}
+
+#[test]
+fn regression_issue_261_max_length_blank_node_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nBlankMaxLen")),
+        "a blank-node value node must always violate sh:maxLength per SHACL \
+         §4.4.2, even with a very generous bound (1000)"
+    );
+}
+
+#[test]
+fn regression_issue_261_max_length_literal_ok_conforms() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nLiteralMaxLenOk")),
+        "control case: a literal short enough to satisfy sh:maxLength must \
+         still conform"
+    );
+}
+
+#[test]
+fn regression_issue_261_max_length_literal_too_long_violates() {
+    let data = load("shacl_s261_lexical_form_data.ttl");
+    let shapes = load("shacl_s261_lexical_form_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nLiteralMaxLenTooLong")),
+        "control case: a literal too long for sh:maxLength must still \
+         violate"
     );
 }

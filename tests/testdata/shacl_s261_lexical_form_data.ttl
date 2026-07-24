@@ -1,0 +1,50 @@
+@prefix ex: <http://example.com/ns#> .
+
+# Regression fixtures for https://github.com/daghovland/rdf-datalog/issues/261
+#
+# Per the normative SHACL §4.4.1-4.4.3 text (verified against the W3C SHACL
+# spec's SPARQL definitions, which use `str($value)` guarded by
+# `!isBlank($value)`): sh:minLength/sh:maxLength/sh:pattern "can be applied
+# to any literals and IRIs, but not to blank nodes" - an IRI value node is
+# tested against its own string form (SPARQL str()), while a blank node
+# value node ALWAYS produces a violation regardless of the bound/pattern.
+#
+# Before the fix, `lexical_form` returned None for every non-literal
+# (including IRIs), and the string-constraint evaluators treated None as
+# "skip this value node" instead of testing IRIs / always-violating blank
+# nodes, so a non-matching IRI or any blank node silently conformed.
+
+# ── sh:pattern against an IRI value node ────────────────────────────────────
+# IRI string "http://example.com/ns#ZZZfoo" contains "ZZZ" -> must conform.
+ex:nIriPatternMatch ex:v <http://example.com/ns#ZZZfoo> .
+# IRI string "http://example.com/ns#Alice" does not contain "ZZZ" -> the
+# issue's original repro; must violate.
+ex:nIriPatternNonMatch ex:v <http://example.com/ns#Alice> .
+
+# ── sh:pattern against a blank-node value node ──────────────────────────────
+# Must always violate, regardless of the pattern.
+ex:nBlankPattern ex:v [] .
+
+# ── sh:minLength against an IRI value node ──────────────────────────────────
+ex:nIriMinLenOk ex:v <http://example.com/ns#Alice> .
+ex:nIriMinLenTooShort ex:v <http://example.com/ns#Alice> .
+
+# ── sh:minLength against a blank-node value node ────────────────────────────
+# Must always violate, even with the loosest possible bound (0).
+ex:nBlankMinLen ex:v [] .
+
+# ── sh:maxLength against an IRI value node ──────────────────────────────────
+ex:nIriMaxLenOk ex:v <http://example.com/ns#Alice> .
+ex:nIriMaxLenTooLong ex:v <http://example.com/ns#Alice> .
+
+# ── sh:maxLength against a blank-node value node ────────────────────────────
+# Must always violate, even with a very generous bound (1000).
+ex:nBlankMaxLen ex:v [] .
+
+# ── literal controls: string-constraints on literals must be unaffected ────
+ex:nLiteralPatternMatch ex:v "ZZZfoo" .
+ex:nLiteralPatternNonMatch ex:v "Alice" .
+ex:nLiteralMinLenOk ex:v "hello" .
+ex:nLiteralMinLenTooShort ex:v "a" .
+ex:nLiteralMaxLenOk ex:v "hi" .
+ex:nLiteralMaxLenTooLong ex:v "this literal is much too long" .

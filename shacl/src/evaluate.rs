@@ -18,7 +18,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::{Severity, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
-use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
 use ingress::RDF_TYPE;
 use regex::Regex;
 use std::collections::HashSet;
@@ -294,13 +294,18 @@ fn eval_prop_constraint(
         }
 
         // §4.4.1 sh:minLength
+        // Per spec: IRIs are tested by their string form (lexical_form
+        // returns Some), blank nodes always violate (lexical_form returns
+        // None) — see https://github.com/daghovland/rdf-datalog/issues/261
         MinLength(n) => {
             let viol = graph::intern_iri(work, &vocab::viol_min_length(si, pi));
             for node in targets {
                 for val in values_of(*node) {
-                    if let Some(s) = lexical_form(data, val)
-                        && codepoint_len(&s) < *n as usize
-                    {
+                    let violates = match lexical_form(data, val) {
+                        Some(s) => codepoint_len(&s) < *n as usize,
+                        None => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -309,13 +314,18 @@ fn eval_prop_constraint(
         }
 
         // §4.4.2 sh:maxLength
+        // Per spec: IRIs are tested by their string form (lexical_form
+        // returns Some), blank nodes always violate (lexical_form returns
+        // None) — see https://github.com/daghovland/rdf-datalog/issues/261
         MaxLength(n) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_length(si, pi));
             for node in targets {
                 for val in values_of(*node) {
-                    if let Some(s) = lexical_form(data, val)
-                        && codepoint_len(&s) > *n as usize
-                    {
+                    let violates = match lexical_form(data, val) {
+                        Some(s) => codepoint_len(&s) > *n as usize,
+                        None => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -324,6 +334,9 @@ fn eval_prop_constraint(
         }
 
         // §4.4.3 sh:pattern
+        // Per spec: IRIs are tested by their string form (lexical_form
+        // returns Some), blank nodes always violate (lexical_form returns
+        // None) — see https://github.com/daghovland/rdf-datalog/issues/261
         Pattern(pat, flags) => {
             let viol = graph::intern_iri(work, &vocab::viol_pattern(si, pi));
             let full_pat = regex_with_flags(pat, flags.as_deref());
@@ -334,9 +347,11 @@ fn eval_prop_constraint(
                 Ok(re) => {
                     for node in targets {
                         for val in values_of(*node) {
-                            if let Some(s) = lexical_form(data, val)
-                                && !re.is_match(&s)
-                            {
+                            let violates = match lexical_form(data, val) {
+                                Some(s) => !re.is_match(&s),
+                                None => true,
+                            };
+                            if violates {
                                 add_viol(work, *node, viol, val);
                             }
                         }
@@ -740,6 +755,11 @@ fn constraint_conforms(
                 .collect();
             values.iter().all(|v| allowed_ids.contains(v))
         }
+        // `is_some_and` returns false for a `None` lexical form (blank-node
+        // value node), so this already treats blank nodes as violations per
+        // SHACL §4.4.1/4.4.2, matching the evaluate_pattern fix in
+        // https://github.com/daghovland/rdf-datalog/issues/261. IRIs still
+        // get their string form from lexical_form and are tested normally.
         MinLength(n) => values
             .iter()
             .all(|&v| lexical_form(data, v).is_some_and(|s| codepoint_len(&s) >= *n as usize)),
@@ -1109,7 +1129,25 @@ fn bound_to_comparable(
 
 // ── String / language helpers ─────────────────────────────────────────────────
 
-/// Get the lexical form of a literal (the string value before datatype/lang processing).
+/// Get the string representation of a value node that `sh:minLength`,
+/// `sh:maxLength`, and `sh:pattern` test against (SPARQL `str()` of the
+/// value), or `None` if the value node must unconditionally violate those
+/// constraints.
+///
+/// Per the normative SHACL §4.4.1-4.4.3 text (W3C SHACL spec, verified
+/// against the spec's own SPARQL definitions which use `str($value)` guarded
+/// by `!isBlank($value)`): these constraints "can be applied to any literals
+/// and IRIs, but not to blank nodes" — a blank node always produces a
+/// validation result regardless of the bound/pattern. So:
+/// - literal → its lexical form (pre-datatype/lang string value)
+/// - IRI → the IRI string itself (`str()` of an IRI is the IRI)
+/// - blank node / triple term → `None`, meaning "always violates"
+///
+/// Before the fix, this returned `None` for *all* non-literals (including
+/// IRIs), and callers treated `None` as "skip this value node" rather than
+/// "always violates", so a non-matching IRI silently conformed and a blank
+/// node was never flagged at all. See
+/// https://github.com/daghovland/rdf-datalog/issues/261.
 fn lexical_form(data: &Datastore, id: GraphElementId) -> Option<String> {
     match data.resources.get_graph_element(id) {
         GraphElement::GraphLiteral(lit) => Some(match lit {
@@ -1120,7 +1158,9 @@ fn lexical_form(data: &Datastore, id: GraphElementId) -> Option<String> {
             RdfLiteral::BooleanLiteral(b) => b.to_string(),
             other => other.to_string(),
         }),
-        _ => None,
+        GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => Some(iri.0.clone()),
+        GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(_))
+        | GraphElement::TripleTerm(_) => None,
     }
 }
 
