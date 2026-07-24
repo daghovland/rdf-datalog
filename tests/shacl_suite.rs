@@ -118,6 +118,14 @@ fn shacl_testdata_parses() {
         "shacl_s4_property_ref_shapes.ttl",
         "shacl_s4_qualified_max_data.ttl",
         "shacl_s4_qualified_max_shapes.ttl",
+        "shacl_s4_node_level_datatype_data.ttl",
+        "shacl_s4_node_level_datatype_shapes.ttl",
+        "shacl_s4_node_level_in_data.ttl",
+        "shacl_s4_node_level_in_shapes.ttl",
+        "shacl_s4_node_level_class_data.ttl",
+        "shacl_s4_node_level_class_shapes.ttl",
+        "shacl_s4_node_level_hasvalue_data.ttl",
+        "shacl_s4_node_level_hasvalue_shapes.ttl",
         "shacl_s3_severity_data.ttl",
         "shacl_s3_severity_shapes.ttl",
     ];
@@ -954,6 +962,76 @@ fn spec_s4_7_3_qualified_max_count() {
         1,
         "ex:Alice has 2 IRI parents; qualifiedMaxCount 1 violated"
     );
+}
+
+// ── Issue #260 — node-level (pathless) value constraints ─────────────────────
+//
+// A shape may carry value constraints directly (no sh:path), which apply to the
+// focus node itself rather than to a path-traversed value.
+// See: https://github.com/daghovland/rdf-datalog/issues/260
+
+/// Issue #260 — node-level `sh:datatype` (no `sh:path`) applies to the focus node.
+///
+/// `ex:n` is an IRI (via `ex:n a ex:Thing`), not an `xsd:integer` literal, so the
+/// focus node itself must fail `sh:datatype xsd:integer` → 1 violation.
+#[test]
+fn regression_issue_260_node_level_datatype() {
+    let data = load("shacl_s4_node_level_datatype_data.ttl");
+    let shapes = load("shacl_s4_node_level_datatype_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "node-level sh:datatype must be checked against the focus node itself"
+    );
+    assert_eq!(report.results.len(), 1);
+}
+
+/// Issue #260 — node-level `sh:in` (no `sh:path`) applies to the focus node.
+///
+/// `ex:n` is neither `ex:A` nor `ex:B` → the focus node itself violates `sh:in`.
+#[test]
+fn regression_issue_260_node_level_in() {
+    let data = load("shacl_s4_node_level_in_data.ttl");
+    let shapes = load("shacl_s4_node_level_in_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "node-level sh:in must be checked against the focus node itself"
+    );
+    assert_eq!(report.results.len(), 1);
+}
+
+/// Issue #260 — node-level `sh:class` (no `sh:path`) applies to the focus node.
+///
+/// `ex:n` is `rdf:type ex:Thing`, not `ex:Person` → the focus node itself
+/// violates `sh:class ex:Person`. Note: `ParsedShape::node_class` was parsed
+/// but never read by either evaluator prior to this fix — this test confirms
+/// it is now actually enforced (folded into the generic node-level mechanism).
+#[test]
+fn regression_issue_260_node_level_class() {
+    let data = load("shacl_s4_node_level_class_data.ttl");
+    let shapes = load("shacl_s4_node_level_class_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "node-level sh:class must be checked against the focus node itself"
+    );
+    assert_eq!(report.results.len(), 1);
+}
+
+/// Issue #260 — node-level `sh:hasValue` (no `sh:path`) applies to the focus node.
+///
+/// `ex:n` targeted directly; the focus node itself is not `ex:Expected` → violation.
+#[test]
+fn regression_issue_260_node_level_hasvalue() {
+    let data = load("shacl_s4_node_level_hasvalue_data.ttl");
+    let shapes = load("shacl_s4_node_level_hasvalue_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "node-level sh:hasValue must be checked against the focus node itself"
+    );
+    assert_eq!(report.results.len(), 1);
 }
 
 // ── §3.5  Severity ────────────────────────────────────────────────────────────

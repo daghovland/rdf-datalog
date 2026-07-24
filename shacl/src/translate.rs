@@ -71,7 +71,7 @@ pub fn shapes_to_rules(
                 let new = prop_constraint_rules(
                     constraint,
                     key,
-                    path_id,
+                    Some(path_id),
                     target_pred,
                     true_id,
                     nil_id,
@@ -81,6 +81,26 @@ pub fn shapes_to_rules(
                 );
                 viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
             }
+        }
+
+        // Node-level (pathless) constraints — sh:class/sh:hasValue/sh:in declared
+        // directly on the shape (no sh:path). The rule body checks the constraint
+        // directly against the focus-node variable instead of a path-traversed
+        // value variable. See #260.
+        for (ci, constraint) in shape.node_constraints.iter().enumerate() {
+            let key = (si, NODE_LEVEL_PI_BASE + ci, 0);
+            let new = prop_constraint_rules(
+                constraint,
+                key,
+                None,
+                target_pred,
+                true_id,
+                nil_id,
+                rdf_type_id,
+                &mut rules,
+                work,
+            );
+            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
         }
 
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
@@ -147,7 +167,7 @@ pub fn shapes_to_rules(
                         let viols = prop_constraint_rules(
                             constraint,
                             (si, inner_pi, ci),
-                            path_id_work,
+                            Some(path_id_work),
                             target_pred,
                             true_id,
                             nil_id,
@@ -289,7 +309,7 @@ fn target_rules(
 fn prop_constraint_rules(
     constraint: &PropConstraint,
     key: (usize, usize, usize),
-    path_id: GraphElementId,
+    path_id: Option<GraphElementId>,
     target_pred: GraphElementId,
     true_id: GraphElementId,
     nil_id: GraphElementId,
@@ -298,6 +318,39 @@ fn prop_constraint_rules(
     work: &mut Datastore,
 ) -> Vec<GraphElementId> {
     let (si, pi, ci) = key;
+
+    // sh:minCount / sh:maxCount are Property constraint components (spec §4.2):
+    // they only make sense with a sh:path. A node-level (pathless) shape carrying
+    // one is not meaningful — skip it rather than fabricate a self-cardinality
+    // semantics. See #260.
+    if path_id.is_none()
+        && matches!(
+            constraint,
+            PropConstraint::MinCount(_) | PropConstraint::MaxCount(_)
+        )
+    {
+        log::debug!(
+            "sh:minCount/sh:maxCount without sh:path (node-level) is not meaningful; skipping ({si},{pi},{ci})"
+        );
+        return vec![];
+    }
+
+    // Value variable + optional path-traversal atom shared across the
+    // Datalog-translated constraint types below. For a property-shape
+    // constraint (`path_id = Some`), the value being tested is reached via
+    // `path(node_var, value_var)`; for a node-level (pathless) constraint
+    // (`path_id = None`), the value being tested IS the focus node itself,
+    // so `value_var` is aliased to `"n"` and no path atom is emitted. See #260.
+    let value_var: &str = if path_id.is_some() { "v" } else { "n" };
+    let path_atom = |node_var: &str| -> Option<RuleAtom> {
+        path_id.map(|pid| {
+            pos(
+                Term::Variable(node_var.into()),
+                Term::Resource(pid),
+                Term::Variable(value_var.into()),
+            )
+        })
+    };
 
     match constraint {
         // §4.2.1 sh:minCount
@@ -309,7 +362,7 @@ fn prop_constraint_rules(
             // atoms at all). Violation fires when the target node does NOT have
             // N distinct values, i.e. fewer than N values are present.
             let has_val = graph::intern_iri(work, &int_has_val(si, pi));
-            let ok_body = n_distinct_values_body(*n, "n", target_pred, true_id, path_id);
+            let ok_body = n_distinct_values_body(*n, "n", target_pred, true_id, path_id.unwrap());
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
@@ -359,7 +412,7 @@ fn prop_constraint_rules(
                     ),
                     pos(
                         Term::Variable("n".into()),
-                        Term::Resource(path_id),
+                        Term::Resource(path_id.unwrap()),
                         Term::Variable("v".into()),
                     ),
                 ],
@@ -371,7 +424,7 @@ fn prop_constraint_rules(
             // on the target node's `path`. For N = 1 this degenerates to exactly
             // the original two-distinct-values check.
             let viol = graph::intern_iri(work, &viol_max_count(si, pi));
-            let body = n_distinct_values_body(*n + 1, "n", target_pred, true_id, path_id);
+            let body = n_distinct_values_body(*n + 1, "n", target_pred, true_id, path_id.unwrap());
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
@@ -402,29 +455,24 @@ fn prop_constraint_rules(
                 )],
             });
             let viol = graph::intern_iri(work, &viol_class(si, pi));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(neg(
+                Term::Variable(value_var.into()),
+                Term::Resource(has_class),
+                Term::Resource(true_id),
+            ));
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
                     Term::Resource(viol),
-                    Term::Variable("v".into()),
+                    Term::Variable(value_var.into()),
                 )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v".into()),
-                    ),
-                    neg(
-                        Term::Variable("v".into()),
-                        Term::Resource(has_class),
-                        Term::Resource(true_id),
-                    ),
-                ],
+                body,
             });
             vec![viol]
         }
@@ -433,25 +481,42 @@ fn prop_constraint_rules(
         PropConstraint::HasValue(elem) => {
             let val_id = intern_elem(elem, work);
             let has_val = graph::intern_iri(work, &int_has_val(si, pi));
-            // has_val(n) :- target(n), [n, path, specific_val]
+            // Property shape: has_val(n) :- target(n), [n, path, specific_val]
+            // Node-level (#260): the focus node itself must BE specific_val, so
+            // the head/body are grounded on val_id directly rather than a
+            // path-traversed value variable — has_val(val_id) :- target(val_id).
+            let (head_node, has_val_body) = match path_id {
+                Some(pid) => (
+                    Term::Variable("n".into()),
+                    vec![
+                        pos(
+                            Term::Variable("n".into()),
+                            Term::Resource(target_pred),
+                            Term::Resource(true_id),
+                        ),
+                        pos(
+                            Term::Variable("n".into()),
+                            Term::Resource(pid),
+                            Term::Resource(val_id),
+                        ),
+                    ],
+                ),
+                None => (
+                    Term::Resource(val_id),
+                    vec![pos(
+                        Term::Resource(val_id),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    )],
+                ),
+            };
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
-                    Term::Variable("n".into()),
+                    head_node,
                     Term::Resource(has_val),
                     Term::Resource(true_id),
                 )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Resource(val_id),
-                    ),
-                ],
+                body: has_val_body,
             });
             let viol = graph::intern_iri(work, &viol_has_value(si, pi));
             rules.push(Rule {
@@ -484,29 +549,24 @@ fn prop_constraint_rules(
                 rules.push(fact(val_id, in_list, true_id));
             }
             let viol = graph::intern_iri(work, &viol_in(si, pi));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(neg(
+                Term::Variable(value_var.into()),
+                Term::Resource(in_list),
+                Term::Resource(true_id),
+            ));
             rules.push(Rule {
                 head: RuleHead::NormalHead(dgp(
                     Term::Variable("n".into()),
                     Term::Resource(viol),
-                    Term::Variable("v".into()),
+                    Term::Variable(value_var.into()),
                 )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id),
-                        Term::Variable("v".into()),
-                    ),
-                    neg(
-                        Term::Variable("v".into()),
-                        Term::Resource(in_list),
-                        Term::Resource(true_id),
-                    ),
-                ],
+                body,
             });
             vec![viol]
         }

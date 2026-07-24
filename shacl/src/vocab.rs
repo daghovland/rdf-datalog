@@ -127,6 +127,13 @@ pub fn int_sub_ok(shape_idx: usize, sub_idx: usize) -> String {
     format!("urn:dagalog:shacl:subOk:{shape_idx}:{sub_idx}")
 }
 
+/// Synthetic "prop_idx" base used for node-level (pathless) constraints
+/// (`ParsedShape::node_constraints`), so their violation-IRI `prop_idx` slot
+/// never collides with a real `ParsedPropShape::idx` (which starts at 0) or
+/// with the `sub_idx * 10_000 + pi` scheme used for `sh:and` inner shapes.
+/// See [#260](https://github.com/daghovland/rdf-datalog/issues/260).
+pub const NODE_LEVEL_PI_BASE: usize = usize::MAX / 2;
+
 // ── Violation IRI builders ────────────────────────────────────────────────────
 //
 // One unique violation predicate per (shape, constraint). Each violation triple
@@ -143,10 +150,6 @@ pub fn viol_max_count(shape_idx: usize, prop_idx: usize) -> String {
 
 pub fn viol_class(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:class")
-}
-
-pub fn viol_node_class(shape_idx: usize) -> String {
-    format!("urn:dagalog:shacl:viol:{shape_idx}:nodeClass")
 }
 
 pub fn viol_has_value(shape_idx: usize, prop_idx: usize) -> String {

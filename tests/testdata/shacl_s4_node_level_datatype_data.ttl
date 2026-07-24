@@ -1,0 +1,6 @@
+# Issue #260 — node-level sh:datatype data graph.
+# ex:n is an IRI, not an xsd:integer literal → the focus node itself must be
+# tested against sh:datatype xsd:integer → 1 violation.
+PREFIX ex: <http://example.com/ns#>
+
+ex:n a ex:Thing .

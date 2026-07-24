@@ -47,7 +47,7 @@ pub fn eval_all(
                 let new = eval_prop_constraint(
                     constraint,
                     coord,
-                    &prop.path,
+                    Some(&prop.path),
                     &targets,
                     data,
                     shapes_store,
@@ -56,6 +56,22 @@ pub fn eval_all(
                 viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
             }
         }
+
+        // Node-level (pathless) value constraints — sh:datatype/sh:in/sh:class/…
+        // declared directly on the shape (no sh:path). These are checked against
+        // each target node itself rather than a path-traversed value.
+        // See #260.
+        for (ci, constraint) in shape.node_constraints.iter().enumerate() {
+            let coord = ConstraintCoord {
+                si: shape.idx,
+                pi: vocab::NODE_LEVEL_PI_BASE + ci,
+                ci: 0,
+            };
+            let new =
+                eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
+            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+        }
+
         // sh:nodeKind at node shape level — check each target node itself.
         if let Some(nk) = &shape.node_kind {
             let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
@@ -98,7 +114,7 @@ pub fn eval_all(
                         let new = eval_prop_constraint(
                             constraint,
                             coord,
-                            &path_str,
+                            Some(&path_str),
                             &targets,
                             data,
                             shapes_store,
@@ -132,7 +148,7 @@ struct ConstraintCoord {
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
     coord: ConstraintCoord,
-    path: &str,
+    path: Option<&str>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
@@ -140,6 +156,7 @@ fn eval_prop_constraint(
 ) -> Vec<GraphElementId> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
+    let values_of = |node: GraphElementId| -> Vec<GraphElementId> { values_for(data, node, path) };
     match constraint {
         // Phase 1 constraints are handled via Datalog — skip them here.
         MinCount(_) | MaxCount(_) | Class(_) | HasValue(_) | In(_) => vec![],
@@ -148,7 +165,7 @@ fn eval_prop_constraint(
         Datatype(dt_iri) => {
             let viol = graph::intern_iri(work, &vocab::viol_datatype(si, pi));
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if !has_datatype(data, val, dt_iri) {
                         add_viol(work, *node, viol, val);
                     }
@@ -161,7 +178,7 @@ fn eval_prop_constraint(
         NodeKind(nk) => {
             let viol = graph::intern_iri(work, &vocab::viol_node_kind(si, pi));
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if !matches_node_kind(data, val, nk) {
                         add_viol(work, *node, viol, val);
                     }
@@ -175,7 +192,7 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_min_inclusive(si, pi));
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
                         && v < *b
                     {
@@ -189,7 +206,7 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_max_inclusive(si, pi));
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
                         && v > *b
                     {
@@ -203,7 +220,7 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_min_exclusive(si, pi));
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
                         && v <= *b
                     {
@@ -217,7 +234,7 @@ fn eval_prop_constraint(
             let viol = graph::intern_iri(work, &vocab::viol_max_exclusive(si, pi));
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
                         && v >= *b
                     {
@@ -232,7 +249,7 @@ fn eval_prop_constraint(
         MinLength(n) => {
             let viol = graph::intern_iri(work, &vocab::viol_min_length(si, pi));
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let Some(s) = lexical_form(data, val)
                         && codepoint_len(&s) < *n as usize
                     {
@@ -247,7 +264,7 @@ fn eval_prop_constraint(
         MaxLength(n) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_length(si, pi));
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     if let Some(s) = lexical_form(data, val)
                         && codepoint_len(&s) > *n as usize
                     {
@@ -268,7 +285,7 @@ fn eval_prop_constraint(
                 }
                 Ok(re) => {
                     for node in targets {
-                        for val in path_values(data, *node, path) {
+                        for val in values_of(*node) {
                             if let Some(s) = lexical_form(data, val)
                                 && !re.is_match(&s)
                             {
@@ -286,7 +303,7 @@ fn eval_prop_constraint(
             let tag_set: HashSet<String> = tags.iter().map(|t| t.to_lowercase()).collect();
             let viol = graph::intern_iri(work, &vocab::viol_language_in(si, pi));
             for node in targets {
-                for val in path_values(data, *node, path) {
+                for val in values_of(*node) {
                     // Language-tagged literal whose tag is not in the allowed set → violation.
                     // Non-language-tagged literals also violate (per SHACL spec §4.4.4).
                     // Non-literals are ignored.
@@ -309,7 +326,7 @@ fn eval_prop_constraint(
         UniqueLang => {
             let viol = graph::intern_iri(work, &vocab::viol_unique_lang(si, pi));
             for node in targets {
-                let vals = path_values(data, *node, path);
+                let vals = values_of(*node);
                 let mut seen_langs: HashSet<String> = HashSet::new();
                 for val in &vals {
                     if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) =
@@ -330,8 +347,7 @@ fn eval_prop_constraint(
         Equals(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_equals(si, pi));
             for node in targets {
-                let path_vals: HashSet<GraphElementId> =
-                    path_values(data, *node, path).into_iter().collect();
+                let path_vals: HashSet<GraphElementId> = values_of(*node).into_iter().collect();
                 let other_vals: HashSet<GraphElementId> =
                     path_values(data, *node, other_path).into_iter().collect();
                 if path_vals != other_vals {
@@ -347,8 +363,7 @@ fn eval_prop_constraint(
         Disjoint(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_disjoint(si, pi));
             for node in targets {
-                let path_vals: HashSet<GraphElementId> =
-                    path_values(data, *node, path).into_iter().collect();
+                let path_vals: HashSet<GraphElementId> = values_of(*node).into_iter().collect();
                 let other_vals: HashSet<GraphElementId> =
                     path_values(data, *node, other_path).into_iter().collect();
                 for shared in path_vals.intersection(&other_vals) {
@@ -362,7 +377,7 @@ fn eval_prop_constraint(
         LessThan(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_less_than(si, pi));
             for node in targets {
-                'outer: for pv in path_values(data, *node, path) {
+                'outer: for pv in values_of(*node) {
                     if let Some(pvc) = lit_comparable(data, pv) {
                         for ov in path_values(data, *node, other_path) {
                             if let Some(ovc) = lit_comparable(data, ov)
@@ -382,7 +397,7 @@ fn eval_prop_constraint(
         LessThanOrEquals(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_less_than_or_equals(si, pi));
             for node in targets {
-                'outer: for pv in path_values(data, *node, path) {
+                'outer: for pv in values_of(*node) {
                     if let Some(pvc) = lit_comparable(data, pv) {
                         for ov in path_values(data, *node, other_path) {
                             if let Some(ovc) = lit_comparable(data, ov)
@@ -472,7 +487,7 @@ fn eval_xone(
 fn eval_node_shape(
     coord: ConstraintCoord,
     inner_shapes_id: GraphElementId,
-    path: &str,
+    path: Option<&str>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
@@ -480,7 +495,7 @@ fn eval_node_shape(
 ) -> Vec<GraphElementId> {
     let viol = graph::intern_iri(work, &vocab::viol_node_shape(coord.si, coord.pi));
     for node in targets {
-        for val in path_values(data, *node, path) {
+        for val in values_for(data, *node, path) {
             if !node_conforms_to_inner(val, inner_shapes_id, data, shapes_store) {
                 add_viol(work, *node, viol, val);
             }
@@ -500,7 +515,7 @@ struct QualifiedSpec {
 fn eval_qualified_value(
     coord: ConstraintCoord,
     spec: QualifiedSpec,
-    path: &str,
+    path: Option<&str>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
@@ -510,7 +525,7 @@ fn eval_qualified_value(
     let nil = graph::intern_iri(work, vocab::INT_NIL);
 
     for node in targets {
-        let qualifying_count = path_values(data, *node, path)
+        let qualifying_count = values_for(data, *node, path)
             .iter()
             .filter(|&&val| node_conforms_to_inner(val, spec.inner_shapes_id, data, shapes_store))
             .count() as u64;
@@ -591,6 +606,16 @@ fn path_values(data: &Datastore, node: GraphElementId, path_iri: &str) -> Vec<Gr
     data.get_triples_with_subject_predicate(node, path_id)
         .map(|t| t.obj)
         .collect()
+}
+
+/// Resolve the "values to test" for a focus node against a constraint: path-traversed
+/// values for a property-shape constraint (`path = Some(iri)`), or just the focus node
+/// itself for a node-level (pathless) constraint (`path = None`). See #260.
+fn values_for(data: &Datastore, node: GraphElementId, path: Option<&str>) -> Vec<GraphElementId> {
+    match path {
+        Some(p) => path_values(data, node, p),
+        None => vec![node],
+    }
 }
 
 /// Add a violation triple `(focus, viol_pred, value)` to the **default** graph of `work`.
