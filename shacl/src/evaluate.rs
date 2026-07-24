@@ -1147,7 +1147,7 @@ fn bound_to_comparable(
 /// IRIs), and callers treated `None` as "skip this value node" rather than
 /// "always violates", so a non-matching IRI silently conformed and a blank
 /// node was never flagged at all. See
-/// https://github.com/daghovland/rdf-datalog/issues/261.
+/// <https://github.com/daghovland/rdf-datalog/issues/261>.
 fn lexical_form(data: &Datastore, id: GraphElementId) -> Option<String> {
     match data.resources.get_graph_element(id) {
         GraphElement::GraphLiteral(lit) => Some(match lit {
