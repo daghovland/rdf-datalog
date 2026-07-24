@@ -1,0 +1,25 @@
+# SHACL spec §3.5 — sh:severity shapes graph.
+# Source: https://www.w3.org/TR/shacl/#severity
+# Three shapes, identical except for declared severity (or its absence):
+#   WarnShape    → sh:severity sh:Warning
+#   InfoShape    → sh:severity sh:Info
+#   DefaultShape → no sh:severity declared → must default to sh:Violation
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:WarnShape
+    a sh:NodeShape ;
+    sh:targetNode ex:nWarn ;
+    sh:severity sh:Warning ;
+    sh:property [ sh:path ex:v ; sh:minCount 1 ] .
+
+ex:InfoShape
+    a sh:NodeShape ;
+    sh:targetNode ex:nInfo ;
+    sh:severity sh:Info ;
+    sh:property [ sh:path ex:v ; sh:minCount 1 ] .
+
+ex:DefaultShape
+    a sh:NodeShape ;
+    sh:targetNode ex:nDefault ;
+    sh:property [ sh:path ex:v ; sh:minCount 1 ] .

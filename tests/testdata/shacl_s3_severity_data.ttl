@@ -1,0 +1,10 @@
+# SHACL spec §3.5 — sh:severity data graph.
+# Source: https://www.w3.org/TR/shacl/#severity
+# ex:nWarn, ex:nInfo, ex:nDefault are each ex:Thing with no ex:v value,
+# so each violates its shape's sh:minCount 1 on ex:v — the shapes differ
+# only in declared severity.
+PREFIX ex: <http://example.com/ns#>
+
+ex:nWarn    a ex:Thing .
+ex:nInfo    a ex:Thing .
+ex:nDefault a ex:Thing .
