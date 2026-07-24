@@ -53,6 +53,14 @@ struct MaterializedMapping {
 ///
 /// One part named `mapping` (required) becomes `<tmp>/mapping.ttl`; every
 /// other part must carry a `filename`, which becomes `<tmp>/<filename>`.
+///
+/// `MultipartError`s from reading fields are propagated with `e.status()`
+/// rather than a hardcoded `400`: axum derives that status from the
+/// underlying `multer::Error` kind, so a body exceeding
+/// `max_rml_upload_bytes` correctly surfaces as `413 Payload Too Large`
+/// (matching the raw-body RDF write routes), while genuinely malformed
+/// multipart bodies (bad boundary, truncated headers, etc.) still get `400`.
+/// See [#279](https://github.com/daghovland/rdf-datalog/issues/279).
 #[allow(clippy::result_large_err)]
 async fn materialize_multipart(multipart: &mut Multipart) -> Result<MaterializedMapping, Response> {
     let tmp_dir = tempfile::TempDir::new().map_err(|e| {
@@ -68,7 +76,7 @@ async fn materialize_multipart(multipart: &mut Multipart) -> Result<Materialized
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("multipart error: {e}")).into_response())?
+        .map_err(|e| (e.status(), format!("multipart error: {e}")).into_response())?
     {
         let is_mapping = field.name() == Some("mapping");
         let file_name = field.file_name().map(str::to_owned);
@@ -90,9 +98,10 @@ async fn materialize_multipart(multipart: &mut Multipart) -> Result<Materialized
             }
         }
 
-        let bytes = field.bytes().await.map_err(|e| {
-            (StatusCode::BAD_REQUEST, format!("multipart error: {e}")).into_response()
-        })?;
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|e| (e.status(), format!("multipart error: {e}")).into_response())?;
 
         let dest = if is_mapping {
             has_mapping = true;
