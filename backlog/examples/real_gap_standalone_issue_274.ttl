@@ -1,0 +1,39 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix crate: <https://dagalog.dev/ns/backlog/crate#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+
+# Unlike invalid_orphan_issue.ttl (a fictional issue number, invented purely
+# for a negative test), this is a REAL, currently-existing gap: issue #274
+# genuinely has no parent epic (confirmed via the GitHub GraphQL API's
+# `issue.parent` field returning null), despite this repo's own stated
+# policy that every issue must be an epic or a sub-issue of one
+# (CLAUDE.md, "Github backlog"). It is closed and resolved (PR #275) —
+# the gap is structural (no epic link), not about the work itself being
+# incomplete.
+#
+# Kept in its own file, separate from the purely-synthetic
+# invalid_orphan_issue.ttl, so that file's own documented guarantee ("no
+# real issue is broken") stays true, while still giving #285's SHACL shapes
+# a second, real-world example of the same violation shape to catch —
+# more convincing evidence the shapes work than a fictional case alone.
+#
+# Kept as-is (not fixed) — resolving it is a call for the repo owner, not a
+# fixture-authoring decision. (Dag reviewing this: if you'd like #274 given
+# a parent epic, that's a one-line `gh api .../sub_issues` call, independent
+# of this backlog-mirror work.)
+
+ghissues:274
+    a bl:Issue ;
+    bl:number 274 ;
+    bl:title "Apply configurable request body limit to RDF upload routes (/{name}/data, /rdf-graph-store) to avoid RequestEntityTooLarge" ;
+    bl:state bl:Closed ;
+    bl:hasLabel "bug", "ready" .
+    # No bl:subIssueOf — confirmed via GraphQL, not assumed.
+
+ghpull:275 a bl:PullRequest ;
+    bl:number 275 ;
+    bl:title "fix(sparql_endpoint): raise body-size limit on RDF write routes" ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:274 ;
+    bl:touchesCrate crate:sparql_endpoint, crate:dagalog .

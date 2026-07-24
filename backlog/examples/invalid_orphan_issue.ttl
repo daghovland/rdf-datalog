@@ -1,0 +1,24 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+
+# Deliberately non-conforming fixture for #285's SHACL shapes.
+#
+# This repo's own backlog policy (CLAUDE.md, "Github backlog" section)
+# requires every issue to be either an epic or a sub-issue of an epic. This
+# file describes one issue that is neither: no bl:subIssueOf, and not the
+# target of any other issue's bl:subIssueOf (i.e. no children either) — a
+# plain orphan.
+#
+# Issue number 999999 is fictional and does not exist in this repo. Do not
+# treat this file as a claim that a real issue is broken — it exists purely
+# so #285's SHACL shapes have something concrete to reject in a test.
+
+ghissues:999999
+    a bl:Issue ;
+    bl:number 999999 ;
+    bl:title "An orphan issue with no epic and no children" ;
+    bl:state bl:Open ;
+    bl:hasLabel "ready" .
+    # No bl:subIssueOf, and nothing else in this file points bl:subIssueOf
+    # at it — violates "every issue is an epic or has a parent epic".
