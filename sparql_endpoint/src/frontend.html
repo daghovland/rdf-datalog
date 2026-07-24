@@ -1411,8 +1411,13 @@
       // Outbound triples use DESCRIBE <iri> (#45): the executor's DESCRIBE
       // semantics are outbound-only (all triples where `iri` is the subject —
       // see sparql_parser::execute's Query::Describe arm and
-      // sparql_parser/tests/describe_from_tests.rs), which matches exactly
-      // what the old outbound SELECT fetched. The response comes back as
+      // sparql_parser/tests/describe_from_tests.rs). Note this is a superset
+      // of the old outbound SELECT: DESCRIBE walks the subject index across
+      // *all* graphs (default + named), while the old plain SELECT (no GRAPH
+      // clause / FROM) only saw the default graph — so on datasets with
+      // named-graph data, the resource page can now surface triples the old
+      // SELECT never showed. Treated here as a feature (a fuller picture of
+      // the resource), not a regression. The response comes back as
       // `application/n-triples`, not SPARQL JSON bindings, so it's parsed
       // client-side and reshaped into the `{p, o}` bindings shape `renderTable`
       // expects. Inbound triples (`?s ?p <iri>`) aren't part of DESCRIBE's
