@@ -309,6 +309,69 @@ next, per CLAUDE.md's TDD protocol.
 
 ---
 
+## Serialiser (`manchester_parser::serialize`)
+
+Tracked in issue [#160](https://github.com/daghovland/rdf-datalog/issues/160),
+follow-up to this parser and to [#147](https://github.com/daghovland/rdf-datalog/issues/147)
+(Turtle 1.2 serialisation, the pattern this mirrors). Lives in
+`manchester_parser/src/serialize.rs`, exported as `manchester_parser::serialize`.
+
+**Scope mirrors the parser's** (the table above): the same entity frames and
+sections, the same class-expression/restriction forms, the same "named
+datatype only" data ranges. Constructs deferred by [#157](https://github.com/daghovland/rdf-datalog/issues/157)
+are out of scope here too.
+
+Design points:
+
+- **No `Prefix:` declarations are emitted.** `Ontology` carries no prefix map
+  (see "Target data model" above — prefixes are consumed and discarded during
+  parsing), so every IRI is serialized in full `<...>` form. The parser's
+  `iri` production accepts a full IRI in every position a Manchester IRI can
+  appear, so this is always valid and sidesteps inventing a prefix-shortening
+  scheme.
+- **One frame per entity, not per axiom.** Axioms are grouped by their frame
+  subject (the class/property/individual a section is about) in
+  first-occurrence order, then emitted as a single frame with one section
+  line per axiom (`many0` in the parser's frame grammar allows a section
+  keyword like `SubClassOf:` to repeat, so no comma-joining of same-keyword
+  items is needed). Grouping — rather than one frame per axiom — matters
+  specifically for declaration annotations: the parser folds every
+  `Annotations:` section inside a frame into that entity's single
+  `AxiomDeclaration`, so splitting an entity's declaration annotations and its
+  other axioms across separate same-named frames would reparse into two
+  distinct (and non-equal) declaration axioms.
+- **Top-level `misc` forms** (`EquivalentClasses:`, `DisjointClasses:`,
+  `SameIndividual:`, `DifferentIndividuals:`, `EquivalentProperties:`,
+  `DisjointProperties:`) are used for genuinely n-ary axioms (more than two
+  members), and as a fallback for binary axioms whose members can't serve as
+  an atomic frame subject (e.g. one side of an `EquivalentObjectProperties`
+  pair is `inverse P`, which has no `ObjectProperty:` frame header of its
+  own — the other side is tried instead, since the relation is symmetric).
+- **Out-of-scope or unsupported constructs are skipped with a `log::warn!`,
+  never silently emitted as invalid syntax.** This covers everything
+  deferred by #157, plus two serialisation-specific gaps: a standalone
+  `AnnotationAssertion` about an arbitrary subject (the frame grammar only
+  lets `Annotations:` attach to a frame's own entity declaration, so there's
+  no frame form for an assertion about an unrelated subject), and any
+  `ClassExpression`/`ObjectPropertyExpression` variant the parser itself
+  never produces (`AnonymousClass`, `AnonymousObjectProperty`,
+  `ObjectPropertyChain`, nested `inverse (inverse ...)`).
+- **Anonymous individuals** (`Individual::AnonymousIndividual(u32)`) serialize
+  as `_:b<id>`. Ids are assigned by first-occurrence order during parsing;
+  since the serializer walks axioms in their original order when building
+  frame groups, a document with a single anonymous individual round-trips to
+  the same id. Multiple anonymous individuals are not guaranteed to keep
+  their relative ids stable across a round-trip once entity-grouping can
+  reorder which `_:bN` label is written first — the round-trip test suite
+  (`manchester_parser/tests/serialize_roundtrip.rs`) accordingly limits itself
+  to single-anonymous-individual fixtures.
+
+Round-trip tests (parse → serialize → re-parse → compare axiom sets via
+`HashSet<owl_ontology::Axiom>`, per this document's original TDD-protocol
+ask) live in `manchester_parser/tests/serialize_roundtrip.rs`, covering the
+ontology header, each entity frame's sections, class-expression nesting,
+top-level `misc` forms, and a multi-frame integration fixture.
+
 ## References
 
 - [OWL 2 Manchester Syntax, W3C](https://www.w3.org/TR/owl2-manchester-syntax/)
