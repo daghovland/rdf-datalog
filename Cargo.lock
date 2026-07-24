@@ -770,6 +770,7 @@ dependencies = [
  "hmac",
  "ingress",
  "log",
+ "manchester-parser",
  "ottr",
  "owl2rl2datalog",
  "rdf-owl-translator",
