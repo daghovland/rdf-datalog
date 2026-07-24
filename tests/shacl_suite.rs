@@ -59,6 +59,9 @@ fn shacl_testdata_parses() {
         "shacl_s4_class_shapes.ttl",
         "shacl_s4_datatype_data.ttl",
         "shacl_s4_datatype_shapes.ttl",
+        "shacl_s4_datatype_langstring_data.ttl",
+        "shacl_s4_datatype_xsdstring_shapes.ttl",
+        "shacl_s4_datatype_langstring_shapes.ttl",
         "shacl_s4_nodekind_data.ttl",
         "shacl_s4_nodekind_shapes.ttl",
         "shacl_s4_mincount_data.ttl",
@@ -123,6 +126,8 @@ fn shacl_testdata_parses() {
         "shacl_s4_node_level_class_shapes.ttl",
         "shacl_s4_node_level_hasvalue_data.ttl",
         "shacl_s4_node_level_hasvalue_shapes.ttl",
+        "shacl_s3_severity_data.ttl",
+        "shacl_s3_severity_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -289,6 +294,46 @@ fn spec_s4_1_2_datatype() {
         report.results.len(),
         2,
         "ex:Bob and ex:Carol each produce 1 violation"
+    );
+}
+
+/// Regression test for issue #259 — `sh:datatype xsd:string` must not conflate
+/// `rdf:langString` (language-tagged literals) with `xsd:string` (plain literals).
+///
+/// `ex:Dave ex:name "hello"@en` is language-tagged, so its datatype is
+/// `rdf:langString`, not `xsd:string` → violates.
+/// `ex:Erin ex:name "hello"` is a plain literal, so its datatype is
+/// `xsd:string` → conforms.
+#[test]
+fn regression_259_datatype_xsd_string_excludes_lang_tagged() {
+    let data = load("shacl_s4_datatype_langstring_data.ttl");
+    let shapes = load("shacl_s4_datatype_xsdstring_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Dave (lang-tagged) should violate sh:datatype xsd:string"
+    );
+}
+
+/// Regression test for issue #259 — `sh:datatype rdf:langString` must not
+/// accept a plain (non-language-tagged) literal.
+///
+/// `ex:Dave ex:name "hello"@en` is language-tagged → datatype is
+/// `rdf:langString` → conforms.
+/// `ex:Erin ex:name "hello"` is a plain literal, so its datatype is
+/// `xsd:string`, not `rdf:langString` → violates.
+#[test]
+fn regression_259_datatype_langstring_excludes_plain_string() {
+    let data = load("shacl_s4_datatype_langstring_data.ttl");
+    let shapes = load("shacl_s4_datatype_langstring_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Erin (plain string) should violate sh:datatype rdf:langString"
     );
 }
 
@@ -987,4 +1032,73 @@ fn regression_issue_260_node_level_hasvalue() {
         "node-level sh:hasValue must be checked against the focus node itself"
     );
     assert_eq!(report.results.len(), 1);
+// ── §3.5  Severity ────────────────────────────────────────────────────────────
+//
+// Regression tests for issue #263: `sh:severity` was ignored and every result
+// was hardcoded to `Severity::Violation`. Source: <https://www.w3.org/TR/shacl/#severity>
+
+/// A shape with `sh:severity sh:Warning` must produce results with
+/// `Severity::Warning`, not the hardcoded `Severity::Violation`.
+#[test]
+fn regression_issue_263_severity_warning() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let warn_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nWarn"))
+        .expect("ex:nWarn should have a validation result (missing ex:v)");
+    assert_eq!(warn_result.severity, shacl::Severity::Warning);
+}
+
+/// A shape with `sh:severity sh:Info` must produce results with `Severity::Info`.
+#[test]
+fn regression_issue_263_severity_info() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let info_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nInfo"))
+        .expect("ex:nInfo should have a validation result (missing ex:v)");
+    assert_eq!(info_result.severity, shacl::Severity::Info);
+}
+
+/// A shape with no `sh:severity` declared must default to `Severity::Violation`
+/// (guards against a regression in the common, unset case).
+#[test]
+fn regression_issue_263_severity_default() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let default_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nDefault"))
+        .expect("ex:nDefault should have a validation result (missing ex:v)");
+    assert_eq!(default_result.severity, shacl::Severity::Violation);
+}
+
+/// `report_to_turtle` must emit the actual severity per result, not a hardcoded
+/// `sh:Violation` for every result.
+#[test]
+fn regression_issue_263_severity_in_turtle_report() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Warning"),
+        "turtle report should contain sh:Warning severity:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Info"),
+        "turtle report should contain sh:Info severity:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Violation"),
+        "turtle report should contain sh:Violation severity for the default shape:\n{turtle}"
+    );
 }

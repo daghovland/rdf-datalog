@@ -80,6 +80,12 @@ pub const SH_IGNORED_PROPERTIES: &str = "http://www.w3.org/ns/shacl#ignoredPrope
 pub const SH_HAS_VALUE: &str = "http://www.w3.org/ns/shacl#hasValue";
 pub const SH_IN: &str = "http://www.w3.org/ns/shacl#in";
 
+// §3.5 Severity
+pub const SH_SEVERITY: &str = "http://www.w3.org/ns/shacl#severity";
+pub const SH_VIOLATION: &str = "http://www.w3.org/ns/shacl#Violation";
+pub const SH_WARNING: &str = "http://www.w3.org/ns/shacl#Warning";
+pub const SH_INFO: &str = "http://www.w3.org/ns/shacl#Info";
+
 // ── Synthetic marker IRIs (internal to this implementation) ───────────────────
 //
 // These are minted into the working Datastore as predicate IRIs during validation.

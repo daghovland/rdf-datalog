@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/#core-components>
 
-use crate::{graph, shapes, vocab};
+use crate::{Severity, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral};
 use ingress::RDF_TYPE;
@@ -26,13 +26,14 @@ use std::collections::HashSet;
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Evaluate all Phase 2 property constraints for every shape and add violation
-/// triples to `work`.  Returns the violation-predicate IDs.
+/// triples to `work`.  Returns the violation-predicate IDs paired with the
+/// producing shape's `Severity`.
 pub fn eval_all(
     parsed: &[shapes::ParsedShape],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
+) -> Vec<(GraphElementId, Severity)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         let targets = crate::data_targets(shape, data);
@@ -52,7 +53,7 @@ pub fn eval_all(
                     shapes_store,
                     work,
                 );
-                viol_preds.extend(new);
+                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
             }
         }
 
@@ -80,13 +81,13 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push(viol);
+            viol_preds.push((viol, shape.severity));
         }
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
             let new = eval_xone(shape, &targets, data, shapes_store, work);
-            viol_preds.extend(new);
+            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
         }
 
         // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
@@ -119,7 +120,7 @@ pub fn eval_all(
                             shapes_store,
                             work,
                         );
-                        viol_preds.extend(new);
+                        viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
                     }
                 }
             }
@@ -643,12 +644,11 @@ fn has_datatype(data: &Datastore, id: GraphElementId, dt_iri: &str) -> bool {
 }
 
 fn literal_datatype_iri(lit: &RdfLiteral) -> &str {
-    use ingress::{XSD_BOOLEAN, XSD_INTEGER};
+    use ingress::{RDF_LANG_STRING, XSD_BOOLEAN, XSD_INTEGER};
     match lit {
         RdfLiteral::TypedLiteral { type_iri, .. } => &type_iri.0,
-        RdfLiteral::LiteralString(_) | RdfLiteral::LangLiteral { .. } => {
-            "http://www.w3.org/2001/XMLSchema#string"
-        }
+        RdfLiteral::LiteralString(_) => "http://www.w3.org/2001/XMLSchema#string",
+        RdfLiteral::LangLiteral { .. } => RDF_LANG_STRING,
         RdfLiteral::BooleanLiteral(_) => XSD_BOOLEAN,
         RdfLiteral::IntegerLiteral(_) => XSD_INTEGER,
         RdfLiteral::DecimalLiteral(_) => "http://www.w3.org/2001/XMLSchema#decimal",

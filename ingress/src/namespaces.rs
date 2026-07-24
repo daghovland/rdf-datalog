@@ -21,6 +21,8 @@ pub const RDF_FIRST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
 pub const RDF_REST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
 
 pub const RDF_REIFIES: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies";
+/// The IRI for rdf:langString, the datatype of language-tagged literals (RDF 1.1 §5.5).
+pub const RDF_LANG_STRING: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
 pub const RDFS_LITERAL: &str = "http://www.w3.org/2000/01/rdf-schema#Literal";
 
 pub const RDFS_SUB_CLASS_OF: &str = "http://www.w3.org/2000/01/rdf-schema#subClassOf";

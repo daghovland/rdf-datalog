@@ -26,6 +26,7 @@ Contact: hovlanddag@gmail.com
 //! The sole exception is `InnerShapeRef::shapes_id`, which is passed back to the
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
+use crate::Severity;
 use crate::graph;
 use crate::shapes::{
     ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target, parse_prop_constraints,
@@ -41,18 +42,19 @@ use ingress::RDF_TYPE;
 /// Translate all parsed shapes into Datalog rules.
 ///
 /// Returns `(rules, viol_preds)`.  Every triple `(n, p, v)` in the working store
-/// after `evaluate_rules` where `p ∈ viol_preds` is one `ValidationResult`.
+/// after `evaluate_rules` where `p` is one of `viol_preds` is one `ValidationResult`,
+/// with severity given by the paired `Severity` (the producing shape's `sh:severity`).
 pub fn shapes_to_rules(
     parsed: &[ParsedShape],
     shapes: &Datastore,
     work: &mut Datastore,
-) -> (Vec<Rule>, Vec<GraphElementId>) {
+) -> (Vec<Rule>, Vec<(GraphElementId, Severity)>) {
     let true_id = graph::intern_iri(work, INT_TRUE);
     let nil_id = graph::intern_iri(work, INT_NIL);
     let rdf_type_id = graph::intern_iri(work, RDF_TYPE);
 
     let mut rules: Vec<Rule> = Vec::new();
-    let mut viol_preds: Vec<GraphElementId> = Vec::new();
+    let mut viol_preds: Vec<(GraphElementId, Severity)> = Vec::new();
 
     for shape in parsed {
         let si = shape.idx;
@@ -77,7 +79,7 @@ pub fn shapes_to_rules(
                     &mut rules,
                     work,
                 );
-                viol_preds.extend(new);
+                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
             }
         }
 
@@ -138,7 +140,7 @@ pub fn shapes_to_rules(
                     ),
                 ],
             });
-            viol_preds.push(viol);
+            viol_preds.push((viol, shape.severity));
         }
 
         // sh:and — all constraints in all inner shapes must hold.
@@ -173,7 +175,7 @@ pub fn shapes_to_rules(
                             &mut rules,
                             work,
                         );
-                        viol_preds.extend(viols);
+                        viol_preds.extend(viols.into_iter().map(|v| (v, shape.severity)));
                     }
                 }
             }
@@ -221,7 +223,7 @@ pub fn shapes_to_rules(
                 )),
                 body,
             });
-            viol_preds.push(viol);
+            viol_preds.push((viol, shape.severity));
         }
 
         // sh:xone — deferred to Phase 2 (requires counting conforming sub-shapes)

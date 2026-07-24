@@ -150,6 +150,8 @@ pub struct ParsedShape {
     pub node_constraints: Vec<PropConstraint>,
     /// `sh:nodeKind NK` at the node level.
     pub node_kind: Option<NodeKindValue>,
+    /// `sh:severity` on this shape, defaulting to `Severity::Violation` when unset.
+    pub severity: crate::Severity,
 }
 
 // ── Top-level entry point ─────────────────────────────────────────────────────
@@ -232,6 +234,11 @@ fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> 
         .and_then(|id| graph::iri_string(shapes, id))
         .and_then(|iri| parse_node_kind(&iri));
 
+    let severity = graph::get_object(shapes, shape_id, SH_SEVERITY)
+        .and_then(|id| graph::iri_string(shapes, id))
+        .and_then(|iri| crate::Severity::from_iri(&iri))
+        .unwrap_or_default();
+
     ParsedShape {
         idx,
         iri,
@@ -244,6 +251,7 @@ fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> 
         xone_inners,
         node_constraints,
         node_kind,
+        severity,
     }
 }
 
