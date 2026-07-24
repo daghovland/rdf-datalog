@@ -1,0 +1,137 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/ns#> .
+
+# See https://github.com/daghovland/rdf-datalog/issues/261
+
+# ── sh:pattern against an IRI value node ────────────────────────────────────
+ex:SIriPatternMatch
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriPatternMatch ;
+    sh:property [
+        sh:path ex:v ;
+        # Unanchored: matches anywhere in the IRI's string form.
+        sh:pattern "ZZZ" ;
+    ] .
+
+ex:SIriPatternNonMatch
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriPatternNonMatch ;
+    sh:property [
+        sh:path ex:v ;
+        sh:pattern "ZZZ" ;
+    ] .
+
+# ── sh:pattern against a blank-node value node ──────────────────────────────
+ex:SBlankPattern
+    a sh:NodeShape ;
+    sh:targetNode ex:nBlankPattern ;
+    sh:property [
+        sh:path ex:v ;
+        # Any pattern - even one guaranteed to match "everything" - must
+        # still violate for a blank node.
+        sh:pattern ".*" ;
+    ] .
+
+# ── sh:minLength against an IRI value node ──────────────────────────────────
+# "http://example.com/ns#Alice" is 27 characters long.
+ex:SIriMinLenOk
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriMinLenOk ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minLength 5 ;
+    ] .
+
+ex:SIriMinLenTooShort
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriMinLenTooShort ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minLength 1000 ;
+    ] .
+
+# ── sh:minLength against a blank-node value node ────────────────────────────
+ex:SBlankMinLen
+    a sh:NodeShape ;
+    sh:targetNode ex:nBlankMinLen ;
+    sh:property [
+        sh:path ex:v ;
+        # The loosest possible bound - must still violate for a blank node.
+        sh:minLength 0 ;
+    ] .
+
+# ── sh:maxLength against an IRI value node ──────────────────────────────────
+ex:SIriMaxLenOk
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriMaxLenOk ;
+    sh:property [
+        sh:path ex:v ;
+        sh:maxLength 1000 ;
+    ] .
+
+ex:SIriMaxLenTooLong
+    a sh:NodeShape ;
+    sh:targetNode ex:nIriMaxLenTooLong ;
+    sh:property [
+        sh:path ex:v ;
+        sh:maxLength 5 ;
+    ] .
+
+# ── sh:maxLength against a blank-node value node ────────────────────────────
+ex:SBlankMaxLen
+    a sh:NodeShape ;
+    sh:targetNode ex:nBlankMaxLen ;
+    sh:property [
+        sh:path ex:v ;
+        # A very generous bound - must still violate for a blank node.
+        sh:maxLength 1000 ;
+    ] .
+
+# ── literal controls: string-constraints on literals must be unaffected ────
+ex:SLiteralPatternMatch
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralPatternMatch ;
+    sh:property [
+        sh:path ex:v ;
+        sh:pattern "^ZZZ" ;
+    ] .
+
+ex:SLiteralPatternNonMatch
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralPatternNonMatch ;
+    sh:property [
+        sh:path ex:v ;
+        sh:pattern "^ZZZ" ;
+    ] .
+
+ex:SLiteralMinLenOk
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralMinLenOk ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minLength 3 ;
+    ] .
+
+ex:SLiteralMinLenTooShort
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralMinLenTooShort ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minLength 3 ;
+    ] .
+
+ex:SLiteralMaxLenOk
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralMaxLenOk ;
+    sh:property [
+        sh:path ex:v ;
+        sh:maxLength 5 ;
+    ] .
+
+ex:SLiteralMaxLenTooLong
+    a sh:NodeShape ;
+    sh:targetNode ex:nLiteralMaxLenTooLong ;
+    sh:property [
+        sh:path ex:v ;
+        sh:maxLength 5 ;
+    ] .
