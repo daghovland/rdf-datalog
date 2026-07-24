@@ -1664,3 +1664,49 @@ fn regression_issue_261_max_length_literal_too_long_violates() {
          violate"
     );
 }
+
+// ── sh:class transitive rdfs:subClassOf closure ──────────────────────────────
+//
+// sh:class checking previously tested only a direct rdf:type C triple on the
+// value node. Per SHACL's "SHACL instance" definition, a value node conforms
+// to sh:class C if it has rdf:type C or rdf:type of any subclass of C, where
+// the subclass edges (rdfs:subClassOf) already present in the data graph
+// must be followed transitively - no external OWL-RL/RDFS reasoner required.
+// See https://github.com/daghovland/rdf-datalog/issues/265
+
+#[test]
+fn regression_issue_265_class_subclassof_direct_conforms() {
+    let data = load("shacl_s265_class_subclassof_data.ttl");
+    let shapes = load("shacl_s265_class_subclassof_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("n")),
+        "issue's exact repro: ex:boss is typed ex:Manager, a direct \
+         rdfs:subClassOf ex:Person, so sh:class ex:Person must conform"
+    );
+}
+
+#[test]
+fn regression_issue_265_class_subclassof_transitive_conforms() {
+    let data = load("shacl_s265_class_subclassof_data.ttl");
+    let shapes = load("shacl_s265_class_subclassof_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("n2")),
+        "multi-level transitivity: ex:elder is typed ex:SeniorManager, which \
+         is rdfs:subClassOf ex:Manager, which is rdfs:subClassOf ex:Person - \
+         the closure must follow two hops, not just one"
+    );
+}
+
+#[test]
+fn regression_issue_265_class_unrelated_still_violates() {
+    let data = load("shacl_s265_class_subclassof_data.ttl");
+    let shapes = load("shacl_s265_class_subclassof_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("n3")),
+        "control case: ex:thing is typed ex:Gadget, unrelated to ex:Person \
+         by any subclass edge, so sh:class ex:Person must still violate"
+    );
+}
