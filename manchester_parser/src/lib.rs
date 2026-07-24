@@ -25,11 +25,14 @@ mod individual;
 mod iri;
 mod literal;
 mod property_expr;
+mod serialize;
 mod tokens;
 
 use iri::ParserContext;
 use nom::multi::many0;
 use owl_ontology::Ontology;
+
+pub use serialize::serialize;
 
 fn prefix_declaration<'a>(
     ctx: &'a ParserContext,
