@@ -801,6 +801,98 @@
       return JSON.parse(text);
     }
 
+    // ── N-Triples parsing (for DESCRIBE results) ───────────────────────────────
+    // DESCRIBE responses come back as `application/n-triples` (see
+    // sparql_endpoint::query::run_select_query), not SPARQL JSON bindings, so
+    // callers that want to reuse `renderTable` must parse the triples
+    // themselves and reshape them into a bindings-like object first.
+    function unescapeNTriplesString(s) {
+      return s.replace(/\\([tbnrf"'\\]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})/g, (m, esc) => {
+        switch (esc[0]) {
+          case 't': return '\t';
+          case 'b': return '\b';
+          case 'n': return '\n';
+          case 'r': return '\r';
+          case 'f': return '\f';
+          case '"': return '"';
+          case "'": return "'";
+          case '\\': return '\\';
+          case 'u': return String.fromCodePoint(parseInt(esc.slice(1), 16));
+          case 'U': return String.fromCodePoint(parseInt(esc.slice(1), 16));
+          default: return m;
+        }
+      });
+    }
+
+    // Parses one N-Triples term (subject/predicate/object token) starting at
+    // `str[i]`, returning `{ term, next }` where `term` is a SPARQL-JSON-style
+    // binding value (`{ type, value, datatype?, 'xml:lang'? }`) and `next` is
+    // the index just past the parsed term.
+    function parseNTriplesTerm(str, i) {
+      while (i < str.length && /\s/.test(str[i])) i++;
+      if (str[i] === '<') {
+        const end = str.indexOf('>', i);
+        return { term: { type: 'uri', value: str.slice(i + 1, end) }, next: end + 1 };
+      }
+      if (str.startsWith('_:', i)) {
+        let end = i + 2;
+        while (end < str.length && !/\s/.test(str[end])) end++;
+        return { term: { type: 'bnode', value: str.slice(i + 2, end) }, next: end };
+      }
+      if (str[i] === '"') {
+        let end = i + 1;
+        while (end < str.length && (str[end] !== '"' || str[end - 1] === '\\')) end++;
+        const raw = str.slice(i + 1, end);
+        let j = end + 1;
+        const value = unescapeNTriplesString(raw);
+        if (str[j] === '@') {
+          let k = j + 1;
+          while (k < str.length && /[A-Za-z0-9-]/.test(str[k])) k++;
+          return { term: { type: 'literal', value, 'xml:lang': str.slice(j + 1, k) }, next: k };
+        }
+        if (str.startsWith('^^', j)) {
+          const dtStart = j + 2;
+          const dtEnd = str.indexOf('>', dtStart);
+          return {
+            term: { type: 'literal', value, datatype: str.slice(dtStart + 1, dtEnd) },
+            next: dtEnd + 1,
+          };
+        }
+        return { term: { type: 'literal', value }, next: j };
+      }
+      // Unrecognised term shape — skip to next whitespace to avoid an infinite loop.
+      let end = i;
+      while (end < str.length && !/\s/.test(str[end])) end++;
+      return { term: { type: 'literal', value: str.slice(i, end) }, next: end };
+    }
+
+    // Parses N-Triples text into `[{ s, p, o }]` triples, each field a
+    // SPARQL-JSON-style binding value as produced by `parseNTriplesTerm`.
+    function parseNTriples(text) {
+      const triples = [];
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        let i = 0;
+        const sRes = parseNTriplesTerm(trimmed, i);
+        const pRes = parseNTriplesTerm(trimmed, sRes.next);
+        const oRes = parseNTriplesTerm(trimmed, pRes.next);
+        triples.push({ s: sRes.term, p: pRes.term, o: oRes.term });
+      }
+      return triples;
+    }
+
+    // Reshapes DESCRIBE's flat triple list into the `{ head, results }` shape
+    // `renderTable` expects, projecting out `?p`/`?o` (the subject is fixed —
+    // it's the described resource — so it's dropped from the table).
+    // Sorted by predicate to match the previous `ORDER BY ?p` SELECT.
+    function describeTriplesToPoBindings(triples) {
+      const bindings = triples
+        .map(t => ({ p: t.p, o: t.o }))
+        .sort((a, b) => a.p.value.localeCompare(b.p.value));
+      return { head: { vars: ['p', 'o'] }, results: { bindings } };
+    }
+
     // ── Shared table renderer ──────────────────────────────────────────────────
     function renderTable(container, data, badgeEl) {
       container.innerHTML = '';
@@ -1316,12 +1408,24 @@
       outEl.textContent = 'Loading…';
       inEl.textContent  = 'Loading…';
 
-      const [outData, inData] = await Promise.all([
-        sparqlFetch('SELECT ?p ?o WHERE { <' + iri + '> ?p ?o } ORDER BY ?p')
+      // Outbound triples use DESCRIBE <iri> (#45): the executor's DESCRIBE
+      // semantics are outbound-only (all triples where `iri` is the subject —
+      // see sparql_parser::execute's Query::Describe arm and
+      // sparql_parser/tests/describe_from_tests.rs), which matches exactly
+      // what the old outbound SELECT fetched. The response comes back as
+      // `application/n-triples`, not SPARQL JSON bindings, so it's parsed
+      // client-side and reshaped into the `{p, o}` bindings shape `renderTable`
+      // expects. Inbound triples (`?s ?p <iri>`) aren't part of DESCRIBE's
+      // result here, so that SELECT stays as-is.
+      const [outRdf, inData] = await Promise.all([
+        sparqlFetch('DESCRIBE <' + iri + '>')
           .catch(e => ({ _error: e.message })),
         sparqlFetch('SELECT ?s ?p WHERE { ?s ?p <' + iri + '> } ORDER BY ?p LIMIT 200')
           .catch(e => ({ _error: e.message })),
       ]);
+      const outData = outRdf._error
+        ? outRdf
+        : describeTriplesToPoBindings(parseNTriples(outRdf.text));
 
       if (!outData._error) {
         const bindings = outData.results?.bindings ?? [];
