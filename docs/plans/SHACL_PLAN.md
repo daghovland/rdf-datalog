@@ -202,10 +202,18 @@ They require a second `sh_value` lookup for the comparison property.
 
 | Constraint | Datalog |
 |---|---|
-| `sh:not S2` | `sh_violation(?n, S, "not", sh:nil) :- sh_target(?n, S), NOT sh_violation_any(?n, S2).` — uses stratified negation |
+| `sh:not S2` | direct evaluation (not Datalog rules): violated iff the inner shape `S2` conforms for the focus node, via the shared `shape_conforms_for_node` checker (`shacl/src/evaluate.rs`) |
 | `sh:and (S1 S2 …)` | union of rules from each shape; violation if any Si violated |
-| `sh:or (S1 S2 …)` | `sh_violation(?n, S, "or", sh:nil) :- sh_target(?n, S), sh_violation_any(?n, S1), sh_violation_any(?n, S2) …` — stratified conjunction of violations (violated iff *all* disjuncts fail) |
-| `sh:xone (S1 S2 …)` | count of conforming shapes ≠ 1; requires counting |
+| `sh:or (S1 S2 …)` | direct evaluation: violated iff *no* disjunct's inner shape conforms, via `shape_conforms_for_node` |
+| `sh:xone (S1 S2 …)` | direct evaluation: violated iff the count of conforming inner shapes ≠ 1, via `shape_conforms_for_node` |
+
+`sh:not`/`sh:or`/`sh:xone` moved from stratified-negation Datalog rules to direct
+Rust evaluation (alongside the other Phase 2 constraints) because their inner
+shapes can use constraint components — `sh:datatype`, `sh:pattern`, ranges, … —
+that have no Datalog rule-body encoding. All three, plus `sh:node` and
+`sh:qualifiedValueShape` below, now dispatch to one shared "does shape S hold
+for node N" predicate instead of separate hand-rolled mini-checkers. See
+[#258](https://github.com/daghovland/rdf-datalog/issues/258).
 
 #### §4.7 Shape-based Constraint Components
 

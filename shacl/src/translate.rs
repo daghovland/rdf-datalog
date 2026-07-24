@@ -28,9 +28,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::Severity;
 use crate::graph;
-use crate::shapes::{
-    ElemValue, InnerShapeRef, ParsedShape, PropConstraint, Target, parse_prop_constraints,
-};
+use crate::shapes::{ElemValue, ParsedShape, PropConstraint, Target, parse_prop_constraints};
 use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
@@ -106,42 +104,11 @@ pub fn shapes_to_rules(
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
         // before any Datalog materialisation, avoiding synthetic-predicate contamination).
 
-        // sh:not
-        if let Some(inner_ref) = &shape.not_inner {
-            let ok_pred = graph::intern_iri(work, &int_sub_ok(si, 0));
-            inner_ok_rules(
-                inner_ref,
-                shapes,
-                ok_pred,
-                true_id,
-                rdf_type_id,
-                &mut rules,
-                work,
-            );
-
-            let viol = graph::intern_iri(work, &viol_not(si));
-            // not-violation: target(n), inner_ok(n)
-            rules.push(Rule {
-                head: RuleHead::NormalHead(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(viol),
-                    Term::Resource(nil_id),
-                )),
-                body: vec![
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    ),
-                    pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(ok_pred),
-                        Term::Resource(true_id),
-                    ),
-                ],
-            });
-            viol_preds.push((viol, shape.severity));
-        }
+        // sh:not — evaluated directly in evaluate.rs::eval_all (see #258): the
+        // negated inner shape may use constraints (datatype, pattern, ranges, ...)
+        // that cannot be expressed as Datalog rule bodies, so full inner-shape
+        // conformance is checked via `shape_conforms_for_node` before any
+        // Datalog materialisation, the same way sh:xone already was.
 
         // sh:and — all constraints in all inner shapes must hold.
         // Each inner property shape is parsed with parse_prop_constraints and
@@ -181,55 +148,11 @@ pub fn shapes_to_rules(
             }
         }
 
-        // sh:or — violation if NO sub-shape conforms
-        if !shape.or_inners.is_empty() {
-            let ok_preds: Vec<GraphElementId> = shape
-                .or_inners
-                .iter()
-                .enumerate()
-                .map(|(sub_idx, inner_ref)| {
-                    let ok_pred = graph::intern_iri(work, &int_sub_ok(si, sub_idx + 100));
-                    inner_ok_rules(
-                        inner_ref,
-                        shapes,
-                        ok_pred,
-                        true_id,
-                        rdf_type_id,
-                        &mut rules,
-                        work,
-                    );
-                    ok_pred
-                })
-                .collect();
+        // sh:or — evaluated directly in evaluate.rs::eval_all (see #258), for the
+        // same reason as sh:not above.
 
-            let viol = graph::intern_iri(work, &viol_or(si));
-            let mut body = vec![pos(
-                Term::Variable("n".into()),
-                Term::Resource(target_pred),
-                Term::Resource(true_id),
-            )];
-            for ok_pred in &ok_preds {
-                body.push(neg(
-                    Term::Variable("n".into()),
-                    Term::Resource(*ok_pred),
-                    Term::Resource(true_id),
-                ));
-            }
-            rules.push(Rule {
-                head: RuleHead::NormalHead(dgp(
-                    Term::Variable("n".into()),
-                    Term::Resource(viol),
-                    Term::Resource(nil_id),
-                )),
-                body,
-            });
-            viol_preds.push((viol, shape.severity));
-        }
-
-        // sh:xone — deferred to Phase 2 (requires counting conforming sub-shapes)
-        if !shape.xone_inners.is_empty() {
-            log::warn!("sh:xone not yet implemented (Phase 2)");
-        }
+        // sh:xone — evaluated directly in evaluate.rs::eval_all (requires counting
+        // conforming sub-shapes; see `eval_xone`).
     }
 
     (rules, viol_preds)
@@ -590,74 +513,6 @@ fn prop_constraint_rules(
         | PropConstraint::NodeShape(_)
         | PropConstraint::QualifiedValueShape { .. } => {
             vec![]
-        }
-    }
-}
-
-// ── Logical constraint helpers ────────────────────────────────────────────────
-
-/// Generate "ok" rules: `(n, ok_pred, INT_TRUE)` when `n` satisfies the inner shape.
-///
-/// Supported inner shapes (Phase 1):
-/// - `[ sh:class C ]` → `ok(n) :- [n, rdf:type, C]`
-/// - `[ sh:property [ sh:path P ; sh:minCount 1 ] ]` → `ok(n) :- [n, P, ?v]`
-fn inner_ok_rules(
-    inner_ref: &InnerShapeRef,
-    shapes: &Datastore,
-    ok_pred: GraphElementId,
-    true_id: GraphElementId,
-    rdf_type_id: GraphElementId,
-    rules: &mut Vec<Rule>,
-    work: &mut Datastore,
-) {
-    use crate::vocab::{SH_CLASS, SH_PROPERTY};
-    let inner_id = inner_ref.shapes_id;
-
-    // sh:class C at node level
-    if let Some(class_id) = graph::get_object(shapes, inner_id, SH_CLASS)
-        && let Some(class_iri) = graph::iri_string(shapes, class_id)
-    {
-        let class_id_work = graph::intern_iri(work, &class_iri);
-        rules.push(Rule {
-            head: RuleHead::NormalHead(dgp(
-                Term::Variable("n".into()),
-                Term::Resource(ok_pred),
-                Term::Resource(true_id),
-            )),
-            body: vec![pos(
-                Term::Variable("n".into()),
-                Term::Resource(rdf_type_id),
-                Term::Resource(class_id_work),
-            )],
-        });
-        return;
-    }
-
-    // sh:property [ sh:path P ; sh:minCount 1 ] → ok if node has at least one P value
-    for prop_node in graph::get_objects(shapes, inner_id, SH_PROPERTY) {
-        use crate::vocab::{SH_MIN_COUNT, SH_PATH};
-        if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
-            && let Some(path_iri) = graph::iri_string(shapes, path_id)
-        {
-            // only handle minCount 1 here
-            let min = graph::get_object(shapes, prop_node, SH_MIN_COUNT)
-                .and_then(|id| graph::elem_to_u64(shapes, id))
-                .unwrap_or(0);
-            if min >= 1 {
-                let path_id_work = graph::intern_iri(work, &path_iri);
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(ok_pred),
-                        Term::Resource(true_id),
-                    )),
-                    body: vec![pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(path_id_work),
-                        Term::Variable("v".into()),
-                    )],
-                });
-            }
         }
     }
 }

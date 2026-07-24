@@ -184,7 +184,11 @@ pub fn parse_shapes(shapes: &Datastore) -> Vec<ParsedShape> {
 
 // ── Shape parsing ─────────────────────────────────────────────────────────────
 
-fn parse_one_shape(shapes: &Datastore, shape_id: GraphElementId, idx: usize) -> ParsedShape {
+pub(crate) fn parse_one_shape(
+    shapes: &Datastore,
+    shape_id: GraphElementId,
+    idx: usize,
+) -> ParsedShape {
     let iri = graph::iri_string(shapes, shape_id);
     let targets = parse_targets(shapes, shape_id, &iri);
     let mut property_shapes = parse_property_shapes(shapes, shape_id);

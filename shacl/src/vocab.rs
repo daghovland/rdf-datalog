@@ -121,12 +121,6 @@ pub fn int_in_list(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:inList:{shape_idx}:{prop_idx}")
 }
 
-/// "Conforms to inner shape" helper for shape `shape_idx`, sub-shape `sub_idx`.
-/// Used for sh:not / sh:or / sh:xone to derive that the node satisfies a sub-shape.
-pub fn int_sub_ok(shape_idx: usize, sub_idx: usize) -> String {
-    format!("urn:dagalog:shacl:subOk:{shape_idx}:{sub_idx}")
-}
-
 /// Synthetic "prop_idx" base used for node-level (pathless) constraints
 /// (`ParsedShape::node_constraints`), so their violation-IRI `prop_idx` slot
 /// never collides with a real `ParsedPropShape::idx` (which starts at 0) or

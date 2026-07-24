@@ -1128,7 +1128,10 @@ fn regression_issue_263_severity_in_turtle_report() {
 
 /// True iff `report` contains a violation whose focus node is `iri`.
 fn has_violation(report: &shacl::ValidationReport, iri: &str) -> bool {
-    report.results.iter().any(|r| r.focus_node.as_deref() == Some(iri))
+    report
+        .results
+        .iter()
+        .any(|r| r.focus_node.as_deref() == Some(iri))
 }
 
 const EX: &str = "http://example.com/ns#";
@@ -1144,7 +1147,6 @@ fn ex(local: &str) -> String {
 /// `inner_ok_rules` did not support `sh:nodeKind` at all, so neither disjunct was
 /// ever derived "ok" and the node was always reported as violating).
 #[test]
-#[ignore]
 fn regression_issue_258_or_nodekind() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1160,7 +1162,6 @@ fn regression_issue_258_or_nodekind() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_or_datatype() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1170,7 +1171,6 @@ fn regression_issue_258_or_datatype() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_or_pattern() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1180,7 +1180,6 @@ fn regression_issue_258_or_pattern() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_or_in() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1190,7 +1189,6 @@ fn regression_issue_258_or_in() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_or_hasvalue() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1200,7 +1198,6 @@ fn regression_issue_258_or_hasvalue() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_or_maxcount() {
     let data = load("shacl_s258_or_data.ttl");
     let shapes = load("shacl_s258_or_shapes.ttl");
@@ -1216,7 +1213,6 @@ fn regression_issue_258_or_maxcount() {
 /// `sh:nodeKind`, so `sh:not`'s violation rule — which requires "ok" to be true
 /// first — never fired, a false negative).
 #[test]
-#[ignore]
 fn regression_issue_258_not_nodekind() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1232,7 +1228,6 @@ fn regression_issue_258_not_nodekind() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_not_datatype() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1242,7 +1237,6 @@ fn regression_issue_258_not_datatype() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_not_pattern() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1252,7 +1246,6 @@ fn regression_issue_258_not_pattern() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_not_in() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1262,7 +1255,6 @@ fn regression_issue_258_not_in() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_not_hasvalue() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1272,7 +1264,6 @@ fn regression_issue_258_not_hasvalue() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_not_maxcount() {
     let data = load("shacl_s258_not_data.ttl");
     let shapes = load("shacl_s258_not_shapes.ttl");
@@ -1284,7 +1275,6 @@ fn regression_issue_258_not_maxcount() {
 // ── sh:node ───────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn regression_issue_258_node_datatype() {
     let data = load("shacl_s258_node_data.ttl");
     let shapes = load("shacl_s258_node_shapes.ttl");
@@ -1294,7 +1284,6 @@ fn regression_issue_258_node_datatype() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_node_pattern() {
     let data = load("shacl_s258_node_data.ttl");
     let shapes = load("shacl_s258_node_shapes.ttl");
@@ -1304,7 +1293,6 @@ fn regression_issue_258_node_pattern() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_node_in() {
     let data = load("shacl_s258_node_data.ttl");
     let shapes = load("shacl_s258_node_shapes.ttl");
@@ -1314,7 +1302,6 @@ fn regression_issue_258_node_in() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_node_hasvalue() {
     let data = load("shacl_s258_node_data.ttl");
     let shapes = load("shacl_s258_node_shapes.ttl");
@@ -1324,7 +1311,6 @@ fn regression_issue_258_node_hasvalue() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_node_maxcount() {
     let data = load("shacl_s258_node_data.ttl");
     let shapes = load("shacl_s258_node_shapes.ttl");
@@ -1336,7 +1322,6 @@ fn regression_issue_258_node_maxcount() {
 // ── sh:xone ───────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn regression_issue_258_xone_datatype() {
     let data = load("shacl_s258_xone_data.ttl");
     let shapes = load("shacl_s258_xone_shapes.ttl");
@@ -1346,7 +1331,6 @@ fn regression_issue_258_xone_datatype() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_xone_pattern() {
     let data = load("shacl_s258_xone_data.ttl");
     let shapes = load("shacl_s258_xone_shapes.ttl");
@@ -1356,7 +1340,6 @@ fn regression_issue_258_xone_pattern() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_xone_in() {
     let data = load("shacl_s258_xone_data.ttl");
     let shapes = load("shacl_s258_xone_shapes.ttl");
@@ -1366,7 +1349,6 @@ fn regression_issue_258_xone_in() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_xone_hasvalue() {
     let data = load("shacl_s258_xone_data.ttl");
     let shapes = load("shacl_s258_xone_shapes.ttl");
@@ -1376,7 +1358,6 @@ fn regression_issue_258_xone_hasvalue() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_xone_maxcount() {
     let data = load("shacl_s258_xone_data.ttl");
     let shapes = load("shacl_s258_xone_shapes.ttl");
@@ -1392,7 +1373,6 @@ fn regression_issue_258_xone_maxcount() {
 /// must count 0 qualifying values and violate (previously the datatype inner
 /// was ignored so both values were wrongly counted as qualifying).
 #[test]
-#[ignore]
 fn regression_issue_258_qualified_datatype() {
     let data = load("shacl_s258_qualified_data.ttl");
     let shapes = load("shacl_s258_qualified_shapes.ttl");
@@ -1402,7 +1382,6 @@ fn regression_issue_258_qualified_datatype() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_qualified_pattern() {
     let data = load("shacl_s258_qualified_data.ttl");
     let shapes = load("shacl_s258_qualified_shapes.ttl");
@@ -1412,7 +1391,6 @@ fn regression_issue_258_qualified_pattern() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_qualified_in() {
     let data = load("shacl_s258_qualified_data.ttl");
     let shapes = load("shacl_s258_qualified_shapes.ttl");
@@ -1422,7 +1400,6 @@ fn regression_issue_258_qualified_in() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_qualified_hasvalue() {
     let data = load("shacl_s258_qualified_data.ttl");
     let shapes = load("shacl_s258_qualified_shapes.ttl");
@@ -1432,7 +1409,6 @@ fn regression_issue_258_qualified_hasvalue() {
 }
 
 #[test]
-#[ignore]
 fn regression_issue_258_qualified_maxcount() {
     let data = load("shacl_s258_qualified_data.ttl");
     let shapes = load("shacl_s258_qualified_shapes.ttl");
