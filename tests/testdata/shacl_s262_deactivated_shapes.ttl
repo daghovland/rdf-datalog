@@ -1,0 +1,37 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Deactivated node shape: sh:minCount 1 would otherwise definitely violate
+# (ex:nNodeDeactivated has no ex:v value at all). Regression fixture for the
+# issue's reproduction. See https://github.com/daghovland/rdf-datalog/issues/262
+ex:SNodeDeactivated
+    a sh:NodeShape ;
+    sh:deactivated true ;
+    sh:targetNode ex:nNodeDeactivated ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minCount 1 ;
+    ] .
+
+# Deactivated property shape nested inside an otherwise-active node shape:
+# only the sh:property block itself carries sh:deactivated true.
+ex:SPropDeactivated
+    a sh:NodeShape ;
+    sh:targetNode ex:nPropDeactivated ;
+    sh:property [
+        a sh:PropertyShape ;
+        sh:deactivated true ;
+        sh:path ex:v ;
+        sh:minCount 1 ;
+    ] .
+
+# Regression guard: the same sh:minCount 1 constraint, NOT deactivated, must
+# still correctly violate.
+ex:SActive
+    a sh:NodeShape ;
+    sh:targetNode ex:nActive ;
+    sh:property [
+        sh:path ex:v ;
+        sh:minCount 1 ;
+    ] .

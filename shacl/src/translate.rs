@@ -55,6 +55,14 @@ pub fn shapes_to_rules(
     let mut viol_preds: Vec<(GraphElementId, Severity)> = Vec::new();
 
     for shape in parsed {
+        // sh:deactivated — a deactivated shape produces no results from any of
+        // its constraints (SHACL §3). Skip rule generation for it entirely,
+        // including its targets, so it never even becomes eligible for
+        // violation reporting. See #262.
+        if shape.deactivated {
+            continue;
+        }
+
         let si = shape.idx;
         let target_pred = graph::intern_iri(work, &int_target(si));
 
@@ -63,6 +71,11 @@ pub fn shapes_to_rules(
 
         // Property shape constraints
         for prop in &shape.property_shapes {
+            // A property shape can itself carry sh:deactivated (independent of
+            // the parent node shape's flag). See #262.
+            if prop.deactivated {
+                continue;
+            }
             let path_id = graph::intern_iri(work, &prop.path);
             for (ci, constraint) in prop.constraints.iter().enumerate() {
                 let key = (si, prop.idx, ci);
@@ -117,11 +130,18 @@ pub fn shapes_to_rules(
         // IRIs, the "prop index" part of the key is offset by sub_idx * 10_000.
         for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
             let inner_id = inner_ref.shapes_id;
+            // A deactivated inner shape contributes no constraints. See #262.
+            if crate::shapes::is_deactivated(shapes, inner_id) {
+                continue;
+            }
 
             for (pi, prop_node) in graph::get_objects(shapes, inner_id, SH_PROPERTY)
                 .into_iter()
                 .enumerate()
             {
+                if crate::shapes::is_deactivated(shapes, prop_node) {
+                    continue;
+                }
                 if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
                     && let Some(path_iri) = graph::iri_string(shapes, path_id)
                 {

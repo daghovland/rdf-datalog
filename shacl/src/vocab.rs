@@ -80,6 +80,9 @@ pub const SH_IGNORED_PROPERTIES: &str = "http://www.w3.org/ns/shacl#ignoredPrope
 pub const SH_HAS_VALUE: &str = "http://www.w3.org/ns/shacl#hasValue";
 pub const SH_IN: &str = "http://www.w3.org/ns/shacl#in";
 
+// §3.6 sh:deactivated
+pub const SH_DEACTIVATED: &str = "http://www.w3.org/ns/shacl#deactivated";
+
 // §3.5 Severity
 pub const SH_SEVERITY: &str = "http://www.w3.org/ns/shacl#severity";
 pub const SH_VIOLATION: &str = "http://www.w3.org/ns/shacl#Violation";
