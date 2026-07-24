@@ -33,7 +33,7 @@ use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
-use ingress::RDF_TYPE;
+use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -380,9 +380,52 @@ fn prop_constraint_rules(
         }
 
         // §4.1.1 sh:class
+        //
+        // A value node conforms to sh:class C if it has rdf:type C, or
+        // rdf:type of any (transitive) rdfs:subClassOf-subclass of C, per
+        // SHACL's "SHACL instance" definition — no external OWL-RL/RDFS
+        // reasoner required, just the transitive closure of subclass edges
+        // already present in the data graph. See
+        // <https://github.com/daghovland/rdf-datalog/issues/265>.
+        //
+        // Encoded as a reflexive-transitive "is-subclass-or-self-of C"
+        // predicate (`subclass_star`), recursively defined over
+        // rdfs:subClassOf, then joined against rdf:type:
+        //   subclass_star(C, true).
+        //   subclass_star(X, true) :- X rdfsSubClassOf Y, subclass_star(Y, true).
+        //   has_class(v, true) :- v rdf:type X, subclass_star(X, true).
         PropConstraint::Class(class_iri) => {
             let class_id = graph::intern_iri(work, class_iri);
-            // helper: value IS an instance of class
+            let rdfs_sub_class_of_id = graph::intern_iri(work, RDFS_SUB_CLASS_OF);
+            let subclass_star = graph::intern_iri(
+                work,
+                &format!("urn:dagalog:shacl:subClassStar:{si}:{pi}:{ci}"),
+            );
+            // Reflexive base case: C is trivially a "subclass-or-self" of C,
+            // so a direct rdf:type C still conforms exactly as before.
+            rules.push(fact(class_id, subclass_star, true_id));
+            // Recursive case: X is subclass_star of C if X directly
+            // rdfs:subClassOf some Y that is itself subclass_star of C.
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("x".into()),
+                    Term::Resource(subclass_star),
+                    Term::Resource(true_id),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("x".into()),
+                        Term::Resource(rdfs_sub_class_of_id),
+                        Term::Variable("y".into()),
+                    ),
+                    pos(
+                        Term::Variable("y".into()),
+                        Term::Resource(subclass_star),
+                        Term::Resource(true_id),
+                    ),
+                ],
+            });
+            // helper: value IS an instance of class (directly or via subclass closure)
             let has_class =
                 graph::intern_iri(work, &format!("urn:dagalog:shacl:hasClass:{si}:{pi}:{ci}"));
             rules.push(Rule {
@@ -391,11 +434,18 @@ fn prop_constraint_rules(
                     Term::Resource(has_class),
                     Term::Resource(true_id),
                 )),
-                body: vec![pos(
-                    Term::Variable("v".into()),
-                    Term::Resource(rdf_type_id),
-                    Term::Resource(class_id),
-                )],
+                body: vec![
+                    pos(
+                        Term::Variable("v".into()),
+                        Term::Resource(rdf_type_id),
+                        Term::Variable("t".into()),
+                    ),
+                    pos(
+                        Term::Variable("t".into()),
+                        Term::Resource(subclass_star),
+                        Term::Resource(true_id),
+                    ),
+                ],
             });
             let viol = graph::intern_iri(work, &viol_class(si, pi));
             let mut body = vec![pos(
