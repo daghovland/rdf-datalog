@@ -44,6 +44,10 @@ pub enum CellType {
     Sparql(String),
     /// `%%rml <path>` — apply an RML mapping file.
     Rml(PathBuf),
+    /// `%%manchester <path>` — load an OWL 2 Manchester Syntax (`.omn`) file:
+    /// materialise its ABox as quads and its TBox as immediately-evaluated
+    /// Datalog rules. See [`crate::cell::manchester::execute_manchester_file`].
+    Manchester(PathBuf),
     /// `%%load <path>` — load a Turtle/TriG/N-Triples file.
     Load(PathBuf),
     /// `%%reason` — run OWL-RL reasoning on the current datastore.
@@ -74,6 +78,10 @@ pub fn detect_cell_type(cell: &str) -> CellType {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Rml(PathBuf::from(path))
             }
+            "manchester" => {
+                let path = parts.next().unwrap_or("").trim();
+                CellType::Manchester(PathBuf::from(path))
+            }
             "load" => {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Load(PathBuf::from(path))
@@ -101,6 +109,7 @@ pub fn detect_cell_type(cell: &str) -> CellType {
 }
 
 pub mod datalog;
+pub mod manchester;
 pub mod ottr;
 pub mod rml;
 pub mod shacl;
@@ -132,6 +141,24 @@ mod tests {
     fn test_sparql_cell_leading_whitespace() {
         let cell = "  \nSELECT * WHERE { ?s ?p ?o }";
         assert!(matches!(detect_cell_type(cell), CellType::Sparql(_)));
+    }
+
+    #[test]
+    fn test_manchester_magic() {
+        let cell = "%%manchester ontologies/animals.omn";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::Manchester(PathBuf::from("ontologies/animals.omn"))
+        );
+    }
+
+    #[test]
+    fn test_manchester_magic_trailing_newline() {
+        let cell = "%%manchester animals.omn\n";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::Manchester(PathBuf::from("animals.omn"))
+        );
     }
 
     #[test]

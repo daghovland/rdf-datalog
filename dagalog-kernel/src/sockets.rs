@@ -6,6 +6,7 @@ use crate::cell::{
     CellType, check_path_safe,
     datalog::execute_datalog,
     detect_cell_type,
+    manchester::execute_manchester_file,
     ottr::{execute_ottr_file, execute_ottr_inline},
     rml::execute_rml,
     shacl::execute_validate,
@@ -233,6 +234,12 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
             execute_rml(ds, &path).map(CellOutput::Stream)
+        }
+        CellType::Manchester(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
+            execute_manchester_file(ds, &path).map(CellOutput::Stream)
         }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;

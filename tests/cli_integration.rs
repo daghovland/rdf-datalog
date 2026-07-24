@@ -238,6 +238,75 @@ ex:Employee rdfs:subClassOf ex:Person .
     );
 }
 
+// ── Manchester Syntax (.omn) ──────────────────────────────────────────────────
+//
+// See [#161](https://github.com/daghovland/rdf-datalog/issues/161) — wiring
+// `manchester_parser` into the CLI's file-loading paths.
+
+#[test]
+fn load_file_omn_materialises_abox_only() {
+    // `load_file` on a `.omn` path materialises the ABox (via `assert_abox`)
+    // but does not compile/evaluate TBox rules — that's `apply_ontologies`'s
+    // job. So `fido a Dog` (asserted) is present but `fido a Animal`
+    // (only derivable via `SubClassOf: Animal` + reasoning) is not.
+    let mut ds = Datastore::new(1_000);
+    load_file(&mut ds, &testdata("animals.omn")).expect("should load animals.omn");
+
+    let dog_rows = run_sparql_query(
+        &ds,
+        "PREFIX : <http://example.org/> SELECT ?x WHERE { ?x a :Dog }",
+    )
+    .expect("query should succeed")
+    .rows;
+    assert_eq!(dog_rows.len(), 1, "fido should be asserted as a Dog");
+
+    let animal_rows = run_sparql_query(
+        &ds,
+        "PREFIX : <http://example.org/> SELECT ?x WHERE { ?x a :Animal }",
+    )
+    .expect("query should succeed")
+    .rows;
+    assert!(
+        animal_rows.is_empty(),
+        "load_file alone must not run TBox reasoning; \
+         got {} Animal rows (Dog rdfs:subClassOf Animal was never evaluated)",
+        animal_rows.len()
+    );
+}
+
+#[test]
+fn apply_ontologies_omn_materialises_abox_and_reasons() {
+    // `apply_ontologies` on a `.omn` path must both materialise the ABox
+    // (`assert_abox`) and compile+evaluate the TBox (`owl2datalog` +
+    // `evaluate_rules`), because a Manchester TBox axiom never becomes an RDF
+    // triple and so can never be recovered later via `rdf2owl` the way a
+    // Turtle-sourced ontology's axioms can. The only way to prove both steps
+    // ran is to check the *inferred* type (fido a Animal), not just the
+    // asserted one (fido a Dog).
+    let mut ds = Datastore::new(1_000);
+    let stats = apply_ontologies(&mut ds, &[testdata("animals.omn")])
+        .expect("apply_ontologies should succeed for a .omn file");
+
+    assert!(
+        stats.rule_count > 0,
+        "expected at least one rule compiled from the Manchester SubClassOf axiom"
+    );
+
+    let animal_rows = run_sparql_query(
+        &ds,
+        "PREFIX : <http://example.org/> SELECT ?x WHERE { ?x a :Animal }",
+    )
+    .expect("query should succeed")
+    .rows;
+    assert_eq!(
+        animal_rows.len(),
+        1,
+        "fido must be inferred as an Animal via the Manchester-parsed SubClassOf \
+         axiom + assert_abox's materialised Dog typing; got {:?}",
+        animal_rows
+    );
+}
+
 // ── Output formats ────────────────────────────────────────────────────────────
 
 #[test]

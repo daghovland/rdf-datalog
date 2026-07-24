@@ -12,7 +12,7 @@ Contact: hovlanddag@gmail.com
 //! The CLI binary (`main.rs`) is a thin wrapper around this library.
 
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
-use owl2rl2datalog::owl2datalog;
+use owl2rl2datalog::{assert_abox, owl2datalog};
 use rdf_owl_translator::rdf2owl;
 use sparql_parser::{
     NetworkPolicy, ParserContext, QueryResult, SelectResult, execute, parse_query,
@@ -83,11 +83,33 @@ pub struct ReasoningStats {
 /// - `.trig` → TriG
 /// - `.nt` → N-Triples
 /// - `.nq` → N-Quads
+/// - `.omn` → OWL 2 Manchester Syntax (ABox only — see below)
 /// - everything else → Turtle
+///
+/// ## `.omn` handling
+///
+/// A Manchester Syntax document is parsed into an [`owl_ontology::Ontology`]
+/// and only its ABox assertions (`Individual:`/`Types:`/`Facts:` frames) are
+/// materialised into `datastore` as ground quads, via
+/// [`owl2rl2datalog::assert_abox`]. TBox axioms (`SubClassOf:`, property
+/// domain/range, …) are **not** compiled to Datalog rules here — `load_file`'s
+/// contract elsewhere is "add quads to the store," and running a full
+/// OWL-RL materialisation pass as a side effect of a data load would be a
+/// surprise, especially since other files in the same batch (loaded later,
+/// e.g. via a `--data` list) wouldn't yet be visible to it. Callers that want
+/// the TBox reasoned over should pass the `.omn` file via [`apply_ontologies`]
+/// instead, which special-cases `.omn` paths to also call [`owl2datalog`] and
+/// evaluate the resulting rules together with every other ontology source in
+/// one batch. See [#161](https://github.com/daghovland/rdf-datalog/issues/161).
 pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext == "omn" {
+        let ontology = parse_manchester_file(path)?;
+        assert_abox(datastore, &ontology);
+        return Ok(());
+    }
     let file = File::open(path).map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
     let reader = BufReader::new(file);
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext {
         "trig" => turtle::parse_trig(datastore, reader)
             .map_err(|e| format!("TriG parse error in {}: {}", path.display(), e)),
@@ -100,6 +122,15 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     }
 }
 
+/// Read and parse a `.omn` (OWL 2 Manchester Syntax) file into an
+/// [`owl_ontology::Ontology`].
+fn parse_manchester_file(path: &Path) -> Result<owl_ontology::Ontology, String> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
+    manchester_parser::parse(&src)
+        .map_err(|e| format!("Manchester Syntax parse error in {}: {}", path.display(), e))
+}
+
 // ── OWL reasoning ─────────────────────────────────────────────────────────────
 
 /// Load OWL ontology files and apply OWL-RL materialisation to `datastore`.
@@ -107,25 +138,52 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
 /// Ontology triples are loaded into the same datastore as the data, then the
 /// full RDF→OWL→Datalog→materialise pipeline is executed.
 ///
-/// Returns reasoning statistics (axiom count, rule count, triple delta).
+/// ## `.omn` (Manchester Syntax) paths
+///
+/// Unlike [`load_file`] (which only materialises a `.omn` file's ABox),
+/// `apply_ontologies` special-cases `.omn` paths so their TBox is actually
+/// reasoned over: each is parsed once, its ABox is materialised via
+/// [`owl2rl2datalog::assert_abox`], and its TBox is compiled to rules via
+/// [`owl2datalog`] — accumulated alongside the rules compiled from every
+/// RDF-native ontology file (Turtle/RDF-XML/JSON-LD, extracted via
+/// [`rdf2owl`]) and evaluated together in one batch, after all paths have
+/// been processed. This ordering matters: a Manchester TBox axiom never
+/// becomes an RDF triple (that's [#177](https://github.com/daghovland/rdf-datalog/issues/177),
+/// not yet done), so it can never be recovered from `datastore` by `rdf2owl`
+/// after the fact — it must be compiled to rules at parse time or it is lost
+/// entirely. See [#161](https://github.com/daghovland/rdf-datalog/issues/161).
+///
+/// Returns reasoning statistics (axiom count, rule count, triple delta) —
+/// counts include both the Manchester and RDF-native ontology sources.
 pub fn apply_ontologies(
     datastore: &mut Datastore,
     paths: &[std::path::PathBuf],
 ) -> Result<ReasoningStats, String> {
     let triples_before = datastore.named_graphs.quad_count;
 
+    let mut manchester_axiom_count = 0usize;
+    let mut all_rules = Vec::new();
+
     for path in paths {
-        load_file(datastore, path)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext == "omn" {
+            let ontology = parse_manchester_file(path)?;
+            assert_abox(datastore, &ontology);
+            manchester_axiom_count += ontology.axioms.len();
+            all_rules.extend(owl2datalog(&mut datastore.resources, &ontology));
+        } else {
+            load_file(datastore, path)?;
+        }
     }
 
     let ontology_doc = rdf2owl(datastore);
     let ontology = &ontology_doc.ontology;
-    let axiom_count = ontology.axioms.len();
+    let axiom_count = manchester_axiom_count + ontology.axioms.len();
 
-    let rules = owl2datalog(&mut datastore.resources, ontology);
-    let rule_count = rules.len();
+    all_rules.extend(owl2datalog(&mut datastore.resources, ontology));
+    let rule_count = all_rules.len();
 
-    datalog::evaluate_rules(rules, datastore);
+    datalog::evaluate_rules(all_rules, datastore);
 
     let triples_after = datastore.named_graphs.quad_count;
 
