@@ -121,6 +121,16 @@ struct Cli {
     )]
     query_timeout: u64,
 
+    /// Maximum request body size for RDF write routes (`/{name}/data`,
+    /// `/rdf-graph-store`, `/rdf-graphs/*`, `/upload`, `/{name}/shacl`), in bytes
+    #[arg(
+        long = "max-rdf-upload-bytes",
+        value_name = "BYTES",
+        default_value_t = 64 * 1024 * 1024,
+        env = "DAGALOG_MAX_RDF_UPLOAD_BYTES"
+    )]
+    max_rdf_upload_bytes: usize,
+
     // ── Tier 1: Static API key ───────────────────────────────────────────────
     /// Shared API key for Bearer token auth; omit to disable (Tier 1)
     #[arg(long = "api-key", value_name = "KEY", env = "DAGALOG_API_KEY")]
@@ -410,6 +420,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_query_timeout_secs: cli.query_timeout,
             auth,
             data_dir,
+            max_rdf_upload_bytes: cli.max_rdf_upload_bytes,
             initial_rules: serve_rules,
             network_policy,
             ..Default::default()
