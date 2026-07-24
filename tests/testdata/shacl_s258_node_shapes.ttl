@@ -1,0 +1,47 @@
+# Issue #258 — sh:node must dispatch to the FULL constraint-evaluation logic for
+# the referenced inner shape (evaluate.rs::node_conforms_to_inner previously only
+# understood sh:class / sh:nodeKind / sh:property[sh:minCount>=1]).
+# https://github.com/daghovland/rdf-datalog/issues/258
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:NodeDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:ndDtOk, ex:ndDtBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node [ sh:property [ sh:path ex:v ; sh:datatype xsd:integer ] ] ;
+    ] .
+
+ex:NodePatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:ndPatOk, ex:ndPatBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node [ sh:property [ sh:path ex:v ; sh:pattern "^foo" ] ] ;
+    ] .
+
+ex:NodeInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:ndInOk, ex:ndInBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node [ sh:property [ sh:path ex:v ; sh:in ( ex:A ex:B ) ] ] ;
+    ] .
+
+ex:NodeHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:ndHvOk, ex:ndHvBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node [ sh:property [ sh:path ex:v ; sh:hasValue ex:Expected ] ] ;
+    ] .
+
+ex:NodeMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:ndMcOk, ex:ndMcBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:node [ sh:property [ sh:path ex:v ; sh:maxCount 1 ] ] ;
+    ] .

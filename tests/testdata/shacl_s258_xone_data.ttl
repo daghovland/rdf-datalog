@@ -1,0 +1,17 @@
+# Issue #258 — sh:xone data graph. See shacl_s258_xone_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:xoDtOk  ex:v 42 .
+ex:xoDtBad ex:v "abc" .
+
+ex:xoPatOk  ex:v "foobar" .
+ex:xoPatBad ex:v "bazqux" .
+
+ex:xoInOk  ex:v ex:A .
+ex:xoInBad ex:v ex:C .
+
+ex:xoHvOk  ex:v ex:Expected .
+ex:xoHvBad ex:v ex:Other .
+
+ex:xoMcOk  ex:v ex:x1 .
+ex:xoMcBad ex:v ex:x1, ex:x2 .

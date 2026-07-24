@@ -128,6 +128,16 @@ fn shacl_testdata_parses() {
         "shacl_s4_node_level_hasvalue_shapes.ttl",
         "shacl_s3_severity_data.ttl",
         "shacl_s3_severity_shapes.ttl",
+        "shacl_s258_or_data.ttl",
+        "shacl_s258_or_shapes.ttl",
+        "shacl_s258_not_data.ttl",
+        "shacl_s258_not_shapes.ttl",
+        "shacl_s258_node_data.ttl",
+        "shacl_s258_node_shapes.ttl",
+        "shacl_s258_xone_data.ttl",
+        "shacl_s258_xone_shapes.ttl",
+        "shacl_s258_qualified_data.ttl",
+        "shacl_s258_qualified_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -1103,4 +1113,306 @@ fn regression_issue_263_severity_in_turtle_report() {
         turtle.contains("sh:resultSeverity sh:Violation"),
         "turtle report should contain sh:Violation severity for the default shape:\n{turtle}"
     );
+}
+
+// ── Issue #258 — shared inner-shape conformance checker ──────────────────────
+//
+// sh:or/sh:not (translate.rs::inner_ok_rules) and sh:node/sh:xone/
+// sh:qualifiedValueShape (evaluate.rs::node_conforms_to_inner) previously
+// evaluated inner-shape conformance through hand-rolled mini-checkers that only
+// understood sh:class / sh:nodeKind / sh:property[sh:minCount>=1]. Any other
+// constraint (sh:datatype, sh:pattern, sh:in, sh:hasValue, sh:maxCount, ...) was
+// silently ignored, producing false positives (sh:or), false negatives (sh:not),
+// or mis-counted qualifying values (sh:node/sh:xone/sh:qualifiedValueShape).
+// See: https://github.com/daghovland/rdf-datalog/issues/258
+
+/// True iff `report` contains a violation whose focus node is `iri`.
+fn has_violation(report: &shacl::ValidationReport, iri: &str) -> bool {
+    report
+        .results
+        .iter()
+        .any(|r| r.focus_node.as_deref() == Some(iri))
+}
+
+const EX: &str = "http://example.com/ns#";
+
+fn ex(local: &str) -> String {
+    format!("{EX}{local}")
+}
+
+// ── sh:or ─────────────────────────────────────────────────────────────────────
+
+/// Issue's concrete repro: `sh:or([sh:nodeKind sh:IRI], [sh:nodeKind sh:Literal])`
+/// must correctly recognize an IRI-valued disjunct as conforming (previously
+/// `inner_ok_rules` did not support `sh:nodeKind` at all, so neither disjunct was
+/// ever derived "ok" and the node was always reported as violating).
+#[test]
+fn regression_issue_258_or_nodekind() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("orNkOk")),
+        "orNkOk's ex:v is an IRI — the sh:nodeKind sh:IRI disjunct conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("orNkBad")),
+        "orNkBad's ex:v is a blank node — neither disjunct conforms"
+    );
+}
+
+#[test]
+fn regression_issue_258_or_datatype() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("orDtOk")));
+    assert!(has_violation(&report, &ex("orDtBad")));
+}
+
+#[test]
+fn regression_issue_258_or_pattern() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("orPatOk")));
+    assert!(has_violation(&report, &ex("orPatBad")));
+}
+
+#[test]
+fn regression_issue_258_or_in() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("orInOk")));
+    assert!(has_violation(&report, &ex("orInBad")));
+}
+
+#[test]
+fn regression_issue_258_or_hasvalue() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("orHvOk")));
+    assert!(has_violation(&report, &ex("orHvBad")));
+}
+
+#[test]
+fn regression_issue_258_or_maxcount() {
+    let data = load("shacl_s258_or_data.ttl");
+    let shapes = load("shacl_s258_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("orMcOk")));
+    assert!(has_violation(&report, &ex("orMcBad")));
+}
+
+// ── sh:not ────────────────────────────────────────────────────────────────────
+
+/// Issue's concrete repro: `sh:not [sh:nodeKind sh:IRI]` must fire when the inner
+/// shape genuinely holds (previously `inner_ok_rules` never derived "ok" for
+/// `sh:nodeKind`, so `sh:not`'s violation rule — which requires "ok" to be true
+/// first — never fired, a false negative).
+#[test]
+fn regression_issue_258_not_nodekind() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("notNkBad")),
+        "notNkBad's ex:v is an IRI — the inner shape conforms, so sh:not violates"
+    );
+    assert!(
+        !has_violation(&report, &ex("notNkOk")),
+        "notNkOk's ex:v is a blank node — the inner shape does not conform, so sh:not is satisfied"
+    );
+}
+
+#[test]
+fn regression_issue_258_not_datatype() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(has_violation(&report, &ex("notDtBad")));
+    assert!(!has_violation(&report, &ex("notDtOk")));
+}
+
+#[test]
+fn regression_issue_258_not_pattern() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(has_violation(&report, &ex("notPatBad")));
+    assert!(!has_violation(&report, &ex("notPatOk")));
+}
+
+#[test]
+fn regression_issue_258_not_in() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(has_violation(&report, &ex("notInBad")));
+    assert!(!has_violation(&report, &ex("notInOk")));
+}
+
+#[test]
+fn regression_issue_258_not_hasvalue() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(has_violation(&report, &ex("notHvBad")));
+    assert!(!has_violation(&report, &ex("notHvOk")));
+}
+
+#[test]
+fn regression_issue_258_not_maxcount() {
+    let data = load("shacl_s258_not_data.ttl");
+    let shapes = load("shacl_s258_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(has_violation(&report, &ex("notMcBad")));
+    assert!(!has_violation(&report, &ex("notMcOk")));
+}
+
+// ── sh:node ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn regression_issue_258_node_datatype() {
+    let data = load("shacl_s258_node_data.ttl");
+    let shapes = load("shacl_s258_node_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("ndDtOk")));
+    assert!(has_violation(&report, &ex("ndDtBad")));
+}
+
+#[test]
+fn regression_issue_258_node_pattern() {
+    let data = load("shacl_s258_node_data.ttl");
+    let shapes = load("shacl_s258_node_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("ndPatOk")));
+    assert!(has_violation(&report, &ex("ndPatBad")));
+}
+
+#[test]
+fn regression_issue_258_node_in() {
+    let data = load("shacl_s258_node_data.ttl");
+    let shapes = load("shacl_s258_node_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("ndInOk")));
+    assert!(has_violation(&report, &ex("ndInBad")));
+}
+
+#[test]
+fn regression_issue_258_node_hasvalue() {
+    let data = load("shacl_s258_node_data.ttl");
+    let shapes = load("shacl_s258_node_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("ndHvOk")));
+    assert!(has_violation(&report, &ex("ndHvBad")));
+}
+
+#[test]
+fn regression_issue_258_node_maxcount() {
+    let data = load("shacl_s258_node_data.ttl");
+    let shapes = load("shacl_s258_node_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("ndMcOk")));
+    assert!(has_violation(&report, &ex("ndMcBad")));
+}
+
+// ── sh:xone ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn regression_issue_258_xone_datatype() {
+    let data = load("shacl_s258_xone_data.ttl");
+    let shapes = load("shacl_s258_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("xoDtOk")));
+    assert!(has_violation(&report, &ex("xoDtBad")));
+}
+
+#[test]
+fn regression_issue_258_xone_pattern() {
+    let data = load("shacl_s258_xone_data.ttl");
+    let shapes = load("shacl_s258_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("xoPatOk")));
+    assert!(has_violation(&report, &ex("xoPatBad")));
+}
+
+#[test]
+fn regression_issue_258_xone_in() {
+    let data = load("shacl_s258_xone_data.ttl");
+    let shapes = load("shacl_s258_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("xoInOk")));
+    assert!(has_violation(&report, &ex("xoInBad")));
+}
+
+#[test]
+fn regression_issue_258_xone_hasvalue() {
+    let data = load("shacl_s258_xone_data.ttl");
+    let shapes = load("shacl_s258_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("xoHvOk")));
+    assert!(has_violation(&report, &ex("xoHvBad")));
+}
+
+#[test]
+fn regression_issue_258_xone_maxcount() {
+    let data = load("shacl_s258_xone_data.ttl");
+    let shapes = load("shacl_s258_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("xoMcOk")));
+    assert!(has_violation(&report, &ex("xoMcBad")));
+}
+
+// ── sh:qualifiedValueShape ────────────────────────────────────────────────────
+
+/// Issue's concrete repro, verbatim: `sh:qualifiedValueShape [sh:datatype
+/// xsd:integer] ; sh:qualifiedMinCount 2` with two non-integer string values
+/// must count 0 qualifying values and violate (previously the datatype inner
+/// was ignored so both values were wrongly counted as qualifying).
+#[test]
+fn regression_issue_258_qualified_datatype() {
+    let data = load("shacl_s258_qualified_data.ttl");
+    let shapes = load("shacl_s258_qualified_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("qvDtOk")));
+    assert!(has_violation(&report, &ex("qvDtBad")));
+}
+
+#[test]
+fn regression_issue_258_qualified_pattern() {
+    let data = load("shacl_s258_qualified_data.ttl");
+    let shapes = load("shacl_s258_qualified_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("qvPatOk")));
+    assert!(has_violation(&report, &ex("qvPatBad")));
+}
+
+#[test]
+fn regression_issue_258_qualified_in() {
+    let data = load("shacl_s258_qualified_data.ttl");
+    let shapes = load("shacl_s258_qualified_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("qvInOk")));
+    assert!(has_violation(&report, &ex("qvInBad")));
+}
+
+#[test]
+fn regression_issue_258_qualified_hasvalue() {
+    let data = load("shacl_s258_qualified_data.ttl");
+    let shapes = load("shacl_s258_qualified_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("qvHvOk")));
+    assert!(has_violation(&report, &ex("qvHvBad")));
+}
+
+#[test]
+fn regression_issue_258_qualified_maxcount() {
+    let data = load("shacl_s258_qualified_data.ttl");
+    let shapes = load("shacl_s258_qualified_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("qvMcOk")));
+    assert!(has_violation(&report, &ex("qvMcBad")));
 }

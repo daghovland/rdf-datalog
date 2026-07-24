@@ -1,0 +1,20 @@
+# Issue #258 — sh:or data graph. See shacl_s258_or_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:orNkOk  ex:v ex:SomeIri .
+ex:orNkBad ex:v _:b1 .
+
+ex:orDtOk  ex:v 42 .
+ex:orDtBad ex:v "abc" .
+
+ex:orPatOk  ex:v "foobar" .
+ex:orPatBad ex:v "bazqux" .
+
+ex:orInOk  ex:v ex:A .
+ex:orInBad ex:v ex:C .
+
+ex:orHvOk  ex:v ex:Expected .
+ex:orHvBad ex:v ex:Other .
+
+ex:orMcOk  ex:v ex:x1 .
+ex:orMcBad ex:v ex:x1, ex:x2 .

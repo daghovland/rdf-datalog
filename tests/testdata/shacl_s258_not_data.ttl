@@ -1,0 +1,20 @@
+# Issue #258 — sh:not data graph. See shacl_s258_not_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:notNkBad ex:v ex:SomeIri .
+ex:notNkOk  ex:v _:b2 .
+
+ex:notDtBad ex:v 42 .
+ex:notDtOk  ex:v "abc" .
+
+ex:notPatBad ex:v "foobar" .
+ex:notPatOk  ex:v "bazqux" .
+
+ex:notInBad ex:v ex:A .
+ex:notInOk  ex:v ex:C .
+
+ex:notHvBad ex:v ex:Expected .
+ex:notHvOk  ex:v ex:Other .
+
+ex:notMcBad ex:v ex:x1 .
+ex:notMcOk  ex:v ex:x1, ex:x2 .

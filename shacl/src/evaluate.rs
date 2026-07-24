@@ -90,6 +90,39 @@ pub fn eval_all(
             viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
         }
 
+        // sh:not — violation iff the negated inner shape conforms. Evaluated here
+        // (rather than as a Datalog rule, as it was before #258) because the full
+        // inner-shape conformance check (`shape_conforms_for_node`) can involve
+        // constraints — datatype, pattern, ranges, ... — that the Datalog engine
+        // cannot express as rule bodies. Mirrors sh:xone's existing direct-eval
+        // style above.
+        if let Some(inner_ref) = &shape.not_inner {
+            let viol = graph::intern_iri(work, &vocab::viol_not(shape.idx));
+            let nil = graph::intern_iri(work, vocab::INT_NIL);
+            for node in &targets {
+                if shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store) {
+                    add_viol(work, *node, viol, nil);
+                }
+            }
+            viol_preds.push((viol, shape.severity));
+        }
+
+        // sh:or — violation iff NO disjunct's inner shape conforms. See sh:not above
+        // for why this moved from Datalog-rule generation to direct evaluation.
+        if !shape.or_inners.is_empty() {
+            let viol = graph::intern_iri(work, &vocab::viol_or(shape.idx));
+            let nil = graph::intern_iri(work, vocab::INT_NIL);
+            for node in &targets {
+                let any_conforms = shape.or_inners.iter().any(|inner_ref| {
+                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
+                });
+                if !any_conforms {
+                    add_viol(work, *node, viol, nil);
+                }
+            }
+            viol_preds.push((viol, shape.severity));
+        }
+
         // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
         // Phase 1 constraints (minCount etc.) are handled via Datalog in translate.rs.
         // The "prop index" offset mirrors the one used in translate.rs (sub_idx * 10_000)
@@ -472,7 +505,7 @@ fn eval_xone(
             .xone_inners
             .iter()
             .filter(|inner_ref| {
-                node_conforms_to_inner(*node, inner_ref.shapes_id, data, shapes_store)
+                shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
             })
             .count();
         if conforming_count != 1 {
@@ -496,7 +529,7 @@ fn eval_node_shape(
     let viol = graph::intern_iri(work, &vocab::viol_node_shape(coord.si, coord.pi));
     for node in targets {
         for val in values_for(data, *node, path) {
-            if !node_conforms_to_inner(val, inner_shapes_id, data, shapes_store) {
+            if !shape_conforms_for_node(val, inner_shapes_id, data, shapes_store) {
                 add_viol(work, *node, viol, val);
             }
         }
@@ -527,7 +560,7 @@ fn eval_qualified_value(
     for node in targets {
         let qualifying_count = values_for(data, *node, path)
             .iter()
-            .filter(|&&val| node_conforms_to_inner(val, spec.inner_shapes_id, data, shapes_store))
+            .filter(|&&val| shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store))
             .count() as u64;
 
         let fails = spec.min.is_some_and(|n| qualifying_count < n)
@@ -539,61 +572,302 @@ fn eval_qualified_value(
     vec![viol]
 }
 
-// ── Inner shape conformance (for sh:node / sh:xone / sh:qualifiedValueShape) ──
+// ── Inner shape conformance (shared by sh:not/sh:or/sh:node/sh:xone/sh:qualifiedValueShape) ──
+//
+// A single "does shape S hold for node N" predicate used everywhere a shape is
+// referenced by another shape, instead of separate hand-rolled mini-checkers
+// that only understood a subset of constraint components. See #258.
 
-/// Return `true` if `node` (in `data`) satisfies the inner shape `inner_id` (in `shapes_store`).
+/// Return `true` if `node` (in `data`) satisfies every constraint of the shape
+/// node `shape_id` (in `shapes_store`) — the FULL shape semantics: every
+/// property-shape and node-level constraint, `sh:nodeKind`, and (recursively)
+/// `sh:not`/`sh:and`/`sh:or`/`sh:xone`.
 ///
-/// Phase 2 support: `sh:class C`, `sh:nodeKind NK`, `sh:property [sh:path P; sh:minCount 1]`.
-fn node_conforms_to_inner(
+/// `shape_id` need not carry an `rdf:type sh:NodeShape`/`sh:PropertyShape`
+/// triple — `shapes::parse_one_shape` works on any shape-graph node, which is
+/// exactly what's needed here since inner shapes referenced via `sh:not`/
+/// `sh:or`/`sh:node`/etc. are typically anonymous blank nodes.
+///
+/// No cycle/depth guard: a recursive shapes graph (e.g. `A sh:not [sh:not A]`)
+/// will overflow the stack rather than terminate. SHACL Core leaves recursive
+/// shape references undefined, so this is a known limitation, not a spec
+/// violation — see [#278](https://github.com/daghovland/rdf-datalog/issues/278).
+fn shape_conforms_for_node(
     node: GraphElementId,
-    inner_id: GraphElementId,
+    shape_id: GraphElementId,
     data: &Datastore,
     shapes_store: &Datastore,
 ) -> bool {
-    use crate::vocab::{SH_CLASS, SH_MIN_COUNT, SH_NODE_KIND, SH_PATH, SH_PROPERTY};
+    let parsed = shapes::parse_one_shape(shapes_store, shape_id, 0);
 
-    // sh:class C — node must be instance of C
-    if let Some(class_id) = graph::get_object(shapes_store, inner_id, SH_CLASS)
-        && let Some(class_iri) = graph::iri_string(shapes_store, class_id)
-    {
-        let rdf_type_id = graph::lookup_iri(data, RDF_TYPE);
-        let class_data_id = graph::lookup_iri(data, &class_iri);
-        if let (Some(rt), Some(cd)) = (rdf_type_id, class_data_id) {
-            if !data
-                .get_triples_with_subject_predicate(node, rt)
-                .any(|t| t.obj == cd)
-            {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-
-    // sh:nodeKind NK
-    if let Some(nk_id) = graph::get_object(shapes_store, inner_id, SH_NODE_KIND)
-        && let Some(nk_iri) = graph::iri_string(shapes_store, nk_id)
-        && let Some(nk) = shapes::NodeKindValue::from_iri(&nk_iri)
-        && !matches_node_kind(data, node, &nk)
+    if let Some(nk) = &parsed.node_kind
+        && !matches_node_kind(data, node, nk)
     {
         return false;
     }
 
-    // sh:property [ sh:path P; sh:minCount 1 ] — node must have ≥1 value for P
-    for prop_node in graph::get_objects(shapes_store, inner_id, SH_PROPERTY) {
-        if let Some(path_id) = graph::get_object(shapes_store, prop_node, SH_PATH)
-            && let Some(path_iri) = graph::iri_string(shapes_store, path_id)
-        {
-            let min = graph::get_object(shapes_store, prop_node, SH_MIN_COUNT)
-                .and_then(|id| graph::elem_to_u64(shapes_store, id))
-                .unwrap_or(0);
-            if min >= 1 && path_values(data, node, &path_iri).is_empty() {
+    for prop in &parsed.property_shapes {
+        for constraint in &prop.constraints {
+            if !constraint_conforms(constraint, node, Some(&prop.path), data, shapes_store) {
                 return false;
             }
         }
     }
 
+    for constraint in &parsed.node_constraints {
+        if !constraint_conforms(constraint, node, None, data, shapes_store) {
+            return false;
+        }
+    }
+
+    if let Some(inner_ref) = &parsed.not_inner
+        && shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+    {
+        return false;
+    }
+
+    if !parsed
+        .and_inners
+        .iter()
+        .all(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
+    {
+        return false;
+    }
+
+    if !parsed.or_inners.is_empty()
+        && !parsed
+            .or_inners
+            .iter()
+            .any(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
+    {
+        return false;
+    }
+
+    if !parsed.xone_inners.is_empty() {
+        let conforming_count = parsed
+            .xone_inners
+            .iter()
+            .filter(|inner_ref| {
+                shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+            })
+            .count();
+        if conforming_count != 1 {
+            return false;
+        }
+    }
+
     true
+}
+
+/// Return `true` if every applicable value for `node` (path-traversed values
+/// when `path` is `Some`, or the focus node itself when `path` is `None`)
+/// satisfies `constraint`. The boolean, early-exit counterpart to
+/// `eval_prop_constraint`'s violation-collecting loop — used by
+/// `shape_conforms_for_node` to answer "does this shape hold", which does not
+/// need per-violation reporting detail. Shares every atomic value-testing
+/// primitive with `eval_prop_constraint` (`has_datatype`, `matches_node_kind`,
+/// `lit_comparable`, `lexical_form`, `regex_with_flags`, `lang_matches`,
+/// `path_values`/`values_for`).
+fn constraint_conforms(
+    constraint: &shapes::PropConstraint,
+    node: GraphElementId,
+    path: Option<&str>,
+    data: &Datastore,
+    shapes_store: &Datastore,
+) -> bool {
+    use shapes::PropConstraint::*;
+    let values = values_for(data, node, path);
+
+    match constraint {
+        MinCount(n) => {
+            let distinct: HashSet<GraphElementId> = values.iter().copied().collect();
+            distinct.len() as u64 >= *n
+        }
+        MaxCount(n) => {
+            let distinct: HashSet<GraphElementId> = values.iter().copied().collect();
+            distinct.len() as u64 <= *n
+        }
+        Class(class_iri) => {
+            let Some(rdf_type_id) = graph::lookup_iri(data, RDF_TYPE) else {
+                return values.is_empty();
+            };
+            let Some(class_id) = graph::lookup_iri(data, class_iri) else {
+                return values.is_empty();
+            };
+            values.iter().all(|&v| {
+                data.get_triples_with_subject_predicate(v, rdf_type_id)
+                    .any(|t| t.obj == class_id)
+            })
+        }
+        Datatype(dt_iri) => values.iter().all(|&v| has_datatype(data, v, dt_iri)),
+        NodeKind(nk) => values.iter().all(|&v| matches_node_kind(data, v, nk)),
+        HasValue(elem) => {
+            let Some(val_id) = lookup_elem_value(data, elem) else {
+                return false;
+            };
+            values.contains(&val_id)
+        }
+        In(allowed) => {
+            let allowed_ids: HashSet<GraphElementId> = allowed
+                .iter()
+                .filter_map(|e| lookup_elem_value(data, e))
+                .collect();
+            values.iter().all(|v| allowed_ids.contains(v))
+        }
+        MinLength(n) => values
+            .iter()
+            .all(|&v| lexical_form(data, v).is_some_and(|s| codepoint_len(&s) >= *n as usize)),
+        MaxLength(n) => values
+            .iter()
+            .all(|&v| lexical_form(data, v).is_some_and(|s| codepoint_len(&s) <= *n as usize)),
+        Pattern(pat, flags) => {
+            let full_pat = regex_with_flags(pat, flags.as_deref());
+            match Regex::new(&full_pat) {
+                Err(e) => {
+                    log::warn!("sh:pattern regex '{}' invalid: {e}", pat);
+                    true
+                }
+                Ok(re) => values
+                    .iter()
+                    .all(|&v| lexical_form(data, v).is_some_and(|s| re.is_match(&s))),
+            }
+        }
+        LanguageIn(tags) => {
+            let tag_set: HashSet<String> = tags.iter().map(|t| t.to_lowercase()).collect();
+            values
+                .iter()
+                .all(|&v| match data.resources.get_graph_element(v) {
+                    GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) => {
+                        lang_matches(&tag_set, lang)
+                    }
+                    GraphElement::GraphLiteral(_) => false,
+                    _ => true,
+                })
+        }
+        UniqueLang => {
+            let mut seen_langs: HashSet<String> = HashSet::new();
+            values.iter().all(|&v| {
+                if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) =
+                    data.resources.get_graph_element(v)
+                {
+                    seen_langs.insert(lang.to_lowercase())
+                } else {
+                    true
+                }
+            })
+        }
+        Equals(other_path) => {
+            let path_vals: HashSet<GraphElementId> = values.iter().copied().collect();
+            let other_vals: HashSet<GraphElementId> =
+                path_values(data, node, other_path).into_iter().collect();
+            path_vals == other_vals
+        }
+        Disjoint(other_path) => {
+            let other_vals: HashSet<GraphElementId> =
+                path_values(data, node, other_path).into_iter().collect();
+            values.iter().all(|v| !other_vals.contains(v))
+        }
+        LessThan(other_path) => values.iter().all(|&pv| {
+            let Some(pvc) = lit_comparable(data, pv) else {
+                return true;
+            };
+            path_values(data, node, other_path)
+                .iter()
+                .all(|&ov| lit_comparable(data, ov).is_none_or(|ovc| pvc < ovc))
+        }),
+        LessThanOrEquals(other_path) => values.iter().all(|&pv| {
+            let Some(pvc) = lit_comparable(data, pv) else {
+                return true;
+            };
+            path_values(data, node, other_path)
+                .iter()
+                .all(|&ov| lit_comparable(data, ov).is_none_or(|ovc| pvc <= ovc))
+        }),
+        MinInclusive(bound) => {
+            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
+                return true;
+            };
+            values
+                .iter()
+                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc >= b))
+        }
+        MaxInclusive(bound) => {
+            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
+                return true;
+            };
+            values
+                .iter()
+                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc <= b))
+        }
+        MinExclusive(bound) => {
+            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
+                return true;
+            };
+            values
+                .iter()
+                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc > b))
+        }
+        MaxExclusive(bound) => {
+            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
+                return true;
+            };
+            values
+                .iter()
+                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc < b))
+        }
+        NodeShape(inner_shapes_id) => values
+            .iter()
+            .all(|&v| shape_conforms_for_node(v, *inner_shapes_id, data, shapes_store)),
+        QualifiedValueShape {
+            shapes_id,
+            min,
+            max,
+        } => {
+            let qualifying_count = values
+                .iter()
+                .filter(|&&v| shape_conforms_for_node(v, *shapes_id, data, shapes_store))
+                .count() as u64;
+            !min.is_some_and(|n| qualifying_count < n) && !max.is_some_and(|n| qualifying_count > n)
+        }
+    }
+}
+
+/// Look up an `ElemValue` (from the shapes graph) as a `GraphElementId` in `data`,
+/// without mutating `data` (unlike `translate::intern_elem`, which is only used
+/// against the mutable working store during rule generation).
+fn lookup_elem_value(data: &Datastore, elem: &shapes::ElemValue) -> Option<GraphElementId> {
+    use dag_rdf::{GraphElement as GE, RdfResource};
+    match elem {
+        shapes::ElemValue::Iri(iri) => graph::lookup_iri(data, iri),
+        shapes::ElemValue::BlankNode(n) => data
+            .resources
+            .resource_map
+            .get(&GE::NodeOrEdge(RdfResource::AnonymousBlankNode(*n)))
+            .copied(),
+        shapes::ElemValue::Literal {
+            value,
+            datatype,
+            lang,
+        } => {
+            let lit = if let Some(lang) = lang {
+                RdfLiteral::LangLiteral {
+                    lang: lang.clone(),
+                    literal: value.clone(),
+                }
+            } else if let Some(dt) = datatype {
+                RdfLiteral::TypedLiteral {
+                    type_iri: ingress::IriReference(dt.clone()),
+                    literal: value.clone(),
+                }
+            } else {
+                RdfLiteral::LiteralString(value.clone())
+            };
+            data.resources
+                .resource_map
+                .get(&GE::GraphLiteral(lit))
+                .copied()
+        }
+    }
 }
 
 // ── Value / literal helpers ───────────────────────────────────────────────────

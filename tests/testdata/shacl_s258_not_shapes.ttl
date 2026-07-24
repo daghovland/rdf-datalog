@@ -1,0 +1,39 @@
+# Issue #258 — sh:not must dispatch to the FULL constraint-evaluation logic for
+# the negated inner shape (translate.rs::inner_ok_rules previously only
+# understood sh:class / sh:nodeKind / sh:property[sh:minCount>=1]).
+# https://github.com/daghovland/rdf-datalog/issues/258
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# Issue's concrete repro (adapted from pathless sh:nodeKind on the focus node to
+# a property-based nodeKind check — see shacl_s258_or_shapes.ttl for why).
+ex:NotNodeKindShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notNkBad, ex:notNkOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:nodeKind sh:IRI ] ] .
+
+ex:NotDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notDtBad, ex:notDtOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:datatype xsd:integer ] ] .
+
+ex:NotPatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notPatBad, ex:notPatOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:pattern "^foo" ] ] .
+
+ex:NotInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notInBad, ex:notInOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:in ( ex:A ex:B ) ] ] .
+
+ex:NotHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notHvBad, ex:notHvOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:hasValue ex:Expected ] ] .
+
+ex:NotMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:notMcBad, ex:notMcOk ;
+    sh:not [ sh:property [ sh:path ex:v ; sh:maxCount 1 ] ] .
