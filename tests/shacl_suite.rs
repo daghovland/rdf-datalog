@@ -118,6 +118,8 @@ fn shacl_testdata_parses() {
         "shacl_s4_property_ref_shapes.ttl",
         "shacl_s4_qualified_max_data.ttl",
         "shacl_s4_qualified_max_shapes.ttl",
+        "shacl_s3_severity_data.ttl",
+        "shacl_s3_severity_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -951,5 +953,76 @@ fn spec_s4_7_3_qualified_max_count() {
         report.results.len(),
         1,
         "ex:Alice has 2 IRI parents; qualifiedMaxCount 1 violated"
+    );
+}
+
+// ── §3.5  Severity ────────────────────────────────────────────────────────────
+//
+// Regression tests for issue #263: `sh:severity` was ignored and every result
+// was hardcoded to `Severity::Violation`. Source: <https://www.w3.org/TR/shacl/#severity>
+
+/// A shape with `sh:severity sh:Warning` must produce results with
+/// `Severity::Warning`, not the hardcoded `Severity::Violation`.
+#[test]
+fn regression_issue_263_severity_warning() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let warn_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nWarn"))
+        .expect("ex:nWarn should have a validation result (missing ex:v)");
+    assert_eq!(warn_result.severity, shacl::Severity::Warning);
+}
+
+/// A shape with `sh:severity sh:Info` must produce results with `Severity::Info`.
+#[test]
+fn regression_issue_263_severity_info() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let info_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nInfo"))
+        .expect("ex:nInfo should have a validation result (missing ex:v)");
+    assert_eq!(info_result.severity, shacl::Severity::Info);
+}
+
+/// A shape with no `sh:severity` declared must default to `Severity::Violation`
+/// (guards against a regression in the common, unset case).
+#[test]
+fn regression_issue_263_severity_default() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let default_result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#nDefault"))
+        .expect("ex:nDefault should have a validation result (missing ex:v)");
+    assert_eq!(default_result.severity, shacl::Severity::Violation);
+}
+
+/// `report_to_turtle` must emit the actual severity per result, not a hardcoded
+/// `sh:Violation` for every result.
+#[test]
+fn regression_issue_263_severity_in_turtle_report() {
+    let data = load("shacl_s3_severity_data.ttl");
+    let shapes = load("shacl_s3_severity_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Warning"),
+        "turtle report should contain sh:Warning severity:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Info"),
+        "turtle report should contain sh:Info severity:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultSeverity sh:Violation"),
+        "turtle report should contain sh:Violation severity for the default shape:\n{turtle}"
     );
 }

@@ -36,11 +36,38 @@ use std::collections::HashSet;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Severity of a SHACL validation result (`sh:resultSeverity`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Spec: <https://www.w3.org/TR/shacl/#severity>. A shape's own `sh:severity`
+/// determines the severity of every result it produces; the default when
+/// unset is `sh:Violation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Severity {
+    #[default]
     Violation,
     Warning,
     Info,
+}
+
+impl Severity {
+    /// Parse a `sh:severity` object IRI (`sh:Violation`/`sh:Warning`/`sh:Info`).
+    /// Returns `None` for any other IRI.
+    pub fn from_iri(iri: &str) -> Option<Self> {
+        match iri {
+            vocab::SH_VIOLATION => Some(Severity::Violation),
+            vocab::SH_WARNING => Some(Severity::Warning),
+            vocab::SH_INFO => Some(Severity::Info),
+            _ => None,
+        }
+    }
+
+    /// The `sh:` term name (`"sh:Violation"`, …) used when serialising a report.
+    pub fn turtle_term(self) -> &'static str {
+        match self {
+            Severity::Violation => "sh:Violation",
+            Severity::Warning => "sh:Warning",
+            Severity::Info => "sh:Info",
+        }
+    }
 }
 
 /// A single validation result entry (`sh:ValidationResult`).
@@ -102,7 +129,8 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
         for result in &report.results {
             out.push_str(" ;\n   sh:result [\n");
             out.push_str("       a sh:ValidationResult ;\n");
-            out.push_str("       sh:resultSeverity sh:Violation");
+            out.push_str("       sh:resultSeverity ");
+            out.push_str(result.severity.turtle_term());
             if let Some(focus) = &result.focus_node {
                 out.push_str(" ;\n       sh:focusNode ");
                 out.push_str(&turtle_term(focus));
@@ -154,12 +182,12 @@ fn pre_compute_violations(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
+) -> Vec<(GraphElementId, Severity)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         if let Some(allowed_iris) = &shape.closed {
             let pred = closed_violations(shape, allowed_iris, data, work);
-            viol_preds.push(pred);
+            viol_preds.push((pred, shape.severity));
         }
     }
     let phase2_viols = evaluate::eval_all(parsed, data, shapes_store, work);
@@ -266,12 +294,16 @@ fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {
 
 // ── Violation collection ──────────────────────────────────────────────────────
 
-fn collect_violations(work: &Datastore, viol_preds: &[GraphElementId]) -> Vec<ValidationResult> {
-    let pred_set: HashSet<GraphElementId> = viol_preds.iter().copied().collect();
+fn collect_violations(
+    work: &Datastore,
+    viol_preds: &[(GraphElementId, Severity)],
+) -> Vec<ValidationResult> {
+    let pred_severity: std::collections::HashMap<GraphElementId, Severity> =
+        viol_preds.iter().copied().collect();
     // Only examine default-graph triples (triple_id = 0).
     work.named_graphs
         .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .filter(|q| pred_set.contains(&q.predicate))
+        .filter(|q| pred_severity.contains_key(&q.predicate))
         .map(|q| {
             let focus = graph::element_display(work, q.subject);
             let val = {
@@ -282,9 +314,10 @@ fn collect_violations(work: &Datastore, viol_preds: &[GraphElementId]) -> Vec<Va
                     Some(s)
                 }
             };
+            let severity = pred_severity.get(&q.predicate).copied().unwrap_or_default();
             ValidationResult {
                 focus_node: Some(focus),
-                severity: Severity::Violation,
+                severity,
                 message: None,
                 result_path: None,
                 source_shape: None,
