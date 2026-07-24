@@ -1,0 +1,21 @@
+@prefix ex: <http://example.com/ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Subclass chain (not materialised by any reasoner - raw data graph assertions):
+#   ex:SeniorManager rdfs:subClassOf ex:Manager rdfs:subClassOf ex:Person
+ex:Manager rdfs:subClassOf ex:Person .
+ex:SeniorManager rdfs:subClassOf ex:Manager .
+
+# Issue's exact repro: value typed as a direct subclass (one hop) of the
+# sh:class target.
+ex:n ex:v ex:boss .
+ex:boss a ex:Manager .
+
+# Multi-level transitivity: value typed only as a subclass-of-a-subclass
+# (two hops) of the sh:class target.
+ex:n2 ex:v ex:elder .
+ex:elder a ex:SeniorManager .
+
+# Control: value typed as a wholly unrelated class - must still violate.
+ex:n3 ex:v ex:thing .
+ex:thing a ex:Gadget .

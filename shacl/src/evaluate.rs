@@ -19,9 +19,9 @@ Contact: hovlanddag@gmail.com
 use crate::{Severity, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
-use ingress::RDF_TYPE;
+use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -735,10 +735,9 @@ fn constraint_conforms(
             let Some(class_id) = graph::lookup_iri(data, class_iri) else {
                 return values.is_empty();
             };
-            values.iter().all(|&v| {
-                data.get_triples_with_subject_predicate(v, rdf_type_id)
-                    .any(|t| t.obj == class_id)
-            })
+            values
+                .iter()
+                .all(|&v| is_instance_of_class_or_subclass(data, v, class_id, rdf_type_id))
         }
         Datatype(dt_iri) => values.iter().all(|&v| has_datatype(data, v, dt_iri)),
         NodeKind(nk) => values.iter().all(|&v| matches_node_kind(data, v, nk)),
@@ -876,6 +875,63 @@ fn constraint_conforms(
             !min.is_some_and(|n| qualifying_count < n) && !max.is_some_and(|n| qualifying_count > n)
         }
     }
+}
+
+/// Return `true` if `value` has `rdf:type class_id`, or `rdf:type` of any
+/// class reachable from `class_id` by following `rdfs:subClassOf` edges
+/// backwards (i.e. `value`'s asserted type is `class_id` or a transitive
+/// subclass of it), using only subclass edges already present in `data` — no
+/// external OWL-RL/RDFS reasoner is invoked. Per SHACL's "SHACL instance"
+/// definition. See <https://github.com/daghovland/rdf-datalog/issues/265>.
+///
+/// Implemented as a BFS over each of `value`'s asserted types, walking
+/// `t rdfs:subClassOf super` edges outward from `t` and checking whether
+/// `class_id` is reached; a `visited` set guards against cycles in
+/// malformed subclass data.
+fn is_instance_of_class_or_subclass(
+    data: &Datastore,
+    value: GraphElementId,
+    class_id: GraphElementId,
+    rdf_type_id: GraphElementId,
+) -> bool {
+    let Some(sub_class_of_id) = graph::lookup_iri(data, RDFS_SUB_CLASS_OF) else {
+        // No rdfs:subClassOf triples exist in the data at all — fall back to
+        // the direct rdf:type check.
+        return data
+            .get_triples_with_subject_predicate(value, rdf_type_id)
+            .any(|t| t.obj == class_id);
+    };
+
+    let types: Vec<GraphElementId> = data
+        .get_triples_with_subject_predicate(value, rdf_type_id)
+        .map(|t| t.obj)
+        .collect();
+
+    let mut visited: HashSet<GraphElementId> = HashSet::new();
+    let mut queue: VecDeque<GraphElementId> = VecDeque::new();
+    for t in types {
+        if t == class_id {
+            return true;
+        }
+        if visited.insert(t) {
+            queue.push_back(t);
+        }
+    }
+
+    while let Some(t) = queue.pop_front() {
+        for parent in data
+            .get_triples_with_subject_predicate(t, sub_class_of_id)
+            .map(|tr| tr.obj)
+        {
+            if parent == class_id {
+                return true;
+            }
+            if visited.insert(parent) {
+                queue.push_back(parent);
+            }
+        }
+    }
+    false
 }
 
 /// Look up an `ElemValue` (from the shapes graph) as a `GraphElementId` in `data`,
