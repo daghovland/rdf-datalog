@@ -1,0 +1,70 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix crate: <https://dagalog.dev/ns/backlog/crate#> .
+
+# Extends the ticket-tracking fixtures with the codebase itself: every
+# workspace crate (from the root Cargo.toml's `members` list, as of
+# 2026-07-24) plus its real path-dependency edges (from each crate's own
+# Cargo.toml [dependencies] section) — not invented, read directly off the
+# actual workspace. Lets #285/#286 answer questions like "which crates have
+# open bugs" or "what depends on shacl" by joining bl:touchesCrate (added to
+# the relevant PRs in valid_backlog_snapshot.ttl) against this dependency
+# graph.
+#
+# bl:Crate    -- a workspace member crate
+# bl:name     -- xsd:string, the Cargo package name (not always == dir name,
+#                e.g. dir `dag_rdf` is package `dag-rdf`)
+# bl:path     -- xsd:string, workspace-relative directory
+# bl:dependsOnCrate -- bl:Crate -> bl:Crate, direct path dependency
+#
+# Provisional, same status as the rest of this directory (see README.md) --
+# a bespoke bl:Crate is used here rather than reusing DOAP (Description of a
+# Project) terms, but DOAP is the closest real precedent for this half of
+# the ontology and #283 should weigh adopting it properly (e.g. doap:Project
+# for the repo as a whole, something DOAP-adjacent for each crate as a
+# component) rather than inventing bl:Crate from scratch.
+
+crate:ingress a bl:Crate ; bl:name "ingress" ; bl:path "ingress" .
+crate:dag_rdf a bl:Crate ; bl:name "dag-rdf" ; bl:path "dag_rdf" ;
+    bl:dependsOnCrate crate:ingress .
+crate:owl_ontology a bl:Crate ; bl:name "owl-ontology" ; bl:path "owl_ontology" ;
+    bl:dependsOnCrate crate:ingress .
+crate:turtle a bl:Crate ; bl:name "turtle" ; bl:path "turtle" ;
+    bl:dependsOnCrate crate:dag_rdf .
+crate:sparql_parser a bl:Crate ; bl:name "sparql-parser" ; bl:path "sparql_parser" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:ingress .
+crate:datalog a bl:Crate ; bl:name "datalog" ; bl:path "datalog" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:sparql_parser .
+crate:eli a bl:Crate ; bl:name "eli" ; bl:path "eli" ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf, crate:datalog, crate:owl_ontology .
+crate:owl2rl2datalog a bl:Crate ; bl:name "owl2rl2datalog" ; bl:path "owl2rl2datalog" ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf, crate:datalog, crate:owl_ontology, crate:eli .
+crate:manchester_parser a bl:Crate ; bl:name "manchester-parser" ; bl:path "manchester_parser" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:owl_ontology, crate:ingress .
+crate:datalog_parser a bl:Crate ; bl:name "datalog-parser" ; bl:path "datalog_parser" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:datalog, crate:sparql_parser .
+crate:rdf_owl_translator a bl:Crate ; bl:name "rdf-owl-translator" ; bl:path "rdf_owl_translator" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:ingress, crate:owl_ontology, crate:turtle .
+crate:jsonld_parser a bl:Crate ; bl:name "jsonld-parser" ; bl:path "jsonld_parser" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:ingress .
+crate:shacl a bl:Crate ; bl:name "shacl" ; bl:path "shacl" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:datalog, crate:ingress .
+crate:rml a bl:Crate ; bl:name "rml" ; bl:path "rml" ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf, crate:turtle .
+crate:ottr a bl:Crate ; bl:name "ottr" ; bl:path "ottr" ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf .
+crate:vqs_index a bl:Crate ; bl:name "vqs-index" ; bl:path "vqs_index" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:ingress, crate:sparql_parser, crate:turtle .
+crate:rdf_canon a bl:Crate ; bl:name "rdf-canonicalization" ; bl:path "rdf_canon" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:ingress .
+crate:sparql_endpoint a bl:Crate ; bl:name "sparql-endpoint" ; bl:path "sparql_endpoint" ;
+    bl:dependsOnCrate crate:dag_rdf, crate:datalog, crate:ingress, crate:shacl,
+        crate:sparql_parser, crate:turtle, crate:vqs_index, crate:jsonld_parser,
+        crate:rml, crate:ottr .
+crate:dagalog_kernel a bl:Crate ; bl:name "dagalog-kernel" ; bl:path "dagalog-kernel" ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf, crate:datalog, crate:datalog_parser,
+        crate:sparql_parser, crate:turtle, crate:rml, crate:ottr,
+        crate:owl2rl2datalog, crate:manchester_parser, crate:rdf_owl_translator, crate:shacl .
+crate:dagalog a bl:Crate ; bl:name "dagalog" ; bl:path "." ;
+    bl:dependsOnCrate crate:ingress, crate:dag_rdf, crate:owl_ontology, crate:owl2rl2datalog,
+        crate:turtle, crate:rdf_owl_translator, crate:datalog, crate:datalog_parser,
+        crate:sparql_parser, crate:sparql_endpoint, crate:rml, crate:ottr, crate:manchester_parser .
