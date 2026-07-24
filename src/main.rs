@@ -131,6 +131,16 @@ struct Cli {
     )]
     max_rdf_upload_bytes: usize,
 
+    /// Maximum request body size for the RML mapping endpoints
+    /// (`/{name}/rml`, `/rml/map`), in bytes
+    #[arg(
+        long = "max-rml-upload-bytes",
+        value_name = "BYTES",
+        default_value_t = 64 * 1024 * 1024,
+        env = "DAGALOG_MAX_RML_UPLOAD_BYTES"
+    )]
+    max_rml_upload_bytes: usize,
+
     // ── Tier 1: Static API key ───────────────────────────────────────────────
     /// Shared API key for Bearer token auth; omit to disable (Tier 1)
     #[arg(long = "api-key", value_name = "KEY", env = "DAGALOG_API_KEY")]
@@ -421,9 +431,9 @@ fn run(cli: Cli) -> Result<(), String> {
             auth,
             data_dir,
             max_rdf_upload_bytes: cli.max_rdf_upload_bytes,
+            max_rml_upload_bytes: cli.max_rml_upload_bytes,
             initial_rules: serve_rules,
             network_policy,
-            ..Default::default()
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

@@ -172,6 +172,9 @@ pub struct Config {
     /// parts, which routinely exceed axum's server-wide 2 MB
     /// `DefaultBodyLimit`. This field overrides the limit for just those two
     /// routes; every other route keeps the 2 MB default.
+    ///
+    /// Configurable via `--max-rml-upload-bytes` / `DAGALOG_MAX_RML_UPLOAD_BYTES`.
+    /// See [#257](https://github.com/daghovland/rdf-datalog/issues/257).
     pub max_rml_upload_bytes: usize,
     /// Maximum request body size for the RDF write routes
     /// (`POST`/`PUT /{name}/data`, `POST`/`PUT /rdf-graph-store`,
