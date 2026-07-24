@@ -338,6 +338,73 @@ async fn rml_post_accepts_upload_larger_than_2mb() {
     );
 }
 
+/// 10. With a small configured `max_rml_upload_bytes`, a source file exceeding
+/// *that* limit is correctly rejected — proving `Config::max_rml_upload_bytes`
+/// (wired to `--max-rml-upload-bytes` / `DAGALOG_MAX_RML_UPLOAD_BYTES`) is a real,
+/// enforced limit and not simply "no limit at all". See #257.
+///
+/// Unlike the raw-body RDF write routes (which reject with 413 directly from
+/// axum's `DefaultBodyLimit` layer), these routes use the `Multipart`
+/// extractor: a body-limit violation surfaces as a `MultipartError` while
+/// reading a field, which the handler maps to 400 with a descriptive message
+/// (see `materialize_multipart` in `rml_endpoint.rs`). So the expected
+/// rejection status here is 400, not 413.
+#[tokio::test]
+async fn rml_post_rejects_upload_over_configured_limit() {
+    let server = common::TestServer::start_writable_with_rml_limit("", 1024).await;
+    let big_csv = large_people_csv(8 * 1024);
+
+    let form = Form::new()
+        .part(
+            "mapping",
+            Part::text(PEOPLE_MAPPING).file_name("mapping.ttl"),
+        )
+        .part("people.csv", Part::text(big_csv).file_name("people.csv"));
+
+    let resp = server
+        .client
+        .post(server.dataset_rml_url(DS))
+        .multipart(form)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(
+        resp.status(),
+        400,
+        "a source file over the configured limit must be rejected"
+    );
+    let body = resp.text().await.expect("body");
+    assert!(!body.is_empty(), "error body should describe the failure");
+}
+
+/// 11. A normal-sized upload still succeeds under a small but sufficient
+/// configured `max_rml_upload_bytes` (sanity check that the override is not
+/// simply rejecting everything).
+#[tokio::test]
+async fn rml_post_accepts_upload_within_configured_limit() {
+    let server = common::TestServer::start_writable_with_rml_limit("", 64 * 1024).await;
+
+    let form = Form::new()
+        .part(
+            "mapping",
+            Part::text(PEOPLE_MAPPING).file_name("mapping.ttl"),
+        )
+        .part("people.csv", Part::text(PEOPLE_CSV).file_name("people.csv"));
+
+    let resp = server
+        .client
+        .post(server.dataset_rml_url(DS))
+        .multipart(form)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(
+        resp.status(),
+        200,
+        "a normal-sized upload must succeed under a sufficiently large configured limit"
+    );
+}
+
 // ── POST /rml/map — stateless mapping endpoint ────────────────────────────────
 
 /// 1. A multipart POST with a mapping + CSV source, no `Accept` header, must
