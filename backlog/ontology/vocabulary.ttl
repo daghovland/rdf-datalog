@@ -1,0 +1,163 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# The dagalog-on-dagalog backlog-mirror vocabulary. See issue #283
+# <https://github.com/daghovland/rdf-datalog/issues/283> and
+# MODELING_NOTES.md (this directory) for the reasoning behind every
+# decision recorded here. Grounded against the fixtures in
+# ../examples/ — every class/property below is exercised by at least
+# one triple there.
+
+<https://dagalog.dev/ns/backlog>
+    a owl:Ontology ;
+    rdfs:label "dagalog backlog vocabulary" ;
+    rdfs:comment "Minimal vocabulary for mirroring a GitHub issue/PR backlog (and the codebase it tracks) as RDF, for the dagalog-on-dagalog self-hosting epic (#282)." ;
+    owl:versionInfo "0.1.0-draft" .
+
+# ── Classes ─────────────────────────────────────────────────────────────────
+
+bl:Issue
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Issue" ;
+    rdfs:comment "A GitHub issue. Subjects are the real GitHub issue URL — no invented identifier scheme. There is deliberately NO separate bl:Epic class: see MODELING_NOTES.md \"Epic modeling\" — an issue is an epic purely structurally (no bl:subIssueOf, and the object of at least one other issue's bl:subIssueOf), never asserted as a type." .
+
+bl:PullRequest
+    a rdfs:Class, owl:Class ;
+    rdfs:subClassOf bl:Issue ;
+    rdfs:label "Pull request" ;
+    rdfs:comment "A GitHub pull request. Modeled as an rdfs:subClassOf bl:Issue (not a disjoint sibling class) since it shares every property Issue has (number, title, state, hasLabel) and adds two more (closesIssue, relatesToIssue) — matches GitHub's own data model, where a PR literally is an issue with extra fields." .
+
+bl:IssueState
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Issue state" ;
+    rdfs:comment "Controlled vocabulary for GitHub's own raw open/closed state (bl:state) — a purely technical field, distinct from the workflow-stage concept in bl:WorkflowStatus. See MODELING_NOTES.md \"Workflow status as its own axis\"." .
+
+bl:Open a bl:IssueState ; rdfs:label "Open" .
+bl:Closed a bl:IssueState ; rdfs:label "Closed" .
+
+bl:WorkflowStatus
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Workflow status" ;
+    rdfs:comment "Controlled vocabulary for this repo's own Kanban/Jira-style workflow stage (bl:status) — independent of the raw bl:state. An issue can be bl:state bl:Open at every stage except bl:Done; bl:status only ever advances Todo -> Ready -> InProgress -> Done (this repo has no formal \"blocked\"/\"in review\" stage today, so none is modeled -- add one here first if this repo's practice grows one, rather than overloading an existing value)." .
+
+bl:Todo
+    a bl:WorkflowStatus ;
+    rdfs:label "Todo" ;
+    rdfs:comment "Filed, unlabeled, awaiting the repo owner's review (this repo's convention: an agent-filed issue starts here and must never self-advance past it)." .
+
+bl:Ready
+    a bl:WorkflowStatus ;
+    rdfs:label "Ready" ;
+    rdfs:comment "Reviewed and approved by the repo owner for an agent to pick up — corresponds exactly to the GitHub \"ready\" label." .
+
+bl:InProgress
+    a bl:WorkflowStatus ;
+    rdfs:label "In progress" ;
+    rdfs:comment "Actively being worked. This repo has no GitHub label for this stage today — it's signaled by a working-branch comment on the issue instead, which a loader (#284) would need parsing/convention-detection logic to recognise, not just a label read." .
+
+bl:Done
+    a bl:WorkflowStatus ;
+    rdfs:label "Done" ;
+    rdfs:comment "Closed via a merged PR. Always coincides with bl:state bl:Closed, but is asserted separately rather than derived, since not every bl:Closed issue necessarily went through the ready/in-progress pipeline (e.g. closed as a duplicate or won't-fix)." .
+
+bl:Crate
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Crate" ;
+    rdfs:comment "A Rust workspace member crate. See MODELING_NOTES.md \"DOAP vs. bespoke bl:Crate\" for why this isn't a DOAP term — a doap:Project is used instead for the repository as a whole, one level up." .
+
+# ── Properties: Issue/PullRequest ────────────────────────────────────────────
+
+bl:number
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range xsd:integer ;
+    rdfs:label "number" ;
+    rdfs:comment "The GitHub issue/PR number, for human-readable display — the IRI (the real GitHub URL) is already the actual identifier, this is not needed for identity." .
+
+bl:title
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range xsd:string ;
+    rdfs:label "title" .
+
+bl:state
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range bl:IssueState ;
+    rdfs:label "state" ;
+    rdfs:comment "GitHub's raw open/closed state. See bl:status for the separate workflow-stage axis." .
+
+bl:status
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range bl:WorkflowStatus ;
+    rdfs:label "status" ;
+    rdfs:comment "This repo's own Kanban-style workflow stage, independent of bl:state. Added per the Jira/Azure-DevOps/Kanban comparison in PR #293 -- not populated for every issue in ../examples/, since deriving it reliably (in particular detecting bl:InProgress, which has no GitHub label) is #284's (the loader's) job, not this vocabulary's." .
+
+bl:hasLabel
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range xsd:string ;
+    rdfs:label "has label" ;
+    rdfs:comment "A GitHub label name (repeatable). Kept as a plain string per this ontology's \"deliberately minimal v1\" scope (#282) rather than minting a resource per label -- revisit if label metadata beyond the name (color, description) is ever needed." .
+
+bl:subIssueOf
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range bl:Issue ;
+    rdfs:label "sub-issue of" ;
+    rdfs:comment "Mirrors GitHub's native sub-issue relation (child -> parent). The sole basis for the structural epic definition -- see bl:Issue's comment and MODELING_NOTES.md." .
+
+bl:closesIssue
+    a owl:ObjectProperty ;
+    rdfs:domain bl:PullRequest ;
+    rdfs:range bl:Issue ;
+    rdfs:label "closes issue" ;
+    rdfs:comment "PR formally closes an issue on merge (a GitHub \"Closes #N\" reference). Distinct from bl:relatesToIssue -- see that property's comment for why the distinction matters." .
+
+bl:relatesToIssue
+    a owl:ObjectProperty ;
+    rdfs:domain bl:PullRequest ;
+    rdfs:range bl:Issue ;
+    rdfs:label "relates to issue" ;
+    rdfs:comment "PR references an issue without closing it -- e.g. it implements only part of the issue's scope. Kept distinct from bl:closesIssue so a loader (or a human) can never conflate \"this PR mentions #N\" with \"this PR resolved #N\" -- see PR #292/issue #161 in ../examples/valid_backlog_snapshot.ttl for a real case where collapsing the two would have been wrong." .
+
+# ── Properties: crates ───────────────────────────────────────────────────────
+
+bl:touchesCrate
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Issue ;
+    rdfs:range bl:Crate ;
+    rdfs:label "touches crate" ;
+    rdfs:comment "The crate(s) an issue or PR actually changed (or, for a still-open issue, is expected to change). Domain bl:Issue rather than bl:PullRequest specifically -- since bl:PullRequest is a subclass, PRs can use it too, but so can an unresolved bug report that already knows which crate it affects before any fix exists." .
+
+bl:dependsOnCrate
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Crate ;
+    rdfs:range bl:Crate ;
+    rdfs:label "depends on crate" ;
+    rdfs:comment "A direct (not transitive) Cargo path dependency, read straight off the dependent crate's own Cargo.toml -- not asserted transitively, so \"what (transitively) depends on X\" is a property-path SPARQL query (bl:dependsOnCrate+ in reverse), not a separate stored relation, to avoid a second source of truth that could drift from Cargo.toml." .
+
+bl:name
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Crate ;
+    rdfs:range xsd:string ;
+    rdfs:label "name" ;
+    rdfs:comment "The Cargo package name (not always identical to the directory name, e.g. directory dag_rdf is package dag-rdf)." .
+
+bl:path
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Crate ;
+    rdfs:range xsd:string ;
+    rdfs:label "path" ;
+    rdfs:comment "Workspace-relative directory of the crate." .
+
+bl:partOfProject
+    a owl:ObjectProperty ;
+    rdfs:domain bl:Crate ;
+    rdfs:range <http://usefulinc.com/ns/doap#Project> ;
+    rdfs:label "part of project" ;
+    rdfs:comment "Links a workspace crate to the enclosing doap:Project. See MODELING_NOTES.md \"DOAP vs. bespoke bl:Crate\" for why the repository as a whole reuses real DOAP terms while individual crates use the bespoke bl:Crate class." .

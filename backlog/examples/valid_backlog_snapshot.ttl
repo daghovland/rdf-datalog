@@ -43,7 +43,7 @@ ghissues:258
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:276 a bl:PullRequest ;
+ghpull:276 a bl:PullRequest, bl:Issue ;
     bl:number 276 ;
     bl:title "fix(shacl): shared inner-shape conformance checker for combinators" ;
     bl:state bl:Closed ;
@@ -58,7 +58,7 @@ ghissues:259
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:272 a bl:PullRequest ;
+ghpull:272 a bl:PullRequest, bl:Issue ;
     bl:number 272 ;
     bl:title "fix(shacl): distinguish rdf:langString from xsd:string in sh:datatype" ;
     bl:state bl:Closed ;
@@ -73,7 +73,7 @@ ghissues:260
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:271 a bl:PullRequest ;
+ghpull:271 a bl:PullRequest, bl:Issue ;
     bl:number 271 ;
     bl:title "fix(shacl): node-level (pathless) value constraints on a shape are silently dropped" ;
     bl:state bl:Closed ;
@@ -88,7 +88,7 @@ ghissues:261
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:289 a bl:PullRequest ;
+ghpull:289 a bl:PullRequest, bl:Issue ;
     bl:number 289 ;
     bl:title "fix(shacl): correctly evaluate sh:pattern/minLength/maxLength for IRI and blank-node value nodes" ;
     bl:state bl:Closed ;
@@ -103,7 +103,7 @@ ghissues:262
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:280 a bl:PullRequest ;
+ghpull:280 a bl:PullRequest, bl:Issue ;
     bl:number 280 ;
     bl:title "fix(shacl): honor sh:deactivated on node and property shapes" ;
     bl:state bl:Closed ;
@@ -118,7 +118,7 @@ ghissues:263
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:273 a bl:PullRequest ;
+ghpull:273 a bl:PullRequest, bl:Issue ;
     bl:number 273 ;
     bl:title "fix(shacl): honor sh:severity instead of hardcoding Violation" ;
     bl:state bl:Closed ;
@@ -145,7 +145,7 @@ ghissues:265
     bl:hasLabel "bug", "ready" ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:290 a bl:PullRequest ;
+ghpull:290 a bl:PullRequest, bl:Issue ;
     bl:number 290 ;
     bl:title "fix(shacl): sh:class follows rdfs:subClassOf transitivity" ;
     bl:state bl:Closed ;
@@ -233,7 +233,7 @@ ghissues:160
     bl:hasLabel "ready" ;
     bl:subIssueOf ghissues:178 .
 
-ghpull:288 a bl:PullRequest ;
+ghpull:288 a bl:PullRequest, bl:Issue ;
     bl:number 288 ;
     bl:title "Add Manchester Syntax serializer (manchester_parser::serialize)" ;
     bl:state bl:Closed ;
@@ -255,7 +255,7 @@ ghissues:161
     # done" would get this wrong; that's exactly the distinction
     # bl:closesIssue vs. bl:relatesToIssue exists to preserve.
 
-ghpull:292 a bl:PullRequest ;
+ghpull:292 a bl:PullRequest, bl:Issue ;
     bl:number 292 ;
     bl:title "Wire Manchester Syntax (.omn) into CLI and notebook kernel" ;
     bl:state bl:Closed ;
@@ -283,7 +283,7 @@ ghissues:257
     bl:hasLabel "enhancement", "ready" ;
     bl:subIssueOf ghissues:25 .
 
-ghpull:277 a bl:PullRequest ;
+ghpull:277 a bl:PullRequest, bl:Issue ;
     bl:number 277 ;
     bl:title "Add --max-rml-upload-bytes CLI flag / env var for RML upload limit" ;
     bl:state bl:Closed ;

@@ -31,7 +31,7 @@ ghissues:274
     bl:hasLabel "bug", "ready" .
     # No bl:subIssueOf — confirmed via GraphQL, not assumed.
 
-ghpull:275 a bl:PullRequest ;
+ghpull:275 a bl:PullRequest, bl:Issue ;
     bl:number 275 ;
     bl:title "fix(sparql_endpoint): raise body-size limit on RDF write routes" ;
     bl:state bl:Closed ;
