@@ -69,7 +69,7 @@ pub fn eval_all(
             };
             let new =
                 eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
-            viol_preds.extend(new);
+            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
         }
 
         // sh:nodeKind at node shape level — check each target node itself.

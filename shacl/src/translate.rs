@@ -100,7 +100,7 @@ pub fn shapes_to_rules(
                 &mut rules,
                 work,
             );
-            viol_preds.extend(new);
+            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
         }
 
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph

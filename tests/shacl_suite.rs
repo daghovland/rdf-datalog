@@ -1032,6 +1032,8 @@ fn regression_issue_260_node_level_hasvalue() {
         "node-level sh:hasValue must be checked against the focus node itself"
     );
     assert_eq!(report.results.len(), 1);
+}
+
 // ── §3.5  Severity ────────────────────────────────────────────────────────────
 //
 // Regression tests for issue #263: `sh:severity` was ignored and every result
