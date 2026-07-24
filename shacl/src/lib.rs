@@ -185,6 +185,11 @@ fn pre_compute_violations(
 ) -> Vec<(GraphElementId, Severity)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
+        // sh:deactivated — a deactivated shape produces no results at all,
+        // including from sh:closed. See #262.
+        if shape.deactivated {
+            continue;
+        }
         if let Some(allowed_iris) = &shape.closed {
             let pred = closed_violations(shape, allowed_iris, data, work);
             viol_preds.push((pred, shape.severity));

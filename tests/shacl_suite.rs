@@ -138,6 +138,8 @@ fn shacl_testdata_parses() {
         "shacl_s258_xone_shapes.ttl",
         "shacl_s258_qualified_data.ttl",
         "shacl_s258_qualified_shapes.ttl",
+        "shacl_s262_deactivated_data.ttl",
+        "shacl_s262_deactivated_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -1415,4 +1417,52 @@ fn regression_issue_258_qualified_maxcount() {
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert!(!has_violation(&report, &ex("qvMcOk")));
     assert!(has_violation(&report, &ex("qvMcBad")));
+}
+
+// ── sh:deactivated ──────────────────────────────────────────────────────────
+//
+// Per SHACL §3, a shape with sh:deactivated true must produce no validation
+// results at all, from any of its constraints, even if the data would
+// otherwise violate them. Previously sh:deactivated was not handled anywhere
+// in the shacl crate, so every constraint on a deactivated shape was still
+// evaluated. See https://github.com/daghovland/rdf-datalog/issues/262
+
+/// Issue's concrete repro, verbatim: a deactivated node shape with
+/// sh:targetNode + sh:property[sh:minCount 1] must conform even though the
+/// focus node has no value for the path at all.
+#[test]
+fn regression_issue_262_node_shape_deactivated() {
+    let data = load("shacl_s262_deactivated_data.ttl");
+    let shapes = load("shacl_s262_deactivated_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nNodeDeactivated")),
+        "the node shape is sh:deactivated, so sh:minCount 1 must never be checked"
+    );
+}
+
+/// A deactivated sh:property block nested inside an otherwise-active node
+/// shape must also produce no results, independent of the parent shape.
+#[test]
+fn regression_issue_262_property_shape_deactivated() {
+    let data = load("shacl_s262_deactivated_data.ttl");
+    let shapes = load("shacl_s262_deactivated_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("nPropDeactivated")),
+        "the sh:property block itself is sh:deactivated, so sh:minCount 1 must never be checked"
+    );
+}
+
+/// Regression guard: the same sh:minCount 1 constraint on a shape that is
+/// NOT deactivated must still correctly violate.
+#[test]
+fn regression_issue_262_active_shape_still_violates() {
+    let data = load("shacl_s262_deactivated_data.ttl");
+    let shapes = load("shacl_s262_deactivated_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nActive")),
+        "this shape is not deactivated, so sh:minCount 1 must still be checked and violate"
+    );
 }

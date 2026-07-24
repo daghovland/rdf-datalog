@@ -1,0 +1,6 @@
+@prefix ex: <http://example.com/ns#> .
+
+# No ex:v value on any of these — sh:minCount 1 would violate if evaluated.
+ex:nNodeDeactivated a ex:Thing .
+ex:nPropDeactivated a ex:Thing .
+ex:nActive a ex:Thing .

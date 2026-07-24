@@ -36,8 +36,16 @@ pub fn eval_all(
 ) -> Vec<(GraphElementId, Severity)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
+        // sh:deactivated — skip this shape's constraints entirely (SHACL §3).
+        // See #262.
+        if shape.deactivated {
+            continue;
+        }
         let targets = crate::data_targets(shape, data);
         for prop in &shape.property_shapes {
+            if prop.deactivated {
+                continue;
+            }
             for (ci, constraint) in prop.constraints.iter().enumerate() {
                 let coord = ConstraintCoord {
                     si: shape.idx,
@@ -129,11 +137,18 @@ pub fn eval_all(
         // so violation IRI names are consistent.
         for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
             let inner_id = inner_ref.shapes_id;
+            // A deactivated inner shape contributes no constraints. See #262.
+            if shapes::is_deactivated(shapes_store, inner_id) {
+                continue;
+            }
             for (inner_pi, prop_node) in
                 graph::get_objects(shapes_store, inner_id, crate::vocab::SH_PROPERTY)
                     .into_iter()
                     .enumerate()
             {
+                if shapes::is_deactivated(shapes_store, prop_node) {
+                    continue;
+                }
                 let path = graph::get_object(shapes_store, prop_node, crate::vocab::SH_PATH)
                     .and_then(|id| graph::iri_string(shapes_store, id));
                 if let Some(path_str) = path {
@@ -600,6 +615,14 @@ fn shape_conforms_for_node(
 ) -> bool {
     let parsed = shapes::parse_one_shape(shapes_store, shape_id, 0);
 
+    // sh:deactivated — a deactivated shape is vacuously satisfied by every
+    // node (SHACL §3: it must produce no results, which here means it never
+    // blocks conformance when referenced by sh:not/sh:and/sh:or/sh:node/…).
+    // See #262.
+    if parsed.deactivated {
+        return true;
+    }
+
     if let Some(nk) = &parsed.node_kind
         && !matches_node_kind(data, node, nk)
     {
@@ -607,6 +630,9 @@ fn shape_conforms_for_node(
     }
 
     for prop in &parsed.property_shapes {
+        if prop.deactivated {
+            continue;
+        }
         for constraint in &prop.constraints {
             if !constraint_conforms(constraint, node, Some(&prop.path), data, shapes_store) {
                 return false;

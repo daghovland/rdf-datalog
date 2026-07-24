@@ -110,6 +110,11 @@ pub struct ParsedPropShape {
     /// `sh:path` IRI.
     pub path: String,
     pub constraints: Vec<PropConstraint>,
+    /// `sh:deactivated true` on this property shape itself (as opposed to the
+    /// parent node shape). Per SHACL §3, a deactivated shape produces no
+    /// results from any of its constraints. See
+    /// [#262](https://github.com/daghovland/rdf-datalog/issues/262).
+    pub deactivated: bool,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -152,6 +157,24 @@ pub struct ParsedShape {
     pub node_kind: Option<NodeKindValue>,
     /// `sh:severity` on this shape, defaulting to `Severity::Violation` when unset.
     pub severity: crate::Severity,
+    /// `sh:deactivated true` on this shape. Per SHACL §3, a deactivated shape
+    /// must produce no validation results at all, from any of its
+    /// constraints — every place a shape is processed must check this flag
+    /// and skip constraint generation/evaluation entirely when set. See
+    /// [#262](https://github.com/daghovland/rdf-datalog/issues/262).
+    pub deactivated: bool,
+}
+
+/// Return `true` if the shape-graph node `shape_id` carries `sh:deactivated true`.
+///
+/// A lightweight standalone check (rather than a full `parse_one_shape` call)
+/// used wherever only the deactivated flag of a shape reference is needed
+/// before deciding whether to process it further (e.g. an inner shape inside
+/// `sh:and`). See [#262](https://github.com/daghovland/rdf-datalog/issues/262).
+pub(crate) fn is_deactivated(shapes: &Datastore, shape_id: GraphElementId) -> bool {
+    graph::get_object(shapes, shape_id, SH_DEACTIVATED)
+        .and_then(|id| graph::elem_to_bool(shapes, id))
+        .unwrap_or(false)
 }
 
 // ── Top-level entry point ─────────────────────────────────────────────────────
@@ -189,6 +212,7 @@ pub(crate) fn parse_one_shape(
     shape_id: GraphElementId,
     idx: usize,
 ) -> ParsedShape {
+    let deactivated = is_deactivated(shapes, shape_id);
     let iri = graph::iri_string(shapes, shape_id);
     let targets = parse_targets(shapes, shape_id, &iri);
     let mut property_shapes = parse_property_shapes(shapes, shape_id);
@@ -206,6 +230,7 @@ pub(crate) fn parse_one_shape(
                 idx: next_idx,
                 path: path_iri,
                 constraints: direct_constraints,
+                deactivated,
             });
         }
     }
@@ -256,6 +281,7 @@ pub(crate) fn parse_one_shape(
         node_constraints,
         node_kind,
         severity,
+        deactivated,
     }
 }
 
@@ -313,6 +339,7 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                 idx,
                 path,
                 constraints: parse_prop_constraints(shapes, prop_node),
+                deactivated: is_deactivated(shapes, prop_node),
             })
         })
         .collect()
