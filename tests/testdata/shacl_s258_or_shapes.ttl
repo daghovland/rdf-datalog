@@ -1,0 +1,60 @@
+# Issue #258 — sh:or must dispatch to the FULL constraint-evaluation logic for
+# inner shapes (translate.rs::inner_ok_rules previously only understood
+# sh:class / sh:nodeKind / sh:property[sh:minCount>=1]).
+# https://github.com/daghovland/rdf-datalog/issues/258
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# Issue's concrete repro (adapted from pathless sh:nodeKind on the focus node to
+# a property-based nodeKind check, to sidestep the unrelated fact that
+# sh:targetNode does not currently resolve literal/blank-node-valued targets):
+# one disjunct requires an IRI value, the other a Literal value; a blank-node
+# value matches neither, so both disjuncts must be evaluated correctly.
+ex:OrNodeKindShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orNkOk, ex:orNkBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:nodeKind sh:IRI ] ]
+        [ sh:property [ sh:path ex:v ; sh:nodeKind sh:Literal ] ]
+    ) .
+
+ex:OrDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orDtOk, ex:orDtBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:datatype xsd:integer ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:OrPatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orPatOk, ex:orPatBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:pattern "^foo" ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:OrInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orInOk, ex:orInBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:in ( ex:A ex:B ) ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:OrHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orHvOk, ex:orHvBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:hasValue ex:Expected ] ]
+        [ sh:datatype ex:NeverMatches ]
+    ) .
+
+ex:OrMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:orMcOk, ex:orMcBad ;
+    sh:or (
+        [ sh:property [ sh:path ex:v ; sh:maxCount 1 ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .

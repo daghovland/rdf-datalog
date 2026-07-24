@@ -1,0 +1,17 @@
+# Issue #258 — sh:node data graph. See shacl_s258_node_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:ndDtOk  ex:address ex:addrDtOk .  ex:addrDtOk  ex:v 42 .
+ex:ndDtBad ex:address ex:addrDtBad . ex:addrDtBad ex:v "abc" .
+
+ex:ndPatOk  ex:address ex:addrPatOk .  ex:addrPatOk  ex:v "foobar" .
+ex:ndPatBad ex:address ex:addrPatBad . ex:addrPatBad ex:v "bazqux" .
+
+ex:ndInOk  ex:address ex:addrInOk .  ex:addrInOk  ex:v ex:A .
+ex:ndInBad ex:address ex:addrInBad . ex:addrInBad ex:v ex:C .
+
+ex:ndHvOk  ex:address ex:addrHvOk .  ex:addrHvOk  ex:v ex:Expected .
+ex:ndHvBad ex:address ex:addrHvBad . ex:addrHvBad ex:v ex:Other .
+
+ex:ndMcOk  ex:address ex:addrMcOk .  ex:addrMcOk  ex:v ex:x1 .
+ex:ndMcBad ex:address ex:addrMcBad . ex:addrMcBad ex:v ex:x1, ex:x2 .

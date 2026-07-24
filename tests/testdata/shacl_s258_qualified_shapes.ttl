@@ -1,0 +1,56 @@
+# Issue #258 — sh:qualifiedValueShape must dispatch to the FULL
+# constraint-evaluation logic for the referenced inner shape
+# (evaluate.rs::node_conforms_to_inner previously only understood sh:class /
+# sh:nodeKind / sh:property[sh:minCount>=1]).
+# https://github.com/daghovland/rdf-datalog/issues/258
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# Issue's concrete repro, verbatim semantics: qualifiedMinCount 2 with an inner
+# sh:datatype xsd:integer shape; 2 non-integer values must count as 0 qualifying
+# and hence violate (previously silently counted as 2 qualifying → false negative).
+ex:QualifiedDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:qvDtOk, ex:qvDtBad ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:datatype xsd:integer ] ;
+        sh:qualifiedMinCount 2 ;
+    ] .
+
+ex:QualifiedPatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:qvPatOk, ex:qvPatBad ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:pattern "^foo" ] ;
+        sh:qualifiedMinCount 1 ;
+    ] .
+
+ex:QualifiedInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:qvInOk, ex:qvInBad ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:in ( ex:A ex:B ) ] ;
+        sh:qualifiedMinCount 1 ;
+    ] .
+
+ex:QualifiedHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:qvHvOk, ex:qvHvBad ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:hasValue ex:Expected ] ;
+        sh:qualifiedMinCount 1 ;
+    ] .
+
+ex:QualifiedMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:qvMcOk, ex:qvMcBad ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:property [ sh:path ex:nickname ; sh:maxCount 1 ] ] ;
+        sh:qualifiedMinCount 1 ;
+    ] .

@@ -1,0 +1,47 @@
+# Issue #258 — sh:xone must dispatch to the FULL constraint-evaluation logic for
+# each candidate inner shape (evaluate.rs::node_conforms_to_inner previously only
+# understood sh:class / sh:nodeKind / sh:property[sh:minCount>=1]).
+# https://github.com/daghovland/rdf-datalog/issues/258
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:XoneDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:xoDtOk, ex:xoDtBad ;
+    sh:xone (
+        [ sh:property [ sh:path ex:v ; sh:datatype xsd:integer ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:XonePatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:xoPatOk, ex:xoPatBad ;
+    sh:xone (
+        [ sh:property [ sh:path ex:v ; sh:pattern "^foo" ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:XoneInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:xoInOk, ex:xoInBad ;
+    sh:xone (
+        [ sh:property [ sh:path ex:v ; sh:in ( ex:A ex:B ) ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .
+
+ex:XoneHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:xoHvOk, ex:xoHvBad ;
+    sh:xone (
+        [ sh:property [ sh:path ex:v ; sh:hasValue ex:Expected ] ]
+        [ sh:datatype ex:NeverMatches ]
+    ) .
+
+ex:XoneMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:xoMcOk, ex:xoMcBad ;
+    sh:xone (
+        [ sh:property [ sh:path ex:v ; sh:maxCount 1 ] ]
+        [ sh:hasValue ex:Nonexistent ]
+    ) .

@@ -1,0 +1,20 @@
+# Issue #258 — sh:qualifiedValueShape data graph. See shacl_s258_qualified_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:qvDtOk  ex:parent 1, 2 .
+ex:qvDtBad ex:parent "a", "b" .
+
+ex:qvPatOk  ex:parent "foobar" .
+ex:qvPatBad ex:parent "bazqux" .
+
+ex:qvInOk  ex:parent ex:A .
+ex:qvInBad ex:parent ex:C .
+
+ex:qvHvOk  ex:parent ex:Expected .
+ex:qvHvBad ex:parent ex:Other .
+
+ex:qvMcOk ex:parent ex:p1 .
+ex:p1 ex:nickname "A" .
+
+ex:qvMcBad ex:parent ex:p2 .
+ex:p2 ex:nickname "A", "B" .
