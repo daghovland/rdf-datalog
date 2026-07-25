@@ -30,21 +30,21 @@
 # ── Epic #267: SHACL correctness audit — mostly done, 2 of 9 still open ───
 
 ghissues:267
-    a bl:Issue, bl:Epic ;
+    a bl:Issue, bl:Epic, bl:WorkItem ;
     bl:number 267 ;
     bl:title "SHACL correctness audit (2026-07-23): tracking issue" ;
     bl:state bl:Open ;
     bl:hasLabel bl:Bug, bl:Ready .
 
 ghissues:258
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 258 ;
     bl:title "BUG: sh:or/sh:not/sh:and/sh:node/sh:xone/sh:qualifiedValueShape use an incomplete inner-shape checker" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:276 a bl:PullRequest, bl:Issue ;
+ghpull:276 a bl:PullRequest, bl:WorkItem ;
     bl:number 276 ;
     bl:title "fix(shacl): shared inner-shape conformance checker for combinators" ;
     bl:state bl:Closed ;
@@ -52,14 +52,14 @@ ghpull:276 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:259
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 259 ;
     bl:title "BUG: sh:datatype does not distinguish rdf:langString from xsd:string" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:272 a bl:PullRequest, bl:Issue ;
+ghpull:272 a bl:PullRequest, bl:WorkItem ;
     bl:number 272 ;
     bl:title "fix(shacl): distinguish rdf:langString from xsd:string in sh:datatype" ;
     bl:state bl:Closed ;
@@ -67,14 +67,14 @@ ghpull:272 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl, crate:ingress .
 
 ghissues:260
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 260 ;
     bl:title "BUG: node-level (pathless) value constraints on a shape are silently dropped" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:271 a bl:PullRequest, bl:Issue ;
+ghpull:271 a bl:PullRequest, bl:WorkItem ;
     bl:number 271 ;
     bl:title "fix(shacl): node-level (pathless) value constraints on a shape are silently dropped" ;
     bl:state bl:Closed ;
@@ -82,14 +82,14 @@ ghpull:271 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:261
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 261 ;
     bl:title "BUG: sh:pattern/sh:minLength/sh:maxLength skip IRI and blank-node value nodes" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:289 a bl:PullRequest, bl:Issue ;
+ghpull:289 a bl:PullRequest, bl:WorkItem ;
     bl:number 289 ;
     bl:title "fix(shacl): correctly evaluate sh:pattern/minLength/maxLength for IRI and blank-node value nodes" ;
     bl:state bl:Closed ;
@@ -97,14 +97,14 @@ ghpull:289 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:262
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 262 ;
     bl:title "BUG: sh:deactivated is never honored" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:280 a bl:PullRequest, bl:Issue ;
+ghpull:280 a bl:PullRequest, bl:WorkItem ;
     bl:number 280 ;
     bl:title "fix(shacl): honor sh:deactivated on node and property shapes" ;
     bl:state bl:Closed ;
@@ -112,14 +112,14 @@ ghpull:280 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:263
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 263 ;
     bl:title "BUG: sh:severity is ignored; every result is hardcoded to sh:Violation" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:273 a bl:PullRequest, bl:Issue ;
+ghpull:273 a bl:PullRequest, bl:WorkItem ;
     bl:number 273 ;
     bl:title "fix(shacl): honor sh:severity instead of hardcoding Violation" ;
     bl:state bl:Closed ;
@@ -127,7 +127,7 @@ ghpull:273 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:264
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 264 ;
     bl:title "BUG: validation results are missing sh:resultPath, sh:sourceShape, sh:sourceConstraintComponent, sh:resultMessage" ;
     bl:state bl:Open ;
@@ -139,14 +139,14 @@ ghissues:264
     # real positive case to match against #267.
 
 ghissues:265
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 265 ;
     bl:title "BUG: sh:class ignores rdfs:subClassOf edges present in the data graph" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
-ghpull:290 a bl:PullRequest, bl:Issue ;
+ghpull:290 a bl:PullRequest, bl:WorkItem ;
     bl:number 290 ;
     bl:title "fix(shacl): sh:class follows rdfs:subClassOf transitivity" ;
     bl:state bl:Closed ;
@@ -154,7 +154,7 @@ ghpull:290 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:shacl .
 
 ghissues:266
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 266 ;
     bl:title "SHACL: unconfirmed suspicions to verify (languageIn, lessThan comparability) + report-detail deviations" ;
     bl:state bl:Open ;
@@ -166,7 +166,7 @@ ghissues:266
 # ── Epic #282: dagalog-on-dagalog — freshly created, mostly not started ───
 
 ghissues:282
-    a bl:Issue, bl:Epic ;
+    a bl:Issue, bl:Epic, bl:WorkItem ;
     bl:number 282 ;
     bl:title "Epic: dagalog-on-dagalog — self-hosted RDF/SPARQL/SHACL backlog mirror" ;
     bl:state bl:Open .
@@ -175,7 +175,7 @@ ghissues:282
     # sub-issues an agent might pick up, not to the epic itself).
 
 ghissues:283
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 283 ;
     bl:title "backlog: design a minimal RDF ontology for GitHub issues/epics/PRs/labels" ;
     bl:state bl:Open ;
@@ -185,28 +185,28 @@ ghissues:283
     # progress as of this snapshot (this file is part of that work).
 
 ghissues:284
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 284 ;
     bl:title "backlog: GitHub API loader — issues/epics/PRs/labels into RDF" ;
     bl:state bl:Open ;
     bl:subIssueOf ghissues:282 .
 
 ghissues:285
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 285 ;
     bl:title "backlog: SHACL shapes validating backlog structural invariants" ;
     bl:state bl:Open ;
     bl:subIssueOf ghissues:282 .
 
 ghissues:286
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 286 ;
     bl:title "backlog: canned SPARQL query library for common backlog views" ;
     bl:state bl:Open ;
     bl:subIssueOf ghissues:282 .
 
 ghissues:287
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 287 ;
     bl:title "backlog: write-back — sync local RDF edits to GitHub via API" ;
     bl:state bl:Open ;
@@ -220,21 +220,21 @@ ghissues:287
 # the way the #267 and #282 sections above are.
 
 ghissues:178
-    a bl:Issue, bl:Epic ;
+    a bl:Issue, bl:Epic, bl:WorkItem ;
     bl:number 178 ;
     bl:title "OWL Manchester Syntax: parsing, serialization, and full integration (epic)" ;
     bl:state bl:Open ;
     bl:hasLabel bl:Enhancement, bl:Ready .
 
 ghissues:160
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 160 ;
     bl:title "Manchester Syntax: serializer (owl_ontology::Ontology → .omn)" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Ready ;
     bl:subIssueOf ghissues:178 .
 
-ghpull:288 a bl:PullRequest, bl:Issue ;
+ghpull:288 a bl:PullRequest, bl:WorkItem ;
     bl:number 288 ;
     bl:title "Add Manchester Syntax serializer (manchester_parser::serialize)" ;
     bl:state bl:Closed ;
@@ -242,7 +242,7 @@ ghpull:288 a bl:PullRequest, bl:Issue ;
     bl:touchesCrate crate:manchester_parser .
 
 ghissues:161
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 161 ;
     bl:title "Manchester Syntax: wire serializer into CLI/kernel/HTTP content negotiation" ;
     bl:state bl:Open ;
@@ -256,7 +256,7 @@ ghissues:161
     # done" would get this wrong; that's exactly the distinction
     # bl:closesIssue vs. bl:relatesToIssue exists to preserve.
 
-ghpull:292 a bl:PullRequest, bl:Issue ;
+ghpull:292 a bl:PullRequest, bl:WorkItem ;
     bl:number 292 ;
     bl:title "Wire Manchester Syntax (.omn) into CLI and notebook kernel" ;
     bl:state bl:Closed ;
@@ -270,21 +270,21 @@ ghpull:292 a bl:PullRequest, bl:Issue ;
 # one example touching sparql_endpoint rather than only shacl/manchester.
 
 ghissues:25
-    a bl:Issue, bl:Epic ;
+    a bl:Issue, bl:Epic, bl:WorkItem ;
     bl:number 25 ;
     bl:title "RML pipeline: remaining source/function gaps (epic)" ;
     bl:state bl:Open ;
     bl:hasLabel bl:Enhancement .
 
 ghissues:257
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 257 ;
     bl:title "RML upload endpoints: make the 64MB body-size limit configurable" ;
     bl:state bl:Closed ;
     bl:hasLabel bl:Enhancement, bl:Ready ;
     bl:subIssueOf ghissues:25 .
 
-ghpull:277 a bl:PullRequest, bl:Issue ;
+ghpull:277 a bl:PullRequest, bl:WorkItem ;
     bl:number 277 ;
     bl:title "Add --max-rml-upload-bytes CLI flag / env var for RML upload limit" ;
     bl:state bl:Closed ;

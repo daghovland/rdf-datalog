@@ -19,22 +19,28 @@
 
 # ── Classes ─────────────────────────────────────────────────────────────────
 
+bl:WorkItem
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Work item" ;
+    rdfs:comment "The abstract common superclass of everything this ontology tracks as a unit of work to be done or already done -- currently bl:Issue and bl:PullRequest. Exists so those two can be disjoint siblings (see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\") while still sharing a type for properties that genuinely apply to both (bl:number, bl:title, bl:state, bl:hasLabel, bl:touchesCrate)." .
+
 bl:Issue
     a rdfs:Class, owl:Class ;
+    rdfs:subClassOf bl:WorkItem ;
     rdfs:label "Issue" ;
-    rdfs:comment "A GitHub issue (or work item, in Jira/Azure-DevOps terms). Subjects are the real GitHub issue URL — no invented identifier scheme." .
+    rdfs:comment "A GitHub issue (or work item, in Jira/Azure-DevOps terms). Subjects are the real GitHub issue URL — no invented identifier scheme. Disjoint from bl:PullRequest (see disjointness axioms below) -- a conceptually distinct kind of thing from a PR, even though GitHub's own internal data model blurs this (a PR IS technically an issue there, with extra fields)." .
 
 bl:PullRequest
     a rdfs:Class, owl:Class ;
-    rdfs:subClassOf bl:Issue ;
+    rdfs:subClassOf bl:WorkItem ;
     rdfs:label "Pull request" ;
-    rdfs:comment "A GitHub pull request. Modeled as an rdfs:subClassOf bl:Issue (not a disjoint sibling class) since it shares every property Issue has (number, title, state, hasLabel) and adds two more (closesIssue, relatesToIssue) — matches GitHub's own data model, where a PR literally is an issue with extra fields. See the disjointness axioms below: nothing can be both a bl:PullRequest and a bl:Epic." .
+    rdfs:comment "A GitHub pull request. Revised (after review) from rdfs:subClassOf bl:Issue to a disjoint sibling under bl:WorkItem instead -- see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\" for why: a PR is conceptually a different kind of thing from an issue (it proposes a change and can merge/close code; an issue reports or requests something), even though it happens to share most of the same properties (number, title, state, hasLabel, touchesCrate -- all now declared on the common bl:WorkItem superclass instead)." .
 
 bl:Epic
     a rdfs:Class, owl:Class ;
     rdfs:subClassOf bl:Issue ;
     rdfs:label "Epic" ;
-    rdfs:comment "An issue explicitly marked as an epic. Revised from the original (PR #294) purely-structural definition (no bl:subIssueOf, target of some other issue's bl:subIssueOf) after review flagged that pattern's assumption of an exactly-two-level hierarchy: GitHub's native sub-issue relation nests arbitrarily, so a mid-tree issue (has both a parent and children) matched neither \"epic\" nor \"leaf\" under the old definition and silently vanished from either kind of query. bl:Epic is now an ASSERTED type (by the loader, #284, or by hand in these fixtures) with exactly one hard constraint, not a derived double-negation — see bl:EpicHasNoParentShape in shapes.ttl. Deliberately NOT required to have at least one bl:subIssueOf child: a freshly-filed epic legitimately has zero sub-issues until they're filed (e.g. #282 itself, briefly, when first created) — only \"has no parent\" is enforced, not \"has children\". No depth restriction is implied elsewhere: an Epic's own children may themselves have further children; whether a mid-tree node also gets asserted bl:Epic is a modeling choice made per-issue (by whoever/whatever asserts the type), not something this class definition dictates one way or the other." .
+    rdfs:comment "An issue explicitly marked as an epic. Revised from the original (PR #294) purely-structural definition (no bl:subIssueOf, target of some other issue's bl:subIssueOf) after review flagged that pattern's assumption of an exactly-two-level hierarchy: GitHub's native sub-issue relation nests arbitrarily, so a mid-tree issue (has both a parent and children) matched neither \"epic\" nor \"leaf\" under the old definition and silently vanished from either kind of query. bl:Epic is now an ASSERTED type (by the loader, #284, or by hand in these fixtures) with exactly one hard constraint, not a derived double-negation — see bl:EpicHasNoParentShape in shapes.ttl. Deliberately NOT required to have at least one bl:subIssueOf child: a freshly-filed epic legitimately has zero sub-issues until they're filed (e.g. #282 itself, briefly, when first created) — only \"has no parent\" is enforced, not \"has children\". No depth restriction is implied elsewhere: an Epic's own children may themselves have further children; whether a mid-tree node also gets asserted bl:Epic is a modeling choice made per-issue (by whoever/whatever asserts the type), not something this class definition dictates one way or the other. Remains rdfs:subClassOf bl:Issue (not bl:WorkItem) -- an epic is specifically a kind of issue, never a kind of pull request." .
 
 bl:IssueState
     a rdfs:Class, owl:Class ;
@@ -87,20 +93,20 @@ bl:Crate
 
 bl:number
     a owl:DatatypeProperty ;
-    rdfs:domain bl:Issue ;
+    rdfs:domain bl:WorkItem ;
     rdfs:range xsd:integer ;
     rdfs:label "number" ;
     rdfs:comment "The GitHub issue/PR number, for human-readable display — the IRI (the real GitHub URL) is already the actual identifier, this is not needed for identity." .
 
 bl:title
     a owl:DatatypeProperty ;
-    rdfs:domain bl:Issue ;
+    rdfs:domain bl:WorkItem ;
     rdfs:range xsd:string ;
     rdfs:label "title" .
 
 bl:state
     a owl:ObjectProperty ;
-    rdfs:domain bl:Issue ;
+    rdfs:domain bl:WorkItem ;
     rdfs:range bl:IssueState ;
     rdfs:label "state" ;
     rdfs:comment "GitHub's raw open/closed state. See bl:status for the separate workflow-stage axis." .
@@ -110,21 +116,21 @@ bl:status
     rdfs:domain bl:Issue ;
     rdfs:range bl:WorkflowStatus ;
     rdfs:label "status" ;
-    rdfs:comment "This repo's own Kanban-style workflow stage, independent of bl:state. Added per the Jira/Azure-DevOps/Kanban comparison in PR #293 -- not populated for every issue in ../examples/, since deriving it reliably (in particular detecting bl:InProgress, which has no GitHub label) is #284's (the loader's) job, not this vocabulary's. Where a bl:WorkflowStatus value has a directly corresponding bl:Label (currently just bl:Ready), #284 should derive bl:status for that value FROM the matching bl:hasLabel, not assert it independently -- see MODELING_NOTES.md \"Labels as resources\"." .
+    rdfs:comment "This repo's own Kanban-style workflow stage, independent of bl:state. Added per the Jira/Azure-DevOps/Kanban comparison in PR #293 -- not populated for every issue in ../examples/, since deriving it reliably (in particular detecting bl:InProgress, which has no GitHub label) is #284's (the loader's) job, not this vocabulary's. Where a bl:WorkflowStatus value has a directly corresponding bl:Label (currently just bl:Ready), #284 should derive bl:status for that value FROM the matching bl:hasLabel, not assert it independently -- see MODELING_NOTES.md \"Labels as resources\". Domain kept as bl:Issue, not bl:WorkItem: this repo's practice never gives a PR its own workflow stage distinct from bl:state (a PR is open, then merged/closed -- there's no separate ready/in-progress pipeline for a PR itself)." .
 
 bl:hasLabel
     a owl:ObjectProperty ;
-    rdfs:domain bl:Issue ;
+    rdfs:domain bl:WorkItem ;
     rdfs:range bl:Label ;
     rdfs:label "has label" ;
-    rdfs:comment "A GitHub label (repeatable). Resource-valued, not a plain string — see MODELING_NOTES.md \"Labels as resources\" for why this changed from PR #294's original string-valued design." .
+    rdfs:comment "A GitHub label (repeatable) — issues and PRs can both carry labels on GitHub. Resource-valued, not a plain string — see MODELING_NOTES.md \"Labels as resources\" for why this changed from PR #294's original string-valued design." .
 
 bl:subIssueOf
     a owl:ObjectProperty ;
     rdfs:domain bl:Issue ;
     rdfs:range bl:Issue ;
     rdfs:label "sub-issue of" ;
-    rdfs:comment "Mirrors GitHub's native sub-issue relation (child -> parent), which nests arbitrarily deep -- no depth restriction is implied by this property. See bl:Epic's comment and bl:EpicHasNoParentShape (shapes.ttl) for the one constraint this vocabulary does impose: an Epic must never have this property asserted on it." .
+    rdfs:comment "Mirrors GitHub's native sub-issue relation (child -> parent), which nests arbitrarily deep -- no depth restriction is implied by this property. Domain/range are bl:Issue, not bl:WorkItem: a PR is never a sub-issue of anything and never has sub-issues (GitHub's sub-issue relation is issue-only). See bl:Epic's comment and bl:EpicHasNoParentShape (shapes.ttl) for the one constraint this vocabulary does impose: an Epic must never have this property asserted on it." .
 
 bl:closesIssue
     a owl:ObjectProperty ;
@@ -144,10 +150,10 @@ bl:relatesToIssue
 
 bl:touchesCrate
     a owl:ObjectProperty ;
-    rdfs:domain bl:Issue ;
+    rdfs:domain bl:WorkItem ;
     rdfs:range bl:Crate ;
     rdfs:label "touches crate" ;
-    rdfs:comment "The crate(s) an issue or PR actually changed (or, for a still-open issue, is expected to change). Domain bl:Issue rather than bl:PullRequest specifically -- since bl:PullRequest is a subclass, PRs can use it too, but so can an unresolved bug report that already knows which crate it affects before any fix exists." .
+    rdfs:comment "The crate(s) an issue or PR actually changed (or, for a still-open issue, is expected to change). Domain bl:WorkItem, not bl:Issue or bl:PullRequest specifically, since this is the main property genuinely shared by both -- a PR that already changed a crate, and an unresolved bug report that already knows which crate it affects before any fix exists." .
 
 bl:dependsOnCrate
     a owl:ObjectProperty ;
@@ -185,18 +191,31 @@ bl:partOfProject
 #
 # Group 1: every top-level class here is pairwise disjoint from every other
 # EXCEPT bl:WorkflowStatus, which is asserted disjoint separately below so
-# it can stay un-disjoint from bl:Label specifically.
+# it can stay un-disjoint from bl:Label specifically. bl:WorkItem here
+# (rather than bl:Issue/bl:PullRequest individually) covers both subclasses
+# automatically via subsumption -- a reasoner running full OWL-RL over this
+# data would derive bl:Issue and bl:PullRequest are each disjoint from
+# bl:Crate/bl:IssueState/bl:Label/doap:Project without a separate assertion.
 [] a owl:AllDisjointClasses ;
-    owl:members ( bl:Issue bl:Crate bl:IssueState bl:Label <http://usefulinc.com/ns/doap#Project> ) .
+    owl:members ( bl:WorkItem bl:Crate bl:IssueState bl:Label <http://usefulinc.com/ns/doap#Project> ) .
 
 # Group 2: the same top-level classes, with bl:WorkflowStatus substituted
-# for bl:Label -- entails bl:WorkflowStatus disjoint from bl:Issue/Crate/
+# for bl:Label -- entails bl:WorkflowStatus disjoint from bl:WorkItem/Crate/
 # IssueState/doap:Project, and re-asserts (harmlessly) that those four are
 # mutually disjoint. Neither group ever lists bl:Label and bl:WorkflowStatus
 # together, so no disjointness between THEM is entailed.
 [] a owl:AllDisjointClasses ;
-    owl:members ( bl:Issue bl:Crate bl:IssueState bl:WorkflowStatus <http://usefulinc.com/ns/doap#Project> ) .
+    owl:members ( bl:WorkItem bl:Crate bl:IssueState bl:WorkflowStatus <http://usefulinc.com/ns/doap#Project> ) .
 
-# Sibling subclasses of bl:Issue: nothing is both a pull request and an
-# epic.
-bl:PullRequest owl:disjointWith bl:Epic .
+# Sibling subclasses of bl:WorkItem: an issue is never a pull request and
+# vice versa (see bl:Issue/bl:PullRequest's comments and MODELING_NOTES.md
+# "bl:Issue and bl:PullRequest are disjoint"). This is the load-bearing
+# disjointness axiom in this vocabulary, since neither class is a subclass
+# of the other any more.
+bl:Issue owl:disjointWith bl:PullRequest .
+
+# NOT separately asserted: bl:PullRequest owl:disjointWith bl:Epic. It's
+# already entailed (bl:Epic rdfs:subClassOf bl:Issue, and bl:Issue is now
+# disjoint from bl:PullRequest above, so bl:Epic inherits that disjointness
+# through subsumption) -- asserting it again would be redundant, not an
+# independent fact.

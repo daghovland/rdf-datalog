@@ -47,11 +47,43 @@ the one direction that's cheap and unambiguous to validate (an Epic has no
 parent) rather than trying to define "epic-ness" as a two-sided pattern
 match that breaks down at depth > 2.
 
-**`bl:PullRequest`/`bl:Epic` disjointness:** since both are now sibling
-subclasses of `bl:Issue`, `vocabulary.ttl` asserts
-`bl:PullRequest owl:disjointWith bl:Epic` — nothing is both a pull request
-and an epic. See "Disjointness axioms" below for the fuller set this PR
-adds.
+**`bl:PullRequest`/`bl:Epic` disjointness:** not separately asserted.
+`bl:Epic rdfs:subClassOf bl:Issue`, and `bl:Issue owl:disjointWith
+bl:PullRequest` (see "`bl:Issue` and `bl:PullRequest` are disjoint" below),
+so nothing being both a pull request and an epic is already entailed
+through subsumption — asserting it again would be a redundant, not an
+independent, fact.
+
+## `bl:Issue` and `bl:PullRequest` are disjoint (via a common `bl:WorkItem`)
+
+**Revised after a second round of review**, requested directly: a PR and an
+issue are conceptually different things (a PR proposes and can merge/close
+a code change; an issue reports or requests something) even though they
+happen to share most of the same fields — the original `bl:PullRequest
+rdfs:subClassOf bl:Issue` conflated "shares properties with" and "is a kind
+of."
+
+**Decision:** introduced `bl:WorkItem` as an abstract common superclass.
+`bl:Issue` and `bl:PullRequest` are now disjoint siblings under it
+(`bl:Issue owl:disjointWith bl:PullRequest`), and the properties that
+genuinely apply to both (`bl:number`, `bl:title`, `bl:state`, `bl:hasLabel`,
+`bl:touchesCrate`) moved their `rdfs:domain` from `bl:Issue` to
+`bl:WorkItem`. Properties that are genuinely issue-only (`bl:subIssueOf`) or
+PR-only (`bl:closesIssue`, `bl:relatesToIssue`) keep their original,
+narrower domain. `bl:status` also stays domain `bl:Issue`, not `bl:WorkItem`
+— this repo's practice never gives a PR its own workflow stage distinct from
+`bl:state` (a PR is open, then merged/closed; there's no separate
+ready/in-progress pipeline for the PR itself, only for the issue(s) it
+closes). `bl:Epic` stays `rdfs:subClassOf bl:Issue` (not `bl:WorkItem`) — an
+epic is specifically a kind of issue, never a kind of pull request.
+
+**Consequence for the fixtures:** every PR individual, which previously
+carried `a bl:PullRequest, bl:Issue` (see "`rdfs:subClassOf` is not free"
+below), now carries `a bl:PullRequest, bl:WorkItem` instead — asserting `a
+bl:Issue` on a PR would now be a direct contradiction of the new
+disjointness axiom. Every `bl:Issue` individual likewise now also carries
+an explicit `a bl:WorkItem`, for the same "subclass inference doesn't fire
+at query time" reason documented below.
 
 ## Workflow status as its own axis (`bl:status`, distinct from `bl:state`)
 
@@ -143,21 +175,23 @@ ontology declared what *can't* overlap, not just what can. `vocabulary.ttl`
 now asserts (via two `owl:AllDisjointClasses` groups, to avoid writing out
 every pairwise combination by hand):
 
-- `bl:Issue`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and `bl:Label`
+- `bl:WorkItem`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and `bl:Label`
   are pairwise disjoint from each other (group 1).
-- `bl:Issue`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and
+- `bl:WorkItem`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and
   `bl:WorkflowStatus` are pairwise disjoint from each other (group 2).
-- `bl:PullRequest owl:disjointWith bl:Epic` (sibling subclasses of
-  `bl:Issue` — see "Epic modeling" above).
+- `bl:Issue owl:disjointWith bl:PullRequest` — the load-bearing sibling
+  disjointness under `bl:WorkItem`, see the section above.
 
 **The one deliberate exception:** `bl:Label` and `bl:WorkflowStatus` are
 never listed in the same `AllDisjointClasses` group, so nothing entails
 disjointness between them specifically — required by `bl:Ready`'s
 intentional dual-typing (see "Labels as resources" above). Every other pair
-across all six top-level classes is disjoint. `bl:Epic`/`bl:PullRequest`
-inherit disjointness from `bl:Issue` vs. the other five classes
-automatically through subsumption (a reasoner running full OWL-RL over this
-data would derive it; not separately re-asserted here).
+across all six top-level classes is disjoint. `bl:Issue`/`bl:PullRequest`
+inherit disjointness from `bl:WorkItem` vs. the other four classes
+automatically through subsumption, and `bl:Epic` inherits its disjointness
+from `bl:PullRequest` the same way through `bl:Issue` (a reasoner running
+full OWL-RL over this data would derive all of this; none of it is
+separately re-asserted).
 
 Verified directly (not just parsed): loaded these axioms plus the example
 fixtures through dagalog's own SHACL endpoint and confirmed
@@ -166,25 +200,37 @@ and correctly reports a violation (`sh:conforms false`, with the exact
 offending `sh:focusNode`/`sh:value`) when a parent edge is deliberately
 added to an epic in a scratch test.
 
-## `rdfs:subClassOf` is not free: PRs need an explicit `rdf:type bl:Issue`
+## `rdfs:subClassOf` is not free: every instance needs an explicit `rdf:type` per level
 
-**Finding, made concrete while writing these notes:** declaring
-`bl:PullRequest rdfs:subClassOf bl:Issue` in `vocabulary.ttl` does *not*
-make a plain SPARQL query like `?x a bl:Issue` match a resource asserted
-only as `a bl:PullRequest` — dagalog's SPARQL executor (like most, absent an
+**Finding, made concrete while writing these notes.** Originally observed
+as: declaring `bl:PullRequest rdfs:subClassOf bl:Issue` does *not* make a
+plain SPARQL query like `?x a bl:Issue` match a resource asserted only as
+`a bl:PullRequest` — dagalog's SPARQL executor (like most, absent an
 explicit reasoning pass) doesn't perform RDFS/OWL-RL entailment at query
-time. Verified directly: before the fix below, `SELECT (COUNT(*) AS ?n)
-WHERE { ?pr a bl:PullRequest . ?pr a bl:Issue . }` against these fixtures
-returned `0`.
+time. Verified directly at the time: `SELECT (COUNT(*) AS ?n) WHERE { ?pr a
+bl:PullRequest . ?pr a bl:Issue . }` against these fixtures returned `0`
+before fixtures were fixed to dual-type.
 
-**Decision:** the fixtures now assert `a bl:PullRequest, bl:Issue` on every
-PR individual, redundantly but explicitly — not relying on subclass
-inference. **This is a requirement for #284 (the loader), not just a fixture
-quirk**: it must emit both `rdf:type` triples for every PR it materializes,
-or every "all Issues" query/shape in #285/#286 will silently miss every PR
-unless something first runs this repo's own OWL-RL/RDFS reasoner
-(`dagalog::apply_ontologies`) over the mirrored data — an extra, easy-to-forget
-step for what's supposed to be a lightweight, always-fresh local mirror.
+**Still true after introducing `bl:WorkItem`, just at a different level.**
+Now that `bl:Issue`/`bl:PullRequest` are disjoint siblings under
+`bl:WorkItem` rather than one subclassing the other, every individual needs
+an explicit `a bl:WorkItem` alongside its specific type
+(`a bl:PullRequest, bl:WorkItem` or `a bl:Issue, bl:WorkItem`) for the same
+reason — properties domained on `bl:WorkItem` (`bl:number`, `bl:title`,
+`bl:state`, `bl:hasLabel`, `bl:touchesCrate`) won't match a plain `?x a
+bl:WorkItem` query otherwise. Verified again after the change: `SELECT
+(COUNT(*) AS ?n) WHERE { ?w a bl:WorkItem }` returns 34 (23 issues + 11
+PRs) with both explicit types present in the fixtures; it would return `0`
+for either category if either's dual-typing were dropped.
+
+**This is a requirement for #284 (the loader), not just a fixture quirk**:
+it must emit `a bl:WorkItem` on every issue and PR it materializes,
+alongside the more specific type, or every property/shape/query in
+#285/#286 that's domained on `bl:WorkItem` will silently miss data — unless
+something first runs this repo's own OWL-RL/RDFS reasoner
+(`dagalog::apply_ontologies`) over the mirrored data, an extra,
+easy-to-forget step for what's supposed to be a lightweight, always-fresh
+local mirror.
 
 ## What's still open (deliberately, past this issue's scope)
 
@@ -205,7 +251,8 @@ step for what's supposed to be a lightweight, always-fresh local mirror.
   (write-back) exists; every IRI in this ontology currently assumes a real
   `github.com` resource exists first.
 - A SHACL shape (in #285's fuller shape library, not this narrow one)
-  requiring every `bl:PullRequest` to also carry `a bl:Issue` — enforcing
-  the dual-typing requirement from "`rdfs:subClassOf` is not free" below, so
-  a forgotten dual-type doesn't silently under-count PRs out of "all
-  Issues" queries.
+  requiring every `bl:Issue` and `bl:PullRequest` to also carry
+  `a bl:WorkItem` — enforcing the dual-typing requirement from
+  "`rdfs:subClassOf` is not free" above, so a forgotten dual-type doesn't
+  silently drop an issue or PR out of any `bl:WorkItem`-domained
+  property/query.
