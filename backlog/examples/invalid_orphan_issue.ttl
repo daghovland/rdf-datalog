@@ -1,3 +1,4 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix bl: <https://dagalog.dev/ns/backlog#> .
 @prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
 @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
@@ -17,7 +18,7 @@
 ghissues:999999
     a bl:Issue, bl:WorkItem ;
     bl:number 999999 ;
-    bl:title "An orphan issue with no epic and no children" ;
+    rdfs:label "An orphan issue with no epic and no children" ;
     bl:state bl:Open ;
     bl:hasLabel bl:Ready .
     # No bl:subIssueOf, and nothing else in this file points bl:subIssueOf

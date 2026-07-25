@@ -66,8 +66,9 @@ of."
 **Decision:** introduced `bl:WorkItem` as an abstract common superclass.
 `bl:Issue` and `bl:PullRequest` are now disjoint siblings under it
 (`bl:Issue owl:disjointWith bl:PullRequest`), and the properties that
-genuinely apply to both (`bl:number`, `bl:title`, `bl:state`, `bl:hasLabel`,
-`bl:touchesCrate`) moved their `rdfs:domain` from `bl:Issue` to
+genuinely apply to both (`bl:number`, `bl:state`, `bl:hasLabel`,
+`bl:touchesCrate` — title uses `rdfs:label`, see "`rdfs:label` instead of a
+bespoke `bl:title`" below) moved their `rdfs:domain` from `bl:Issue` to
 `bl:WorkItem`. Properties that are genuinely issue-only (`bl:subIssueOf`) or
 PR-only (`bl:closesIssue`, `bl:relatesToIssue`) keep their original,
 narrower domain. `bl:status` also stays domain `bl:Issue`, not `bl:WorkItem`
@@ -168,6 +169,33 @@ matching `bl:hasLabel`, rather than asserting it as an independent fact.
 both `bl:Label` and `bl:WorkflowStatus`, those two classes are the one
 deliberate exception to the disjointness axioms below — see that section.
 
+## `rdfs:label` instead of a bespoke `bl:title`
+
+**Decision:** there is no `bl:title` property. An issue/PR's title is given
+directly by `rdfs:label` — RDFS's own "a human-readable name for the
+subject" — which is exactly what a GitHub title is, and reusing it is
+standard RDF practice (Wikidata, DBpedia, and most published vocabularies
+use `rdfs:label` as the generic display name for both schema terms and
+instance data, not just schema terms).
+
+**Why not keep a bespoke property, given this vocabulary already
+distinguishes controlled-vocabulary resources from plain literals
+carefully elsewhere?** Because a separate `bl:title` would say nothing
+`rdfs:label` doesn't already say — there's no domain-specific meaning to
+"issue/PR title" beyond "the human-readable name of this resource", unlike
+(for contrast) `bl:hasLabel`, which specifically means "carries this GitHub
+label", a real domain concept `rdfs:label` doesn't capture.
+
+**One thing to be aware of, not a real problem:** this vocabulary already
+uses `rdfs:label` heavily as schema-level annotation on classes, properties,
+and controlled-vocabulary individuals (e.g. `bl:Issue rdfs:label "Issue"`).
+Reusing the same predicate for instance-level titles means one predicate
+now serves both purposes in the same files. This is normal — `rdf:type`
+always distinguishes a schema term from a `bl:Issue`/`bl:PullRequest`
+instance if it ever matters for a query — but worth naming so a future
+reader isn't surprised to see `rdfs:label` show up on both a `bl:Issue` and
+an `owl:Class` in the same graph.
+
 ## Disjointness axioms
 
 **Added after review**, in response to being asked directly whether the
@@ -216,8 +244,8 @@ Now that `bl:Issue`/`bl:PullRequest` are disjoint siblings under
 `bl:WorkItem` rather than one subclassing the other, every individual needs
 an explicit `a bl:WorkItem` alongside its specific type
 (`a bl:PullRequest, bl:WorkItem` or `a bl:Issue, bl:WorkItem`) for the same
-reason — properties domained on `bl:WorkItem` (`bl:number`, `bl:title`,
-`bl:state`, `bl:hasLabel`, `bl:touchesCrate`) won't match a plain `?x a
+reason — properties domained on `bl:WorkItem` (`bl:number`, `bl:state`,
+`bl:hasLabel`, `bl:touchesCrate`) won't match a plain `?x a
 bl:WorkItem` query otherwise. Verified again after the change: `SELECT
 (COUNT(*) AS ?n) WHERE { ?w a bl:WorkItem }` returns 34 (23 issues + 11
 PRs) with both explicit types present in the fixtures; it would return `0`

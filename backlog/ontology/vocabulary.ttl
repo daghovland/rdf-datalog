@@ -22,7 +22,7 @@
 bl:WorkItem
     a rdfs:Class, owl:Class ;
     rdfs:label "Work item" ;
-    rdfs:comment "The abstract common superclass of everything this ontology tracks as a unit of work to be done or already done -- currently bl:Issue and bl:PullRequest. Exists so those two can be disjoint siblings (see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\") while still sharing a type for properties that genuinely apply to both (bl:number, bl:title, bl:state, bl:hasLabel, bl:touchesCrate)." .
+    rdfs:comment "The abstract common superclass of everything this ontology tracks as a unit of work to be done or already done -- currently bl:Issue and bl:PullRequest. Exists so those two can be disjoint siblings (see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\") while still sharing a type for properties that genuinely apply to both (bl:number, bl:state, bl:hasLabel, bl:touchesCrate -- plus rdfs:label for the title, see the note near bl:state)." .
 
 bl:Issue
     a rdfs:Class, owl:Class ;
@@ -34,7 +34,7 @@ bl:PullRequest
     a rdfs:Class, owl:Class ;
     rdfs:subClassOf bl:WorkItem ;
     rdfs:label "Pull request" ;
-    rdfs:comment "A GitHub pull request. Revised (after review) from rdfs:subClassOf bl:Issue to a disjoint sibling under bl:WorkItem instead -- see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\" for why: a PR is conceptually a different kind of thing from an issue (it proposes a change and can merge/close code; an issue reports or requests something), even though it happens to share most of the same properties (number, title, state, hasLabel, touchesCrate -- all now declared on the common bl:WorkItem superclass instead)." .
+    rdfs:comment "A GitHub pull request. Revised (after review) from rdfs:subClassOf bl:Issue to a disjoint sibling under bl:WorkItem instead -- see MODELING_NOTES.md \"bl:Issue and bl:PullRequest are disjoint\" for why: a PR is conceptually a different kind of thing from an issue (it proposes a change and can merge/close code; an issue reports or requests something), even though it happens to share most of the same properties (number, state, hasLabel, touchesCrate -- all now declared on the common bl:WorkItem superclass instead; title uses rdfs:label, not a bespoke property)." .
 
 bl:Epic
     a rdfs:Class, owl:Class ;
@@ -98,11 +98,13 @@ bl:number
     rdfs:label "number" ;
     rdfs:comment "The GitHub issue/PR number, for human-readable display — the IRI (the real GitHub URL) is already the actual identifier, this is not needed for identity." .
 
-bl:title
-    a owl:DatatypeProperty ;
-    rdfs:domain bl:WorkItem ;
-    rdfs:range xsd:string ;
-    rdfs:label "title" .
+# NOTE: no bl:title property -- an issue/PR's title is given by rdfs:label
+# directly (RDFS's own "human-readable name for the subject"), not a
+# bespoke property. Reused deliberately: this vocabulary already uses
+# rdfs:label as schema-level annotation on classes/properties/individuals
+# (e.g. bl:Issue rdfs:label "Issue"); using it for instance-level titles too
+# is standard RDF practice (rdfs:label is not reserved for schema terms)
+# and avoids a redundant property that would say exactly the same thing.
 
 bl:state
     a owl:ObjectProperty ;
@@ -162,12 +164,10 @@ bl:dependsOnCrate
     rdfs:label "depends on crate" ;
     rdfs:comment "A direct (not transitive) Cargo path dependency, read straight off the dependent crate's own Cargo.toml -- not asserted transitively, so \"what (transitively) depends on X\" is a property-path SPARQL query (bl:dependsOnCrate+ in reverse), not a separate stored relation, to avoid a second source of truth that could drift from Cargo.toml." .
 
-bl:name
-    a owl:DatatypeProperty ;
-    rdfs:domain bl:Crate ;
-    rdfs:range xsd:string ;
-    rdfs:label "name" ;
-    rdfs:comment "The Cargo package name (not always identical to the directory name, e.g. directory dag_rdf is package dag-rdf)." .
+# NOTE: no bl:name property either -- same reasoning as bl:title above. A
+# crate's Cargo package name is its rdfs:label (not always identical to the
+# directory name, which is bl:path -- e.g. directory dag_rdf is package
+# dag-rdf).
 
 bl:path
     a owl:DatatypeProperty ;
