@@ -1,3 +1,4 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix bl: <https://dagalog.dev/ns/backlog#> .
 @prefix crate: <https://dagalog.dev/ns/backlog/crate#> .
 @prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
@@ -24,16 +25,16 @@
 # of this backlog-mirror work.)
 
 ghissues:274
-    a bl:Issue ;
+    a bl:Issue, bl:WorkItem ;
     bl:number 274 ;
-    bl:title "Apply configurable request body limit to RDF upload routes (/{name}/data, /rdf-graph-store) to avoid RequestEntityTooLarge" ;
+    rdfs:label "Apply configurable request body limit to RDF upload routes (/{name}/data, /rdf-graph-store) to avoid RequestEntityTooLarge" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" .
+    bl:hasLabel bl:Bug, bl:Ready .
     # No bl:subIssueOf — confirmed via GraphQL, not assumed.
 
-ghpull:275 a bl:PullRequest ;
+ghpull:275 a bl:PullRequest, bl:WorkItem ;
     bl:number 275 ;
-    bl:title "fix(sparql_endpoint): raise body-size limit on RDF write routes" ;
+    rdfs:label "fix(sparql_endpoint): raise body-size limit on RDF write routes" ;
     bl:state bl:Closed ;
     bl:closesIssue ghissues:274 ;
     bl:touchesCrate crate:sparql_endpoint, crate:dagalog .

@@ -9,13 +9,16 @@ SHACL shapes ([#285](https://github.com/daghovland/rdf-datalog/issues/285)), and
 integration-test, before the loader ([#284](https://github.com/daghovland/rdf-datalog/issues/284)) exists to
 pull live data from the GitHub API.
 
-**Status: provisional.** The predicate/class names here (`bl:` prefix,
-`https://dagalog.dev/ns/backlog#` namespace) are a first-pass sketch to make
-the examples writable, not a finalized vocabulary — #283's job is to settle
-the actual ontology, including the open modeling question flagged inline
-below (epic-as-type vs. epic-as-structural-role). Expect predicate names in
-these files to change once #283 lands; the example *data* (which real
-issues/PRs are represented, and how they relate) should stay accurate.
+**Status: the ontology is formalized**, including a second design-review
+pass before merge (ontology decisions are expensive to reverse once #284's
+loader, #285's shapes, and #286's queries all depend on them). See
+[`../ontology/vocabulary.ttl`](../ontology/vocabulary.ttl) for the actual
+class/property declarations and
+[`../ontology/MODELING_NOTES.md`](../ontology/MODELING_NOTES.md) for the
+reasoning behind every decision — including two that were revised after
+review: epic is now an asserted `bl:Epic` type (not purely structural), and
+labels are resource-valued (not plain strings). The fixtures in this
+directory were updated to match both revisions.
 
 ## Files
 
@@ -53,41 +56,43 @@ issues/PRs are represented, and how they relate) should stay accurate.
   this repo's own policy, kept separate from the fictional fixture above so
   that file's documented "no real issue is broken" guarantee stays literally
   true. Not fixed here — resolving it, if wanted, is the repo owner's call.
+- `project_and_status.ttl` — the repository itself as a `doap:Project` (see
+  `MODELING_NOTES.md`'s "DOAP vs. bespoke `bl:Crate`"), every crate linked to
+  it, and a small, honestly-representative set of real issues given a
+  `bl:status` value (see `MODELING_NOTES.md`'s "Workflow status as its own
+  axis" for why this isn't populated everywhere).
 
-## Comparison with Kanban/Jira/Azure DevOps (informs, doesn't resolve, #283)
+## Comparison with Kanban/Jira/Azure DevOps
 
 There's no broadly-adopted RDF vocabulary for issue tracking the way FOAF
 covers people or DOAP covers software projects — Jira and Azure DevOps have
-proprietary schemas, not published ontologies. Two ideas are worth carrying
-over from them into #283's actual design, though:
+proprietary schemas, not published ontologies. Two ideas carried over from
+them into the now-finalized ontology (`../ontology/vocabulary.ttl`,
+reasoning in `../ontology/MODELING_NOTES.md`):
 
 1. **Work-item hierarchy** (Epic → Story/Task/Bug) is the same shape as
-   GitHub's epic/sub-issue relation already modeled here — no new concept
-   needed, just confirms the structural-role approach below generalizes.
+   GitHub's epic/sub-issue relation already modeled here (see "Epic
+   modeling" below).
 2. **Workflow status as its own axis**, separate from a raw open/closed
    bit — Jira's To Do/In Progress/Done, Azure's board columns. This repo
    already has exactly that distinction in practice (unlabeled = TODO,
-   `ready` = reviewed-and-approved, an implicit in-progress state, closed =
-   done) but these fixtures only capture GitHub's binary `bl:state`. Worth
-   #283 adding a separate `bl:status` (or similar) rather than trying to
-   overload `bl:state` or `bl:hasLabel` to carry that meaning — not done in
-   these fixtures, to avoid re-litigating already-written examples before
-   #283 gets to it, but flagged here as a concrete recommendation.
+   `ready` = reviewed-and-approved, an in-progress convention, closed =
+   done); the ontology now has a `bl:status` property (range
+   `bl:WorkflowStatus`) capturing it, separate from `bl:state`.
 
 For the codebase side, **DOAP** (Description of a Project) is the closest
-real precedent — it already models a project/repository/component tree.
-`crates_and_dependencies.ttl` uses a bespoke `bl:Crate` for now (see that
-file's header), but #283 should weigh adopting DOAP properly (e.g.
-`doap:Project` for the repo as a whole) instead of reinventing it from
-scratch.
+real precedent — reused directly for the repository as a whole
+(`doap:Project`, see `project_and_status.ttl`), while individual crates keep
+the bespoke `bl:Crate` (DOAP has no workspace-submodule concept to reuse
+there — see `MODELING_NOTES.md` for why).
 
-## Open modeling question (for #283, not resolved here)
+## Epic modeling (see `../ontology/MODELING_NOTES.md` for the full history)
 
-Whether "epic" is a first-class `rdf:type` (`bl:Epic`) or a purely
-structural role (an issue that has no `bl:subIssueOf` and is the target of at
-least one other issue's `bl:subIssueOf`). These fixtures take the latter,
-simpler approach — no `bl:Epic` class, epics are just issues without a
-parent that other issues point at — since it can never drift out of sync
-with the actual sub-issue graph the way a separately-asserted type could.
-#283 should treat this as a starting proposal to confirm or overturn, not a
-decision already made.
+`bl:Epic` is an asserted `rdfs:subClassOf bl:Issue` type, constrained by
+[`../ontology/shapes.ttl`](../ontology/shapes.ttl)'s
+`bl:EpicHasNoParentShape`: an Epic must never itself carry `bl:subIssueOf`.
+It is not required to have any children. `MODELING_NOTES.md` covers why an
+earlier, purely-structural version of this decision (no `bl:Epic` class;
+"epic" derived from a two-sided no-parent-but-has-children pattern) was
+revised — that pattern silently assumed an exactly-two-level hierarchy that
+GitHub's arbitrarily-nestable sub-issue relation doesn't actually guarantee.

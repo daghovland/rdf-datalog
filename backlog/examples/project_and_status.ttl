@@ -1,0 +1,78 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix crate: <https://dagalog.dev/ns/backlog/crate#> .
+@prefix doap: <http://usefulinc.com/ns/doap#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+
+# Demonstrates two of ../ontology/MODELING_NOTES.md's decisions:
+#
+# 1. The repository as a whole reuses real DOAP terms (doap:Project), unlike
+#    the bespoke bl:Crate used for individual workspace members — see
+#    MODELING_NOTES.md's "DOAP vs. bespoke bl:Crate".
+# 2. bl:status (Kanban-style workflow stage) populated for a small, honestly
+#    representative set of real issues — not exhaustively for everything in
+#    valid_backlog_snapshot.ttl, since deriving it (especially bl:InProgress,
+#    which has no GitHub label) is #284's job, not this vocabulary's. See
+#    MODELING_NOTES.md's "Workflow status as its own axis".
+
+<https://github.com/daghovland/rdf-datalog>
+    a doap:Project ;
+    doap:name "rdf-datalog" ;
+    doap:shortdesc "Datalog for RDF in rust" ;
+    doap:homepage <https://github.com/daghovland/rdf-datalog> ;
+    doap:programming-language "Rust" ;
+    doap:repository [
+        a doap:GitRepository ;
+        doap:location <https://github.com/daghovland/rdf-datalog.git>
+    ] .
+
+# Every bl:Crate from crates_and_dependencies.ttl belongs to this project.
+# (Not modeled as a formal inverse-functional/owl property -- just a plain
+# link per crate, since there is only ever one enclosing project here.)
+crate:ingress bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:dag_rdf bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:owl_ontology bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:turtle bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:sparql_parser bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:datalog bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:eli bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:owl2rl2datalog bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:manchester_parser bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:datalog_parser bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:rdf_owl_translator bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:jsonld_parser bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:shacl bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:rml bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:ottr bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:vqs_index bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:rdf_canon bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:sparql_endpoint bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:dagalog_kernel bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+crate:dagalog bl:partOfProject <https://github.com/daghovland/rdf-datalog> .
+
+# ── bl:status illustration (a few real, honestly-classifiable issues) ──────
+
+ghissues:283 bl:status bl:InProgress .
+    # This very issue -- actively being worked (this file is part of that
+    # work), signaled in practice by the working-branch comment on #283,
+    # not a GitHub label.
+
+ghissues:282 bl:status bl:Todo .
+    # The epic itself: open, unlabeled, per this repo's convention of
+    # leaving top-level epics unlabeled (the ready gate applies to concrete
+    # sub-issues, not the epic).
+
+ghissues:284 bl:status bl:Todo .
+ghissues:285 bl:status bl:Todo .
+ghissues:286 bl:status bl:Todo .
+ghissues:287 bl:status bl:Todo .
+
+ghissues:258 bl:status bl:Done .
+ghissues:265 bl:status bl:Done .
+    # Closed via a merged PR (bl:state bl:Closed already asserted for both
+    # in valid_backlog_snapshot.ttl) -- bl:Done is asserted here separately,
+    # per MODELING_NOTES.md, rather than derived from bl:state alone.
+
+ghissues:264 bl:status bl:Ready .
+ghissues:266 bl:status bl:Ready .
+    # Still open (bl:state bl:Open) but labeled "ready" -- reviewed and
+    # approved, just not yet picked up or finished.
