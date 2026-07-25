@@ -347,8 +347,13 @@ async fn rml_post_accepts_upload_larger_than_2mb() {
 /// axum's `DefaultBodyLimit` layer), these routes use the `Multipart`
 /// extractor: a body-limit violation surfaces as a `MultipartError` while
 /// reading a field, which the handler maps to 400 with a descriptive message
-/// (see `materialize_multipart` in `rml_endpoint.rs`). So the expected
-/// rejection status here is 400, not 413.
+/// (see `materialize_multipart` in `rml_endpoint.rs`). Axum's `MultipartError`
+/// carries a `status()` derived from the underlying `multer::Error` kind:
+/// `FieldSizeExceeded`/`StreamSizeExceeded` map to `413`, everything else
+/// (bad boundary, truncated headers, etc.) maps to `400`. The handler now
+/// propagates that status instead of hardcoding `400`, so a body-limit
+/// violation surfaces as `413`, matching the raw-body RDF write routes. See
+/// [#279](https://github.com/daghovland/rdf-datalog/issues/279).
 #[tokio::test]
 async fn rml_post_rejects_upload_over_configured_limit() {
     let server = common::TestServer::start_writable_with_rml_limit("", 1024).await;
@@ -370,11 +375,39 @@ async fn rml_post_rejects_upload_over_configured_limit() {
         .expect("request failed");
     assert_eq!(
         resp.status(),
-        400,
-        "a source file over the configured limit must be rejected"
+        413,
+        "a source file over the configured limit must be rejected with 413, not 400"
     );
     let body = resp.text().await.expect("body");
     assert!(!body.is_empty(), "error body should describe the failure");
+}
+
+/// 10b. A genuinely malformed multipart body (bad boundary, so the parser
+/// can't even split the stream into fields) must still be rejected with
+/// `400`, not `413` — the fix for #279 only reclassifies size-limit
+/// overflows, not other kinds of multipart errors.
+#[tokio::test]
+async fn rml_post_malformed_multipart_body_is_bad_request() {
+    let server = common::TestServer::start_writable("").await;
+
+    // Declare one boundary in the Content-Type header but send a body using a
+    // different one, so multer can never find a matching boundary marker.
+    let resp = server
+        .client
+        .post(server.dataset_rml_url(DS))
+        .header(
+            "content-type",
+            "multipart/form-data; boundary=declared-boundary",
+        )
+        .body("--actual-boundary\r\nnot a valid part\r\n--actual-boundary--\r\n")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(
+        resp.status(),
+        400,
+        "a malformed multipart body must stay 400, not become 413"
+    );
 }
 
 /// 11. A normal-sized upload still succeeds under a small but sufficient
