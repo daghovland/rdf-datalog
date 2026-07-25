@@ -1,0 +1,36 @@
+# Issue #278 -- a legitimately deep (but acyclic) chain of 20 nested sh:not
+# references must still terminate and conform/not-conform correctly; the
+# cycle guard must not misfire on merely-deep-but-acyclic shapes graphs.
+# https://github.com/daghovland/rdf-datalog/issues/278
+#
+# ex:Deep0 sh:not ex:Deep1 ; ex:Deep1 sh:not ex:Deep2 ; ... ; ex:Deep19 sh:not ex:Deep20 .
+# ex:Deep20 is the base case: sh:nodeKind sh:IRI, which holds for ex:deepNode
+# (an IRI). Since 20 (an even number of) sh:not wraps a true base value, the
+# double-negation cancels out at every even distance from the base, so
+# ex:Deep0 itself also conforms for ex:deepNode -- meaning the top-level
+# shape own sh:not (against ex:Deep1, at odd distance 19 => false) produces
+# no violation, so validation should conform.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Deep0 a sh:NodeShape ; sh:targetNode ex:deepNode ; sh:not ex:Deep1 .
+ex:Deep1 a sh:NodeShape ; sh:not ex:Deep2 .
+ex:Deep2 a sh:NodeShape ; sh:not ex:Deep3 .
+ex:Deep3 a sh:NodeShape ; sh:not ex:Deep4 .
+ex:Deep4 a sh:NodeShape ; sh:not ex:Deep5 .
+ex:Deep5 a sh:NodeShape ; sh:not ex:Deep6 .
+ex:Deep6 a sh:NodeShape ; sh:not ex:Deep7 .
+ex:Deep7 a sh:NodeShape ; sh:not ex:Deep8 .
+ex:Deep8 a sh:NodeShape ; sh:not ex:Deep9 .
+ex:Deep9 a sh:NodeShape ; sh:not ex:Deep10 .
+ex:Deep10 a sh:NodeShape ; sh:not ex:Deep11 .
+ex:Deep11 a sh:NodeShape ; sh:not ex:Deep12 .
+ex:Deep12 a sh:NodeShape ; sh:not ex:Deep13 .
+ex:Deep13 a sh:NodeShape ; sh:not ex:Deep14 .
+ex:Deep14 a sh:NodeShape ; sh:not ex:Deep15 .
+ex:Deep15 a sh:NodeShape ; sh:not ex:Deep16 .
+ex:Deep16 a sh:NodeShape ; sh:not ex:Deep17 .
+ex:Deep17 a sh:NodeShape ; sh:not ex:Deep18 .
+ex:Deep18 a sh:NodeShape ; sh:not ex:Deep19 .
+ex:Deep19 a sh:NodeShape ; sh:not ex:Deep20 .
+ex:Deep20 a sh:NodeShape ; sh:nodeKind sh:IRI .
