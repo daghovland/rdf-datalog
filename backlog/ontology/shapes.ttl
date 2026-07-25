@@ -1,0 +1,23 @@
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+# A single, narrowly-scoped SHACL shape enacting the one hard constraint
+# `vocabulary.ttl`'s bl:Epic class establishes: an Epic must never itself be
+# a sub-issue of anything. See MODELING_NOTES.md "Epic modeling" for why
+# this exists and what it deliberately does NOT constrain (an Epic is not
+# required to have any children).
+#
+# This is NOT the full shape library #285 ("SHACL shapes validating backlog
+# structural invariants") is scoped to build -- that issue's job is the
+# fuller validation suite (labels, closed-issue consistency, crate coverage,
+# etc). This one shape is narrow enough, and load-bearing enough for the
+# ontology itself, to enact immediately rather than leave implicit.
+
+bl:EpicHasNoParentShape
+    a sh:NodeShape ;
+    sh:targetClass bl:Epic ;
+    sh:property [
+        sh:path bl:subIssueOf ;
+        sh:maxCount 0 ;
+        sh:message "An Epic (bl:Epic) must not itself be a sub-issue of anything (bl:subIssueOf must be absent)." ;
+    ] .

@@ -28,7 +28,7 @@ ghissues:274
     bl:number 274 ;
     bl:title "Apply configurable request body limit to RDF upload routes (/{name}/data, /rdf-graph-store) to avoid RequestEntityTooLarge" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" .
+    bl:hasLabel bl:Bug, bl:Ready .
     # No bl:subIssueOf — confirmed via GraphQL, not assumed.
 
 ghpull:275 a bl:PullRequest, bl:Issue ;

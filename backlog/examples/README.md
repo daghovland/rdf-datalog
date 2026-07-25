@@ -9,15 +9,16 @@ SHACL shapes ([#285](https://github.com/daghovland/rdf-datalog/issues/285)), and
 integration-test, before the loader ([#284](https://github.com/daghovland/rdf-datalog/issues/284)) exists to
 pull live data from the GitHub API.
 
-**Status: the ontology is now formalized.** See
+**Status: the ontology is formalized**, including a second design-review
+pass before merge (ontology decisions are expensive to reverse once #284's
+loader, #285's shapes, and #286's queries all depend on them). See
 [`../ontology/vocabulary.ttl`](../ontology/vocabulary.ttl) for the actual
-class/property declarations (with `rdfs:label`/`rdfs:comment` on each) and
+class/property declarations and
 [`../ontology/MODELING_NOTES.md`](../ontology/MODELING_NOTES.md) for the
-reasoning behind every decision, including the two questions this directory
-originally left open (both resolved there: epic modeling stays structural;
-workflow status became a new `bl:status` property, informed by the
-Kanban/Jira/Azure DevOps comparison below). The fixtures in this directory
-were updated to match.
+reasoning behind every decision — including two that were revised after
+review: epic is now an asserted `bl:Epic` type (not purely structural), and
+labels are resource-valued (not plain strings). The fixtures in this
+directory were updated to match both revisions.
 
 ## Files
 
@@ -70,8 +71,8 @@ them into the now-finalized ontology (`../ontology/vocabulary.ttl`,
 reasoning in `../ontology/MODELING_NOTES.md`):
 
 1. **Work-item hierarchy** (Epic → Story/Task/Bug) is the same shape as
-   GitHub's epic/sub-issue relation already modeled here — confirms the
-   structural-role approach (below) generalizes, no new concept needed.
+   GitHub's epic/sub-issue relation already modeled here (see "Epic
+   modeling" below).
 2. **Workflow status as its own axis**, separate from a raw open/closed
    bit — Jira's To Do/In Progress/Done, Azure's board columns. This repo
    already has exactly that distinction in practice (unlabeled = TODO,
@@ -85,9 +86,13 @@ real precedent — reused directly for the repository as a whole
 the bespoke `bl:Crate` (DOAP has no workspace-submodule concept to reuse
 there — see `MODELING_NOTES.md` for why).
 
-## Epic modeling (resolved in `../ontology/MODELING_NOTES.md`)
+## Epic modeling (see `../ontology/MODELING_NOTES.md` for the full history)
 
-"Epic" is a purely structural role, not a first-class `rdf:type`: an issue
-with no `bl:subIssueOf` that is the target of at least one other issue's
-`bl:subIssueOf`. See `MODELING_NOTES.md` for the full reasoning and the
-trade-off acknowledged there.
+`bl:Epic` is an asserted `rdfs:subClassOf bl:Issue` type, constrained by
+[`../ontology/shapes.ttl`](../ontology/shapes.ttl)'s
+`bl:EpicHasNoParentShape`: an Epic must never itself carry `bl:subIssueOf`.
+It is not required to have any children. `MODELING_NOTES.md` covers why an
+earlier, purely-structural version of this decision (no `bl:Epic` class;
+"epic" derived from a two-sided no-parent-but-has-children pattern) was
+revised — that pattern silently assumed an exactly-two-level hierarchy that
+GitHub's arbitrarily-nestable sub-issue relation doesn't actually guarantee.

@@ -22,13 +22,19 @@
 bl:Issue
     a rdfs:Class, owl:Class ;
     rdfs:label "Issue" ;
-    rdfs:comment "A GitHub issue. Subjects are the real GitHub issue URL — no invented identifier scheme. There is deliberately NO separate bl:Epic class: see MODELING_NOTES.md \"Epic modeling\" — an issue is an epic purely structurally (no bl:subIssueOf, and the object of at least one other issue's bl:subIssueOf), never asserted as a type." .
+    rdfs:comment "A GitHub issue (or work item, in Jira/Azure-DevOps terms). Subjects are the real GitHub issue URL — no invented identifier scheme." .
 
 bl:PullRequest
     a rdfs:Class, owl:Class ;
     rdfs:subClassOf bl:Issue ;
     rdfs:label "Pull request" ;
-    rdfs:comment "A GitHub pull request. Modeled as an rdfs:subClassOf bl:Issue (not a disjoint sibling class) since it shares every property Issue has (number, title, state, hasLabel) and adds two more (closesIssue, relatesToIssue) — matches GitHub's own data model, where a PR literally is an issue with extra fields." .
+    rdfs:comment "A GitHub pull request. Modeled as an rdfs:subClassOf bl:Issue (not a disjoint sibling class) since it shares every property Issue has (number, title, state, hasLabel) and adds two more (closesIssue, relatesToIssue) — matches GitHub's own data model, where a PR literally is an issue with extra fields. See the disjointness axioms below: nothing can be both a bl:PullRequest and a bl:Epic." .
+
+bl:Epic
+    a rdfs:Class, owl:Class ;
+    rdfs:subClassOf bl:Issue ;
+    rdfs:label "Epic" ;
+    rdfs:comment "An issue explicitly marked as an epic. Revised from the original (PR #294) purely-structural definition (no bl:subIssueOf, target of some other issue's bl:subIssueOf) after review flagged that pattern's assumption of an exactly-two-level hierarchy: GitHub's native sub-issue relation nests arbitrarily, so a mid-tree issue (has both a parent and children) matched neither \"epic\" nor \"leaf\" under the old definition and silently vanished from either kind of query. bl:Epic is now an ASSERTED type (by the loader, #284, or by hand in these fixtures) with exactly one hard constraint, not a derived double-negation — see bl:EpicHasNoParentShape in shapes.ttl. Deliberately NOT required to have at least one bl:subIssueOf child: a freshly-filed epic legitimately has zero sub-issues until they're filed (e.g. #282 itself, briefly, when first created) — only \"has no parent\" is enforced, not \"has children\". No depth restriction is implied elsewhere: an Epic's own children may themselves have further children; whether a mid-tree node also gets asserted bl:Epic is a modeling choice made per-issue (by whoever/whatever asserts the type), not something this class definition dictates one way or the other." .
 
 bl:IssueState
     a rdfs:Class, owl:Class ;
@@ -49,9 +55,9 @@ bl:Todo
     rdfs:comment "Filed, unlabeled, awaiting the repo owner's review (this repo's convention: an agent-filed issue starts here and must never self-advance past it)." .
 
 bl:Ready
-    a bl:WorkflowStatus ;
+    a bl:WorkflowStatus, bl:Label ;
     rdfs:label "Ready" ;
-    rdfs:comment "Reviewed and approved by the repo owner for an agent to pick up — corresponds exactly to the GitHub \"ready\" label." .
+    rdfs:comment "Reviewed and approved by the repo owner for an agent to pick up. Deliberately typed as BOTH bl:WorkflowStatus and bl:Label — this individual IS the GitHub \"ready\" label (bl:hasLabel bl:Ready) AND IS the corresponding workflow stage (bl:status bl:Ready): one resource, two properties pointing at it, not two independent facts that could drift apart. See MODELING_NOTES.md \"Labels as resources\"." .
 
 bl:InProgress
     a bl:WorkflowStatus ;
@@ -62,6 +68,15 @@ bl:Done
     a bl:WorkflowStatus ;
     rdfs:label "Done" ;
     rdfs:comment "Closed via a merged PR. Always coincides with bl:state bl:Closed, but is asserted separately rather than derived, since not every bl:Closed issue necessarily went through the ready/in-progress pipeline (e.g. closed as a duplicate or won't-fix)." .
+
+bl:Label
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Label" ;
+    rdfs:comment "A GitHub label, as a controlled-vocabulary resource rather than a plain string. Revised from PR #294's original string-valued bl:hasLabel after review — see MODELING_NOTES.md \"Labels as resources\". Individuals are named per label actually used in ../examples/, not an exhaustive enumeration of every label this repo could ever use; add more as new labels appear." .
+
+bl:Bug a bl:Label ; rdfs:label "bug" .
+bl:Enhancement a bl:Label ; rdfs:label "enhancement" .
+# bl:Ready is also a bl:Label — see its declaration above (bl:WorkflowStatus section).
 
 bl:Crate
     a rdfs:Class, owl:Class ;
@@ -95,21 +110,21 @@ bl:status
     rdfs:domain bl:Issue ;
     rdfs:range bl:WorkflowStatus ;
     rdfs:label "status" ;
-    rdfs:comment "This repo's own Kanban-style workflow stage, independent of bl:state. Added per the Jira/Azure-DevOps/Kanban comparison in PR #293 -- not populated for every issue in ../examples/, since deriving it reliably (in particular detecting bl:InProgress, which has no GitHub label) is #284's (the loader's) job, not this vocabulary's." .
+    rdfs:comment "This repo's own Kanban-style workflow stage, independent of bl:state. Added per the Jira/Azure-DevOps/Kanban comparison in PR #293 -- not populated for every issue in ../examples/, since deriving it reliably (in particular detecting bl:InProgress, which has no GitHub label) is #284's (the loader's) job, not this vocabulary's. Where a bl:WorkflowStatus value has a directly corresponding bl:Label (currently just bl:Ready), #284 should derive bl:status for that value FROM the matching bl:hasLabel, not assert it independently -- see MODELING_NOTES.md \"Labels as resources\"." .
 
 bl:hasLabel
-    a owl:DatatypeProperty ;
+    a owl:ObjectProperty ;
     rdfs:domain bl:Issue ;
-    rdfs:range xsd:string ;
+    rdfs:range bl:Label ;
     rdfs:label "has label" ;
-    rdfs:comment "A GitHub label name (repeatable). Kept as a plain string per this ontology's \"deliberately minimal v1\" scope (#282) rather than minting a resource per label -- revisit if label metadata beyond the name (color, description) is ever needed." .
+    rdfs:comment "A GitHub label (repeatable). Resource-valued, not a plain string — see MODELING_NOTES.md \"Labels as resources\" for why this changed from PR #294's original string-valued design." .
 
 bl:subIssueOf
     a owl:ObjectProperty ;
     rdfs:domain bl:Issue ;
     rdfs:range bl:Issue ;
     rdfs:label "sub-issue of" ;
-    rdfs:comment "Mirrors GitHub's native sub-issue relation (child -> parent). The sole basis for the structural epic definition -- see bl:Issue's comment and MODELING_NOTES.md." .
+    rdfs:comment "Mirrors GitHub's native sub-issue relation (child -> parent), which nests arbitrarily deep -- no depth restriction is implied by this property. See bl:Epic's comment and bl:EpicHasNoParentShape (shapes.ttl) for the one constraint this vocabulary does impose: an Epic must never have this property asserted on it." .
 
 bl:closesIssue
     a owl:ObjectProperty ;
@@ -161,3 +176,27 @@ bl:partOfProject
     rdfs:range <http://usefulinc.com/ns/doap#Project> ;
     rdfs:label "part of project" ;
     rdfs:comment "Links a workspace crate to the enclosing doap:Project. See MODELING_NOTES.md \"DOAP vs. bespoke bl:Crate\" for why the repository as a whole reuses real DOAP terms while individual crates use the bespoke bl:Crate class." .
+
+# ── Disjointness ─────────────────────────────────────────────────────────────
+#
+# See MODELING_NOTES.md "Disjointness axioms" for the reasoning, including
+# the one deliberate exception (bl:Label / bl:WorkflowStatus are NOT
+# declared disjoint, since bl:Ready is intentionally typed as both).
+#
+# Group 1: every top-level class here is pairwise disjoint from every other
+# EXCEPT bl:WorkflowStatus, which is asserted disjoint separately below so
+# it can stay un-disjoint from bl:Label specifically.
+[] a owl:AllDisjointClasses ;
+    owl:members ( bl:Issue bl:Crate bl:IssueState bl:Label <http://usefulinc.com/ns/doap#Project> ) .
+
+# Group 2: the same top-level classes, with bl:WorkflowStatus substituted
+# for bl:Label -- entails bl:WorkflowStatus disjoint from bl:Issue/Crate/
+# IssueState/doap:Project, and re-asserts (harmlessly) that those four are
+# mutually disjoint. Neither group ever lists bl:Label and bl:WorkflowStatus
+# together, so no disjointness between THEM is entailed.
+[] a owl:AllDisjointClasses ;
+    owl:members ( bl:Issue bl:Crate bl:IssueState bl:WorkflowStatus <http://usefulinc.com/ns/doap#Project> ) .
+
+# Sibling subclasses of bl:Issue: nothing is both a pull request and an
+# epic.
+bl:PullRequest owl:disjointWith bl:Epic .

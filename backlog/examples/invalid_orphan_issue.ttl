@@ -19,6 +19,6 @@ ghissues:999999
     bl:number 999999 ;
     bl:title "An orphan issue with no epic and no children" ;
     bl:state bl:Open ;
-    bl:hasLabel "ready" .
+    bl:hasLabel bl:Ready .
     # No bl:subIssueOf, and nothing else in this file points bl:subIssueOf
     # at it — violates "every issue is an epic or has a parent epic".

@@ -4,43 +4,44 @@
 @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-# ── Provisional vocabulary sketch ──────────────────────────────────────────
+# ── Vocabulary reference ────────────────────────────────────────────────────
 #
-# NOT a final ontology — see ../README.md and issue #283. Subjects are the
-# real GitHub issue/PR URLs (already globally unique IRIs, no invented
-# identifier scheme needed). Every fact below reflects this repo's actual
-# state as of 2026-07-24 — see README.md for exactly which parts are a
-# complete slice vs. a deliberately partial one (the #178 section).
+# See ../ontology/vocabulary.ttl for the actual formal ontology and
+# ../ontology/MODELING_NOTES.md for the reasoning. Subjects are the real
+# GitHub issue/PR URLs (already globally unique IRIs, no invented identifier
+# scheme needed). Every fact below reflects this repo's actual state as of
+# 2026-07-25 — see README.md for exactly which parts are a complete slice
+# vs. a deliberately partial one (the #178 section).
 #
 # bl:number          xsd:integer            issue/PR number, for display
 # bl:title           xsd:string
 # bl:state           bl:Open | bl:Closed    controlled-vocabulary object property
-# bl:hasLabel        xsd:string             GitHub label name (repeatable)
+# bl:hasLabel        bl:Label               GitHub label, as a resource (repeatable)
 # bl:subIssueOf       <issue>                parent issue (native GitHub sub-issue relation)
 # bl:closesIssue     <issue>                PR -> issue, formally closes it on merge
 # bl:relatesToIssue  <issue>                PR -> issue, references without closing
 # bl:touchesCrate    bl:Crate               issue/PR -> crate(s) it actually changed;
 #                                           see crates_and_dependencies.ttl for bl:Crate
 #
-# "Epic" is deliberately NOT a separate rdf:type here — see README.md's
-# "Open modeling question". An issue with no bl:subIssueOf that is the
-# object of some other issue's bl:subIssueOf is an epic, structurally.
+# "Epic" is now an asserted rdf:type (bl:Epic, rdfs:subClassOf bl:Issue),
+# constrained (see ../ontology/shapes.ttl) to never itself carry
+# bl:subIssueOf, but NOT required to have any bl:subIssueOf children.
 
 # ── Epic #267: SHACL correctness audit — mostly done, 2 of 9 still open ───
 
 ghissues:267
-    a bl:Issue ;
+    a bl:Issue, bl:Epic ;
     bl:number 267 ;
     bl:title "SHACL correctness audit (2026-07-23): tracking issue" ;
     bl:state bl:Open ;
-    bl:hasLabel "bug", "ready" .
+    bl:hasLabel bl:Bug, bl:Ready .
 
 ghissues:258
     a bl:Issue ;
     bl:number 258 ;
     bl:title "BUG: sh:or/sh:not/sh:and/sh:node/sh:xone/sh:qualifiedValueShape use an incomplete inner-shape checker" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:276 a bl:PullRequest, bl:Issue ;
@@ -55,7 +56,7 @@ ghissues:259
     bl:number 259 ;
     bl:title "BUG: sh:datatype does not distinguish rdf:langString from xsd:string" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:272 a bl:PullRequest, bl:Issue ;
@@ -70,7 +71,7 @@ ghissues:260
     bl:number 260 ;
     bl:title "BUG: node-level (pathless) value constraints on a shape are silently dropped" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:271 a bl:PullRequest, bl:Issue ;
@@ -85,7 +86,7 @@ ghissues:261
     bl:number 261 ;
     bl:title "BUG: sh:pattern/sh:minLength/sh:maxLength skip IRI and blank-node value nodes" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:289 a bl:PullRequest, bl:Issue ;
@@ -100,7 +101,7 @@ ghissues:262
     bl:number 262 ;
     bl:title "BUG: sh:deactivated is never honored" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:280 a bl:PullRequest, bl:Issue ;
@@ -115,7 +116,7 @@ ghissues:263
     bl:number 263 ;
     bl:title "BUG: sh:severity is ignored; every result is hardcoded to sh:Violation" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:273 a bl:PullRequest, bl:Issue ;
@@ -130,7 +131,7 @@ ghissues:264
     bl:number 264 ;
     bl:title "BUG: validation results are missing sh:resultPath, sh:sourceShape, sh:sourceConstraintComponent, sh:resultMessage" ;
     bl:state bl:Open ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 ;
     bl:touchesCrate crate:shacl .
     # Still open — no closing PR yet. Deliberately included unresolved so
@@ -142,7 +143,7 @@ ghissues:265
     bl:number 265 ;
     bl:title "BUG: sh:class ignores rdfs:subClassOf edges present in the data graph" ;
     bl:state bl:Closed ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 .
 
 ghpull:290 a bl:PullRequest, bl:Issue ;
@@ -157,7 +158,7 @@ ghissues:266
     bl:number 266 ;
     bl:title "SHACL: unconfirmed suspicions to verify (languageIn, lessThan comparability) + report-detail deviations" ;
     bl:state bl:Open ;
-    bl:hasLabel "bug", "ready" ;
+    bl:hasLabel bl:Bug, bl:Ready ;
     bl:subIssueOf ghissues:267 ;
     bl:touchesCrate crate:shacl .
     # Also still open — same rationale as #264 above.
@@ -165,7 +166,7 @@ ghissues:266
 # ── Epic #282: dagalog-on-dagalog — freshly created, mostly not started ───
 
 ghissues:282
-    a bl:Issue ;
+    a bl:Issue, bl:Epic ;
     bl:number 282 ;
     bl:title "Epic: dagalog-on-dagalog — self-hosted RDF/SPARQL/SHACL backlog mirror" ;
     bl:state bl:Open .
@@ -178,7 +179,7 @@ ghissues:283
     bl:number 283 ;
     bl:title "backlog: design a minimal RDF ontology for GitHub issues/epics/PRs/labels" ;
     bl:state bl:Open ;
-    bl:hasLabel "ready" ;
+    bl:hasLabel bl:Ready ;
     bl:subIssueOf ghissues:282 .
     # The very issue these fixtures are being written for — ready and in
     # progress as of this snapshot (this file is part of that work).
@@ -219,18 +220,18 @@ ghissues:287
 # the way the #267 and #282 sections above are.
 
 ghissues:178
-    a bl:Issue ;
+    a bl:Issue, bl:Epic ;
     bl:number 178 ;
     bl:title "OWL Manchester Syntax: parsing, serialization, and full integration (epic)" ;
     bl:state bl:Open ;
-    bl:hasLabel "enhancement", "ready" .
+    bl:hasLabel bl:Enhancement, bl:Ready .
 
 ghissues:160
     a bl:Issue ;
     bl:number 160 ;
     bl:title "Manchester Syntax: serializer (owl_ontology::Ontology → .omn)" ;
     bl:state bl:Closed ;
-    bl:hasLabel "ready" ;
+    bl:hasLabel bl:Ready ;
     bl:subIssueOf ghissues:178 .
 
 ghpull:288 a bl:PullRequest, bl:Issue ;
@@ -245,7 +246,7 @@ ghissues:161
     bl:number 161 ;
     bl:title "Manchester Syntax: wire serializer into CLI/kernel/HTTP content negotiation" ;
     bl:state bl:Open ;
-    bl:hasLabel "ready" ;
+    bl:hasLabel bl:Ready ;
     bl:subIssueOf ghissues:178 ;
     bl:touchesCrate crate:dagalog, crate:dagalog_kernel, crate:sparql_endpoint .
     # Still open on purpose: PR #292 implemented only part of this issue's
@@ -269,18 +270,18 @@ ghpull:292 a bl:PullRequest, bl:Issue ;
 # one example touching sparql_endpoint rather than only shacl/manchester.
 
 ghissues:25
-    a bl:Issue ;
+    a bl:Issue, bl:Epic ;
     bl:number 25 ;
     bl:title "RML pipeline: remaining source/function gaps (epic)" ;
     bl:state bl:Open ;
-    bl:hasLabel "enhancement" .
+    bl:hasLabel bl:Enhancement .
 
 ghissues:257
     a bl:Issue ;
     bl:number 257 ;
     bl:title "RML upload endpoints: make the 64MB body-size limit configurable" ;
     bl:state bl:Closed ;
-    bl:hasLabel "enhancement", "ready" ;
+    bl:hasLabel bl:Enhancement, bl:Ready ;
     bl:subIssueOf ghissues:25 .
 
 ghpull:277 a bl:PullRequest, bl:Issue ;

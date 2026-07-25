@@ -7,33 +7,51 @@ formal vocabulary is [`vocabulary.ttl`](vocabulary.ttl) — this document is
 the *why*, kept separate so the `.ttl` file's `rdfs:comment`s can stay short
 and the reasoning here can be as long as it needs to be.
 
-## Epic modeling: structural role, not a type
+## Epic modeling: an asserted `bl:Epic` type, constrained by one SHACL shape
 
-**Decision:** there is no `bl:Epic` class. An issue is an epic purely
-structurally: it has no `bl:subIssueOf`, and it is the object of at least
-one other issue's `bl:subIssueOf`. Equivalently, in SPARQL:
+**Revised after review.** The first version of this document (and PR #294 as
+originally opened) made "epic" a purely structural role — no `bl:Epic`
+class; an issue was an epic if it had no `bl:subIssueOf` and was the target
+of at least one other issue's. A subsequent design review (a second
+Fable-5-backed pass specifically requested before merge, given how
+expensive ontology changes are to walk back later) flagged the real problem
+with that pattern: it silently assumes an **exactly-two-level** hierarchy.
+GitHub's native sub-issue relation nests arbitrarily; a mid-tree issue (has
+both a parent and children) matched neither the "epic" pattern (it has a
+parent) nor a "leaf work item" pattern (it has children) under the old
+rule, and would vanish from either kind of query with no signal that
+anything was wrong.
 
-```sparql
-SELECT ?epic WHERE {
-  ?epic a bl:Issue .
-  FILTER NOT EXISTS { ?epic bl:subIssueOf ?anyParent }
-  FILTER EXISTS     { ?anyChild bl:subIssueOf ?epic }
-}
-```
+**Decision:** `bl:Epic` is now `rdfs:subClassOf bl:Issue`, an ordinarily
+asserted `rdf:type` — by the loader (#284) when it materializes an issue
+that currently has sub-issues and no parent, or by hand in these fixtures.
+The **one** hard constraint is enforced by
+[`bl:EpicHasNoParentShape`](shapes.ttl): a `bl:Epic` must never carry
+`bl:subIssueOf`. It is deliberately **not** required to have any
+`bl:subIssueOf` children — a freshly-filed epic legitimately has zero
+sub-issues until they're filed (e.g. #282 itself, briefly, when first
+created) — and nothing here imposes a depth limit on the rest of the tree:
+an Epic's children may themselves have further children; whether a
+mid-tree node also gets asserted `bl:Epic` is left as a per-issue modeling
+choice for whoever/whatever asserts the type, not something this class
+definition dictates.
 
-**Why not `bl:Epic a owl:Class`, asserted directly on qualifying issues?**
-Because it would be a second, separately-maintained source of truth that
-could silently drift from the actual `bl:subIssueOf` graph — e.g. a loader
-bug that fails to assert `bl:Epic` on a genuinely-childless-but-parentless
-issue would go undetected by anything checking `rdf:type bl:Epic`, since the
-type triple itself would just be missing, not wrong. Deriving it structurally
-means there is only one fact to get right (`bl:subIssueOf` edges), not two.
+**Why a type + a narrow shape, rather than the loader-derived-cache idea the
+review also raised (recompute `bl:Epic` from the edges on every load, same
+single source of truth, just materialized for ergonomics)?** That's
+actually very close to what's landed here — the type is still meant to be
+*derived* by #284 from the same `bl:subIssueOf` edges, just asserted once at
+load time rather than recomputed per-query. The difference from the
+original structural proposal is narrow but important: the shape only checks
+the one direction that's cheap and unambiguous to validate (an Epic has no
+parent) rather than trying to define "epic-ness" as a two-sided pattern
+match that breaks down at depth > 2.
 
-**Trade-off acknowledged:** this makes "is this an epic" a join instead of a
-type lookup, which is slower and slightly less ergonomic for SPARQL/SHACL
-authors. Given the actual data size (this repo's backlog, not a
-web-scale dataset), that cost is negligible — revisit only if this vocabulary
-is ever reused somewhere the query cost genuinely matters.
+**`bl:PullRequest`/`bl:Epic` disjointness:** since both are now sibling
+subclasses of `bl:Issue`, `vocabulary.ttl` asserts
+`bl:PullRequest owl:disjointWith bl:Epic` — nothing is both a pull request
+and an epic. See "Disjointness axioms" below for the fuller set this PR
+adds.
 
 ## Workflow status as its own axis (`bl:status`, distinct from `bl:state`)
 
@@ -89,6 +107,65 @@ ontology where no such broadly-adopted vocabulary exists to reuse. See
 [`../examples/project_and_status.ttl`](../examples/project_and_status.ttl)
 for a real instance.
 
+## Labels as resources, not strings
+
+**Revised after review.** The original `bl:hasLabel` was `xsd:string`-valued
+("deferred to v1", per the first version of this document). Review flagged
+that this was an unprincipled inconsistency — `bl:state`/`bl:status` were
+already modeled as controlled-vocabulary resources one section earlier, and
+for one specific, present-tense case (not hypothetical) it created a real
+duplication: the fixtures asserted **both** `bl:hasLabel "ready"` (a string)
+**and** `bl:status bl:Ready` (a resource) on the same issues (#264, #266) —
+the same real-world fact, recorded twice, in two different representations,
+in two different files, with nothing tying them together.
+
+**Decision:** `bl:hasLabel` is now `owl:ObjectProperty`-valued, range
+`bl:Label`, with named individuals per label actually in use
+(`bl:Bug`, `bl:Enhancement`, `bl:Ready`) — not an exhaustive enumeration of
+every label this repo could ever use, just what these fixtures need; add
+more as needed. Critically, **`bl:Ready` is deliberately typed as both
+`bl:Label` and `bl:WorkflowStatus`** — one resource, referenced by both
+`bl:hasLabel` and `bl:status`, rather than two separate individuals that
+happen to mean the same thing. `bl:hasLabel bl:Ready` and
+`bl:status bl:Ready` now point at the literal same IRI; there is nothing
+left to drift apart. `#284` (the loader) should derive `bl:status` for any
+value with a corresponding `bl:Label` (currently just `bl:Ready`) from the
+matching `bl:hasLabel`, rather than asserting it as an independent fact.
+
+**Consequence for disjointness:** because `bl:Ready` is intentionally in
+both `bl:Label` and `bl:WorkflowStatus`, those two classes are the one
+deliberate exception to the disjointness axioms below — see that section.
+
+## Disjointness axioms
+
+**Added after review**, in response to being asked directly whether the
+ontology declared what *can't* overlap, not just what can. `vocabulary.ttl`
+now asserts (via two `owl:AllDisjointClasses` groups, to avoid writing out
+every pairwise combination by hand):
+
+- `bl:Issue`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and `bl:Label`
+  are pairwise disjoint from each other (group 1).
+- `bl:Issue`, `bl:Crate`, `bl:IssueState`, `doap:Project`, and
+  `bl:WorkflowStatus` are pairwise disjoint from each other (group 2).
+- `bl:PullRequest owl:disjointWith bl:Epic` (sibling subclasses of
+  `bl:Issue` — see "Epic modeling" above).
+
+**The one deliberate exception:** `bl:Label` and `bl:WorkflowStatus` are
+never listed in the same `AllDisjointClasses` group, so nothing entails
+disjointness between them specifically — required by `bl:Ready`'s
+intentional dual-typing (see "Labels as resources" above). Every other pair
+across all six top-level classes is disjoint. `bl:Epic`/`bl:PullRequest`
+inherit disjointness from `bl:Issue` vs. the other five classes
+automatically through subsumption (a reasoner running full OWL-RL over this
+data would derive it; not separately re-asserted here).
+
+Verified directly (not just parsed): loaded these axioms plus the example
+fixtures through dagalog's own SHACL endpoint and confirmed
+`bl:EpicHasNoParentShape` both conforms on the real (compliant) fixture data
+and correctly reports a violation (`sh:conforms false`, with the exact
+offending `sh:focusNode`/`sh:value`) when a parent edge is deliberately
+added to an epic in a scratch test.
+
 ## `rdfs:subClassOf` is not free: PRs need an explicit `rdf:type bl:Issue`
 
 **Finding, made concrete while writing these notes:** declaring
@@ -111,9 +188,24 @@ step for what's supposed to be a lightweight, always-fresh local mirror.
 
 ## What's still open (deliberately, past this issue's scope)
 
-- Whether `bl:hasLabel` should eventually become resource-valued (one IRI per
-  label, carrying color/description) rather than a plain string — deferred
-  per the "deliberately minimal v1" framing in #282; revisit if label
-  metadata beyond the name is ever actually needed by #285/#286.
+- `bl:Label` individuals carry only `rdfs:label` today, no color/description
+  — revisit if that metadata is ever actually needed by #285/#286.
 - A `bl:blockedBy`/"in review" `bl:WorkflowStatus` value, if this repo's own
   practice ever grows one — not invented speculatively here.
+- A terminal non-completion `bl:WorkflowStatus` value (e.g. `WontFix`/
+  `Duplicate`) for an issue closed without going through the
+  Todo→Ready→InProgress→Done pipeline — `bl:Done` and raw `bl:state
+  bl:Closed` currently leave that case with no coherent `bl:status` at all.
+- A canonical-IRI rule for PRs (`/pull/N`, never `/issues/N`, even though
+  GitHub serves the same PR under both) — worth pinning down explicitly
+  before #284 is built, in case it ever reads the issues endpoint for
+  anything and mints an IRI from that response instead.
+- A placeholder-IRI convention (e.g. `urn:dagalog:draft:...`) for an issue
+  drafted locally before it's actually filed on GitHub — relevant once #287
+  (write-back) exists; every IRI in this ontology currently assumes a real
+  `github.com` resource exists first.
+- A SHACL shape (in #285's fuller shape library, not this narrow one)
+  requiring every `bl:PullRequest` to also carry `a bl:Issue` — enforcing
+  the dual-typing requirement from "`rdfs:subClassOf` is not free" below, so
+  a forgotten dual-type doesn't silently under-count PRs out of "all
+  Issues" queries.
