@@ -1,0 +1,15 @@
+@prefix ex: <http://example.com/ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Leaf a owl:Class ;
+  rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty ex:hasChild ;
+    owl:maxCardinality "0"^^xsd:nonNegativeInteger
+  ] .
+
+# n2 IS a Leaf but DOES have an ex:hasChild edge -- genuinely violates <=0.
+ex:n2 a ex:Leaf ;
+  ex:hasChild ex:n3 .

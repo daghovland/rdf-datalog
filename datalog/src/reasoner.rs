@@ -121,11 +121,26 @@ impl DatalogProgram {
 
         for quad in &delta {
             for rule_match in self.get_rules_for_fact(quad) {
+                // `get_rules_for_fact` only tells us that `quad` matches ONE
+                // triggering atom of this rule's body — the other body atoms
+                // (e.g. a property-edge atom guarding a conditional
+                // contradiction such as `cls-maxc0`, see
+                // https://github.com/daghovland/rdf-datalog/issues/298) are
+                // NOT yet checked at this point. We must run the full join
+                // via `evaluate()` before treating a `Contradiction` head as
+                // triggered — panicking here on the bare triggering-atom
+                // match would fire the contradiction unconditionally,
+                // ignoring the rest of the rule body.
                 let head_pattern = match &rule_match.partial_rule.rule.head {
-                    RuleHead::Contradiction => panic!(
-                        "Contradiction during reasoning: {}",
-                        rule_match.partial_rule.rule
-                    ),
+                    RuleHead::Contradiction => {
+                        if !evaluate(datastore, &rule_match).is_empty() {
+                            panic!(
+                                "Contradiction during reasoning: {}",
+                                rule_match.partial_rule.rule
+                            );
+                        }
+                        continue;
+                    }
                     RuleHead::NormalHead(h) => h.clone(),
                 };
                 // evaluate() borrows datastore immutably and returns an owned Vec,
@@ -196,11 +211,20 @@ impl DatalogProgram {
             let mut new_quads: Vec<dag_rdf::Quad> = Vec::new();
             for quad in &quads {
                 for rule_match in self.get_rules_for_fact(quad) {
+                    // See the matching comment in `materialise_one_iteration`:
+                    // the triggering-atom match alone does not prove the full
+                    // rule body holds, so a `Contradiction` head must be
+                    // re-checked via a full `evaluate()` join first.
                     let head_pattern = match &rule_match.partial_rule.rule.head {
-                        RuleHead::Contradiction => panic!(
-                            "Contradiction during reasoning: {}",
-                            rule_match.partial_rule.rule
-                        ),
+                        RuleHead::Contradiction => {
+                            if !evaluate(datastore, &rule_match).is_empty() {
+                                panic!(
+                                    "Contradiction during reasoning: {}",
+                                    rule_match.partial_rule.rule
+                                );
+                            }
+                            continue;
+                        }
                         RuleHead::NormalHead(h) => h.clone(),
                     };
                     let subs = evaluate(datastore, &rule_match);
