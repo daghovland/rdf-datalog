@@ -54,6 +54,54 @@ so nothing being both a pull request and an epic is already entailed
 through subsumption — asserting it again would be a redundant, not an
 independent, fact.
 
+## An OWL `maxCardinality` restriction was attempted, then reverted (blocked on #298)
+
+Raised directly: doesn't OWL already have a way to express "an issue with no
+parent" as a class, via a cardinality restriction, rather than only via
+SHACL? Yes — checked precisely, not just asserted from profile theory:
+`bl:Epic rdfs:subClassOf [ a owl:Restriction ; owl:onProperty bl:subIssueOf ;
+owl:maxCardinality "0"^^xsd:nonNegativeInteger ]` is a completely valid OWL
+2 RL axiom, and (in the *checking*, not *defining*, direction — see
+`eli/src/extractor.rs::eli_class_extractor`, which has no case for max
+cardinality in sub-concept/defining position, only
+`ObjectMinQualifiedCardinality` with cardinality exactly 1) is exactly the
+kind of thing this repo's own OWL-RL translator is supposed to reason over
+as a redundant, alongside-SHACL enforcement mechanism — the same pattern
+already used for the disjointness axioms above.
+
+**Reverted before merge.** Adding it and running it through real reasoning
+(`--ontology backlog/ontology/vocabulary.ttl`, not just flat `--data`
+loading, which is all this vocabulary had ever been exercised with before)
+surfaced a genuine, unrelated bug: `eli/src/extractor.rs` translates
+`ObjectMaxCardinality(0, prop)` in super-concept position by discarding
+`prop` entirely and mapping straight to `owl:Nothing` —
+
+```rust
+ClassExpression::ObjectMaxCardinality(card, _prop) if *card == 0u32.into() => {
+    (vec![], vec![], vec![NormalizedConcept::Bottom])
+}
+```
+
+— which means the reasoner treats `C ⊑ ≤0 R` as "`C` is empty," unconditionally,
+the instant anything is asserted `a C`, regardless of whether that instance
+has any `R` edges at all. Compounded by `datalog/src/reasoner.rs:125`
+`panic!`-ing (rather than returning a `Result::Err`) the moment any
+contradiction is derived, this axiom crashed the whole program on the real
+`valid_backlog_snapshot.ttl` fixtures the instant any of the four real
+epics was loaded — confirmed by isolating the exact trigger (vocabulary
+alone: fine; every other individual fixture file: fine; `valid_backlog_snapshot.ttl`,
+the only file with `a bl:Epic` instances: panics) before concluding this
+wasn't a mistake in the axiom itself.
+
+Filed as [#298](https://github.com/daghovland/rdf-datalog/issues/298)
+(unlabeled, awaiting review — not this ontology issue's job to fix a
+reasoner bug). The `owl:Restriction` is **not** in `vocabulary.ttl` today;
+add it back once #298 is fixed. Until then, `bl:EpicHasNoParentShape`
+(SHACL, unaffected by this bug since it never invokes OWL-RL reasoning) is
+the sole actually-enforced mechanism for this constraint — which was
+already true in practice even before this attempt, since nothing in this
+epic's tooling runs `apply_ontologies` over the backlog data anyway.
+
 ## `bl:Issue` and `bl:PullRequest` are disjoint (via a common `bl:WorkItem`)
 
 **Revised after a second round of review**, requested directly: a PR and an
@@ -259,6 +307,67 @@ something first runs this repo's own OWL-RL/RDFS reasoner
 (`dagalog::apply_ontologies`) over the mirrored data, an extra,
 easy-to-forget step for what's supposed to be a lightweight, always-fresh
 local mirror.
+
+## The #285 shape library (`shapes.ttl`)
+
+Six shapes, enacting CLAUDE.md's own backlog policy and the structural
+invariants this document establishes but the RDFS/OWL class axioms alone
+can't enforce (see "`rdfs:subClassOf` is not free" above):
+
+- `bl:EpicHasNoParentShape` (from #294) — an Epic never carries
+  `bl:subIssueOf`.
+- `bl:IssueIsEpicXorHasParentShape` — every Issue is either an Epic or has
+  exactly one `bl:subIssueOf` parent (CLAUDE.md's actual policy sentence).
+  Combined with the shape above, this is effectively XOR in practice, even
+  though `sh:or` alone only expresses "at least one" — the two branches are
+  mutually exclusive by construction, not by an explicit XOR constraint.
+- `bl:RequiresWorkItemTypeShape` — every `bl:Issue`/`bl:PullRequest` also
+  carries a literal `a bl:WorkItem` triple.
+- `bl:IssueAndPullRequestMutuallyExclusiveShape` — practical enforcement of
+  the `owl:disjointWith` axiom (which is never itself actively checked
+  without running a reasoner).
+- `bl:InProgressImpliesOpenShape` — `bl:status bl:InProgress` and
+  `bl:state bl:Closed` can't both hold.
+- `bl:WorkItemRequiredFieldsShape` — every work item has a title
+  (`rdfs:label`), a `bl:number`, and a `bl:state`.
+
+**Two items from #285's own issue text were deliberately NOT implemented as
+literally worded**, since the current vocabulary doesn't model the fields
+they'd need:
+- "A `ready`-labeled issue must have a non-empty body" — there is no
+  `bl:body`/description property in this ontology (out of the "deliberately
+  minimal v1" scope from #282). Revisit once #284 (the loader) actually
+  needs to capture issue body text for some other reason.
+- "No issue should be both open and have an in-progress marker with no
+  linked working branch" — there is no branch-link property either.
+  `bl:InProgressImpliesOpenShape` above implements the closest checkable
+  approximation with what's actually modeled (`bl:InProgress` implies
+  `bl:Open`), not the literal "has no linked branch" check.
+
+**Important finding, made concrete while verifying these shapes**:
+`sh:class` in this repo's `shacl` crate correctly follows `rdfs:subClassOf`
+per the SHACL spec (the #265/PR #290 fix from earlier in this epic's work)
+— which means `sh:class bl:WorkItem` is a no-op check here: it's trivially
+satisfied by anything typed `bl:Issue`/`bl:PullRequest` via subclass closure
+alone, whether or not the literal `a bl:WorkItem` triple this repo's
+plain-SPARQL layer actually needs (see "`rdfs:subClassOf` is not free"
+above) is present. Verified empirically: an `sh:class`-based first draft of
+`bl:RequiresWorkItemTypeShape` did NOT catch a deliberately-missing
+`bl:WorkItem` type in a scratch test; switching to
+`sh:property [ sh:path rdf:type ; sh:hasValue bl:WorkItem ]` (a raw
+graph-edge check, unaffected by class semantics) did. Any future shape
+checking for an explicit type triple, as opposed to "is this semantically
+an instance of C by any means," should reach for `rdf:type`/`sh:hasValue`,
+not `sh:class`.
+
+**Verification**: all shapes conform against the real fixture data
+(`valid_backlog_snapshot.ttl` + `crates_and_dependencies.ttl` +
+`project_and_status.ttl`), and correctly report exactly the two known
+violations (`invalid_orphan_issue.ttl`'s fictional issue,
+`real_gap_standalone_issue_274.ttl`'s real one) when those are included —
+nothing else in the corpus trips any shape. Each new shape was also proven
+to fire on a targeted synthetic violation, not just parsed. See
+`tests/backlog_ontology.rs` for the automated version of all of this.
 
 ## What's still open (deliberately, past this issue's scope)
 

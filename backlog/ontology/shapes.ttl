@@ -1,18 +1,44 @@
 @prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 
-# A single, narrowly-scoped SHACL shape enacting the one hard constraint
-# `vocabulary.ttl`'s bl:Epic class establishes: an Epic must never itself be
-# a sub-issue of anything. See MODELING_NOTES.md "Epic modeling" for why
-# this exists and what it deliberately does NOT constrain (an Epic is not
-# required to have any children).
+# SHACL shapes validating this repo's own backlog policy (CLAUDE.md,
+# "Github backlog" section) and the structural invariants `vocabulary.ttl`
+# establishes but can't itself enforce (RDFS/OWL class axioms are never
+# checked at plain-SPARQL query time in this engine -- see
+# MODELING_NOTES.md "rdfs:subClassOf is not free"). Written for issue #285.
 #
-# This is NOT the full shape library #285 ("SHACL shapes validating backlog
-# structural invariants") is scoped to build -- that issue's job is the
-# fuller validation suite (labels, closed-issue consistency, crate coverage,
-# etc). This one shape is narrow enough, and load-bearing enough for the
-# ontology itself, to enact immediately rather than leave implicit.
+# Validated against ../examples/ (the same fixtures #294 used) rather than
+# a real loader snapshot, since #284 (the GitHub API loader) doesn't exist
+# yet -- these shapes should be directly reusable once it does. See
+# tests/backlog_ontology.rs for the automated test harness running these
+# shapes against both the real (conforming) fixtures and synthetic
+# violating cases.
+#
+# IMPORTANT, discovered while writing/verifying these shapes: `sh:class`
+# in this repo's shacl crate correctly follows rdfs:subClassOf per spec
+# (see #265/PR #290) -- so `sh:class bl:WorkItem` is a NO-OP check here: it
+# is trivially satisfied by anything typed bl:Issue or bl:PullRequest via
+# subclass closure alone, whether or not the literal `a bl:WorkItem` triple
+# this repo's plain-SPARQL layer actually needs (see MODELING_NOTES.md
+# "rdfs:subClassOf is not free") is present. Verified empirically: an
+# `sh:class bl:WorkItem`-based shape did NOT catch a deliberately-missing
+# bl:WorkItem type in a scratch test; switching to
+# `sh:property [ sh:path rdf:type ; sh:hasValue bl:WorkItem ]` (a raw graph-
+# edge check, unaffected by class semantics) did. See
+# bl:RequiresWorkItemTypeShape below for why this matters and which form it
+# uses. Any future shape checking for the presence of an EXPLICIT type
+# triple (as opposed to "is this thing semantically an instance of C, by
+# any means") should reach for rdf:type/sh:hasValue, not sh:class.
 
+# ── Epic structure ───────────────────────────────────────────────────────────
+
+# The one hard constraint vocabulary.ttl's bl:Epic class establishes: an
+# Epic must never itself be a sub-issue of anything. See
+# MODELING_NOTES.md "Epic modeling" for why this exists and what it
+# deliberately does NOT constrain (an Epic is not required to have any
+# children).
 bl:EpicHasNoParentShape
     a sh:NodeShape ;
     sh:targetClass bl:Epic ;
@@ -20,4 +46,80 @@ bl:EpicHasNoParentShape
         sh:path bl:subIssueOf ;
         sh:maxCount 0 ;
         sh:message "An Epic (bl:Epic) must not itself be a sub-issue of anything (bl:subIssueOf must be absent)." ;
+    ] .
+
+# CLAUDE.md's backlog policy: "they must either be epics, or sub-issues of
+# epics". Combined with bl:EpicHasNoParentShape above (an Epic can never
+# be the "sub-issue of" branch), this is effectively XOR in practice, even
+# though sh:or alone only expresses "at least one" -- the two branches are
+# already mutually exclusive by construction.
+bl:IssueIsEpicXorHasParentShape
+    a sh:NodeShape ;
+    sh:targetClass bl:Issue ;
+    sh:or (
+        [ sh:class bl:Epic ]
+        [ sh:property [ sh:path bl:subIssueOf ; sh:minCount 1 ; sh:maxCount 1 ] ]
+    ) ;
+    sh:message "An Issue must either be an Epic (bl:Epic) or have exactly one bl:subIssueOf parent." .
+
+# ── bl:WorkItem dual-typing (see MODELING_NOTES.md "rdfs:subClassOf is not
+# free") ──────────────────────────────────────────────────────────────────
+
+bl:RequiresWorkItemTypeShape
+    a sh:NodeShape ;
+    sh:targetClass bl:Issue, bl:PullRequest ;
+    sh:property [
+        sh:path rdf:type ;
+        sh:hasValue bl:WorkItem ;
+        sh:message "Every bl:Issue or bl:PullRequest must also carry a LITERAL rdf:type bl:WorkItem triple -- this engine performs no RDFS subclass inference at plain-SPARQL query time, so bl:WorkItem-domained properties (bl:number, bl:state, bl:hasLabel, bl:touchesCrate) require the explicit type. (Deliberately checked via a plain rdf:type/sh:hasValue property, NOT sh:class: this repo's sh:class implementation correctly follows rdfs:subClassOf per spec -- see #265/PR #290 -- so sh:class bl:WorkItem would be vacuously satisfied by anything typed bl:Issue via subclass closure alone, without ever requiring the literal triple this shape exists to enforce.)" ;
+    ] .
+
+# Practical enforcement of the bl:Issue/bl:PullRequest disjointness axiom in
+# vocabulary.ttl: OWL disjointness alone is never actively checked without
+# running a reasoner, so this SHACL shape is what actually catches a
+# violation in this engine.
+bl:IssueAndPullRequestMutuallyExclusiveShape
+    a sh:NodeShape ;
+    sh:targetClass bl:Issue ;
+    sh:not [ sh:class bl:PullRequest ] ;
+    sh:message "A bl:Issue must never also be typed bl:PullRequest -- they are disjoint (vocabulary.ttl)." .
+
+# ── Workflow-status consistency ──────────────────────────────────────────────
+
+# bl:status and bl:state are separate axes (MODELING_NOTES.md "Workflow
+# status as its own axis"), but they must not directly contradict each
+# other: an issue can't be actively worked (bl:InProgress) while also
+# closed.
+bl:InProgressImpliesOpenShape
+    a sh:NodeShape ;
+    sh:targetClass bl:Issue ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path bl:status ; sh:hasValue bl:InProgress ] ] ]
+        [ sh:property [ sh:path bl:state ; sh:hasValue bl:Open ] ]
+    ) ;
+    sh:message "An Issue with bl:status bl:InProgress must have bl:state bl:Open (it cannot be both in-progress and closed)." .
+
+# ── Required fields ───────────────────────────────────────────────────────────
+
+# Baseline completeness: every work item needs a title (rdfs:label), a
+# GitHub number, and exactly one raw state.
+bl:WorkItemRequiredFieldsShape
+    a sh:NodeShape ;
+    sh:targetClass bl:WorkItem ;
+    sh:property [
+        sh:path rdfs:label ;
+        sh:minCount 1 ;
+        sh:message "Every bl:WorkItem needs a title (rdfs:label)." ;
+    ] ;
+    sh:property [
+        sh:path bl:number ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every bl:WorkItem needs exactly one bl:number." ;
+    ] ;
+    sh:property [
+        sh:path bl:state ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every bl:WorkItem needs exactly one bl:state." ;
     ] .
