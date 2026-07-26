@@ -72,7 +72,7 @@ impl Severity {
 
 /// Per-violation-predicate metadata, threaded alongside a `Severity` from
 /// rule/constraint-generation time (`translate.rs`/`evaluate.rs`) through to
-/// [`collect_violations`], mirroring the way `Severity` itself is threaded
+/// `collect_violations`, mirroring the way `Severity` itself is threaded
 /// through `shapes_to_rules`/`eval_all`/`pre_compute_violations`. One
 /// `ViolMeta` describes every violation triple sharing a given synthetic
 /// violation predicate — which is always exactly one shape/path/constraint
