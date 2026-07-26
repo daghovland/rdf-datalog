@@ -1,0 +1,17 @@
+# Epics that currently have zero sub-issues -- either freshly created (a
+# legitimate, temporary state -- see backlog/ontology/vocabulary.ttl's
+# bl:Epic comment) or possibly stalled/forgotten if it's been that way a
+# while (this query can't distinguish the two: there's no timestamp
+# property in this ontology yet to check "how long", see
+# backlog/queries/README.md's "not implemented" list).
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?epic ?number ?title WHERE {
+  ?epic a bl:Epic ;
+    bl:number ?number ;
+    rdfs:label ?title .
+  FILTER NOT EXISTS { ?child bl:subIssueOf ?epic }
+}
+ORDER BY ?number

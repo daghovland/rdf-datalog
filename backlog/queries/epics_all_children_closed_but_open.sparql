@@ -1,0 +1,27 @@
+# Epics where every existing sub-issue is closed, but the epic itself is
+# still open -- usually means the epic just needs a final "close it out"
+# pass (docs, a wrap-up comment) rather than more sub-issue work.
+#
+# Implemented as "epic is open, and NOT (some child is open)" rather than
+# "every child is closed" directly, since SPARQL has no direct universal
+# quantifier -- this is the standard double-negation encoding and is
+# equivalent given at least one child exists (an epic with zero children
+# would vacuously match "no open child exists" too, which is why this
+# query additionally requires at least one child, to not overlap with
+# epics_with_no_subissues.sparql's very different situation).
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?epic ?number ?title WHERE {
+  ?epic a bl:Epic ;
+    bl:state bl:Open ;
+    bl:number ?number ;
+    rdfs:label ?title .
+  ?anyChild bl:subIssueOf ?epic .
+  FILTER NOT EXISTS {
+    ?openChild bl:subIssueOf ?epic ;
+      bl:state bl:Open .
+  }
+}
+ORDER BY ?number

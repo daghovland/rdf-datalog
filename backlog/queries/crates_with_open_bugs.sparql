@@ -1,0 +1,16 @@
+# Every crate touched by a still-open Issue -- a "what needs attention"
+# view by crate, joining ticket data against the dependency graph in
+# crates_and_dependencies.ttl. Only considers bl:Issue (not bl:PullRequest):
+# an open PR touching a crate isn't a bug to fix, it's in-flight work
+# already addressing one.
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?crateName WHERE {
+  ?issue a bl:Issue ;
+    bl:state bl:Open ;
+    bl:touchesCrate ?crate .
+  ?crate rdfs:label ?crateName .
+}
+ORDER BY ?crateName

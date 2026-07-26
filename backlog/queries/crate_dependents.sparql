@@ -1,0 +1,19 @@
+# What (directly) depends on a given crate. PARAMETERIZED: edit the
+# VALUES line below to the crate name (the Cargo package name, e.g.
+# "shacl", "dag-rdf" -- see crates_and_dependencies.ttl's rdfs:label
+# values, not the directory name) you want to check before running.
+#
+# Direct dependents only, matching bl:dependsOnCrate's own "not
+# transitive" design (backlog/ontology/vocabulary.ttl) -- for the full
+# transitive closure, change `bl:dependsOnCrate ?target` below to
+# `bl:dependsOnCrate+ ?target` (a SPARQL 1.1 property path).
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?dependentName WHERE {
+  VALUES ?targetCrateName { "shacl" }
+  ?target a bl:Crate ; rdfs:label ?targetCrateName .
+  ?dependent bl:dependsOnCrate ?target ; rdfs:label ?dependentName .
+}
+ORDER BY ?dependentName

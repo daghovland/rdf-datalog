@@ -1,0 +1,25 @@
+# "ready" issues that haven't been picked up yet.
+#
+# Uses bl:hasLabel bl:Ready (the raw GitHub label) rather than bl:status
+# bl:Ready, since #284 (the loader) hasn't been built yet to populate
+# bl:status reliably for every issue -- bl:hasLabel is the one signal
+# guaranteed present wherever the label was actually applied. See
+# backlog/ontology/MODELING_NOTES.md "Labels as resources" for why
+# bl:hasLabel bl:Ready and bl:status bl:Ready are the same resource anyway.
+#
+# "Not yet started" = still bl:state bl:Open. (There is no bl:InProgress
+# marker reliably populated yet either -- see MODELING_NOTES.md's "Workflow
+# status as its own axis" -- so this can't yet exclude in-progress issues
+# specifically; it's "open and ready", which is still a useful view.)
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?issue ?number ?title WHERE {
+  ?issue a bl:Issue ;
+    bl:hasLabel bl:Ready ;
+    bl:state bl:Open ;
+    bl:number ?number ;
+    rdfs:label ?title .
+}
+ORDER BY ?number

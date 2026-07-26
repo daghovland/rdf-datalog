@@ -1,0 +1,19 @@
+# Every issue or PR (bl:WorkItem) that touches a given crate. PARAMETERIZED:
+# edit the VALUES line below to the crate name (the Cargo package name,
+# e.g. "shacl", "sparql-endpoint" -- see crates_and_dependencies.ttl's
+# rdfs:label values, not the directory name) you want to check.
+
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?number ?title ?stateName WHERE {
+  VALUES ?targetCrateName { "shacl" }
+  ?crate a bl:Crate ; rdfs:label ?targetCrateName .
+  ?item a bl:WorkItem ;
+    bl:touchesCrate ?crate ;
+    bl:number ?number ;
+    rdfs:label ?title ;
+    bl:state ?state .
+  ?state rdfs:label ?stateName .
+}
+ORDER BY ?number
