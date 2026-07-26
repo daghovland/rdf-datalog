@@ -1,0 +1,7 @@
+# Regression test data for issue #264 — sh:message parsing.
+# ex:Alice has ex:name → conforms. ex:Bob has no ex:name → 1 violation
+# carrying the shape's sh:message.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:name "Alice" .
+ex:Bob   ex:givenName "Bob"@en .

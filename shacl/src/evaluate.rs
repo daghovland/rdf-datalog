@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/#core-components>
 
-use crate::{Severity, graph, shapes, vocab};
+use crate::{ViolMeta, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
 use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
@@ -27,13 +27,15 @@ use std::collections::{HashSet, VecDeque};
 
 /// Evaluate all Phase 2 property constraints for every shape and add violation
 /// triples to `work`.  Returns the violation-predicate IDs paired with the
-/// producing shape's `Severity`.
+/// producing shape's `ViolMeta` (severity, shape IRI, path, constraint
+/// component, message). See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 pub fn eval_all(
     parsed: &[shapes::ParsedShape],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<(GraphElementId, Severity)> {
+) -> Vec<(GraphElementId, ViolMeta)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         // sh:deactivated — skip this shape's constraints entirely (SHACL §3).
@@ -61,7 +63,12 @@ pub fn eval_all(
                     shapes_store,
                     work,
                 );
-                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                viol_preds.extend(new.into_iter().map(|v| {
+                    (
+                        v,
+                        ViolMeta::new(shape, Some(&prop.path), constraint.component_iri()),
+                    )
+                }));
             }
         }
 
@@ -77,7 +84,10 @@ pub fn eval_all(
             };
             let new =
                 eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(
+                new.into_iter()
+                    .map(|v| (v, ViolMeta::new(shape, None, constraint.component_iri()))),
+            );
         }
 
         // sh:nodeKind at node shape level — check each target node itself.
@@ -89,13 +99,16 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((viol, ViolMeta::new(shape, None, vocab::CC_NODE_KIND)));
         }
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
             let new = eval_xone(shape, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(
+                new.into_iter()
+                    .map(|v| (v, ViolMeta::new(shape, None, vocab::CC_XONE))),
+            );
         }
 
         // sh:not — violation iff the negated inner shape conforms. Evaluated here
@@ -112,7 +125,7 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((viol, ViolMeta::new(shape, None, vocab::CC_NOT)));
         }
 
         // sh:or — violation iff NO disjunct's inner shape conforms. See sh:not above
@@ -128,7 +141,7 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((viol, ViolMeta::new(shape, None, vocab::CC_OR)));
         }
 
         // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
@@ -168,7 +181,12 @@ pub fn eval_all(
                             shapes_store,
                             work,
                         );
-                        viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                        viol_preds.extend(new.into_iter().map(|v| {
+                            (
+                                v,
+                                ViolMeta::new(shape, Some(&path_str), constraint.component_iri()),
+                            )
+                        }));
                     }
                 }
             }

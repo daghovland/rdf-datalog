@@ -146,6 +146,8 @@ fn shacl_testdata_parses() {
         "shacl_s278_cycle_shapes.ttl",
         "shacl_s278_deep_data.ttl",
         "shacl_s278_deep_shapes.ttl",
+        "shacl_s264_message_data.ttl",
+        "shacl_s264_message_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -1792,5 +1794,128 @@ fn regression_issue_278_deep_acyclic_chain_conforms() {
         "a deep but acyclic sh:not chain must be evaluated to its correct \
          (even-negation-count => conforms) answer, not rejected by an \
          over-eager cycle guard"
+    );
+}
+
+// ── §264  Validation result detail (resultPath/sourceShape/sourceConstraintComponent/message) ──
+//
+// Regression tests for issue #264: `collect_violations` unconditionally set
+// `result_path`, `source_shape`, `source_constraint`, and `message` to `None`
+// on every `ValidationResult`, and `sh:message` on a shape was never even
+// parsed. Source: <https://github.com/daghovland/rdf-datalog/issues/264>
+
+/// `sh:minCount` violation must carry `result_path` (the property's `sh:path`
+/// IRI) and `source_constraint` (`sh:MinCountConstraintComponent`).
+#[test]
+fn regression_264_mincount_result_path_and_component() {
+    let data = load("shacl_s4_mincount_data.ttl");
+    let shapes = load("shacl_s4_mincount_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#name")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#MinCountConstraintComponent")
+    );
+    assert_eq!(
+        result.source_shape.as_deref(),
+        Some("http://example.com/ns#MinCountExampleShape")
+    );
+}
+
+/// `sh:class` violation must carry `result_path` (`ex:address`) and
+/// `source_constraint` (`sh:ClassConstraintComponent`).
+#[test]
+fn regression_264_class_result_path_and_component() {
+    let data = load("shacl_s4_class_data.ttl");
+    let shapes = load("shacl_s4_class_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#address")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#ClassConstraintComponent")
+    );
+    assert_eq!(
+        result.source_shape.as_deref(),
+        Some("http://example.com/ns#ClassExampleShape")
+    );
+}
+
+/// `sh:pattern` violation must carry `result_path` (`ex:bCode`) and
+/// `source_constraint` (`sh:PatternConstraintComponent`).
+#[test]
+fn regression_264_pattern_result_path_and_component() {
+    let data = load("shacl_s4_pattern_data.ttl");
+    let shapes = load("shacl_s4_pattern_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#bCode")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#PatternConstraintComponent")
+    );
+    assert_eq!(
+        result.source_shape.as_deref(),
+        Some("http://example.com/ns#PatternExampleShape")
+    );
+}
+
+/// `sh:message` on a shape must be parsed and surfaced verbatim on every
+/// `ValidationResult` it produces.
+#[test]
+fn regression_264_message_populated() {
+    let data = load("shacl_s264_message_data.ttl");
+    let shapes = load("shacl_s264_message_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(
+        report.results.len(),
+        1,
+        "ex:Bob has no ex:name → 1 violation"
+    );
+    assert_eq!(
+        report.results[0].message.as_deref(),
+        Some("Every person must have a name")
+    );
+}
+
+/// `report_to_turtle` must emit `sh:resultPath`, `sh:sourceShape`,
+/// `sh:sourceConstraintComponent`, and `sh:resultMessage` — not just
+/// `sh:focusNode`/`sh:value` as before #264.
+#[test]
+fn regression_264_full_detail_in_turtle_report() {
+    let data = load("shacl_s264_message_data.ttl");
+    let shapes = load("shacl_s264_message_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("sh:resultPath <http://example.com/ns#name>"),
+        "turtle report should contain sh:resultPath:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:sourceShape <http://example.com/ns#MessageExampleShape>"),
+        "turtle report should contain sh:sourceShape:\n{turtle}"
+    );
+    assert!(
+        turtle.contains(
+            "sh:sourceConstraintComponent <http://www.w3.org/ns/shacl#MinCountConstraintComponent>"
+        ),
+        "turtle report should contain sh:sourceConstraintComponent:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultMessage \"Every person must have a name\""),
+        "turtle report should contain sh:resultMessage:\n{turtle}"
     );
 }

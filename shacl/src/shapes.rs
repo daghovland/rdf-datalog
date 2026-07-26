@@ -22,6 +22,53 @@ use ingress::RDF_TYPE;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+impl PropConstraint {
+    /// The `sh:sourceConstraintComponent` IRI for this constraint's kind, per
+    /// the W3C SHACL spec's constraint-component table:
+    /// <https://www.w3.org/TR/shacl/#core-components>. Used to populate
+    /// `ValidationResult::source_constraint`. See
+    /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub fn component_iri(&self) -> &'static str {
+        use crate::vocab::*;
+        match self {
+            PropConstraint::MinCount(_) => CC_MIN_COUNT,
+            PropConstraint::MaxCount(_) => CC_MAX_COUNT,
+            PropConstraint::Class(_) => CC_CLASS,
+            PropConstraint::Datatype(_) => CC_DATATYPE,
+            PropConstraint::NodeKind(_) => CC_NODE_KIND,
+            PropConstraint::HasValue(_) => CC_HAS_VALUE,
+            PropConstraint::In(_) => CC_IN,
+            PropConstraint::MinLength(_) => CC_MIN_LENGTH,
+            PropConstraint::MaxLength(_) => CC_MAX_LENGTH,
+            PropConstraint::Pattern(_, _) => CC_PATTERN,
+            PropConstraint::LanguageIn(_) => CC_LANGUAGE_IN,
+            PropConstraint::UniqueLang => CC_UNIQUE_LANG,
+            PropConstraint::Equals(_) => CC_EQUALS,
+            PropConstraint::Disjoint(_) => CC_DISJOINT,
+            PropConstraint::MinInclusive(_) => CC_MIN_INCLUSIVE,
+            PropConstraint::MaxInclusive(_) => CC_MAX_INCLUSIVE,
+            PropConstraint::MinExclusive(_) => CC_MIN_EXCLUSIVE,
+            PropConstraint::MaxExclusive(_) => CC_MAX_EXCLUSIVE,
+            PropConstraint::LessThan(_) => CC_LESS_THAN,
+            PropConstraint::LessThanOrEquals(_) => CC_LESS_THAN_OR_EQUALS,
+            PropConstraint::NodeShape(_) => CC_NODE,
+            // sh:qualifiedMinCount/sh:qualifiedMaxCount are two independent
+            // constraint components sharing one `PropConstraint` variant here;
+            // report whichever was actually declared, preferring min when both
+            // are present (arbitrary but deterministic — see #264).
+            PropConstraint::QualifiedValueShape { min, max, .. } => {
+                if min.is_some() {
+                    CC_QUALIFIED_MIN_COUNT
+                } else if max.is_some() {
+                    CC_QUALIFIED_MAX_COUNT
+                } else {
+                    CC_QUALIFIED_MIN_COUNT
+                }
+            }
+        }
+    }
+}
+
 /// A value from a shape constraint — an IRI, blank node, or literal.
 #[derive(Debug, Clone)]
 pub enum ElemValue {
@@ -162,6 +209,9 @@ pub struct ParsedShape {
     pub node_kind: Option<NodeKindValue>,
     /// `sh:severity` on this shape, defaulting to `Severity::Violation` when unset.
     pub severity: crate::Severity,
+    /// `sh:message` on this shape, surfaced verbatim on every `ValidationResult`
+    /// it produces. See [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub message: Option<String>,
     /// `sh:deactivated true` on this shape. Per SHACL §3, a deactivated shape
     /// must produce no validation results at all, from any of its
     /// constraints — every place a shape is processed must check this flag
@@ -273,6 +323,9 @@ pub(crate) fn parse_one_shape(
         .and_then(|iri| crate::Severity::from_iri(&iri))
         .unwrap_or_default();
 
+    let message =
+        graph::get_object(shapes, shape_id, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
+
     ParsedShape {
         idx,
         shapes_id: shape_id,
@@ -287,6 +340,7 @@ pub(crate) fn parse_one_shape(
         node_constraints,
         node_kind,
         severity,
+        message,
         deactivated,
     }
 }
