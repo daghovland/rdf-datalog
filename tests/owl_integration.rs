@@ -421,6 +421,49 @@ fn maxcardinality_zero_violation_is_still_detected() {
     let _ = load_and_extract_rules("maxcardinality0_violation.ttl");
 }
 
+/// The `datalog::reasoner` fix above (evaluating the FULL rule body before
+/// treating a `Contradiction` head as triggered) is a fix to the shared
+/// dispatch point, not to the `cls-maxc0` rule specifically -- so it should
+/// also fix the equivalent pre-existing false-positive risk for any other
+/// multi-atom `Contradiction`-head rule, such as `owl:disjointWith`
+/// (`translate_empty_intersection`, which also has >= 2 body atoms: one
+/// membership atom per disjoint class). An individual belonging to only ONE
+/// of two disjoint classes must not be flagged as a contradiction.
+#[test]
+fn disjointwith_without_violation_does_not_panic() {
+    let (ds, _) = load_and_extract_rules("disjointwith_no_violation.ttl");
+
+    const N1: &str = "http://example.com/ns#n1";
+    const CAT: &str = "http://example.com/ns#Cat";
+    let n1_is_cat = !ds
+        .quads_matching(
+            None,
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    N1.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    RDF_TYPE.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    CAT.to_string(),
+                ))))
+                .copied(),
+        )
+        .is_empty();
+    assert!(
+        n1_is_cat,
+        "ex:n1 should still be a valid ex:Cat -- belonging to only one of two disjoint classes is not a violation"
+    );
+}
+
 // ── Tests that cannot be translated (not implemented) ────────────────────────
 //
 // TableauWorks / Imf2AlcWorks: the Tableau (ALC) reasoner is not implemented

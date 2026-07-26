@@ -1,0 +1,14 @@
+@prefix ex: <http://example.com/ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+ex:Cat a owl:Class .
+ex:Dog a owl:Class ;
+  owl:disjointWith ex:Cat .
+
+# n1 is a Cat only -- does NOT belong to both disjoint classes, so this must
+# NOT be flagged as a contradiction. Regression test for the "Contradiction
+# fires on partial body match" bug fixed alongside
+# https://github.com/daghovland/rdf-datalog/issues/298 -- a disjointWith
+# Contradiction rule has two body atoms (membership in each disjoint class),
+# and must only fire when BOTH hold, not merely one.
+ex:n1 a ex:Cat .
