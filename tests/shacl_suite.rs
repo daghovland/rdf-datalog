@@ -1741,12 +1741,31 @@ fn regression_issue_265_class_unrelated_still_violates() {
 fn regression_issue_278_cycle_terminates() {
     let data = load("shacl_s278_cycle_data.ttl");
     let shapes = load("shacl_s278_cycle_shapes.ttl");
-    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let err = shacl::validate(&data, &shapes).expect_err(
+        "a shapes graph with a sh:not cycle (ex:CycleA <-> ex:CycleB) is provably \
+         unevaluable (SHACL Core leaves recursive shape-reference semantics \
+         undefined) and must be rejected up front by a static cycle check, \
+         rather than silently picking a runtime answer",
+    );
     assert!(
-        report.conforms,
-        "cyclic sh:not references must terminate cleanly (returning false on \
-         cycle re-entry) rather than stack-overflowing; with that guard \
-         neither ex:CycleA nor ex:CycleB ends up violating for ex:cycleNode"
+        err.to_lowercase().contains("cycle"),
+        "error message should mention the word 'cycle' to explain the rejection; got: {err}"
+    );
+}
+
+/// A longer cycle (3+ shapes: A -> B -> C -> A via sh:not) must also be
+/// detected by the static check — proving the cycle detector walks the full
+/// reference graph rather than only catching direct self-reference or
+/// 2-shape mutual references.
+#[test]
+fn regression_issue_278_three_shape_cycle_rejected() {
+    let data = load("shacl_s278_cycle_data.ttl");
+    let shapes = load("shacl_s278_three_cycle_shapes.ttl");
+    let err = shacl::validate(&data, &shapes)
+        .expect_err("a 3-shape sh:not cycle (A -> B -> C -> A) must be statically rejected");
+    assert!(
+        err.to_lowercase().contains("cycle"),
+        "error message should mention the word 'cycle'; got: {err}"
     );
 }
 

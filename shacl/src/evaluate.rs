@@ -618,149 +618,87 @@ fn eval_qualified_value(
 /// exactly what's needed here since inner shapes referenced via `sh:not`/
 /// `sh:or`/`sh:node`/etc. are typically anonymous blank nodes.
 ///
-/// Cycle guard: `visited` holds every `(node, shape_id)` pair currently being
-/// evaluated further up the call stack. If a recursive shapes graph (e.g.
-/// `A sh:not [sh:not A]`) loops back to a pair already in `visited`, we return
-/// `false` (does not conform) instead of recursing again — this terminates
-/// instead of overflowing the stack. SHACL Core leaves recursive
-/// shape-reference semantics undefined, so `false` is a defensible,
-/// arbitrary-but-documented choice, not a spec violation — see
+/// No runtime cycle guard is needed here: `shapes::find_shape_reference_cycle`
+/// statically rejects any cyclic shapes graph in `crate::validate` before
+/// validation begins, so by the time this function runs, the shape-reference
+/// graph reachable from any top-level shape is guaranteed acyclic. See
 /// [#278](https://github.com/daghovland/rdf-datalog/issues/278).
-///
-/// A visited *set* (rather than a fixed depth limit) is used deliberately: it
-/// catches cycles precisely regardless of their length, and — unlike a depth
-/// limit — never misfires on a legitimately deep-but-acyclic shapes graph
-/// (e.g. many nested `sh:not`/`sh:and` levels), since each distinct
-/// `(node, shape_id)` pair along an acyclic path is visited at most once.
-///
-/// `visited` is scoped to the current call stack, not this evaluation's
-/// entire history: the entry (see `shape_conforms_for_node` below) is removed
-/// again once the call returns, so a shape referenced twice via independent,
-/// non-mutually-recursive branches (a "diamond" in the shapes graph — a common,
-/// legitimate pattern) is evaluated normally both times rather than the second
-/// occurrence being mistaken for a cycle.
-fn shape_conforms_for_node_visited(
-    node: GraphElementId,
-    shape_id: GraphElementId,
-    data: &Datastore,
-    shapes_store: &Datastore,
-    visited: &mut HashSet<(GraphElementId, GraphElementId)>,
-) -> bool {
-    let key = (node, shape_id);
-    if !visited.insert(key) {
-        return false;
-    }
-
-    let result = (|| {
-        let parsed = shapes::parse_one_shape(shapes_store, shape_id, 0);
-
-        // sh:deactivated — a deactivated shape is vacuously satisfied by every
-        // node (SHACL §3: it must produce no results, which here means it never
-        // blocks conformance when referenced by sh:not/sh:and/sh:or/sh:node/…).
-        // See #262.
-        if parsed.deactivated {
-            return true;
-        }
-
-        if let Some(nk) = &parsed.node_kind
-            && !matches_node_kind(data, node, nk)
-        {
-            return false;
-        }
-
-        for prop in &parsed.property_shapes {
-            if prop.deactivated {
-                continue;
-            }
-            for constraint in &prop.constraints {
-                if !constraint_conforms(
-                    constraint,
-                    node,
-                    Some(&prop.path),
-                    data,
-                    shapes_store,
-                    visited,
-                ) {
-                    return false;
-                }
-            }
-        }
-
-        for constraint in &parsed.node_constraints {
-            if !constraint_conforms(constraint, node, None, data, shapes_store, visited) {
-                return false;
-            }
-        }
-
-        if let Some(inner_ref) = &parsed.not_inner
-            && shape_conforms_for_node_visited(
-                node,
-                inner_ref.shapes_id,
-                data,
-                shapes_store,
-                visited,
-            )
-        {
-            return false;
-        }
-
-        if !parsed.and_inners.iter().all(|inner_ref| {
-            shape_conforms_for_node_visited(node, inner_ref.shapes_id, data, shapes_store, visited)
-        }) {
-            return false;
-        }
-
-        if !parsed.or_inners.is_empty()
-            && !parsed.or_inners.iter().any(|inner_ref| {
-                shape_conforms_for_node_visited(
-                    node,
-                    inner_ref.shapes_id,
-                    data,
-                    shapes_store,
-                    visited,
-                )
-            })
-        {
-            return false;
-        }
-
-        if !parsed.xone_inners.is_empty() {
-            let conforming_count = parsed
-                .xone_inners
-                .iter()
-                .filter(|inner_ref| {
-                    shape_conforms_for_node_visited(
-                        node,
-                        inner_ref.shapes_id,
-                        data,
-                        shapes_store,
-                        visited,
-                    )
-                })
-                .count();
-            if conforming_count != 1 {
-                return false;
-            }
-        }
-
-        true
-    })();
-
-    visited.remove(&key);
-    result
-}
-
-/// Entry point for "does shape `shape_id` hold for `node`" — starts a fresh
-/// cycle-detection set covering this evaluation's recursion. See
-/// `shape_conforms_for_node_visited` for the cycle-guard rationale.
 fn shape_conforms_for_node(
     node: GraphElementId,
     shape_id: GraphElementId,
     data: &Datastore,
     shapes_store: &Datastore,
 ) -> bool {
-    let mut visited = HashSet::new();
-    shape_conforms_for_node_visited(node, shape_id, data, shapes_store, &mut visited)
+    let parsed = shapes::parse_one_shape(shapes_store, shape_id, 0);
+
+    // sh:deactivated — a deactivated shape is vacuously satisfied by every
+    // node (SHACL §3: it must produce no results, which here means it never
+    // blocks conformance when referenced by sh:not/sh:and/sh:or/sh:node/…).
+    // See #262.
+    if parsed.deactivated {
+        return true;
+    }
+
+    if let Some(nk) = &parsed.node_kind
+        && !matches_node_kind(data, node, nk)
+    {
+        return false;
+    }
+
+    for prop in &parsed.property_shapes {
+        if prop.deactivated {
+            continue;
+        }
+        for constraint in &prop.constraints {
+            if !constraint_conforms(constraint, node, Some(&prop.path), data, shapes_store) {
+                return false;
+            }
+        }
+    }
+
+    for constraint in &parsed.node_constraints {
+        if !constraint_conforms(constraint, node, None, data, shapes_store) {
+            return false;
+        }
+    }
+
+    if let Some(inner_ref) = &parsed.not_inner
+        && shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+    {
+        return false;
+    }
+
+    if !parsed
+        .and_inners
+        .iter()
+        .all(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
+    {
+        return false;
+    }
+
+    if !parsed.or_inners.is_empty()
+        && !parsed
+            .or_inners
+            .iter()
+            .any(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
+    {
+        return false;
+    }
+
+    if !parsed.xone_inners.is_empty() {
+        let conforming_count = parsed
+            .xone_inners
+            .iter()
+            .filter(|inner_ref| {
+                shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+            })
+            .count();
+        if conforming_count != 1 {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Return `true` if every applicable value for `node` (path-traversed values
@@ -778,7 +716,6 @@ fn constraint_conforms(
     path: Option<&str>,
     data: &Datastore,
     shapes_store: &Datastore,
-    visited: &mut HashSet<(GraphElementId, GraphElementId)>,
 ) -> bool {
     use shapes::PropConstraint::*;
     let values = values_for(data, node, path);
@@ -924,9 +861,9 @@ fn constraint_conforms(
                 .iter()
                 .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc < b))
         }
-        NodeShape(inner_shapes_id) => values.iter().all(|&v| {
-            shape_conforms_for_node_visited(v, *inner_shapes_id, data, shapes_store, visited)
-        }),
+        NodeShape(inner_shapes_id) => values
+            .iter()
+            .all(|&v| shape_conforms_for_node(v, *inner_shapes_id, data, shapes_store)),
         QualifiedValueShape {
             shapes_id,
             min,
@@ -934,9 +871,7 @@ fn constraint_conforms(
         } => {
             let qualifying_count = values
                 .iter()
-                .filter(|&&v| {
-                    shape_conforms_for_node_visited(v, *shapes_id, data, shapes_store, visited)
-                })
+                .filter(|&&v| shape_conforms_for_node(v, *shapes_id, data, shapes_store))
                 .count() as u64;
             !min.is_some_and(|n| qualifying_count < n) && !max.is_some_and(|n| qualifying_count > n)
         }

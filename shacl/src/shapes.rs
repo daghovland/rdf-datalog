@@ -132,6 +132,11 @@ pub struct InnerShapeRef {
 pub struct ParsedShape {
     /// Sequential index across all shapes (for unique synthetic IRI names).
     pub idx: usize,
+    /// ID of this shape node in the **shapes** `Datastore` it was parsed from.
+    /// Used as the root of the static shape-reference cycle check (see
+    /// [`find_shape_reference_cycle`]) — a top-level shape's `shapes_id` is
+    /// where evaluation actually enters the "does shape S hold" recursion.
+    pub shapes_id: GraphElementId,
     /// IRI of the shape if it is a named node.
     pub iri: Option<String>,
     pub targets: Vec<Target>,
@@ -270,6 +275,7 @@ pub(crate) fn parse_one_shape(
 
     ParsedShape {
         idx,
+        shapes_id: shape_id,
         iri,
         targets,
         property_shapes,
@@ -552,4 +558,136 @@ fn parse_node_kind(iri: &str) -> Option<NodeKindValue> {
         SH_IRI_OR_LITERAL => Some(NodeKindValue::IRIOrLiteral),
         _ => None,
     }
+}
+
+// ── Static shape-reference cycle check ────────────────────────────────────────
+//
+// The "shape S references shape T" graph (via sh:not/sh:and/sh:or/sh:xone/
+// sh:node/sh:qualifiedValueShape) is fixed once the shapes graph is parsed —
+// entirely independent of what data is later validated against it. Rather than
+// guarding every recursive per-node conformance check at evaluation time (cost
+// proportional to data size), a cycle in this graph is detected exactly once,
+// statically, before any data validation begins. See
+// [#278](https://github.com/daghovland/rdf-datalog/issues/278).
+
+/// DFS visitation state for [`find_shape_reference_cycle`]'s white/gray/black
+/// marking. Nodes with no entry in the map are implicitly white (unvisited).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VisitState {
+    /// On the current DFS path (gray) — re-entering this node is a cycle.
+    InProgress,
+    /// Fully explored (black) — already known cycle-free from here.
+    Done,
+}
+
+/// Every other shape node that `shape_id` references directly, across all the
+/// constructs that recurse into `shape_conforms_for_node` at evaluation time
+/// (`evaluate.rs`): `sh:not`, `sh:and`, `sh:or`, `sh:xone`, and the
+/// `sh:node`/`sh:qualifiedValueShape` property constraints (both on
+/// `sh:property` blocks and on pathless node-level constraints).
+fn shape_references(shapes_store: &Datastore, shape_id: GraphElementId) -> Vec<GraphElementId> {
+    // idx is irrelevant here — only used for synthetic violation-IRI naming
+    // elsewhere, never for graph structure.
+    let parsed = parse_one_shape(shapes_store, shape_id, 0);
+    let mut refs = Vec::new();
+
+    if let Some(inner) = &parsed.not_inner {
+        refs.push(inner.shapes_id);
+    }
+    refs.extend(parsed.and_inners.iter().map(|r| r.shapes_id));
+    refs.extend(parsed.or_inners.iter().map(|r| r.shapes_id));
+    refs.extend(parsed.xone_inners.iter().map(|r| r.shapes_id));
+
+    let constraint_refs = |cs: &[PropConstraint]| -> Vec<GraphElementId> {
+        cs.iter()
+            .filter_map(|c| match c {
+                PropConstraint::NodeShape(id) => Some(*id),
+                PropConstraint::QualifiedValueShape { shapes_id, .. } => Some(*shapes_id),
+                _ => None,
+            })
+            .collect()
+    };
+    for prop in &parsed.property_shapes {
+        refs.extend(constraint_refs(&prop.constraints));
+    }
+    refs.extend(constraint_refs(&parsed.node_constraints));
+
+    refs
+}
+
+/// Depth-first search from `id`, extending `path` (the current DFS stack) and
+/// updating the shared `state` map. Returns the cycle (as a sequence of
+/// shapes-store `GraphElementId`s, first element repeated as the last) the
+/// first time a node already `InProgress` on the current path is re-entered.
+fn dfs_find_cycle(
+    shapes_store: &Datastore,
+    id: GraphElementId,
+    state: &mut std::collections::HashMap<GraphElementId, VisitState>,
+    path: &mut Vec<GraphElementId>,
+) -> Option<Vec<GraphElementId>> {
+    match state.get(&id) {
+        Some(VisitState::Done) => return None,
+        Some(VisitState::InProgress) => {
+            let start = path.iter().position(|&x| x == id).unwrap_or(0);
+            let mut cycle = path[start..].to_vec();
+            cycle.push(id);
+            return Some(cycle);
+        }
+        None => {}
+    }
+
+    state.insert(id, VisitState::InProgress);
+    path.push(id);
+
+    for next in shape_references(shapes_store, id) {
+        if let Some(cycle) = dfs_find_cycle(shapes_store, next, state, path) {
+            return Some(cycle);
+        }
+    }
+
+    path.pop();
+    state.insert(id, VisitState::Done);
+    None
+}
+
+/// Search the whole shapes graph, once, for a cycle in the shape-reference
+/// graph reachable from any top-level parsed shape. Returns the cycle (a
+/// sequence of shapes-store `GraphElementId`s) if one exists.
+///
+/// Roots are exactly `parsed`'s top-level shapes because evaluation only ever
+/// *enters* the recursive "does shape S hold for node N" check
+/// (`shape_conforms_for_node` in `evaluate.rs`) from one of them — any cycle
+/// that could be hit at runtime is therefore reachable from a root here.
+pub fn find_shape_reference_cycle(
+    shapes_store: &Datastore,
+    parsed: &[ParsedShape],
+) -> Option<Vec<GraphElementId>> {
+    let mut state = std::collections::HashMap::new();
+    for shape in parsed {
+        let mut path = Vec::new();
+        if let Some(cycle) = dfs_find_cycle(shapes_store, shape.shapes_id, &mut state, &mut path) {
+            return Some(cycle);
+        }
+    }
+    None
+}
+
+/// Render a cycle (as returned by [`find_shape_reference_cycle`]) as a clear
+/// diagnostic message naming each shape involved (IRI, or `_:bN` for blank
+/// nodes) — used by [`crate::validate`] to reject a provably cyclic shapes
+/// graph up front rather than picking an arbitrary runtime answer. SHACL Core
+/// leaves recursive shape-reference semantics undefined, so refusing to
+/// validate at all against such a shapes graph is more spec-honest than
+/// silently choosing a behavior. See
+/// [#278](https://github.com/daghovland/rdf-datalog/issues/278).
+pub fn describe_shape_cycle(shapes_store: &Datastore, cycle: &[GraphElementId]) -> String {
+    let names: Vec<String> = cycle
+        .iter()
+        .map(|&id| graph::element_display(shapes_store, id))
+        .collect();
+    format!(
+        "shapes graph contains a cycle of shape references, which SHACL Core \
+         leaves undefined; refusing to validate: {}",
+        names.join(" -> ")
+    )
 }
