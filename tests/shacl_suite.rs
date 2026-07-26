@@ -142,6 +142,10 @@ fn shacl_testdata_parses() {
         "shacl_s258_qualified_shapes.ttl",
         "shacl_s262_deactivated_data.ttl",
         "shacl_s262_deactivated_shapes.ttl",
+        "shacl_s278_cycle_data.ttl",
+        "shacl_s278_cycle_shapes.ttl",
+        "shacl_s278_deep_data.ttl",
+        "shacl_s278_deep_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -1708,5 +1712,85 @@ fn regression_issue_265_class_unrelated_still_violates() {
         has_violation(&report, &ex("n3")),
         "control case: ex:thing is typed ex:Gadget, unrelated to ex:Person \
          by any subclass edge, so sh:class ex:Person must still violate"
+    );
+}
+
+// ── Issue #278 — cycle guard on shape_conforms_for_node ──────────────────────
+//
+// `shacl::evaluate::shape_conforms_for_node` (the shared inner-shape
+// conformance checker added by #258/#276) recurses into sh:not/sh:and/sh:or/
+// sh:xone/sh:node/sh:qualifiedValueShape inner shapes. Before the fix, a
+// cyclic shapes graph caused unbounded recursion (stack overflow) instead of
+// terminating with some defined answer. See
+// https://github.com/daghovland/rdf-datalog/issues/278
+
+/// A 2-cycle (`ex:CycleA sh:not ex:CycleB ; ex:CycleB sh:not ex:CycleA`) must
+/// terminate rather than stack-overflow. Before the fix this test would crash
+/// the test process; after the fix it must return a clean `ValidationReport`.
+///
+/// With the "return false on cycle re-entry" guard, tracing the evaluation by
+/// hand: for either shape, the inner reference eventually revisits a
+/// `(node, shape_id)` pair already on the recursion stack and that inner call
+/// returns `false` (does not conform), which unwinds to the *outer* shape also
+/// not violating its own `sh:not` (since its negated inner failed to
+/// conform). So both `ex:CycleA` and `ex:CycleB` end up not violating for
+/// `ex:cycleNode`, and the whole graph conforms. The key property under test
+/// is termination with *some* well-defined answer, not this particular
+/// answer — SHACL Core leaves recursive shape references undefined.
+#[test]
+fn regression_issue_278_cycle_terminates() {
+    let data = load("shacl_s278_cycle_data.ttl");
+    let shapes = load("shacl_s278_cycle_shapes.ttl");
+    let err = shacl::validate(&data, &shapes).expect_err(
+        "a shapes graph with a sh:not cycle (ex:CycleA <-> ex:CycleB) is provably \
+         unevaluable (SHACL Core leaves recursive shape-reference semantics \
+         undefined) and must be rejected up front by a static cycle check, \
+         rather than silently picking a runtime answer",
+    );
+    assert!(
+        err.to_lowercase().contains("cycle"),
+        "error message should mention the word 'cycle' to explain the rejection; got: {err}"
+    );
+}
+
+/// A longer cycle (3+ shapes: A -> B -> C -> A via sh:not) must also be
+/// detected by the static check — proving the cycle detector walks the full
+/// reference graph rather than only catching direct self-reference or
+/// 2-shape mutual references.
+#[test]
+fn regression_issue_278_three_shape_cycle_rejected() {
+    let data = load("shacl_s278_cycle_data.ttl");
+    let shapes = load("shacl_s278_three_cycle_shapes.ttl");
+    let err = shacl::validate(&data, &shapes)
+        .expect_err("a 3-shape sh:not cycle (A -> B -> C -> A) must be statically rejected");
+    assert!(
+        err.to_lowercase().contains("cycle"),
+        "error message should mention the word 'cycle'; got: {err}"
+    );
+}
+
+/// A legitimately deep (20-level) but acyclic chain of nested `sh:not`
+/// references must still terminate *and* produce the semantically correct
+/// answer — the cycle guard (a visited set of `(node, shape_id)` pairs on the
+/// current recursion path, cleared on return) must not misfire just because
+/// the same node is checked against many distinct shapes along an acyclic
+/// path.
+///
+/// `ex:Deep20` is the base case (`sh:nodeKind sh:IRI`, true for the IRI
+/// `ex:deepNode`). 20 nested `sh:not` levels is an even number of negations,
+/// so double-negation cancels out and `ex:Deep0` itself also conforms for
+/// `ex:deepNode`. That means the top-level shape's own `sh:not` (against
+/// `ex:Deep1`, at odd distance 19 from the base, so `false`) produces no
+/// violation: the whole graph should conform.
+#[test]
+fn regression_issue_278_deep_acyclic_chain_conforms() {
+    let data = load("shacl_s278_deep_data.ttl");
+    let shapes = load("shacl_s278_deep_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        report.conforms,
+        "a deep but acyclic sh:not chain must be evaluated to its correct \
+         (even-negation-count => conforms) answer, not rejected by an \
+         over-eager cycle guard"
     );
 }

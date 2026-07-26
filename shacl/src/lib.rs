@@ -96,6 +96,16 @@ pub struct ValidationReport {
 /// The data graph is cloned; the caller's `data` is not mutated.
 pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport, String> {
     let parsed = shapes::parse_shapes(shapes);
+
+    // Static cycle check over the shapes graph alone (sh:not/sh:and/sh:or/sh:xone/
+    // sh:node/sh:qualifiedValueShape references), done once here rather than
+    // guarded per-node at evaluation time — the cycle is a property of the
+    // shapes graph, independent of what data gets validated against it. See
+    // https://github.com/daghovland/rdf-datalog/issues/278.
+    if let Some(cycle) = shapes::find_shape_reference_cycle(shapes, &parsed) {
+        return Err(shapes::describe_shape_cycle(shapes, &cycle));
+    }
+
     let mut work = data.clone();
 
     // Pre-compute violations for constraints that must see only the original data triples

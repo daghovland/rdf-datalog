@@ -1,0 +1,4 @@
+# Issue #278 — data graph. See shacl_s278_cycle_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:cycleNode ex:label "just a node participating in a cyclic shapes graph" .

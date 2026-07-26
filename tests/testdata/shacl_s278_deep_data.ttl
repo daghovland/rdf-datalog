@@ -1,0 +1,4 @@
+# Issue #278 — data graph. See shacl_s278_deep_shapes.ttl.
+PREFIX ex: <http://example.com/ns#>
+
+ex:deepNode ex:label "target of a 20-level-deep but acyclic sh:not chain" .

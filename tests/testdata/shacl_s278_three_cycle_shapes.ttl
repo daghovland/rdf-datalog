@@ -1,0 +1,20 @@
+# Issue #278 -- a longer (3-shape) cyclic sh:not chain must also be rejected
+# by the static shapes-graph cycle check, not just direct self-reference or
+# 2-shape mutual references. https://github.com/daghovland/rdf-datalog/issues/278
+#
+# ex:Cycle3A sh:not ex:Cycle3B ; ex:Cycle3B sh:not ex:Cycle3C ; ex:Cycle3C sh:not ex:Cycle3A .
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Cycle3A
+    a sh:NodeShape ;
+    sh:targetNode ex:cycleNode ;
+    sh:not ex:Cycle3B .
+
+ex:Cycle3B
+    a sh:NodeShape ;
+    sh:not ex:Cycle3C .
+
+ex:Cycle3C
+    a sh:NodeShape ;
+    sh:not ex:Cycle3A .

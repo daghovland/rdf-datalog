@@ -618,10 +618,11 @@ fn eval_qualified_value(
 /// exactly what's needed here since inner shapes referenced via `sh:not`/
 /// `sh:or`/`sh:node`/etc. are typically anonymous blank nodes.
 ///
-/// No cycle/depth guard: a recursive shapes graph (e.g. `A sh:not [sh:not A]`)
-/// will overflow the stack rather than terminate. SHACL Core leaves recursive
-/// shape references undefined, so this is a known limitation, not a spec
-/// violation — see [#278](https://github.com/daghovland/rdf-datalog/issues/278).
+/// No runtime cycle guard is needed here: `shapes::find_shape_reference_cycle`
+/// statically rejects any cyclic shapes graph in `crate::validate` before
+/// validation begins, so by the time this function runs, the shape-reference
+/// graph reachable from any top-level shape is guaranteed acyclic. See
+/// [#278](https://github.com/daghovland/rdf-datalog/issues/278).
 fn shape_conforms_for_node(
     node: GraphElementId,
     shape_id: GraphElementId,

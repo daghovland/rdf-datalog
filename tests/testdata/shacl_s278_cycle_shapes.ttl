@@ -1,0 +1,16 @@
+# Issue #278 — cyclic sh:not references must terminate instead of
+# stack-overflowing. https://github.com/daghovland/rdf-datalog/issues/278
+#
+# ex:CycleA negates ex:CycleB and vice versa: evaluating either shape's
+# conformance for a node recurses back into itself through the other shape.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:CycleA
+    a sh:NodeShape ;
+    sh:targetNode ex:cycleNode ;
+    sh:not ex:CycleB .
+
+ex:CycleB
+    a sh:NodeShape ;
+    sh:not ex:CycleA .
