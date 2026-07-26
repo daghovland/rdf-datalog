@@ -54,6 +54,54 @@ so nothing being both a pull request and an epic is already entailed
 through subsumption — asserting it again would be a redundant, not an
 independent, fact.
 
+## An OWL `maxCardinality` restriction was attempted, then reverted (blocked on #298)
+
+Raised directly: doesn't OWL already have a way to express "an issue with no
+parent" as a class, via a cardinality restriction, rather than only via
+SHACL? Yes — checked precisely, not just asserted from profile theory:
+`bl:Epic rdfs:subClassOf [ a owl:Restriction ; owl:onProperty bl:subIssueOf ;
+owl:maxCardinality "0"^^xsd:nonNegativeInteger ]` is a completely valid OWL
+2 RL axiom, and (in the *checking*, not *defining*, direction — see
+`eli/src/extractor.rs::eli_class_extractor`, which has no case for max
+cardinality in sub-concept/defining position, only
+`ObjectMinQualifiedCardinality` with cardinality exactly 1) is exactly the
+kind of thing this repo's own OWL-RL translator is supposed to reason over
+as a redundant, alongside-SHACL enforcement mechanism — the same pattern
+already used for the disjointness axioms above.
+
+**Reverted before merge.** Adding it and running it through real reasoning
+(`--ontology backlog/ontology/vocabulary.ttl`, not just flat `--data`
+loading, which is all this vocabulary had ever been exercised with before)
+surfaced a genuine, unrelated bug: `eli/src/extractor.rs` translates
+`ObjectMaxCardinality(0, prop)` in super-concept position by discarding
+`prop` entirely and mapping straight to `owl:Nothing` —
+
+```rust
+ClassExpression::ObjectMaxCardinality(card, _prop) if *card == 0u32.into() => {
+    (vec![], vec![], vec![NormalizedConcept::Bottom])
+}
+```
+
+— which means the reasoner treats `C ⊑ ≤0 R` as "`C` is empty," unconditionally,
+the instant anything is asserted `a C`, regardless of whether that instance
+has any `R` edges at all. Compounded by `datalog/src/reasoner.rs:125`
+`panic!`-ing (rather than returning a `Result::Err`) the moment any
+contradiction is derived, this axiom crashed the whole program on the real
+`valid_backlog_snapshot.ttl` fixtures the instant any of the four real
+epics was loaded — confirmed by isolating the exact trigger (vocabulary
+alone: fine; every other individual fixture file: fine; `valid_backlog_snapshot.ttl`,
+the only file with `a bl:Epic` instances: panics) before concluding this
+wasn't a mistake in the axiom itself.
+
+Filed as [#298](https://github.com/daghovland/rdf-datalog/issues/298)
+(unlabeled, awaiting review — not this ontology issue's job to fix a
+reasoner bug). The `owl:Restriction` is **not** in `vocabulary.ttl` today;
+add it back once #298 is fixed. Until then, `bl:EpicHasNoParentShape`
+(SHACL, unaffected by this bug since it never invokes OWL-RL reasoning) is
+the sole actually-enforced mechanism for this constraint — which was
+already true in practice even before this attempt, since nothing in this
+epic's tooling runs `apply_ontologies` over the backlog data anyway.
+
 ## `bl:Issue` and `bl:PullRequest` are disjoint (via a common `bl:WorkItem`)
 
 **Revised after a second round of review**, requested directly: a PR and an
