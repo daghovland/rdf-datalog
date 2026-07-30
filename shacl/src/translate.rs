@@ -94,7 +94,13 @@ pub fn shapes_to_rules(
                 viol_preds.extend(new.into_iter().map(|v| {
                     (
                         v,
-                        ViolMeta::new(shape, Some(&prop.path), constraint.component_iri()),
+                        ViolMeta::new(
+                            shapes,
+                            shape,
+                            prop.shapes_id,
+                            Some(&prop.path),
+                            constraint.component_iri(),
+                        ),
                     )
                 }));
             }
@@ -117,10 +123,18 @@ pub fn shapes_to_rules(
                 &mut rules,
                 work,
             );
-            viol_preds.extend(
-                new.into_iter()
-                    .map(|v| (v, ViolMeta::new(shape, None, constraint.component_iri()))),
-            );
+            viol_preds.extend(new.into_iter().map(|v| {
+                (
+                    v,
+                    ViolMeta::new(
+                        shapes,
+                        shape,
+                        shape.shapes_id,
+                        None,
+                        constraint.component_iri(),
+                    ),
+                )
+            }));
         }
 
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
@@ -174,7 +188,13 @@ pub fn shapes_to_rules(
                         viol_preds.extend(viols.into_iter().map(|v| {
                             (
                                 v,
-                                ViolMeta::new(shape, Some(&path_iri), constraint.component_iri()),
+                                ViolMeta::new(
+                                    shapes,
+                                    shape,
+                                    prop_node,
+                                    Some(&path_iri),
+                                    constraint.component_iri(),
+                                ),
                             )
                         }));
                     }

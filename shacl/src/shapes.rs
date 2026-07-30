@@ -53,9 +53,17 @@ impl PropConstraint {
             PropConstraint::LessThanOrEquals(_) => CC_LESS_THAN_OR_EQUALS,
             PropConstraint::NodeShape(_) => CC_NODE,
             // sh:qualifiedMinCount/sh:qualifiedMaxCount are two independent
-            // constraint components sharing one `PropConstraint` variant here;
-            // report whichever was actually declared, preferring min when both
-            // are present (arbitrary but deterministic — see #264).
+            // SHACL constraint components sharing one `PropConstraint`
+            // variant here. When a property shape declares only one bound,
+            // there is no ambiguity. When BOTH are declared (an interval),
+            // this static method has no access to the runtime qualifying
+            // count needed to say which bound actually failed for a given
+            // violation, so it picks min as an arbitrary representative —
+            // this is NOT what the real evaluator reports, though: see
+            // `evaluate::eval_qualified_value`, which checks each bound
+            // independently at evaluation time and reports the correct,
+            // specific component per violation (never calling this method
+            // for that variant). See #264.
             PropConstraint::QualifiedValueShape { min, max, .. } => {
                 if min.is_some() {
                     CC_QUALIFIED_MIN_COUNT
@@ -154,6 +162,15 @@ pub enum PropConstraint {
 pub struct ParsedPropShape {
     /// Position within the parent shape (used for unique helper-IRI names).
     pub idx: usize,
+    /// ID of this property shape's own node (the object of `sh:property`) in
+    /// the **shapes** `Datastore` — an IRI if named, a blank node otherwise
+    /// (real SHACL property shapes are commonly named, not always blank
+    /// nodes). This is the shape SHACL's `sh:sourceShape` should point to for
+    /// a violation produced by this property shape's constraints — NOT the
+    /// parent node shape, which previously stood in for it unconditionally
+    /// because this field didn't exist. See
+    /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub shapes_id: GraphElementId,
     /// `sh:path` IRI.
     pub path: String,
     pub constraints: Vec<PropConstraint>,
@@ -283,6 +300,7 @@ pub(crate) fn parse_one_shape(
             let next_idx = property_shapes.len();
             property_shapes.push(ParsedPropShape {
                 idx: next_idx,
+                shapes_id: shape_id,
                 path: path_iri,
                 constraints: direct_constraints,
                 deactivated,
@@ -397,6 +415,7 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
             let path = graph::iri_string(shapes, path_id)?;
             Some(ParsedPropShape {
                 idx,
+                shapes_id: prop_node,
                 path,
                 constraints: parse_prop_constraints(shapes, prop_node),
                 deactivated: is_deactivated(shapes, prop_node),

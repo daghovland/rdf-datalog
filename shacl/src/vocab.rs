@@ -283,6 +283,9 @@ pub fn viol_less_than_or_equals(shape_idx: usize, prop_idx: usize) -> String {
 pub fn viol_node_shape(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:node")
 }
-pub fn viol_qualified_value(shape_idx: usize, prop_idx: usize) -> String {
-    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedValue")
+pub fn viol_qualified_min_count(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedMinCount")
+}
+pub fn viol_qualified_max_count(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedMaxCount")
 }

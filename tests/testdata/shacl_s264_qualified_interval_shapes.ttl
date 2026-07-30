@@ -1,0 +1,17 @@
+# Issue #264 PR review — sh:qualifiedValueShape with BOTH sh:qualifiedMinCount
+# and sh:qualifiedMaxCount declared (an interval): each bound must be checked
+# and reported independently, with its own correct
+# sh:sourceConstraintComponent.
+# Requires between 1 and 2 (inclusive) ex:parent values that satisfy sh:nodeKind sh:IRI.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:QualifiedIntervalShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Carol, ex:Dave ;
+    sh:property [
+        sh:path ex:parent ;
+        sh:qualifiedValueShape [ sh:nodeKind sh:IRI ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 2 ;
+    ] .
