@@ -387,9 +387,11 @@ to fire on a targeted synthetic violation, not just parsed. See
   drafted locally before it's actually filed on GitHub — relevant once #287
   (write-back) exists; every IRI in this ontology currently assumes a real
   `github.com` resource exists first.
-- A SHACL shape (in #285's fuller shape library, not this narrow one)
-  requiring every `bl:Issue` and `bl:PullRequest` to also carry
-  `a bl:WorkItem` — enforcing the dual-typing requirement from
-  "`rdfs:subClassOf` is not free" above, so a forgotten dual-type doesn't
-  silently drop an issue or PR out of any `bl:WorkItem`-domained
-  property/query.
+- ~~A SHACL shape requiring every `bl:Issue`/`bl:PullRequest` to also carry
+  `a bl:WorkItem`~~ — **done**, `bl:RequiresWorkItemTypeShape` in
+  `shapes.ttl` (#285).
+- A `createdAt`/`updatedAt`/last-activity timestamp property — needed for
+  any "stale" or "open longer than N days" view. #286's query library
+  (`../queries/README.md`) explicitly couldn't implement that view without
+  one; revisit if it's wanted badly enough to add now rather than waiting
+  for #284.
