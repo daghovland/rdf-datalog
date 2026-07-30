@@ -257,6 +257,34 @@ fn get_at_most_one_normalized_rule(
     }]
 }
 
+/// `C ⊑ ≤0 R` — OWL 2 RL/RDF rule `cls-maxc0`:
+/// `T(?u, rdf:type, ?x), T(?x, owl:maxCardinality, "0"), T(?x, owl:onProperty, ?p),
+/// T(?u, ?p, ?y) → false`.
+///
+/// The contradiction is conditional on the `R`-edge actually existing in the
+/// body (`prop(X, Y)` for a fresh `Y`), combining the sub_conjunction's
+/// type-membership atoms (as in `translate_empty_intersection`) with a
+/// property-edge atom (as in `get_universal_normalized_rule`) — unlike the
+/// unconditional `Bottom` case, an instance of `C` with zero `R`-successors
+/// does NOT trigger this rule. See
+/// <https://github.com/daghovland/rdf-datalog/issues/298>.
+fn get_at_most_zero_normalized_rule(
+    resources: &mut GraphElementManager,
+    sub_conjunction: &[Class],
+    prop: &ObjectPropertyExpression,
+) -> Vec<Rule> {
+    let role_atom = RuleAtom::PositivePattern(get_obj_prop_pattern(resources, prop, "X", "Y"));
+    let body: Vec<RuleAtom> = sub_conjunction
+        .iter()
+        .map(|cls| RuleAtom::PositivePattern(get_type_pattern(resources, "X", cls)))
+        .chain(std::iter::once(role_atom))
+        .collect();
+    vec![Rule {
+        head: RuleHead::Contradiction,
+        body,
+    }]
+}
+
 fn get_object_has_value_normalized_rule(
     resources: &mut GraphElementManager,
     sub_conjunction: &[Class],
@@ -313,6 +341,9 @@ fn generate_axiom_rl(resources: &mut GraphElementManager, formula: &Formula) -> 
             }
             NormalizedConcept::AtMostOneValueFrom(prop) => {
                 get_at_most_one_normalized_rule(resources, subclass_conjunction, prop)
+            }
+            NormalizedConcept::AtMostZeroValueFrom(prop) => {
+                get_at_most_zero_normalized_rule(resources, subclass_conjunction, prop)
             }
         },
     }

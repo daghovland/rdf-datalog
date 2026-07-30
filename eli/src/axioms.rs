@@ -31,6 +31,13 @@ pub enum NormalizedConcept {
     ObjectHasValue(ObjectPropertyExpression, Individual),
     AllValuesFrom(ObjectPropertyExpression, Class),
     AtMostOneValueFrom(ObjectPropertyExpression),
+    /// `C ⊑ ≤0 R` — instances of `C` must have no `R`-successors. Unlike
+    /// `NormalizedConcept::Bottom` (which is an unconditional contradiction
+    /// for every instance of the subclass conjunction), this is only a
+    /// contradiction for an instance that is ALSO the subject of an `R`
+    /// edge — see the OWL 2 RL/RDF rule `cls-maxc0` and
+    /// <https://github.com/daghovland/rdf-datalog/issues/298>.
+    AtMostZeroValueFrom(ObjectPropertyExpression),
 }
 
 /// A normalized ELI formula used by the RL translation.

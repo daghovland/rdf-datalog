@@ -1,0 +1,14 @@
+@prefix ex: <http://example.com/ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Leaf a owl:Class ;
+  rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty ex:hasChild ;
+    owl:maxCardinality "0"^^xsd:nonNegativeInteger
+  ] .
+
+# n1 has NO ex:hasChild edges at all -- trivially satisfies the <=0 restriction.
+ex:n1 a ex:Leaf .

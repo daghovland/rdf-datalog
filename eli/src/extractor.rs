@@ -197,9 +197,11 @@ fn concept_positive_occurrence_normalization(concept: &ClassExpression) -> Vec<F
                         concept_representative(inner),
                     )],
                 ),
-                ClassExpression::ObjectMaxCardinality(card, _prop) if *card == 0u32.into() => {
-                    (vec![], vec![], vec![NormalizedConcept::Bottom])
-                }
+                ClassExpression::ObjectMaxCardinality(card, prop) if *card == 0u32.into() => (
+                    vec![],
+                    vec![],
+                    vec![NormalizedConcept::AtMostZeroValueFrom(prop.clone())],
+                ),
                 ClassExpression::ObjectMaxCardinality(card, prop) if *card == 1u32.into() => (
                     vec![],
                     vec![],

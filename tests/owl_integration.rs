@@ -349,6 +349,78 @@ fn load_ido_ontology_works() {
     evaluate_rules(rules, &mut ds);
 }
 
+// ── Regression tests for issue #298 ──────────────────────────────────────────
+//
+// `ObjectMaxCardinality(0, prop)` on a class in super-concept position used to
+// discard `prop` entirely and translate `C ⊑ ≤0 R` as `C ⊑ ⊥` unconditionally
+// — i.e. "no instance of C exists at all" rather than the correct "instances
+// of C have no R-successors". This made the whole reasoning pipeline panic on
+// *any* instance of such a class, even one with zero R-edges (which trivially
+// satisfies "at most 0 R-successors").
+//
+// See <https://github.com/daghovland/rdf-datalog/issues/298>.
+
+/// The exact non-violating repro from the issue: `ex:Leaf` has a
+/// `maxCardinality 0` restriction on `ex:hasChild`, and `ex:n1 a ex:Leaf` has
+/// NO `ex:hasChild` edges at all. This must succeed without panicking —
+/// `ex:n1` trivially satisfies "at most 0 hasChild edges".
+#[test]
+fn maxcardinality_zero_without_violation_does_not_panic() {
+    let (ds, rule_count) = load_and_extract_rules("maxcardinality0.ttl");
+    assert!(
+        rule_count > 0,
+        "the maxCardinality 0 restriction should yield at least one Datalog rule"
+    );
+
+    const N1: &str = "http://example.com/ns#n1";
+    const LEAF: &str = "http://example.com/ns#Leaf";
+    let n1_is_leaf = !ds
+        .quads_matching(
+            None,
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    N1.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    RDF_TYPE.to_string(),
+                ))))
+                .copied(),
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    LEAF.to_string(),
+                ))))
+                .copied(),
+        )
+        .is_empty();
+    assert!(
+        n1_is_leaf,
+        "ex:n1 should still be a valid, trivially-conforming ex:Leaf"
+    );
+}
+
+/// The violating case: `ex:n2 a ex:Leaf` but `ex:n2` DOES have an
+/// `ex:hasChild` edge, which genuinely violates the `maxCardinality 0`
+/// restriction. This must still be detected as a contradiction.
+///
+/// The reasoner currently signals a genuine contradiction via `panic!`
+/// (`datalog/src/reasoner.rs`) rather than a `Result::Err` — see the
+/// follow-up issue linked from the `datalog` reasoner module docs — so this
+/// test asserts the (documented, deliberately out of scope for #298's fix)
+/// panicking behavior rather than a clean error. The important thing this
+/// regression test guards is that the contradiction is *still detected at
+/// all*: a naive fix for the non-violating case above could easily regress
+/// into silently accepting genuine violations too.
+#[test]
+#[should_panic(expected = "Contradiction during reasoning")]
+fn maxcardinality_zero_violation_is_still_detected() {
+    let _ = load_and_extract_rules("maxcardinality0_violation.ttl");
+}
+
 // ── Tests that cannot be translated (not implemented) ────────────────────────
 //
 // TableauWorks / Imf2AlcWorks: the Tableau (ALC) reasoner is not implemented
