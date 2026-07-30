@@ -1,0 +1,17 @@
+# Issue #266 — sh:lessThan / sh:lessThanOrEquals incomparable-pair coverage data.
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:crossBad   ex:num "5"^^xsd:integer ; ex:date "2020-01-01"^^xsd:date .
+ex:leCrossBad ex:num "5"^^xsd:integer ; ex:date "2020-01-01"^^xsd:date .
+
+ex:strOk  ex:s1 "apple"  ; ex:s2 "banana" .
+ex:strBad ex:s1 "banana" ; ex:s2 "apple" .
+
+ex:boolOk  ex:b1 false ; ex:b2 true .
+ex:boolBad ex:b1 true  ; ex:b2 false .
+
+ex:vacuousOk ex:x "5"^^xsd:integer .
+
+ex:nonLitBad ex:x [] ; ex:y "5"^^xsd:integer .

@@ -122,19 +122,55 @@ A pass over the existing suite shows several of the issue's listed gaps are
 - sh:datatype vs language-tagged literal: covered (`regression_259_*`)
 - sh:class across rdfs:subClassOf: covered (`regression_issue_265_*`)
 
-Genuine remaining gaps to add:
+Genuine remaining gap:
 1. `sh:and` tested with `sh:pattern`/`sh:in`/`sh:hasValue`/`sh:maxCount` inner
    shapes (only `sh:datatype` currently covered for `sh:and` specifically,
-   via `spec_s4_6_2_and_with_datatype_constraint`).
-2. A report-detail test asserting `sh:resultPath`/
-   `sh:sourceConstraintComponent`/severity/`sh:deactivated` actually appear
-   correctly together in a report (Turtle serialization) — no existing test
-   inspects `result_path`/`source_constraint`/`source_shape` on
-   `ValidationResult` or their Turtle rendering directly.
-3. Regression tests locking in the two confirmed fixes above
-   (`sh:languageIn` non-literal, `sh:lessThan`/`sh:lessThanOrEquals`
-   incomparable pairs including cross-type numeric/date), and one for the
-   `sh:equals` per-differing-value report-detail change.
+   via `spec_s4_6_2_and_with_datatype_constraint`). Added:
+   `regression_issue_266_and_{pattern,in,hasvalue,maxcount}`.
+
+Already closed by other work (checked after rebasing this branch onto
+`origin/main`, which pulled in PR #300/#264 — "resultPath/sourceConstraintComponent/severity/deactivated
+in a report" is fully covered by `regression_264_mincount_result_path_and_component`,
+`regression_264_class_result_path_and_component`,
+`regression_264_pattern_result_path_and_component`, and
+`regression_264_full_detail_in_turtle_report` (Turtle serialization), plus the
+pre-existing `regression_issue_262_*` (deactivated) and `regression_issue_263_*`
+(severity) tests. No new test added for this item — would duplicate #300's own
+coverage.
+
+Regression tests added locking in the two confirmed fixes:
+- `sh:languageIn` non-literal value node:
+  `regression_issue_266_languagein_non_literal_violates`.
+- `sh:lessThan`/`sh:lessThanOrEquals` incomparable pairs, including the
+  specific cross-type (numeric vs. date) `Ordering::Equal` fallthrough bug,
+  a non-literal (blank node) pair, the vacuous (no other-path values) case
+  that must still conform, and the "string/boolean pairs ARE SPARQL-comparable"
+  guard the advisor flagged (these must NOT become false positives):
+  `regression_issue_266_lessthan_cross_type_violates`,
+  `regression_issue_266_lessthanorequals_cross_type_violates`,
+  `regression_issue_266_lessthan_non_literal_violates`,
+  `regression_issue_266_lessthan_vacuous_no_other_values_conforms`,
+  `regression_issue_266_lessthan_string_pair_compared_normally`,
+  `regression_issue_266_lessthan_boolean_pair_compared_normally`.
+- `sh:equals` per-differing-value report detail:
+  `regression_issue_266_equals_reports_per_differing_value`, plus the
+  pre-existing `spec_s4_5_1_equals` was updated from asserting 1 result to 2
+  (one per differing value in the symmetric difference).
+
+## Correction after advisor review
+
+The initial plan draft proposed flipping `lit_comparable() == None` to
+"violation" wholesale for `sh:lessThan`/`sh:lessThanOrEquals`. This would have
+been a **new bug**: SPARQL's `<` operator (SPARQL 1.1 §17.3 operator mapping)
+IS defined for xsd:string/simple-literal pairs (via `fn:compare`) and
+xsd:boolean pairs (`op:boolean-less-than`), which `lit_comparable` does not
+recognize at all (it only covers numeric/date/dateTime). The fix instead adds
+a separate `sparql_compare`/`SparqlCmpValue` classification (not reusing or
+modifying the existing `Comparable`/`Ord` impl, which remains exactly as
+before and is still used unmodified by the value-range constraints) that
+recognizes numeric, string, boolean, date, and dateTime pairs, comparing
+within a matching kind and treating any other combination (including
+mismatched kinds, e.g. numeric vs. date) as incomparable ⇒ violation.
 
 Tests for confirmed bugs are added `#[ignore]`d first (red), then unignored
 once the fix lands (green). Tests locking in already-correct behavior

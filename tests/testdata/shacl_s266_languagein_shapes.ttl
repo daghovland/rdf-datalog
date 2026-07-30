@@ -1,0 +1,12 @@
+# Issue #266 — sh:languageIn on a non-literal value node.
+# Spec: https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
+# "For each value node that is either not a literal or that does not have a
+# language tag matching ..." — a non-literal value node always violates.
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:LanguageInNonLiteralShape
+    a sh:NodeShape ;
+    sh:targetNode ex:langInLiteralOk, ex:langInIriBad, ex:langInBlankBad ;
+    sh:property [ sh:path ex:v ; sh:languageIn ("en") ] .

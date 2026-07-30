@@ -150,6 +150,12 @@ fn shacl_testdata_parses() {
         "shacl_s264_message_shapes.ttl",
         "shacl_s264_qualified_interval_data.ttl",
         "shacl_s264_qualified_interval_shapes.ttl",
+        "shacl_s266_and_data.ttl",
+        "shacl_s266_and_shapes.ttl",
+        "shacl_s266_lessthan_data.ttl",
+        "shacl_s266_lessthan_shapes.ttl",
+        "shacl_s266_languagein_data.ttl",
+        "shacl_s266_languagein_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -628,7 +634,10 @@ fn spec_s4_4_5_uniquelang() {
 ///
 /// `EqualsExampleShape` requires `{ex:firstName} = {ex:givenName}`.
 /// `ex:Alice` both `"Alice"` → equal → conforms.
-/// `ex:Bob` `firstName "Bob"` vs `givenName "Bobby"` → not equal → 1 violation.
+/// `ex:Bob` `firstName "Bob"` vs `givenName "Bobby"` → not equal → one
+/// violation per differing value ("Bob" not in `{Bobby}`, "Bobby" not in
+/// `{Bob}`), per the spec's per-value-node text — see
+/// `regression_issue_266_equals_reports_per_differing_value` below.
 #[test]
 fn spec_s4_5_1_equals() {
     let data = load("shacl_s4_equals_data.ttl");
@@ -637,8 +646,8 @@ fn spec_s4_5_1_equals() {
     assert!(!report.conforms);
     assert_eq!(
         report.results.len(),
-        1,
-        "ex:Bob firstName ≠ givenName → sh:equals violated"
+        2,
+        "ex:Bob firstName ≠ givenName → sh:equals violated once per differing value"
     );
 }
 
@@ -2006,4 +2015,206 @@ fn regression_264_full_detail_in_turtle_report() {
         turtle.contains("sh:resultMessage \"Every person must have a name\""),
         "turtle report should contain sh:resultMessage:\n{turtle}"
     );
+}
+
+// ── Issue #266 — languageIn / lessThan suspicions, equals report-detail ─────
+
+/// `sh:languageIn` on a non-literal value node must violate — the spec's
+/// normative text ("For each value node that is either not a literal or that
+/// does not have a language tag matching ...") has no out-of-scope carve-out
+/// for non-literals.
+/// See <https://www.w3.org/TR/shacl/#LanguageInConstraintComponent> and
+/// <https://github.com/daghovland/rdf-datalog/issues/266>.
+#[test]
+fn regression_issue_266_languagein_non_literal_violates() {
+    let data = load("shacl_s266_languagein_data.ttl");
+    let shapes = load("shacl_s266_languagein_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("langInLiteralOk")),
+        "an en-tagged literal matching sh:languageIn (\"en\") conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("langInIriBad")),
+        "an IRI value node is not a literal — must violate sh:languageIn"
+    );
+    assert!(
+        has_violation(&report, &ex("langInBlankBad")),
+        "a blank-node value node is not a literal — must violate sh:languageIn"
+    );
+}
+
+/// `sh:lessThan` on a cross-type pair (numeric vs. date) — the spec says an
+/// incomparable pair violates ("... or where the two values cannot be
+/// compared, there is a validation result"). This is the concrete repro for
+/// the `Comparable::Ord` fallthrough bug: mismatched variants must NOT be
+/// treated as `Ordering::Equal`.
+/// See <https://www.w3.org/TR/shacl/#LessThanConstraintComponent> and
+/// <https://github.com/daghovland/rdf-datalog/issues/266>.
+#[test]
+fn regression_issue_266_lessthan_cross_type_violates() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("crossBad")),
+        "a number and a date cannot be SPARQL-compared — sh:lessThan must violate"
+    );
+}
+
+/// `sh:lessThanOrEquals` on the same cross-type pair. Before the fix, the
+/// `Comparable::Ord` fallthrough returned `Ordering::Equal` for a mismatched
+/// (Numeric, Date) pair, which satisfies `<=` — so this case silently
+/// conformed. It must violate instead, since the pair cannot be compared.
+#[test]
+fn regression_issue_266_lessthanorequals_cross_type_violates() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("leCrossBad")),
+        "a number and a date cannot be SPARQL-compared — sh:lessThanOrEquals must violate"
+    );
+}
+
+/// A blank-node (non-literal) value node can never be SPARQL-compared —
+/// `sh:lessThan` must violate, not silently skip.
+#[test]
+fn regression_issue_266_lessthan_non_literal_violates() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("nonLitBad")),
+        "a blank-node value node cannot be compared — sh:lessThan must violate"
+    );
+}
+
+/// A focus node with no values at all on the compared (`sh:lessThan`) path
+/// must still conform — there are no pairs to check, so the "for each pair"
+/// condition is vacuously satisfied. Guards against over-eagerly treating
+/// "no comparable value" as an automatic violation.
+#[test]
+fn regression_issue_266_lessthan_vacuous_no_other_values_conforms() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("vacuousOk")),
+        "no ex:missing values at all means no pairs to compare — must conform"
+    );
+}
+
+/// SPARQL's `<` operator IS defined for xsd:string-xsd:string (and simple
+/// literal) pairs (SPARQL 1.1 §17.3 operator mapping: `fn:compare`) — these
+/// must be compared normally, not treated as an incomparable/violating pair.
+#[test]
+fn regression_issue_266_lessthan_string_pair_compared_normally() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("strOk")),
+        "\"apple\" < \"banana\" lexicographically — must conform"
+    );
+    assert!(
+        has_violation(&report, &ex("strBad")),
+        "\"banana\" is not < \"apple\" — must violate"
+    );
+}
+
+/// SPARQL's `<` operator IS defined for xsd:boolean-xsd:boolean pairs
+/// (`op:boolean-less-than`) — these must be compared normally too.
+#[test]
+fn regression_issue_266_lessthan_boolean_pair_compared_normally() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("boolOk")),
+        "false < true — must conform"
+    );
+    assert!(
+        has_violation(&report, &ex("boolBad")),
+        "true is not < false — must violate"
+    );
+}
+
+/// `sh:equals` must report one violation per differing value (the symmetric
+/// difference of the two value sets), not a single synthetic-`rdf:nil`
+/// violation per focus node. Spec text (§4.5.1): "For each value node that
+/// does not exist as a value of the property $equals ... there is a
+/// validation result ... For each value of the property $equals ... that is
+/// not one of the value nodes, there is a validation result" — i.e. per term,
+/// in both directions.
+/// See <https://www.w3.org/TR/shacl/#EqualsConstraintComponent> and
+/// <https://github.com/daghovland/rdf-datalog/issues/266>.
+#[test]
+fn regression_issue_266_equals_reports_per_differing_value() {
+    let data = load("shacl_s4_equals_data.ttl");
+    let shapes = load("shacl_s4_equals_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let bob_results: Vec<_> = report
+        .results
+        .iter()
+        .filter(|r| r.focus_node.as_deref() == Some(&ex("Bob")))
+        .collect();
+    assert_eq!(
+        bob_results.len(),
+        2,
+        "ex:Bob firstName {{\"Bob\"}} vs givenName {{\"Bobby\"}} differ in both \
+         directions — one result per differing value, got: {bob_results:?}"
+    );
+    let values: std::collections::HashSet<&str> = bob_results
+        .iter()
+        .filter_map(|r| r.value.as_deref())
+        .collect();
+    assert!(
+        values
+            .iter()
+            .any(|v| v.contains("Bob") && !v.contains("Bobby")),
+        "expected a result whose value is \"Bob\", got {values:?}"
+    );
+    assert!(
+        values.iter().any(|v| v.contains("Bobby")),
+        "expected a result whose value is \"Bobby\", got {values:?}"
+    );
+}
+
+// ── Issue #266 — sh:and coverage gap (only sh:datatype was tested before) ──
+
+#[test]
+fn regression_issue_266_and_pattern() {
+    let data = load("shacl_s266_and_data.ttl");
+    let shapes = load("shacl_s266_and_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("andPatOk")));
+    assert!(has_violation(&report, &ex("andPatBad")));
+}
+
+#[test]
+fn regression_issue_266_and_in() {
+    let data = load("shacl_s266_and_data.ttl");
+    let shapes = load("shacl_s266_and_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("andInOk")));
+    assert!(has_violation(&report, &ex("andInBad")));
+}
+
+#[test]
+fn regression_issue_266_and_hasvalue() {
+    let data = load("shacl_s266_and_data.ttl");
+    let shapes = load("shacl_s266_and_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("andHvOk")));
+    assert!(has_violation(&report, &ex("andHvBad")));
+}
+
+#[test]
+fn regression_issue_266_and_maxcount() {
+    let data = load("shacl_s266_and_data.ttl");
+    let shapes = load("shacl_s266_and_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("andMcOk")));
+    assert!(has_violation(&report, &ex("andMcBad")));
 }
