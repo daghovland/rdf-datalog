@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/#core-components>
 
-use crate::{Severity, graph, shapes, vocab};
+use crate::{ViolMeta, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
 use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
@@ -27,13 +27,15 @@ use std::collections::{HashSet, VecDeque};
 
 /// Evaluate all Phase 2 property constraints for every shape and add violation
 /// triples to `work`.  Returns the violation-predicate IDs paired with the
-/// producing shape's `Severity`.
+/// producing shape's `ViolMeta` (severity, source shape, path, constraint
+/// component, message). See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 pub fn eval_all(
     parsed: &[shapes::ParsedShape],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<(GraphElementId, Severity)> {
+) -> Vec<(GraphElementId, ViolMeta)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         // sh:deactivated — skip this shape's constraints entirely (SHACL §3).
@@ -61,7 +63,18 @@ pub fn eval_all(
                     shapes_store,
                     work,
                 );
-                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                viol_preds.extend(new.into_iter().map(|(v, component)| {
+                    (
+                        v,
+                        ViolMeta::new(
+                            shapes_store,
+                            shape,
+                            prop.shapes_id,
+                            Some(&prop.path),
+                            component,
+                        ),
+                    )
+                }));
             }
         }
 
@@ -77,7 +90,12 @@ pub fn eval_all(
             };
             let new =
                 eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(new.into_iter().map(|(v, component)| {
+                (
+                    v,
+                    ViolMeta::new(shapes_store, shape, shape.shapes_id, None, component),
+                )
+            }));
         }
 
         // sh:nodeKind at node shape level — check each target node itself.
@@ -89,13 +107,27 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(
+                    shapes_store,
+                    shape,
+                    shape.shapes_id,
+                    None,
+                    vocab::CC_NODE_KIND,
+                ),
+            ));
         }
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
             let new = eval_xone(shape, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(new.into_iter().map(|v| {
+                (
+                    v,
+                    ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_XONE),
+                )
+            }));
         }
 
         // sh:not — violation iff the negated inner shape conforms. Evaluated here
@@ -112,7 +144,10 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_NOT),
+            ));
         }
 
         // sh:or — violation iff NO disjunct's inner shape conforms. See sh:not above
@@ -128,7 +163,10 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_OR),
+            ));
         }
 
         // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
@@ -168,7 +206,18 @@ pub fn eval_all(
                             shapes_store,
                             work,
                         );
-                        viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                        viol_preds.extend(new.into_iter().map(|(v, component)| {
+                            (
+                                v,
+                                ViolMeta::new(
+                                    shapes_store,
+                                    shape,
+                                    prop_node,
+                                    Some(&path_str),
+                                    component,
+                                ),
+                            )
+                        }));
                     }
                 }
             }
@@ -193,6 +242,16 @@ struct ConstraintCoord {
 
 // ── Property constraint dispatch ──────────────────────────────────────────────
 
+/// Evaluate one Phase 2 property constraint, returning every violation
+/// predicate it produced, each paired with its own `sh:sourceConstraintComponent`
+/// IRI. For every constraint type except `sh:qualifiedValueShape` (see
+/// `eval_qualified_value`) this is always zero or one predicate, tagged with
+/// `constraint.component_iri()` — but the pairing lives here, inside the
+/// match, rather than being applied uniformly by the caller, specifically so
+/// `sh:qualifiedValueShape` can return up to two independently-tagged
+/// predicates (one per bound) when both `sh:qualifiedMinCount` and
+/// `sh:qualifiedMaxCount` are declared. See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
     coord: ConstraintCoord,
@@ -201,7 +260,7 @@ fn eval_prop_constraint(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
+) -> Vec<(GraphElementId, &'static str)> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
     let values_of = |node: GraphElementId| -> Vec<GraphElementId> { values_for(data, node, path) };
@@ -219,7 +278,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.1.3 sh:nodeKind
@@ -232,7 +291,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.3 value range
@@ -248,7 +307,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MaxInclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_inclusive(si, pi));
@@ -262,7 +321,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MinExclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_min_exclusive(si, pi));
@@ -276,7 +335,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MaxExclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_exclusive(si, pi));
@@ -290,7 +349,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.1 sh:minLength
@@ -310,7 +369,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.2 sh:maxLength
@@ -330,7 +389,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.3 sh:pattern
@@ -358,7 +417,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.4 sh:languageIn
@@ -382,7 +441,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.5 sh:uniqueLang
@@ -403,7 +462,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.5.1 sh:equals — value sets must be identical
@@ -419,7 +478,7 @@ fn eval_prop_constraint(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.5.2 sh:disjoint — value sets must not overlap
@@ -433,7 +492,7 @@ fn eval_prop_constraint(
                     add_viol(work, *node, viol, *shared);
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.5.3 sh:lessThan — every path value must be strictly < every other value
@@ -453,7 +512,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.5.4 sh:lessThanOrEquals
@@ -473,7 +532,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.7.1 sh:node — values must conform to a referenced node shape
@@ -485,9 +544,16 @@ fn eval_prop_constraint(
             data,
             shapes_store,
             work,
-        ),
+        )
+        .into_iter()
+        .map(|v| (v, constraint.component_iri()))
+        .collect(),
 
-        // §4.7.3 sh:qualifiedValueShape
+        // §4.7.3 sh:qualifiedValueShape — sh:qualifiedMinCount/sh:qualifiedMaxCount
+        // are two independent constraint components (see `eval_qualified_value`),
+        // which is why this arm, unlike every other, does not tag its result with
+        // a single `constraint.component_iri()` — `eval_qualified_value` already
+        // returns each predicate paired with its own correct component.
         shapes::PropConstraint::QualifiedValueShape {
             shapes_id,
             min,
@@ -575,6 +641,21 @@ struct QualifiedSpec {
     max: Option<u64>,
 }
 
+/// `sh:qualifiedMinCount` and `sh:qualifiedMaxCount` are two independent SHACL
+/// constraint components (`QualifiedMinCountConstraintComponent` /
+/// `QualifiedMaxCountConstraintComponent` — there is no unified
+/// "QualifiedValueShapeConstraintComponent" in the spec) that happen to share
+/// one `sh:qualifiedValueShape` parameter in this crate's `PropConstraint`
+/// representation. When a property shape declares both (an interval), each
+/// bound is checked and reported **independently** — its own violation
+/// predicate, its own correct `sh:sourceConstraintComponent` — rather than
+/// merging into one ambiguous "fails" check that can only guess which bound
+/// actually tripped. See PR #300 review / #264.
+///
+/// `qualifying_count` is recomputed once per bound when both are declared,
+/// rather than once and reused — a small, deliberate duplication of work in
+/// exchange for keeping each bound's check fully independent and simple to
+/// read; the target sets involved are validation-time, not hot-loop, sized.
 fn eval_qualified_value(
     coord: ConstraintCoord,
     spec: QualifiedSpec,
@@ -583,23 +664,36 @@ fn eval_qualified_value(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
-    let viol = graph::intern_iri(work, &vocab::viol_qualified_value(coord.si, coord.pi));
+) -> Vec<(GraphElementId, &'static str)> {
     let nil = graph::intern_iri(work, vocab::INT_NIL);
+    let mut result = Vec::new();
 
-    for node in targets {
-        let qualifying_count = values_for(data, *node, path)
+    let qualifying_count = |node: GraphElementId| -> u64 {
+        values_for(data, node, path)
             .iter()
             .filter(|&&val| shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store))
-            .count() as u64;
+            .count() as u64
+    };
 
-        let fails = spec.min.is_some_and(|n| qualifying_count < n)
-            || spec.max.is_some_and(|n| qualifying_count > n);
-        if fails {
-            add_viol(work, *node, viol, nil);
+    if let Some(min) = spec.min {
+        let viol = graph::intern_iri(work, &vocab::viol_qualified_min_count(coord.si, coord.pi));
+        for node in targets {
+            if qualifying_count(*node) < min {
+                add_viol(work, *node, viol, nil);
+            }
         }
+        result.push((viol, vocab::CC_QUALIFIED_MIN_COUNT));
     }
-    vec![viol]
+    if let Some(max) = spec.max {
+        let viol = graph::intern_iri(work, &vocab::viol_qualified_max_count(coord.si, coord.pi));
+        for node in targets {
+            if qualifying_count(*node) > max {
+                add_viol(work, *node, viol, nil);
+            }
+        }
+        result.push((viol, vocab::CC_QUALIFIED_MAX_COUNT));
+    }
+    result
 }
 
 // ── Inner shape conformance (shared by sh:not/sh:or/sh:node/sh:xone/sh:qualifiedValueShape) ──

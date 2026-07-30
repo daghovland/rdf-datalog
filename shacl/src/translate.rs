@@ -26,7 +26,7 @@ Contact: hovlanddag@gmail.com
 //! The sole exception is `InnerShapeRef::shapes_id`, which is passed back to the
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
-use crate::Severity;
+use crate::ViolMeta;
 use crate::graph;
 use crate::shapes::{ElemValue, ParsedShape, PropConstraint, Target, parse_prop_constraints};
 use crate::vocab::*;
@@ -41,18 +41,19 @@ use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
 ///
 /// Returns `(rules, viol_preds)`.  Every triple `(n, p, v)` in the working store
 /// after `evaluate_rules` where `p` is one of `viol_preds` is one `ValidationResult`,
-/// with severity given by the paired `Severity` (the producing shape's `sh:severity`).
+/// with metadata given by the paired `ViolMeta` (the producing shape's `sh:severity`,
+/// IRI, `sh:message`, the property path if any, and the constraint-component IRI).
 pub fn shapes_to_rules(
     parsed: &[ParsedShape],
     shapes: &Datastore,
     work: &mut Datastore,
-) -> (Vec<Rule>, Vec<(GraphElementId, Severity)>) {
+) -> (Vec<Rule>, Vec<(GraphElementId, ViolMeta)>) {
     let true_id = graph::intern_iri(work, INT_TRUE);
     let nil_id = graph::intern_iri(work, INT_NIL);
     let rdf_type_id = graph::intern_iri(work, RDF_TYPE);
 
     let mut rules: Vec<Rule> = Vec::new();
-    let mut viol_preds: Vec<(GraphElementId, Severity)> = Vec::new();
+    let mut viol_preds: Vec<(GraphElementId, ViolMeta)> = Vec::new();
 
     for shape in parsed {
         // sh:deactivated — a deactivated shape produces no results from any of
@@ -90,7 +91,18 @@ pub fn shapes_to_rules(
                     &mut rules,
                     work,
                 );
-                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                viol_preds.extend(new.into_iter().map(|v| {
+                    (
+                        v,
+                        ViolMeta::new(
+                            shapes,
+                            shape,
+                            prop.shapes_id,
+                            Some(&prop.path),
+                            constraint.component_iri(),
+                        ),
+                    )
+                }));
             }
         }
 
@@ -111,7 +123,18 @@ pub fn shapes_to_rules(
                 &mut rules,
                 work,
             );
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(new.into_iter().map(|v| {
+                (
+                    v,
+                    ViolMeta::new(
+                        shapes,
+                        shape,
+                        shape.shapes_id,
+                        None,
+                        constraint.component_iri(),
+                    ),
+                )
+            }));
         }
 
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
@@ -162,7 +185,18 @@ pub fn shapes_to_rules(
                             &mut rules,
                             work,
                         );
-                        viol_preds.extend(viols.into_iter().map(|v| (v, shape.severity)));
+                        viol_preds.extend(viols.into_iter().map(|v| {
+                            (
+                                v,
+                                ViolMeta::new(
+                                    shapes,
+                                    shape,
+                                    prop_node,
+                                    Some(&path_iri),
+                                    constraint.component_iri(),
+                                ),
+                            )
+                        }));
                     }
                 }
             }

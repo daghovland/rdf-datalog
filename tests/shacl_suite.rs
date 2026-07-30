@@ -146,6 +146,10 @@ fn shacl_testdata_parses() {
         "shacl_s278_cycle_shapes.ttl",
         "shacl_s278_deep_data.ttl",
         "shacl_s278_deep_shapes.ttl",
+        "shacl_s264_message_data.ttl",
+        "shacl_s264_message_shapes.ttl",
+        "shacl_s264_qualified_interval_data.ttl",
+        "shacl_s264_qualified_interval_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -849,6 +853,13 @@ fn spec_s4_7_3_qualified_value_shape() {
         1,
         "ex:Bob has only 1 IRI parent; qualifiedMinCount 2 violated"
     );
+    // Regression for #264 PR review: only sh:qualifiedMinCount is declared
+    // here, so the violation's sh:sourceConstraintComponent must be the
+    // *min*-count component specifically, not a generic/ambiguous guess.
+    assert_eq!(
+        report.results[0].source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#QualifiedMinCountConstraintComponent")
+    );
 }
 
 // ── §4.8  Other Constraint Components ────────────────────────────────────────
@@ -958,6 +969,17 @@ fn spec_s4_7_2_property_shape_ref() {
         1,
         "ex:Bob has no ex:name → sh:minCount 1 via named PropertyShape violated"
     );
+    // Regression for #264 PR review: sh:sourceShape must be the actual named
+    // property shape that declares the violated constraint
+    // (ex:NamePropertyShape), NOT the enclosing node shape that merely
+    // references it (ex:PersonShape) via sh:property -- real-world SHACL
+    // property shapes are commonly named exactly like this fixture, not
+    // anonymous, so falling back to the parent shape's identity here would
+    // be a real, user-visible correctness bug, not just an edge case.
+    assert_eq!(
+        report.results[0].source_shape,
+        "http://example.com/ns#NamePropertyShape"
+    );
 }
 
 // ── §4.7.3 sh:qualifiedMaxCount ──────────────────────────────────────────────
@@ -979,6 +1001,61 @@ fn spec_s4_7_3_qualified_max_count() {
         report.results.len(),
         1,
         "ex:Alice has 2 IRI parents; qualifiedMaxCount 1 violated"
+    );
+    // Regression for #264 PR review: only sh:qualifiedMaxCount is declared
+    // here, so the violation's sh:sourceConstraintComponent must be the
+    // *max*-count component specifically.
+    assert_eq!(
+        report.results[0].source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#QualifiedMaxCountConstraintComponent")
+    );
+}
+
+/// Regression for #264 PR review ("when both min and max are declared, it's
+/// an interval — can that be used to simplify?"): a property shape
+/// declaring BOTH `sh:qualifiedMinCount` and `sh:qualifiedMaxCount` must
+/// check each bound independently and report each violation with its own
+/// correct, specific `sh:sourceConstraintComponent` — never merging into one
+/// ambiguous check that can only guess which bound actually failed.
+///
+/// `ex:Carol` has 0 qualifying (IRI) parents: violates BOTH `qualifiedMinCount
+/// 1` (0 < 1) and would-be `qualifiedMaxCount 2` (0 is not > 2, so max does
+/// NOT fire) — so exactly one violation (min) is expected here.
+/// `ex:Dave` has 3 qualifying parents: does not violate min (3 >= 1), but
+/// does violate max (3 > 2) — exactly one violation (max) is expected.
+#[test]
+fn regression_264_qualified_interval_reports_independent_components() {
+    let data = load("shacl_s264_qualified_interval_data.ttl");
+    let shapes = load("shacl_s264_qualified_interval_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        2,
+        "expected exactly 2 violations (Carol: min, Dave: max), got: {:#?}",
+        report.results
+    );
+
+    let carol = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#Carol"))
+        .expect("ex:Carol should have a violation (0 qualifying parents < min 1)");
+    assert_eq!(
+        carol.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#QualifiedMinCountConstraintComponent"),
+        "Carol's violation is a min-count failure, not max"
+    );
+
+    let dave = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some("http://example.com/ns#Dave"))
+        .expect("ex:Dave should have a violation (3 qualifying parents > max 2)");
+    assert_eq!(
+        dave.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#QualifiedMaxCountConstraintComponent"),
+        "Dave's violation is a max-count failure, not min"
     );
 }
 
@@ -1792,5 +1869,141 @@ fn regression_issue_278_deep_acyclic_chain_conforms() {
         "a deep but acyclic sh:not chain must be evaluated to its correct \
          (even-negation-count => conforms) answer, not rejected by an \
          over-eager cycle guard"
+    );
+}
+
+// ── §264  Validation result detail (resultPath/sourceShape/sourceConstraintComponent/message) ──
+//
+// Regression tests for issue #264: `collect_violations` unconditionally set
+// `result_path`, `source_shape`, `source_constraint`, and `message` to `None`
+// on every `ValidationResult`, and `sh:message` on a shape was never even
+// parsed. Source: <https://github.com/daghovland/rdf-datalog/issues/264>
+
+/// `sh:minCount` violation must carry `result_path` (the property's `sh:path`
+/// IRI) and `source_constraint` (`sh:MinCountConstraintComponent`).
+#[test]
+fn regression_264_mincount_result_path_and_component() {
+    let data = load("shacl_s4_mincount_data.ttl");
+    let shapes = load("shacl_s4_mincount_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#name")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#MinCountConstraintComponent")
+    );
+    assert_eq!(
+        result.source_shape,
+        "http://example.com/ns#MinCountExampleShape"
+    );
+}
+
+/// `sh:class` violation must carry `result_path` (`ex:address`) and
+/// `source_constraint` (`sh:ClassConstraintComponent`).
+#[test]
+fn regression_264_class_result_path_and_component() {
+    let data = load("shacl_s4_class_data.ttl");
+    let shapes = load("shacl_s4_class_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#address")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#ClassConstraintComponent")
+    );
+    // ex:ClassExampleShape's sh:class constraint lives on an ANONYMOUS
+    // sh:property [...] block, not on the named node shape itself -- the
+    // correct sh:sourceShape is that property shape's own (blank) node, per
+    // real SHACL semantics, not the enclosing named shape. See #264 PR
+    // review: property shapes are commonly named in real-world SHACL, but
+    // when one genuinely is a blank node (as here), sourceShape must say so
+    // rather than silently substituting a different, named shape.
+    assert!(
+        result.source_shape.starts_with("_:"),
+        "expected the anonymous property shape's own blank-node id, got: {}",
+        result.source_shape
+    );
+}
+
+/// `sh:pattern` violation must carry `result_path` (`ex:bCode`) and
+/// `source_constraint` (`sh:PatternConstraintComponent`).
+#[test]
+fn regression_264_pattern_result_path_and_component() {
+    let data = load("shacl_s4_pattern_data.ttl");
+    let shapes = load("shacl_s4_pattern_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#bCode")
+    );
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#PatternConstraintComponent")
+    );
+    // Same reasoning as regression_264_class_result_path_and_component above:
+    // ex:PatternExampleShape's sh:pattern constraint lives on an anonymous
+    // sh:property [...] block, so the correct sh:sourceShape is that
+    // property shape's own blank node, not the named enclosing shape.
+    assert!(
+        result.source_shape.starts_with("_:"),
+        "expected the anonymous property shape's own blank-node id, got: {}",
+        result.source_shape
+    );
+}
+
+/// `sh:message` on a shape must be parsed and surfaced verbatim on every
+/// `ValidationResult` it produces.
+#[test]
+fn regression_264_message_populated() {
+    let data = load("shacl_s264_message_data.ttl");
+    let shapes = load("shacl_s264_message_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(
+        report.results.len(),
+        1,
+        "ex:Bob has no ex:name → 1 violation"
+    );
+    assert_eq!(
+        report.results[0].message.as_deref(),
+        Some("Every person must have a name")
+    );
+}
+
+/// `report_to_turtle` must emit `sh:resultPath`, `sh:sourceShape`,
+/// `sh:sourceConstraintComponent`, and `sh:resultMessage` — not just
+/// `sh:focusNode`/`sh:value` as before #264.
+#[test]
+fn regression_264_full_detail_in_turtle_report() {
+    let data = load("shacl_s264_message_data.ttl");
+    let shapes = load("shacl_s264_message_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("sh:resultPath <http://example.com/ns#name>"),
+        "turtle report should contain sh:resultPath:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:sourceShape <http://example.com/ns#MessageExampleShape>"),
+        "turtle report should contain sh:sourceShape:\n{turtle}"
+    );
+    assert!(
+        turtle.contains(
+            "sh:sourceConstraintComponent <http://www.w3.org/ns/shacl#MinCountConstraintComponent>"
+        ),
+        "turtle report should contain sh:sourceConstraintComponent:\n{turtle}"
+    );
+    assert!(
+        turtle.contains("sh:resultMessage \"Every person must have a name\""),
+        "turtle report should contain sh:resultMessage:\n{turtle}"
     );
 }

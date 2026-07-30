@@ -89,6 +89,55 @@ pub const SH_VIOLATION: &str = "http://www.w3.org/ns/shacl#Violation";
 pub const SH_WARNING: &str = "http://www.w3.org/ns/shacl#Warning";
 pub const SH_INFO: &str = "http://www.w3.org/ns/shacl#Info";
 
+// §3.4 sh:message — a human-readable explanation attached to a shape,
+// surfaced on every `ValidationResult` it produces (`sh:resultMessage`).
+// See [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+pub const SH_MESSAGE: &str = "http://www.w3.org/ns/shacl#message";
+
+// ── Constraint component IRIs (`sh:sourceConstraintComponent`) ────────────────
+//
+// One IRI per constraint component, exactly as named in the W3C SHACL spec's
+// component table: <https://www.w3.org/TR/shacl/#core-components>. Used to
+// populate `ValidationResult::source_constraint`. See
+// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+
+pub const CC_CLASS: &str = "http://www.w3.org/ns/shacl#ClassConstraintComponent";
+pub const CC_DATATYPE: &str = "http://www.w3.org/ns/shacl#DatatypeConstraintComponent";
+pub const CC_NODE_KIND: &str = "http://www.w3.org/ns/shacl#NodeKindConstraintComponent";
+pub const CC_MIN_COUNT: &str = "http://www.w3.org/ns/shacl#MinCountConstraintComponent";
+pub const CC_MAX_COUNT: &str = "http://www.w3.org/ns/shacl#MaxCountConstraintComponent";
+pub const CC_MIN_INCLUSIVE: &str = "http://www.w3.org/ns/shacl#MinInclusiveConstraintComponent";
+pub const CC_MAX_INCLUSIVE: &str = "http://www.w3.org/ns/shacl#MaxInclusiveConstraintComponent";
+pub const CC_MIN_EXCLUSIVE: &str = "http://www.w3.org/ns/shacl#MinExclusiveConstraintComponent";
+pub const CC_MAX_EXCLUSIVE: &str = "http://www.w3.org/ns/shacl#MaxExclusiveConstraintComponent";
+pub const CC_MIN_LENGTH: &str = "http://www.w3.org/ns/shacl#MinLengthConstraintComponent";
+pub const CC_MAX_LENGTH: &str = "http://www.w3.org/ns/shacl#MaxLengthConstraintComponent";
+pub const CC_PATTERN: &str = "http://www.w3.org/ns/shacl#PatternConstraintComponent";
+pub const CC_LANGUAGE_IN: &str = "http://www.w3.org/ns/shacl#LanguageInConstraintComponent";
+pub const CC_UNIQUE_LANG: &str = "http://www.w3.org/ns/shacl#UniqueLangConstraintComponent";
+pub const CC_EQUALS: &str = "http://www.w3.org/ns/shacl#EqualsConstraintComponent";
+pub const CC_DISJOINT: &str = "http://www.w3.org/ns/shacl#DisjointConstraintComponent";
+pub const CC_LESS_THAN: &str = "http://www.w3.org/ns/shacl#LessThanConstraintComponent";
+pub const CC_LESS_THAN_OR_EQUALS: &str =
+    "http://www.w3.org/ns/shacl#LessThanOrEqualsConstraintComponent";
+pub const CC_NOT: &str = "http://www.w3.org/ns/shacl#NotConstraintComponent";
+pub const CC_AND: &str = "http://www.w3.org/ns/shacl#AndConstraintComponent";
+pub const CC_OR: &str = "http://www.w3.org/ns/shacl#OrConstraintComponent";
+pub const CC_XONE: &str = "http://www.w3.org/ns/shacl#XoneConstraintComponent";
+pub const CC_NODE: &str = "http://www.w3.org/ns/shacl#NodeConstraintComponent";
+// Note: there is no unified "QualifiedValueShapeConstraintComponent" in the
+// spec vocabulary (verified against https://www.w3.org/ns/shacl.ttl) — only
+// separate Min/Max components, since sh:qualifiedMinCount and
+// sh:qualifiedMaxCount are independent parameters of the same shape-based
+// constraint. See #264.
+pub const CC_QUALIFIED_MIN_COUNT: &str =
+    "http://www.w3.org/ns/shacl#QualifiedMinCountConstraintComponent";
+pub const CC_QUALIFIED_MAX_COUNT: &str =
+    "http://www.w3.org/ns/shacl#QualifiedMaxCountConstraintComponent";
+pub const CC_CLOSED: &str = "http://www.w3.org/ns/shacl#ClosedConstraintComponent";
+pub const CC_HAS_VALUE: &str = "http://www.w3.org/ns/shacl#HasValueConstraintComponent";
+pub const CC_IN: &str = "http://www.w3.org/ns/shacl#InConstraintComponent";
+
 // ── Synthetic marker IRIs (internal to this implementation) ───────────────────
 //
 // These are minted into the working Datastore as predicate IRIs during validation.
@@ -234,6 +283,9 @@ pub fn viol_less_than_or_equals(shape_idx: usize, prop_idx: usize) -> String {
 pub fn viol_node_shape(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:node")
 }
-pub fn viol_qualified_value(shape_idx: usize, prop_idx: usize) -> String {
-    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedValue")
+pub fn viol_qualified_min_count(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedMinCount")
+}
+pub fn viol_qualified_max_count(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:qualifiedMaxCount")
 }
