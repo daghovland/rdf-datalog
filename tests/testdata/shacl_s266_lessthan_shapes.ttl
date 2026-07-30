@@ -40,3 +40,10 @@ ex:LessThanNonLiteralShape
     a sh:NodeShape ;
     sh:targetNode ex:nonLitBad ;
     sh:property [ sh:path ex:x ; sh:lessThan ex:y ] .
+
+# Language-tagged literals are not comparable via SPARQL `<` (op mapping only
+# covers simple literals/xsd:string), even with matching tags — must violate.
+ex:LessThanLangTaggedShape
+    a sh:NodeShape ;
+    sh:targetNode ex:langBad ;
+    sh:property [ sh:path ex:l1 ; sh:lessThan ex:l2 ] .

@@ -486,8 +486,17 @@ fn eval_prop_constraint(
                 let path_vals: HashSet<GraphElementId> = values_of(*node).into_iter().collect();
                 let other_vals: HashSet<GraphElementId> =
                     path_values(data, *node, other_path).into_iter().collect();
-                for differing in path_vals.symmetric_difference(&other_vals) {
-                    add_viol(work, *node, viol, *differing);
+                // Sort the symmetric difference before emitting: HashSet
+                // iteration order is nondeterministic (RandomState varies
+                // per process), and we want the report's result order to be
+                // stable across runs.
+                let mut differing: Vec<GraphElementId> = path_vals
+                    .symmetric_difference(&other_vals)
+                    .copied()
+                    .collect();
+                differing.sort_unstable();
+                for val in differing {
+                    add_viol(work, *node, viol, val);
                 }
             }
             vec![(viol, constraint.component_iri())]
@@ -1190,6 +1199,15 @@ impl Ord for Comparable {
             }
             (Comparable::Date(a), Comparable::Date(b)) => a.cmp(b),
             (Comparable::DateTime(a), Comparable::DateTime(b)) => a.cmp(b),
+            // Mismatched variants (e.g. Numeric vs. Date) are not actually
+            // equal — they're a type error / "cannot be compared" per
+            // SPARQL/XPath comparison semantics. This fallthrough is used by
+            // `bound_to_comparable` for the sh:minInclusive/maxInclusive/
+            // minExclusive/maxExclusive value-range components, which is a
+            // known, tracked gap distinct from the sh:lessThan/
+            // lessThanOrEquals fix in #266 (which replaced this Ord-based
+            // path with `sparql_compare` for those two components only).
+            // See https://github.com/daghovland/rdf-datalog/issues/304.
             _ => std::cmp::Ordering::Equal,
         }
     }

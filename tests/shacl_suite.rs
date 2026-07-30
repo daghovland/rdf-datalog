@@ -2140,6 +2140,23 @@ fn regression_issue_266_lessthan_boolean_pair_compared_normally() {
     );
 }
 
+/// SPARQL's `<` operator mapping (§17.3) defines `fn:compare` for simple
+/// literals and xsd:string, not `rdf:langString` — a pair of language-tagged
+/// literals (even with matching tags and otherwise-comparable lexical forms)
+/// is a type error, i.e. "cannot be compared", and must violate per
+/// `sh:LessThanConstraintComponent`'s normative text.
+#[test]
+fn regression_issue_266_lessthan_lang_tagged_pair_violates() {
+    let data = load("shacl_s266_lessthan_data.ttl");
+    let shapes = load("shacl_s266_lessthan_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        has_violation(&report, &ex("langBad")),
+        "language-tagged literals are not SPARQL `<`-comparable — must violate \
+         even though \"apple\"@en < \"banana\"@en lexically"
+    );
+}
+
 /// `sh:equals` must report one violation per differing value (the symmetric
 /// difference of the two value sets), not a single synthetic-`rdf:nil`
 /// violation per focus node. Spec text (§4.5.1): "For each value node that
