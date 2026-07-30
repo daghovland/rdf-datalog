@@ -1,0 +1,15 @@
+# Issue #266 — sh:and coverage gap data graph.
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX ex: <http://example.com/ns#>
+
+ex:andPatOk  ex:v "foobar" .
+ex:andPatBad ex:v "barfoo" .
+
+ex:andInOk  ex:v ex:A .
+ex:andInBad ex:v ex:C .
+
+ex:andHvOk  ex:v ex:Expected .
+ex:andHvBad ex:v ex:Other .
+
+ex:andMcOk  ex:v ex:One .
+ex:andMcBad ex:v ex:One, ex:Two .

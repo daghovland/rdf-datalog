@@ -1,0 +1,7 @@
+# Issue #266 — sh:languageIn on a non-literal value node data graph.
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX ex: <http://example.com/ns#>
+
+ex:langInLiteralOk ex:v "hello"@en .
+ex:langInIriBad    ex:v ex:SomeIri .
+ex:langInBlankBad  ex:v [] .
