@@ -1,0 +1,11 @@
+# Regression test data for issue #264 — sh:message parsing.
+# Source: https://www.w3.org/TR/shacl/#message
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MessageExampleShape
+    a sh:PropertyShape ;
+    sh:targetNode ex:Alice, ex:Bob ;
+    sh:path ex:name ;
+    sh:minCount 1 ;
+    sh:message "Every person must have a name" .

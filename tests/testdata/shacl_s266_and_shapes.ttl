@@ -1,0 +1,34 @@
+# Issue #266 — sh:and coverage gap: only sh:datatype was previously tested for
+# sh:and inner shapes (spec_s4_6_2_and_with_datatype_constraint); sh:or/sh:not
+# already got pattern/in/hasValue/maxCount coverage via #258, sh:and did not.
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:AndPatternShape
+    a sh:NodeShape ;
+    sh:targetNode ex:andPatOk, ex:andPatBad ;
+    sh:and (
+        [ sh:property [ sh:path ex:v ; sh:pattern "^foo" ] ]
+    ) .
+
+ex:AndInShape
+    a sh:NodeShape ;
+    sh:targetNode ex:andInOk, ex:andInBad ;
+    sh:and (
+        [ sh:property [ sh:path ex:v ; sh:in ( ex:A ex:B ) ] ]
+    ) .
+
+ex:AndHasValueShape
+    a sh:NodeShape ;
+    sh:targetNode ex:andHvOk, ex:andHvBad ;
+    sh:and (
+        [ sh:property [ sh:path ex:v ; sh:hasValue ex:Expected ] ]
+    ) .
+
+ex:AndMaxCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:andMcOk, ex:andMcBad ;
+    sh:and (
+        [ sh:property [ sh:path ex:v ; sh:maxCount 1 ] ]
+    ) .

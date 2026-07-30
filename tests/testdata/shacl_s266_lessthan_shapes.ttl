@@ -1,0 +1,49 @@
+# Issue #266 — sh:lessThan / sh:lessThanOrEquals incomparable-pair coverage.
+# Spec: https://www.w3.org/TR/shacl/#LessThanConstraintComponent
+# "... or where the two values cannot be compared, there is a validation result."
+# https://github.com/daghovland/rdf-datalog/issues/266
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+# Cross-type (numeric vs. date) is not a SPARQL-comparable pair — must violate,
+# regardless of the concrete values.
+ex:LessThanCrossTypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:crossBad ;
+    sh:property [ sh:path ex:num ; sh:lessThan ex:date ] .
+
+ex:LessThanOrEqualsCrossTypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:leCrossBad ;
+    sh:property [ sh:path ex:num ; sh:lessThanOrEquals ex:date ] .
+
+# string-string and boolean-boolean pairs ARE SPARQL-comparable (§17.3
+# operator mapping) and must be compared normally, not treated as incomparable.
+ex:LessThanStringShape
+    a sh:NodeShape ;
+    sh:targetNode ex:strOk, ex:strBad ;
+    sh:property [ sh:path ex:s1 ; sh:lessThan ex:s2 ] .
+
+ex:LessThanBooleanShape
+    a sh:NodeShape ;
+    sh:targetNode ex:boolOk, ex:boolBad ;
+    sh:property [ sh:path ex:b1 ; sh:lessThan ex:b2 ] .
+
+# No values at all on the compared path: vacuously true (no pairs to check).
+ex:LessThanVacuousShape
+    a sh:NodeShape ;
+    sh:targetNode ex:vacuousOk ;
+    sh:property [ sh:path ex:x ; sh:lessThan ex:missing ] .
+
+# A non-literal value node (blank node) can never be SPARQL-compared — must violate.
+ex:LessThanNonLiteralShape
+    a sh:NodeShape ;
+    sh:targetNode ex:nonLitBad ;
+    sh:property [ sh:path ex:x ; sh:lessThan ex:y ] .
+
+# Language-tagged literals are not comparable via SPARQL `<` (op mapping only
+# covers simple literals/xsd:string), even with matching tags — must violate.
+ex:LessThanLangTaggedShape
+    a sh:NodeShape ;
+    sh:targetNode ex:langBad ;
+    sh:property [ sh:path ex:l1 ; sh:lessThan ex:l2 ] .

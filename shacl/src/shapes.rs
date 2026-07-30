@@ -22,6 +22,61 @@ use ingress::RDF_TYPE;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+impl PropConstraint {
+    /// The `sh:sourceConstraintComponent` IRI for this constraint's kind, per
+    /// the W3C SHACL spec's constraint-component table:
+    /// <https://www.w3.org/TR/shacl/#core-components>. Used to populate
+    /// `ValidationResult::source_constraint`. See
+    /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub fn component_iri(&self) -> &'static str {
+        use crate::vocab::*;
+        match self {
+            PropConstraint::MinCount(_) => CC_MIN_COUNT,
+            PropConstraint::MaxCount(_) => CC_MAX_COUNT,
+            PropConstraint::Class(_) => CC_CLASS,
+            PropConstraint::Datatype(_) => CC_DATATYPE,
+            PropConstraint::NodeKind(_) => CC_NODE_KIND,
+            PropConstraint::HasValue(_) => CC_HAS_VALUE,
+            PropConstraint::In(_) => CC_IN,
+            PropConstraint::MinLength(_) => CC_MIN_LENGTH,
+            PropConstraint::MaxLength(_) => CC_MAX_LENGTH,
+            PropConstraint::Pattern(_, _) => CC_PATTERN,
+            PropConstraint::LanguageIn(_) => CC_LANGUAGE_IN,
+            PropConstraint::UniqueLang => CC_UNIQUE_LANG,
+            PropConstraint::Equals(_) => CC_EQUALS,
+            PropConstraint::Disjoint(_) => CC_DISJOINT,
+            PropConstraint::MinInclusive(_) => CC_MIN_INCLUSIVE,
+            PropConstraint::MaxInclusive(_) => CC_MAX_INCLUSIVE,
+            PropConstraint::MinExclusive(_) => CC_MIN_EXCLUSIVE,
+            PropConstraint::MaxExclusive(_) => CC_MAX_EXCLUSIVE,
+            PropConstraint::LessThan(_) => CC_LESS_THAN,
+            PropConstraint::LessThanOrEquals(_) => CC_LESS_THAN_OR_EQUALS,
+            PropConstraint::NodeShape(_) => CC_NODE,
+            // sh:qualifiedMinCount/sh:qualifiedMaxCount are two independent
+            // SHACL constraint components sharing one `PropConstraint`
+            // variant here. When a property shape declares only one bound,
+            // there is no ambiguity. When BOTH are declared (an interval),
+            // this static method has no access to the runtime qualifying
+            // count needed to say which bound actually failed for a given
+            // violation, so it picks min as an arbitrary representative —
+            // this is NOT what the real evaluator reports, though: see
+            // `evaluate::eval_qualified_value`, which checks each bound
+            // independently at evaluation time and reports the correct,
+            // specific component per violation (never calling this method
+            // for that variant). See #264.
+            PropConstraint::QualifiedValueShape { min, max, .. } => {
+                if min.is_some() {
+                    CC_QUALIFIED_MIN_COUNT
+                } else if max.is_some() {
+                    CC_QUALIFIED_MAX_COUNT
+                } else {
+                    CC_QUALIFIED_MIN_COUNT
+                }
+            }
+        }
+    }
+}
+
 /// A value from a shape constraint — an IRI, blank node, or literal.
 #[derive(Debug, Clone)]
 pub enum ElemValue {
@@ -107,6 +162,15 @@ pub enum PropConstraint {
 pub struct ParsedPropShape {
     /// Position within the parent shape (used for unique helper-IRI names).
     pub idx: usize,
+    /// ID of this property shape's own node (the object of `sh:property`) in
+    /// the **shapes** `Datastore` — an IRI if named, a blank node otherwise
+    /// (real SHACL property shapes are commonly named, not always blank
+    /// nodes). This is the shape SHACL's `sh:sourceShape` should point to for
+    /// a violation produced by this property shape's constraints — NOT the
+    /// parent node shape, which previously stood in for it unconditionally
+    /// because this field didn't exist. See
+    /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub shapes_id: GraphElementId,
     /// `sh:path` IRI.
     pub path: String,
     pub constraints: Vec<PropConstraint>,
@@ -162,6 +226,9 @@ pub struct ParsedShape {
     pub node_kind: Option<NodeKindValue>,
     /// `sh:severity` on this shape, defaulting to `Severity::Violation` when unset.
     pub severity: crate::Severity,
+    /// `sh:message` on this shape, surfaced verbatim on every `ValidationResult`
+    /// it produces. See [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub message: Option<String>,
     /// `sh:deactivated true` on this shape. Per SHACL §3, a deactivated shape
     /// must produce no validation results at all, from any of its
     /// constraints — every place a shape is processed must check this flag
@@ -233,6 +300,7 @@ pub(crate) fn parse_one_shape(
             let next_idx = property_shapes.len();
             property_shapes.push(ParsedPropShape {
                 idx: next_idx,
+                shapes_id: shape_id,
                 path: path_iri,
                 constraints: direct_constraints,
                 deactivated,
@@ -273,6 +341,9 @@ pub(crate) fn parse_one_shape(
         .and_then(|iri| crate::Severity::from_iri(&iri))
         .unwrap_or_default();
 
+    let message =
+        graph::get_object(shapes, shape_id, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
+
     ParsedShape {
         idx,
         shapes_id: shape_id,
@@ -287,6 +358,7 @@ pub(crate) fn parse_one_shape(
         node_constraints,
         node_kind,
         severity,
+        message,
         deactivated,
     }
 }
@@ -343,6 +415,7 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
             let path = graph::iri_string(shapes, path_id)?;
             Some(ParsedPropShape {
                 idx,
+                shapes_id: prop_node,
                 path,
                 constraints: parse_prop_constraints(shapes, prop_node),
                 deactivated: is_deactivated(shapes, prop_node),

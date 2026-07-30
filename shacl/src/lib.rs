@@ -70,6 +70,62 @@ impl Severity {
     }
 }
 
+/// Per-violation-predicate metadata, threaded alongside a `Severity` from
+/// rule/constraint-generation time (`translate.rs`/`evaluate.rs`) through to
+/// `collect_violations`, mirroring the way `Severity` itself is threaded
+/// through `shapes_to_rules`/`eval_all`/`pre_compute_violations`. One
+/// `ViolMeta` describes every violation triple sharing a given synthetic
+/// violation predicate — which is always exactly one shape/path/constraint
+/// combination (see `vocab::viol_*`). See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+#[derive(Debug, Clone)]
+pub struct ViolMeta {
+    pub severity: Severity,
+    /// Display form of the actual shape node that produced this violation
+    /// (`sh:sourceShape`) — an IRI, or a blank-node label (`_:bN`) if the
+    /// shape is anonymous. For a property-shape-scoped violation this is the
+    /// **property shape's own node** (the object of `sh:property`, which is
+    /// commonly a named IRI in real-world SHACL, not necessarily a blank
+    /// node), never the enclosing node shape — see
+    /// `shapes::ParsedPropShape::shapes_id`. Always resolvable (every shape
+    /// node has a display form, IRI or blank node), so unlike the field this
+    /// replaced, never `None`. See
+    /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+    pub source_shape: String,
+    /// `sh:path` of the property shape that produced this violation, or
+    /// `None` for a node-level (pathless) constraint.
+    pub path: Option<String>,
+    /// `sh:sourceConstraintComponent` IRI for the constraint that produced
+    /// this violation.
+    pub component: &'static str,
+    /// `sh:message` declared on the producing shape, if any.
+    pub message: Option<String>,
+}
+
+impl ViolMeta {
+    /// `source_shape_id` is the shapes-graph node that actually declares the
+    /// constraint responsible for this violation: the property shape's own
+    /// node for a property-shape-scoped violation, or `shape.shapes_id`
+    /// itself for a node-level constraint. `shape` still supplies
+    /// `severity`/`message`, which are shape-level (node-shape) concerns in
+    /// this crate today, not (yet) overridable per property shape.
+    fn new(
+        shapes_store: &Datastore,
+        shape: &shapes::ParsedShape,
+        source_shape_id: GraphElementId,
+        path: Option<&str>,
+        component: &'static str,
+    ) -> Self {
+        ViolMeta {
+            severity: shape.severity,
+            source_shape: graph::element_display(shapes_store, source_shape_id),
+            path: path.map(str::to_string),
+            component,
+            message: shape.message.clone(),
+        }
+    }
+}
+
 /// A single validation result entry (`sh:ValidationResult`).
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
@@ -77,7 +133,7 @@ pub struct ValidationResult {
     pub severity: Severity,
     pub message: Option<String>,
     pub result_path: Option<String>,
-    pub source_shape: Option<String>,
+    pub source_shape: String,
     pub source_constraint: Option<String>,
     pub value: Option<String>,
 }
@@ -153,6 +209,12 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
                 out.push_str(" ;\n       sh:value ");
                 out.push_str(&turtle_term(val));
             }
+            out.push_str(" ;\n       sh:sourceShape ");
+            out.push_str(&turtle_term(&result.source_shape));
+            if let Some(component) = &result.source_constraint {
+                out.push_str(" ;\n       sh:sourceConstraintComponent ");
+                out.push_str(&turtle_term(component));
+            }
             if let Some(msg) = &result.message {
                 out.push_str(" ;\n       sh:resultMessage ");
                 out.push('"');
@@ -166,7 +228,9 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
     out
 }
 
-/// Format a value as a Turtle term: IRI `<…>` or string literal `"…"`.
+/// Format a value as a Turtle term: IRI `<…>`, blank node `_:…` (as-is, no
+/// quoting — needed since `sh:sourceShape` can now be a blank-node display
+/// string, see `graph::element_display`), or string literal `"…"`.
 fn turtle_term(s: &str) -> String {
     if s.starts_with('<')
         || s.starts_with("http://")
@@ -175,6 +239,8 @@ fn turtle_term(s: &str) -> String {
     {
         let iri = s.trim_start_matches('<').trim_end_matches('>');
         format!("<{iri}>")
+    } else if s.starts_with("_:") {
+        s.to_string()
     } else {
         format!("\"{}\"", s.replace('"', "\\\""))
     }
@@ -192,7 +258,7 @@ fn pre_compute_violations(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<(GraphElementId, Severity)> {
+) -> Vec<(GraphElementId, ViolMeta)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         // sh:deactivated — a deactivated shape produces no results at all,
@@ -202,7 +268,10 @@ fn pre_compute_violations(
         }
         if let Some(allowed_iris) = &shape.closed {
             let pred = closed_violations(shape, allowed_iris, data, work);
-            viol_preds.push((pred, shape.severity));
+            viol_preds.push((
+                pred,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_CLOSED),
+            ));
         }
     }
     let phase2_viols = evaluate::eval_all(parsed, data, shapes_store, work);
@@ -311,14 +380,14 @@ fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {
 
 fn collect_violations(
     work: &Datastore,
-    viol_preds: &[(GraphElementId, Severity)],
+    viol_preds: &[(GraphElementId, ViolMeta)],
 ) -> Vec<ValidationResult> {
-    let pred_severity: std::collections::HashMap<GraphElementId, Severity> =
-        viol_preds.iter().copied().collect();
+    let pred_meta: std::collections::HashMap<GraphElementId, &ViolMeta> =
+        viol_preds.iter().map(|(id, meta)| (*id, meta)).collect();
     // Only examine default-graph triples (triple_id = 0).
     work.named_graphs
         .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .filter(|q| pred_severity.contains_key(&q.predicate))
+        .filter(|q| pred_meta.contains_key(&q.predicate))
         .map(|q| {
             let focus = graph::element_display(work, q.subject);
             let val = {
@@ -329,14 +398,14 @@ fn collect_violations(
                     Some(s)
                 }
             };
-            let severity = pred_severity.get(&q.predicate).copied().unwrap_or_default();
+            let meta = pred_meta.get(&q.predicate).copied();
             ValidationResult {
                 focus_node: Some(focus),
-                severity,
-                message: None,
-                result_path: None,
-                source_shape: None,
-                source_constraint: None,
+                severity: meta.map(|m| m.severity).unwrap_or_default(),
+                message: meta.and_then(|m| m.message.clone()),
+                result_path: meta.and_then(|m| m.path.clone()),
+                source_shape: meta.map(|m| m.source_shape.clone()).unwrap_or_default(),
+                source_constraint: meta.map(|m| m.component.to_string()),
                 value: val,
             }
         })

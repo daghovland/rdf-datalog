@@ -16,24 +16,27 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/#core-components>
 
-use crate::{Severity, graph, shapes, vocab};
+use crate::{ViolMeta, graph, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
 use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
 use regex::Regex;
+use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Evaluate all Phase 2 property constraints for every shape and add violation
 /// triples to `work`.  Returns the violation-predicate IDs paired with the
-/// producing shape's `Severity`.
+/// producing shape's `ViolMeta` (severity, source shape, path, constraint
+/// component, message). See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 pub fn eval_all(
     parsed: &[shapes::ParsedShape],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<(GraphElementId, Severity)> {
+) -> Vec<(GraphElementId, ViolMeta)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         // sh:deactivated — skip this shape's constraints entirely (SHACL §3).
@@ -61,7 +64,18 @@ pub fn eval_all(
                     shapes_store,
                     work,
                 );
-                viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                viol_preds.extend(new.into_iter().map(|(v, component)| {
+                    (
+                        v,
+                        ViolMeta::new(
+                            shapes_store,
+                            shape,
+                            prop.shapes_id,
+                            Some(&prop.path),
+                            component,
+                        ),
+                    )
+                }));
             }
         }
 
@@ -77,7 +91,12 @@ pub fn eval_all(
             };
             let new =
                 eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(new.into_iter().map(|(v, component)| {
+                (
+                    v,
+                    ViolMeta::new(shapes_store, shape, shape.shapes_id, None, component),
+                )
+            }));
         }
 
         // sh:nodeKind at node shape level — check each target node itself.
@@ -89,13 +108,27 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(
+                    shapes_store,
+                    shape,
+                    shape.shapes_id,
+                    None,
+                    vocab::CC_NODE_KIND,
+                ),
+            ));
         }
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
             let new = eval_xone(shape, &targets, data, shapes_store, work);
-            viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+            viol_preds.extend(new.into_iter().map(|v| {
+                (
+                    v,
+                    ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_XONE),
+                )
+            }));
         }
 
         // sh:not — violation iff the negated inner shape conforms. Evaluated here
@@ -112,7 +145,10 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_NOT),
+            ));
         }
 
         // sh:or — violation iff NO disjunct's inner shape conforms. See sh:not above
@@ -128,7 +164,10 @@ pub fn eval_all(
                     add_viol(work, *node, viol, nil);
                 }
             }
-            viol_preds.push((viol, shape.severity));
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_OR),
+            ));
         }
 
         // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
@@ -168,7 +207,18 @@ pub fn eval_all(
                             shapes_store,
                             work,
                         );
-                        viol_preds.extend(new.into_iter().map(|v| (v, shape.severity)));
+                        viol_preds.extend(new.into_iter().map(|(v, component)| {
+                            (
+                                v,
+                                ViolMeta::new(
+                                    shapes_store,
+                                    shape,
+                                    prop_node,
+                                    Some(&path_str),
+                                    component,
+                                ),
+                            )
+                        }));
                     }
                 }
             }
@@ -193,6 +243,16 @@ struct ConstraintCoord {
 
 // ── Property constraint dispatch ──────────────────────────────────────────────
 
+/// Evaluate one Phase 2 property constraint, returning every violation
+/// predicate it produced, each paired with its own `sh:sourceConstraintComponent`
+/// IRI. For every constraint type except `sh:qualifiedValueShape` (see
+/// `eval_qualified_value`) this is always zero or one predicate, tagged with
+/// `constraint.component_iri()` — but the pairing lives here, inside the
+/// match, rather than being applied uniformly by the caller, specifically so
+/// `sh:qualifiedValueShape` can return up to two independently-tagged
+/// predicates (one per bound) when both `sh:qualifiedMinCount` and
+/// `sh:qualifiedMaxCount` are declared. See
+/// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
     coord: ConstraintCoord,
@@ -201,7 +261,7 @@ fn eval_prop_constraint(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
+) -> Vec<(GraphElementId, &'static str)> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
     let values_of = |node: GraphElementId| -> Vec<GraphElementId> { values_for(data, node, path) };
@@ -219,7 +279,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.1.3 sh:nodeKind
@@ -232,7 +292,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.3 value range
@@ -248,7 +308,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MaxInclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_inclusive(si, pi));
@@ -262,7 +322,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MinExclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_min_exclusive(si, pi));
@@ -276,7 +336,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
         MaxExclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_max_exclusive(si, pi));
@@ -290,7 +350,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.1 sh:minLength
@@ -310,7 +370,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.2 sh:maxLength
@@ -330,7 +390,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.3 sh:pattern
@@ -358,7 +418,7 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.4 sh:languageIn
@@ -369,20 +429,24 @@ fn eval_prop_constraint(
                 for val in values_of(*node) {
                     // Language-tagged literal whose tag is not in the allowed set → violation.
                     // Non-language-tagged literals also violate (per SHACL spec §4.4.4).
-                    // Non-literals are ignored.
-                    let violates = match data.resources.get_graph_element(val) {
-                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) => {
-                            !lang_matches(&tag_set, lang)
-                        }
-                        GraphElement::GraphLiteral(_) => true,
-                        _ => false,
-                    };
+                    // Non-literals also violate — the spec's normative text is
+                    // "For each value node that is either not a literal or
+                    // that does not have a language tag matching ...", so a
+                    // non-literal value node is not out of scope, it always
+                    // violates. See
+                    // https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
+                    // and https://github.com/daghovland/rdf-datalog/issues/266.
+                    let violates = !matches!(
+                        data.resources.get_graph_element(val),
+                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
+                            if lang_matches(&tag_set, lang)
+                    );
                     if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.4.5 sh:uniqueLang
@@ -403,23 +467,39 @@ fn eval_prop_constraint(
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
-        // §4.5.1 sh:equals — value sets must be identical
+        // §4.5.1 sh:equals — value sets must be identical.
+        // Per spec: "For each value node that does not exist as a value of
+        // the property $equals at the focus node, there is a validation
+        // result with the value node as sh:value. For each value of the
+        // property $equals at the focus node that is not one of the value
+        // nodes, there is a validation result with the value as sh:value."
+        // — i.e. one result per member of the symmetric difference, not one
+        // result per focus node. See
+        // https://www.w3.org/TR/shacl/#EqualsConstraintComponent and
+        // https://github.com/daghovland/rdf-datalog/issues/266.
         Equals(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_equals(si, pi));
             for node in targets {
                 let path_vals: HashSet<GraphElementId> = values_of(*node).into_iter().collect();
                 let other_vals: HashSet<GraphElementId> =
                     path_values(data, *node, other_path).into_iter().collect();
-                if path_vals != other_vals {
-                    // One violation per focus node (not per differing value pair)
-                    let nil = graph::intern_iri(work, vocab::INT_NIL);
-                    add_viol(work, *node, viol, nil);
+                // Sort the symmetric difference before emitting: HashSet
+                // iteration order is nondeterministic (RandomState varies
+                // per process), and we want the report's result order to be
+                // stable across runs.
+                let mut differing: Vec<GraphElementId> = path_vals
+                    .symmetric_difference(&other_vals)
+                    .copied()
+                    .collect();
+                differing.sort_unstable();
+                for val in differing {
+                    add_viol(work, *node, viol, val);
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.5.2 sh:disjoint — value sets must not overlap
@@ -433,47 +513,51 @@ fn eval_prop_constraint(
                     add_viol(work, *node, viol, *shared);
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
-        // §4.5.3 sh:lessThan — every path value must be strictly < every other value
+        // §4.5.3 sh:lessThan — every path value must be strictly < every other value.
+        // Per spec: "... or where the two values cannot be compared, there is
+        // a validation result" — an incomparable pair (including a
+        // cross-datatype pair, e.g. a number vs. a date) violates just like a
+        // failed `<`. See
+        // https://www.w3.org/TR/shacl/#LessThanConstraintComponent and
+        // https://github.com/daghovland/rdf-datalog/issues/266.
         LessThan(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_less_than(si, pi));
             for node in targets {
                 'outer: for pv in values_of(*node) {
-                    if let Some(pvc) = lit_comparable(data, pv) {
-                        for ov in path_values(data, *node, other_path) {
-                            if let Some(ovc) = lit_comparable(data, ov)
-                                && pvc >= ovc
-                            {
-                                add_viol(work, *node, viol, pv);
-                                continue 'outer;
-                            }
+                    for ov in path_values(data, *node, other_path) {
+                        let ok = matches!(sparql_compare(data, pv, ov), Some(Ordering::Less));
+                        if !ok {
+                            add_viol(work, *node, viol, pv);
+                            continue 'outer;
                         }
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
-        // §4.5.4 sh:lessThanOrEquals
+        // §4.5.4 sh:lessThanOrEquals — same "cannot be compared ⇒ violation"
+        // rule as sh:lessThan above.
         LessThanOrEquals(other_path) => {
             let viol = graph::intern_iri(work, &vocab::viol_less_than_or_equals(si, pi));
             for node in targets {
                 'outer: for pv in values_of(*node) {
-                    if let Some(pvc) = lit_comparable(data, pv) {
-                        for ov in path_values(data, *node, other_path) {
-                            if let Some(ovc) = lit_comparable(data, ov)
-                                && pvc > ovc
-                            {
-                                add_viol(work, *node, viol, pv);
-                                continue 'outer;
-                            }
+                    for ov in path_values(data, *node, other_path) {
+                        let ok = matches!(
+                            sparql_compare(data, pv, ov),
+                            Some(Ordering::Less) | Some(Ordering::Equal)
+                        );
+                        if !ok {
+                            add_viol(work, *node, viol, pv);
+                            continue 'outer;
                         }
                     }
                 }
             }
-            vec![viol]
+            vec![(viol, constraint.component_iri())]
         }
 
         // §4.7.1 sh:node — values must conform to a referenced node shape
@@ -485,9 +569,16 @@ fn eval_prop_constraint(
             data,
             shapes_store,
             work,
-        ),
+        )
+        .into_iter()
+        .map(|v| (v, constraint.component_iri()))
+        .collect(),
 
-        // §4.7.3 sh:qualifiedValueShape
+        // §4.7.3 sh:qualifiedValueShape — sh:qualifiedMinCount/sh:qualifiedMaxCount
+        // are two independent constraint components (see `eval_qualified_value`),
+        // which is why this arm, unlike every other, does not tag its result with
+        // a single `constraint.component_iri()` — `eval_qualified_value` already
+        // returns each predicate paired with its own correct component.
         shapes::PropConstraint::QualifiedValueShape {
             shapes_id,
             min,
@@ -575,6 +666,21 @@ struct QualifiedSpec {
     max: Option<u64>,
 }
 
+/// `sh:qualifiedMinCount` and `sh:qualifiedMaxCount` are two independent SHACL
+/// constraint components (`QualifiedMinCountConstraintComponent` /
+/// `QualifiedMaxCountConstraintComponent` — there is no unified
+/// "QualifiedValueShapeConstraintComponent" in the spec) that happen to share
+/// one `sh:qualifiedValueShape` parameter in this crate's `PropConstraint`
+/// representation. When a property shape declares both (an interval), each
+/// bound is checked and reported **independently** — its own violation
+/// predicate, its own correct `sh:sourceConstraintComponent` — rather than
+/// merging into one ambiguous "fails" check that can only guess which bound
+/// actually tripped. See PR #300 review / #264.
+///
+/// `qualifying_count` is recomputed once per bound when both are declared,
+/// rather than once and reused — a small, deliberate duplication of work in
+/// exchange for keeping each bound's check fully independent and simple to
+/// read; the target sets involved are validation-time, not hot-loop, sized.
 fn eval_qualified_value(
     coord: ConstraintCoord,
     spec: QualifiedSpec,
@@ -583,23 +689,36 @@ fn eval_qualified_value(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-) -> Vec<GraphElementId> {
-    let viol = graph::intern_iri(work, &vocab::viol_qualified_value(coord.si, coord.pi));
+) -> Vec<(GraphElementId, &'static str)> {
     let nil = graph::intern_iri(work, vocab::INT_NIL);
+    let mut result = Vec::new();
 
-    for node in targets {
-        let qualifying_count = values_for(data, *node, path)
+    let qualifying_count = |node: GraphElementId| -> u64 {
+        values_for(data, node, path)
             .iter()
             .filter(|&&val| shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store))
-            .count() as u64;
+            .count() as u64
+    };
 
-        let fails = spec.min.is_some_and(|n| qualifying_count < n)
-            || spec.max.is_some_and(|n| qualifying_count > n);
-        if fails {
-            add_viol(work, *node, viol, nil);
+    if let Some(min) = spec.min {
+        let viol = graph::intern_iri(work, &vocab::viol_qualified_min_count(coord.si, coord.pi));
+        for node in targets {
+            if qualifying_count(*node) < min {
+                add_viol(work, *node, viol, nil);
+            }
         }
+        result.push((viol, vocab::CC_QUALIFIED_MIN_COUNT));
     }
-    vec![viol]
+    if let Some(max) = spec.max {
+        let viol = graph::intern_iri(work, &vocab::viol_qualified_max_count(coord.si, coord.pi));
+        for node in targets {
+            if qualifying_count(*node) > max {
+                add_viol(work, *node, viol, nil);
+            }
+        }
+        result.push((viol, vocab::CC_QUALIFIED_MAX_COUNT));
+    }
+    result
 }
 
 // ── Inner shape conformance (shared by sh:not/sh:or/sh:node/sh:xone/sh:qualifiedValueShape) ──
@@ -780,15 +899,16 @@ fn constraint_conforms(
         }
         LanguageIn(tags) => {
             let tag_set: HashSet<String> = tags.iter().map(|t| t.to_lowercase()).collect();
-            values
-                .iter()
-                .all(|&v| match data.resources.get_graph_element(v) {
-                    GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) => {
-                        lang_matches(&tag_set, lang)
-                    }
-                    GraphElement::GraphLiteral(_) => false,
-                    _ => true,
-                })
+            // A non-literal value node never conforms — see the matching
+            // eval_prop_constraint arm above for the spec citation
+            // (https://github.com/daghovland/rdf-datalog/issues/266).
+            values.iter().all(|&v| {
+                matches!(
+                    data.resources.get_graph_element(v),
+                    GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
+                        if lang_matches(&tag_set, lang)
+                )
+            })
         }
         UniqueLang => {
             let mut seen_langs: HashSet<String> = HashSet::new();
@@ -813,21 +933,21 @@ fn constraint_conforms(
                 path_values(data, node, other_path).into_iter().collect();
             values.iter().all(|v| !other_vals.contains(v))
         }
+        // See the eval_prop_constraint LessThan/LessThanOrEquals arms for the
+        // spec citation on why an incomparable pair does not conform
+        // (https://github.com/daghovland/rdf-datalog/issues/266).
         LessThan(other_path) => values.iter().all(|&pv| {
-            let Some(pvc) = lit_comparable(data, pv) else {
-                return true;
-            };
             path_values(data, node, other_path)
                 .iter()
-                .all(|&ov| lit_comparable(data, ov).is_none_or(|ovc| pvc < ovc))
+                .all(|&ov| matches!(sparql_compare(data, pv, ov), Some(Ordering::Less)))
         }),
         LessThanOrEquals(other_path) => values.iter().all(|&pv| {
-            let Some(pvc) = lit_comparable(data, pv) else {
-                return true;
-            };
-            path_values(data, node, other_path)
-                .iter()
-                .all(|&ov| lit_comparable(data, ov).is_none_or(|ovc| pvc <= ovc))
+            path_values(data, node, other_path).iter().all(|&ov| {
+                matches!(
+                    sparql_compare(data, pv, ov),
+                    Some(Ordering::Less) | Some(Ordering::Equal)
+                )
+            })
         }),
         MinInclusive(bound) => {
             let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
@@ -1079,6 +1199,15 @@ impl Ord for Comparable {
             }
             (Comparable::Date(a), Comparable::Date(b)) => a.cmp(b),
             (Comparable::DateTime(a), Comparable::DateTime(b)) => a.cmp(b),
+            // Mismatched variants (e.g. Numeric vs. Date) are not actually
+            // equal — they're a type error / "cannot be compared" per
+            // SPARQL/XPath comparison semantics. This fallthrough is used by
+            // `bound_to_comparable` for the sh:minInclusive/maxInclusive/
+            // minExclusive/maxExclusive value-range components, which is a
+            // known, tracked gap distinct from the sh:lessThan/
+            // lessThanOrEquals fix in #266 (which replaced this Ord-based
+            // path with `sparql_compare` for those two components only).
+            // See https://github.com/daghovland/rdf-datalog/issues/304.
             _ => std::cmp::Ordering::Equal,
         }
     }
@@ -1087,6 +1216,66 @@ impl Ord for Comparable {
 fn lit_comparable(data: &Datastore, id: GraphElementId) -> Option<Comparable> {
     match data.resources.get_graph_element(id) {
         GraphElement::GraphLiteral(lit) => lit_to_comparable(lit),
+        _ => None,
+    }
+}
+
+/// A value node classified for the SPARQL `<`/`<=` operator mapping used by
+/// `sh:lessThan`/`sh:lessThanOrEquals` (SPARQL 1.1 §17.3): numeric-numeric,
+/// simple-literal/xsd:string-string (codepoint collation), xsd:boolean-boolean,
+/// and xsd:dateTime-dateTime pairs are comparable; anything else (including a
+/// cross-type pair, e.g. numeric vs. date) is not. Distinct from `Comparable`
+/// (used by the value-range constraints, `sh:minInclusive` &c.), which does
+/// not cover strings/booleans and is intentionally left untouched — see
+/// `sparql_compare` below and <https://github.com/daghovland/rdf-datalog/issues/266>.
+enum SparqlCmpValue {
+    Numeric(f64),
+    Str(String),
+    Bool(bool),
+    Date(chrono::NaiveDate),
+    DateTime(chrono::DateTime<chrono::Utc>),
+}
+
+fn sparql_cmp_value(data: &Datastore, id: GraphElementId) -> Option<SparqlCmpValue> {
+    use ingress::{XSD_BOOLEAN, XSD_STRING};
+    match data.resources.get_graph_element(id) {
+        GraphElement::GraphLiteral(lit) => match lit {
+            RdfLiteral::LiteralString(s) => Some(SparqlCmpValue::Str(s.clone())),
+            RdfLiteral::BooleanLiteral(b) => Some(SparqlCmpValue::Bool(*b)),
+            RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_STRING => {
+                Some(SparqlCmpValue::Str(literal.clone()))
+            }
+            RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_BOOLEAN => {
+                literal.parse::<bool>().ok().map(SparqlCmpValue::Bool)
+            }
+            other => lit_to_comparable(other).map(|c| match c {
+                Comparable::Numeric(n) => SparqlCmpValue::Numeric(n),
+                Comparable::Date(d) => SparqlCmpValue::Date(d),
+                Comparable::DateTime(dt) => SparqlCmpValue::DateTime(dt),
+            }),
+        },
+        _ => None,
+    }
+}
+
+/// SPARQL `<`/`<=`/`>` comparison for `sh:lessThan`/`sh:lessThanOrEquals`
+/// (see `SparqlCmpValue`). Returns `None` when the pair "cannot be compared"
+/// per <https://www.w3.org/TR/shacl/#LessThanConstraintComponent> — either
+/// value isn't a recognized comparable literal, or the two are of different
+/// kinds (e.g. a number and a date) — which callers must treat as a
+/// violation, not as "skip".
+fn sparql_compare(
+    data: &Datastore,
+    a: GraphElementId,
+    b: GraphElementId,
+) -> Option<std::cmp::Ordering> {
+    use SparqlCmpValue::*;
+    match (sparql_cmp_value(data, a)?, sparql_cmp_value(data, b)?) {
+        (Numeric(x), Numeric(y)) => x.partial_cmp(&y),
+        (Str(x), Str(y)) => Some(x.cmp(&y)),
+        (Bool(x), Bool(y)) => Some(x.cmp(&y)),
+        (Date(x), Date(y)) => Some(x.cmp(&y)),
+        (DateTime(x), DateTime(y)) => Some(x.cmp(&y)),
         _ => None,
     }
 }
