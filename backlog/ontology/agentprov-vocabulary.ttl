@@ -65,10 +65,9 @@ agp:Decision
 
 agp:summaryText
     a owl:DatatypeProperty ;
-    rdfs:domain agp:TranscriptSummary ;
     rdfs:range xsd:string ;
     rdfs:label "summary text" ;
-    rdfs:comment "The distilled prose explaining the reasoning. Short (a paragraph or two), not a full transcript -- see the ontology header's privacy note. Also used (with the same meaning) on agp:Decision, for that decision point's own distilled reasoning." .
+    rdfs:comment "The distilled prose explaining the reasoning. Short (a paragraph or two), not a full transcript -- see the ontology header's privacy note. Used on BOTH agp:TranscriptSummary and agp:Decision (that decision point's own distilled reasoning) -- deliberately NO rdfs:domain here, since rdfs:domain is an entailment (X p Y ⊨ X a domain), not a hint: declaring a single-class domain would wrongly entail every agp:Decision is also an agp:TranscriptSummary the moment a reasoner runs (see backlog/ontology/MODELING_NOTES.md \"agp:summaryText has no rdfs:domain\" for the concrete failure this was caught against, and #298 for why this repo is already wary of unverified OWL axioms over this exact fixture)." .
 
 agp:reasoningFor
     a owl:ObjectProperty ;
@@ -104,3 +103,15 @@ agp:parentSession
     rdfs:range agp:AgentSession ;
     rdfs:label "parent session" ;
     rdfs:comment "For sub-agent delegation: the dispatching session that launched this one. Mirrors this repo's own orchestrator/sub-agent pattern (CLAUDE.md's Agent tool usage) -- a top-level session has no agp:parentSession; a delegated sub-agent invocation does." .
+
+# ── Disjointness ─────────────────────────────────────────────────────────────
+#
+# Mirrors vocabulary.ttl's own Disjointness section (see
+# MODELING_NOTES.md "Disjointness axioms" for the general reasoning this
+# follows). agp:AgentSession/agp:TranscriptSummary already inherit
+# disjointness from their prov:Activity/prov:Entity superclasses if PROV-O
+# itself asserts prov:Activity owl:disjointWith prov:Entity (it does -- see
+# tests/testdata/prov-o.ttl), but agp:Decision is a bare local class with no
+# PROV-O superclass to inherit disjointness through, so it's asserted here
+# explicitly against both.
+agp:Decision owl:disjointWith agp:AgentSession, agp:TranscriptSummary .
