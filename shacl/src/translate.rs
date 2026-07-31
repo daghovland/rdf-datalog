@@ -28,7 +28,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::ViolMeta;
 use crate::graph;
-use crate::shapes::{ElemValue, ParsedShape, PropConstraint, Target, parse_prop_constraints};
+use crate::shapes::{ElemValue, ParsedShape, PropConstraint, Target};
 use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
@@ -146,61 +146,13 @@ pub fn shapes_to_rules(
         // conformance is checked via `shape_conforms_for_node` before any
         // Datalog materialisation, the same way sh:xone already was.
 
-        // sh:and — all constraints in all inner shapes must hold.
-        // Each inner property shape is parsed with parse_prop_constraints and
-        // processed through the same prop_constraint_rules machinery as outer
-        // properties.  To avoid IRI collisions with the outer shape's constraint
-        // IRIs, the "prop index" part of the key is offset by sub_idx * 10_000.
-        for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
-            let inner_id = inner_ref.shapes_id;
-            // A deactivated inner shape contributes no constraints. See #262.
-            if crate::shapes::is_deactivated(shapes, inner_id) {
-                continue;
-            }
-
-            for (pi, prop_node) in graph::get_objects(shapes, inner_id, SH_PROPERTY)
-                .into_iter()
-                .enumerate()
-            {
-                if crate::shapes::is_deactivated(shapes, prop_node) {
-                    continue;
-                }
-                if let Some(path_id) = graph::get_object(shapes, prop_node, SH_PATH)
-                    && let Some(path_iri) = graph::iri_string(shapes, path_id)
-                {
-                    let path_id_work = graph::intern_iri(work, &path_iri);
-                    let constraints = parse_prop_constraints(shapes, prop_node);
-                    for (ci, constraint) in constraints.iter().enumerate() {
-                        // sub_idx * 10_000 + pi gives a unique "prop index" that
-                        // does not collide with the outer shape's property indices.
-                        let inner_pi = sub_idx * 10_000 + pi;
-                        let viols = prop_constraint_rules(
-                            constraint,
-                            (si, inner_pi, ci),
-                            Some(path_id_work),
-                            target_pred,
-                            true_id,
-                            nil_id,
-                            rdf_type_id,
-                            &mut rules,
-                            work,
-                        );
-                        viol_preds.extend(viols.into_iter().map(|v| {
-                            (
-                                v,
-                                ViolMeta::new(
-                                    shapes,
-                                    shape,
-                                    prop_node,
-                                    Some(&path_iri),
-                                    constraint.component_iri(),
-                                ),
-                            )
-                        }));
-                    }
-                }
-            }
-        }
+        // sh:and — evaluated directly in evaluate.rs::eval_all: reports ONE
+        // sh:AndConstraintComponent violation (sourced from the enclosing
+        // shape) when any inner shape fails to conform, via
+        // `shape_conforms_for_node` — rather than generating Datalog rules
+        // per inner branch/constraint, which used to leak that branch's own
+        // constraint component instead of sh:and's. See
+        // https://github.com/daghovland/rdf-datalog/issues/309.
 
         // sh:or — evaluated directly in evaluate.rs::eval_all (see #258), for the
         // same reason as sh:not above.

@@ -18,12 +18,6 @@ Last updated: 2026-06-27.
 produce an empty result instead of the expected triples.  CONSTRUCT with an explicit
 template is unaffected.
 
-### sh:and only handles sh:minCount constraints
-**File**: `shacl/src/translate.rs` — `translate_shape`  
-**Impact**: SHACL `sh:and` with inner shapes containing constraints other than
-`sh:minCount` (e.g. `sh:datatype`, `sh:pattern`, `sh:nodeKind`) generates no
-validation rules for those constraints.  Validation silently under-reports violations.
-
 ---
 
 ## Lacking features

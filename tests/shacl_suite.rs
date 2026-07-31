@@ -2235,3 +2235,98 @@ fn regression_issue_266_and_maxcount() {
     assert!(!has_violation(&report, &ex("andMcOk")));
     assert!(has_violation(&report, &ex("andMcBad")));
 }
+
+// ── Regression #309: node-shape-level sh:and/sh:or/sh:not/sh:xone violation
+// metadata ────────────────────────────────────────────────────────────────
+//
+// See https://github.com/daghovland/rdf-datalog/issues/309.
+
+/// A node-shape-level (pathless) `sh:and` must report `sh:AndConstraintComponent`
+/// sourced from the enclosing `sh:and` shape itself — not the inner branch's own
+/// constraint component (e.g. `sh:MinCountConstraintComponent`) leaking through.
+/// Reuses `shacl_s4_and_shapes.ttl`/`shacl_s4_and_data.ttl` (§4.6.2): `ex:Bob`
+/// lacks `ex:lastName`, failing the second `sh:and` branch.
+#[test]
+fn regression_309_and_reports_own_component_and_source_shape() {
+    let data = load("shacl_s4_and_data.ttl");
+    let shapes = load("shacl_s4_and_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1, "ex:Bob lacks ex:lastName");
+    let result = &report.results[0];
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#AndConstraintComponent"),
+        "sh:and itself must be the reported constraint component, not the leaked \
+         inner sh:minCount — got {:?}",
+        result.source_constraint
+    );
+    assert_eq!(
+        result.source_shape, "http://example.com/ns#AndExampleShape",
+        "sh:sourceShape must be the enclosing sh:and shape, not the inner branch's \
+         (anonymous) property shape"
+    );
+    assert_eq!(
+        result.value.as_deref(),
+        Some("http://example.com/ns#Bob"),
+        "node-shape-level (pathless) violation: sh:value must equal the focus node"
+    );
+}
+
+/// A node-shape-level `sh:not` violation must have `sh:value` equal to the
+/// focus node (pathless scope). Reuses `shacl_s4_not_shapes.ttl`/
+/// `shacl_s4_not_data.ttl` (§4.6.1): `ex:Alice` is a `ex:LegalPerson`, so the
+/// negated shape conforms and `sh:not` is violated.
+#[test]
+fn regression_309_not_reports_focus_node_as_value() {
+    let data = load("shacl_s4_not_data.ttl");
+    let shapes = load("shacl_s4_not_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#NotConstraintComponent")
+    );
+    assert_eq!(result.value.as_deref(), Some("http://example.com/ns#Alice"));
+}
+
+/// A node-shape-level `sh:or` violation must have `sh:value` equal to the
+/// focus node. Reuses `shacl_s4_or_shapes.ttl`/`shacl_s4_or_data.ttl`
+/// (§4.6.3): `ex:Carol` is neither `ex:Employee` nor `ex:Customer`.
+#[test]
+fn regression_309_or_reports_focus_node_as_value() {
+    let data = load("shacl_s4_or_data.ttl");
+    let shapes = load("shacl_s4_or_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#OrConstraintComponent")
+    );
+    assert_eq!(result.value.as_deref(), Some("http://example.com/ns#Carol"));
+}
+
+/// A node-shape-level `sh:xone` violation must have `sh:value` equal to the
+/// focus node, for both the "too many conforming branches" and "zero
+/// conforming branches" cases. Reuses `shacl_s4_xone_shapes.ttl`/
+/// `shacl_s4_xone_data.ttl` (§4.6.4): `ex:Bob` matches both branches,
+/// `ex:Carol` matches neither.
+#[test]
+fn regression_309_xone_reports_focus_node_as_value() {
+    let data = load("shacl_s4_xone_data.ttl");
+    let shapes = load("shacl_s4_xone_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 2);
+    for result in &report.results {
+        assert_eq!(
+            result.source_constraint.as_deref(),
+            Some("http://www.w3.org/ns/shacl#XoneConstraintComponent")
+        );
+        assert_eq!(
+            result.value.as_deref(),
+            result.focus_node.as_deref(),
+            "sh:value must equal the focus node for a node-shape-level violation"
+        );
+    }
+}
