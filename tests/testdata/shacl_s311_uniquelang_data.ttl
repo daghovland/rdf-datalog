@@ -1,0 +1,11 @@
+# Issue #311 regression — sh:uniqueLang must count violations per duplicated
+# language tag, not per duplicate occurrence.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX ex: <http://example.com/ns#>
+
+# "en" used 3 times (2 duplicate occurrences) → still exactly 1 violation
+# (one result per language tag used more than once, not one per extra value).
+ex:Carol ex:label "Carol"@en , "Carol2"@en , "Carol3"@en .
+
+# "en" used twice AND "de" used twice → 2 violations (one per duplicated tag).
+ex:Dave ex:label "I"@en , "Ich"@de , "Me"@en , "Mich"@de , "Myself"@en .

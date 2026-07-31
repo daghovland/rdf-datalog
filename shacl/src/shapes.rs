@@ -154,6 +154,14 @@ pub enum PropConstraint {
         shapes_id: GraphElementId,
         min: Option<u64>,
         max: Option<u64>,
+        /// `sh:qualifiedValueShapesDisjoint true` — when set, value nodes
+        /// that also conform to a *sibling* qualified value shape (another
+        /// `sh:property` block on the same parent node shape, sharing this
+        /// one's `sh:path`, that also declares `sh:qualifiedValueShape`) are
+        /// excluded from this shape's qualifying count. See
+        /// [#311](https://github.com/daghovland/rdf-datalog/issues/311) and
+        /// <https://www.w3.org/TR/shacl/#QualifiedValueShapeConstraintComponent>.
+        disjoint: bool,
     },
 }
 
@@ -179,6 +187,17 @@ pub struct ParsedPropShape {
     /// results from any of its constraints. See
     /// [#262](https://github.com/daghovland/rdf-datalog/issues/262).
     pub deactivated: bool,
+    /// `sh:not <inner>` declared directly on this property shape (applies to
+    /// each path-traversed value, not the focus node — contrast with
+    /// `ParsedShape::not_inner`, which applies to the focus node). See
+    /// [#311](https://github.com/daghovland/rdf-datalog/issues/311).
+    pub not_inner: Option<InnerShapeRef>,
+    /// `sh:and (s1 s2 …)` declared directly on this property shape.
+    pub and_inners: Vec<InnerShapeRef>,
+    /// `sh:or (s1 s2 …)` declared directly on this property shape.
+    pub or_inners: Vec<InnerShapeRef>,
+    /// `sh:xone (s1 s2 …)` declared directly on this property shape.
+    pub xone_inners: Vec<InnerShapeRef>,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -296,7 +315,17 @@ pub(crate) fn parse_one_shape(
         && let Some(path_iri) = graph::iri_string(shapes, path_id)
     {
         let direct_constraints = parse_prop_constraints(shapes, shape_id);
-        if !direct_constraints.is_empty() {
+        let direct_not_inner =
+            graph::get_object(shapes, shape_id, SH_NOT).map(|id| InnerShapeRef { shapes_id: id });
+        let direct_and_inners = shape_list_refs(shapes, shape_id, SH_AND);
+        let direct_or_inners = shape_list_refs(shapes, shape_id, SH_OR);
+        let direct_xone_inners = shape_list_refs(shapes, shape_id, SH_XONE);
+        if !direct_constraints.is_empty()
+            || direct_not_inner.is_some()
+            || !direct_and_inners.is_empty()
+            || !direct_or_inners.is_empty()
+            || !direct_xone_inners.is_empty()
+        {
             let next_idx = property_shapes.len();
             property_shapes.push(ParsedPropShape {
                 idx: next_idx,
@@ -304,6 +333,10 @@ pub(crate) fn parse_one_shape(
                 path: path_iri,
                 constraints: direct_constraints,
                 deactivated,
+                not_inner: direct_not_inner,
+                and_inners: direct_and_inners,
+                or_inners: direct_or_inners,
+                xone_inners: direct_xone_inners,
             });
         }
     }
@@ -419,6 +452,11 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                 path,
                 constraints: parse_prop_constraints(shapes, prop_node),
                 deactivated: is_deactivated(shapes, prop_node),
+                not_inner: graph::get_object(shapes, prop_node, SH_NOT)
+                    .map(|id| InnerShapeRef { shapes_id: id }),
+                and_inners: shape_list_refs(shapes, prop_node, SH_AND),
+                or_inners: shape_list_refs(shapes, prop_node, SH_OR),
+                xone_inners: shape_list_refs(shapes, prop_node, SH_XONE),
             })
         })
         .collect()
@@ -535,10 +573,14 @@ pub fn parse_prop_constraints(
             .and_then(|id| graph::elem_to_u64(shapes, id));
         let max = graph::get_object(shapes, prop_node, SH_QUALIFIED_MAX_COUNT)
             .and_then(|id| graph::elem_to_u64(shapes, id));
+        let disjoint = graph::get_object(shapes, prop_node, SH_QUALIFIED_VALUE_SHAPES_DISJOINT)
+            .and_then(|id| graph::elem_to_bool(shapes, id))
+            .unwrap_or(false);
         cs.push(PropConstraint::QualifiedValueShape {
             shapes_id: qvs_id,
             min,
             max,
+            disjoint,
         });
     }
 
@@ -682,6 +724,20 @@ fn shape_references(shapes_store: &Datastore, shape_id: GraphElementId) -> Vec<G
     };
     for prop in &parsed.property_shapes {
         refs.extend(constraint_refs(&prop.constraints));
+        // sh:not/sh:and/sh:or/sh:xone declared directly inside a sh:property
+        // block also reference other shapes (applied to path-traversed
+        // values rather than the focus node — see `ParsedPropShape`'s field
+        // docs and `evaluate.rs`'s per-property combinator handling), and
+        // must be included here for the same reason the node-shape-scoped
+        // ones above are: a cycle reachable only through one of these would
+        // otherwise blow the stack in `shape_conforms_for_node`, since that
+        // function has no runtime cycle guard by design (#278). See #311.
+        if let Some(inner) = &prop.not_inner {
+            refs.push(inner.shapes_id);
+        }
+        refs.extend(prop.and_inners.iter().map(|r| r.shapes_id));
+        refs.extend(prop.or_inners.iter().map(|r| r.shapes_id));
+        refs.extend(prop.xone_inners.iter().map(|r| r.shapes_id));
     }
     refs.extend(constraint_refs(&parsed.node_constraints));
 

@@ -1,0 +1,12 @@
+# Issue #311 regression — sh:datatype must check lexical-form validity, not
+# just the nominal datatype IRI, since a literal's type IRI and the actual
+# validity of its lexical form for that type are independent (RDF allows
+# "ill-formed" literals like "300"^^xsd:byte, which is out of xsd:byte's
+# value space, or "c"^^xsd:byte, which isn't a valid integer at all).
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:Good ex:p "5"^^xsd:byte .
+ex:BadRange ex:p "300"^^xsd:byte .
+ex:BadLexical ex:p "c"^^xsd:byte .

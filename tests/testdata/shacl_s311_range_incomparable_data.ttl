@@ -1,0 +1,9 @@
+# Issue #311 regression — sh:minExclusive/sh:maxExclusive/sh:minInclusive/
+# sh:maxInclusive must treat an incomparable value node as a violation, not
+# silently skip it.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX ex: <http://example.com/ns#>
+
+ex:Ok1  ex:score 5 .
+ex:Bad1 ex:score "not a number" .
+ex:Bad2 ex:score ex:SomeResource .

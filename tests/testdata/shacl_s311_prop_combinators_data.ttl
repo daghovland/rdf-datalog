@@ -1,0 +1,17 @@
+# Issue #311 regression — sh:and/sh:or/sh:not declared directly inside a
+# sh:property block (applying to path-traversed values, not the focus node).
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX ex: <http://example.com/ns#>
+
+# sh:and: both suburb and postalCode required on the address value.
+ex:AndOk    ex:address [ ex:suburb "Kewarra" ; ex:postalCode 4879 ] .
+ex:AndBad   ex:address [ ex:postalCode 4879 ] .
+
+# sh:or: value must be a string OR a boolean.
+ex:OrOk1    ex:tag "hello" .
+ex:OrOk2    ex:tag true .
+ex:OrBad    ex:tag 42 .
+
+# sh:not: value must not be an integer.
+ex:NotOk    ex:score "high" .
+ex:NotBad   ex:score 42 .

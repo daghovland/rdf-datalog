@@ -433,21 +433,31 @@ fn w3c_shacl_core_property() {
     // Property-shape-scoped false negatives and mis-counted violations. See
     // https://github.com/daghovland/rdf-datalog/issues/311.
     let skip: &[&str] = &[
-        "Test of sh:and at property shape 001",
-        "Test of sh:datatype at property shape 003",
-        "Test of sh:minExclusive at property shape 002",
-        "Test of sh:not at property shape 001",
-        "Test of sh:or at property shape 001",
-        "Test of sh:or of sh:datatypes at property shape 001",
+        // Nested `sh:property` (a property shape containing another
+        // `sh:property` block, applying the inner shape to each outer
+        // path-traversed value as a fresh focus node). Not implemented at
+        // all yet — `ParsedPropShape` has no field for nested property
+        // shapes. Additionally, this fixture's expected report has two
+        // *content-identical* results (same focus/path/value, reached via
+        // two different outer paths to the same shared value node) — the
+        // current violation representation (RDF quads in a `Datastore`,
+        // which is set-semantics) cannot represent that multiplicity
+        // without a larger change to how violations are recorded.
         "Test of sh:property at property shape 001",
-        "Test of sh:qualifiedMinCount with disjoint shapes at property shape 001",
-        "Test of sh:qualifiedValueShapesDisjoint at property shape 001",
-        "Test of validation report for ill-formed literals",
+        // Same quad-set-dedup multiplicity limitation as above: this
+        // fixture expects 4 results but 2 pairs are content-identical
+        // (same focus/path/value, different failing comparison partner) —
+        // fixed the "silently skip a value entirely" undercounting bug,
+        // but not this deeper multiplicity limitation.
         "Test of sh:lessThan at property shape 002",
-        "Test of sh:maxExclusive at property shape 001",
-        "Test of sh:maxInclusive at property shape 001",
+        // Confirmed NOT the "greedy comparator" issue originally suspected —
+        // undercounting is real: violations for ex:InstanceWithBlankNode and
+        // ex:InstanceWithBlankNodeAndIRI (the two instances whose only
+        // sh:myProperty values are blank nodes) are never generated at all,
+        // across all 6 sibling nodeKind shapes. Root cause not yet
+        // identified; needs further investigation independent of the fixes
+        // in this PR.
         "Test of sh:nodeKind at property shape 001",
-        "Test of sh:uniqueLang at property shape 001",
     ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/property");

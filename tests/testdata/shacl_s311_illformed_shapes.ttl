@@ -1,0 +1,13 @@
+# Issue #311 regression — sh:datatype lexical-form validity.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:IllFormedShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Good, ex:BadRange, ex:BadLexical ;
+    sh:property [
+        sh:path ex:p ;
+        sh:datatype xsd:byte ;
+    ] .

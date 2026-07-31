@@ -1,0 +1,14 @@
+# Issue #311 regression — incomparable value node must violate a value-range
+# constraint rather than be silently skipped.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:RangeIncomparableShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Ok1, ex:Bad1, ex:Bad2 ;
+    sh:property [
+        sh:path ex:score ;
+        sh:minExclusive 0 ;
+        sh:maxExclusive 10 ;
+    ] .
