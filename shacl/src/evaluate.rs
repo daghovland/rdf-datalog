@@ -1435,11 +1435,19 @@ fn is_well_formed_lexical(lit: &RdfLiteral, dt_iri: &str) -> bool {
         "http://www.w3.org/2001/XMLSchema#short" => trimmed.parse::<i16>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#int" => trimmed.parse::<i32>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#long" => trimmed.parse::<i64>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#integer"
-        | "http://www.w3.org/2001/XMLSchema#nonNegativeInteger"
-        | "http://www.w3.org/2001/XMLSchema#nonPositiveInteger"
-        | "http://www.w3.org/2001/XMLSchema#negativeInteger"
-        | "http://www.w3.org/2001/XMLSchema#positiveInteger" => trimmed.parse::<i128>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#integer" => trimmed.parse::<i128>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#nonNegativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n >= 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#positiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n > 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#nonPositiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n <= 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#negativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n < 0)
+        }
         "http://www.w3.org/2001/XMLSchema#unsignedByte" => trimmed.parse::<u8>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#unsignedShort" => trimmed.parse::<u16>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#unsignedInt" => trimmed.parse::<u32>().is_ok(),
@@ -1447,13 +1455,40 @@ fn is_well_formed_lexical(lit: &RdfLiteral, dt_iri: &str) -> bool {
         "http://www.w3.org/2001/XMLSchema#decimal" => trimmed.parse::<f64>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#float" => trimmed.parse::<f32>().is_ok(),
         "http://www.w3.org/2001/XMLSchema#double" => trimmed.parse::<f64>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#date" => trimmed.parse::<chrono::NaiveDate>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#date" => parse_xsd_date_lexical(trimmed).is_some(),
         "http://www.w3.org/2001/XMLSchema#dateTime" => {
             trimmed.parse::<chrono::DateTime<chrono::Utc>>().is_ok()
                 || trimmed.parse::<chrono::NaiveDateTime>().is_ok()
         }
         _ => true,
     }
+}
+
+/// Parse an `xsd:date` lexical form, tolerating an optional trailing
+/// timezone fragment (`Z` or `±HH:MM`) that `xsd:date`'s lexical space
+/// permits but `chrono::NaiveDate::from_str` rejects outright (it only
+/// accepts a bare `%Y-%m-%d`). The timezone, if present, is not retained —
+/// callers that need it for ordering (`Comparable`) don't currently
+/// distinguish timezoned/timezone-less dates the way they do for
+/// `dateTime` (see `parse_datetime_comparable`); this only needs to decide
+/// well-formedness for `sh:datatype`.
+fn parse_xsd_date_lexical(s: &str) -> Option<chrono::NaiveDate> {
+    if let Ok(d) = s.parse::<chrono::NaiveDate>() {
+        return Some(d);
+    }
+    let date_part = if let Some(stripped) = s.strip_suffix('Z') {
+        stripped
+    } else if s.len() > 6 {
+        let (head, tail) = s.split_at(s.len() - 6);
+        if (tail.starts_with('+') || tail.starts_with('-')) && tail.as_bytes()[3] == b':' {
+            head
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    date_part.parse::<chrono::NaiveDate>().ok()
 }
 
 fn literal_datatype_iri(lit: &RdfLiteral) -> &str {

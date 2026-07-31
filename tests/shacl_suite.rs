@@ -185,6 +185,8 @@ fn shacl_testdata_parses() {
         "shacl_s304_range_cross_type_shapes.ttl",
         "shacl_s318_range_datetime_tz_data.ttl",
         "shacl_s318_range_datetime_tz_shapes.ttl",
+        "shacl_s318_datatype_date_tz_data.ttl",
+        "shacl_s318_datatype_date_tz_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -2793,5 +2795,34 @@ fn regression_304_range_cross_type_comparable_violates() {
     assert!(
         has_violation(&report, &ex("Bad")),
         "ex:Bad's numeric value is a different Comparable kind than the xsd:date bound — must violate, not fall through to Equal"
+    );
+}
+
+/// `xsd:date`'s lexical space permits an optional trailing timezone
+/// fragment (`Z` or `±HH:MM`); `sh:datatype`'s lexical-validity check
+/// (added for #318) must not reject a well-formed timezoned date as
+/// ill-formed just because `chrono::NaiveDate::from_str` only accepts the
+/// bare `%Y-%m-%d` form.
+/// https://github.com/daghovland/rdf-datalog/issues/318
+#[test]
+fn regression_318_datatype_date_timezone_is_well_formed() {
+    let data = load("shacl_s318_datatype_date_tz_data.ttl");
+    let shapes = load("shacl_s318_datatype_date_tz_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("PlainDate")),
+        "a bare xsd:date must conform"
+    );
+    assert!(
+        !has_violation(&report, &ex("ZuluDate")),
+        "\"2020-06-01Z\"^^xsd:date is well-formed — must conform, not violate"
+    );
+    assert!(
+        !has_violation(&report, &ex("OffsetDate")),
+        "\"2020-06-01-05:00\"^^xsd:date is well-formed — must conform, not violate"
+    );
+    assert!(
+        has_violation(&report, &ex("BadDate")),
+        "\"not-a-date\"^^xsd:date is not a valid xsd:date lexical form — must violate"
     );
 }
