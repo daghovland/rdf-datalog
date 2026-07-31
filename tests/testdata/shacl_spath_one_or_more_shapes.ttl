@@ -1,0 +1,13 @@
+# SHACL sh:oneOrMorePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# Every targeted node must have at least one ancestor (ex:parent+).
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:HasAncestorShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Isolated ;
+    sh:property [
+        sh:path [ sh:oneOrMorePath ex:parent ] ;
+        sh:minCount 1 ;
+    ] .

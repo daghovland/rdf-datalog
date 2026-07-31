@@ -27,6 +27,13 @@ pub const SH_TARGET_OBJECTS_OF: &str = "http://www.w3.org/ns/shacl#targetObjects
 pub const SH_PROPERTY: &str = "http://www.w3.org/ns/shacl#property";
 pub const SH_PATH: &str = "http://www.w3.org/ns/shacl#path";
 
+// §2.3.1 Property paths — https://www.w3.org/TR/shacl/#property-paths
+pub const SH_INVERSE_PATH: &str = "http://www.w3.org/ns/shacl#inversePath";
+pub const SH_ALTERNATIVE_PATH: &str = "http://www.w3.org/ns/shacl#alternativePath";
+pub const SH_ZERO_OR_MORE_PATH: &str = "http://www.w3.org/ns/shacl#zeroOrMorePath";
+pub const SH_ONE_OR_MORE_PATH: &str = "http://www.w3.org/ns/shacl#oneOrMorePath";
+pub const SH_ZERO_OR_ONE_PATH: &str = "http://www.w3.org/ns/shacl#zeroOrOnePath";
+
 // §4.1 Value type
 pub const SH_CLASS: &str = "http://www.w3.org/ns/shacl#class";
 pub const SH_DATATYPE: &str = "http://www.w3.org/ns/shacl#datatype";

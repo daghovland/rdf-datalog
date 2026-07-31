@@ -1,0 +1,10 @@
+# SHACL sh:oneOrMorePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# ex:Alice's ex:parent+ closure is {ex:Bob, ex:Carol, ex:Dave}.
+# ex:Isolated has no ex:parent edge at all.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:parent ex:Bob .
+ex:Bob ex:parent ex:Carol .
+ex:Carol ex:parent ex:Dave .
+ex:Isolated a ex:Person .

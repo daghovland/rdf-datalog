@@ -77,7 +77,7 @@ pub fn shapes_to_rules(
             if prop.deactivated {
                 continue;
             }
-            let path_id = graph::intern_iri(work, &prop.path);
+            let path_id = crate::path::resolve_one_path(work, &prop.path, si, prop.idx);
             for (ci, constraint) in prop.constraints.iter().enumerate() {
                 let key = (si, prop.idx, ci);
                 let new = prop_constraint_rules(
@@ -98,7 +98,7 @@ pub fn shapes_to_rules(
                             shapes,
                             shape,
                             prop.shapes_id,
-                            Some(&prop.path),
+                            Some(prop.path_display.as_str()),
                             constraint.component_iri(),
                             prop.severity.clone(),
                         ),

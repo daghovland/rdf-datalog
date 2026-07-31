@@ -1,0 +1,15 @@
+# SHACL sh:zeroOrOnePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# Every value reached via zeroOrOne(ex:hasSpouse) — the focus node itself,
+# plus its spouse if any — must be an ex:Person. Exercises sh:class, a
+# Phase 1 (Datalog-translated) constraint, over a compound path.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:PersonOrSpouseShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Carol ;
+    sh:property [
+        sh:path [ sh:zeroOrOnePath ex:hasSpouse ] ;
+        sh:class ex:Person ;
+    ] .

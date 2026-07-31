@@ -1,0 +1,11 @@
+# SHACL sh:zeroOrOnePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# The zero-length match includes the focus node itself, so
+# [ sh:zeroOrOnePath ex:hasSpouse ] from ex:Alice yields {ex:Alice, ex:Bob};
+# from ex:Carol it yields {ex:Carol, ex:NotAPerson}.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person ; ex:hasSpouse ex:Bob .
+ex:Bob a ex:Person .
+ex:Carol a ex:Person ; ex:hasSpouse ex:NotAPerson .
+ex:NotAPerson a ex:Thing .

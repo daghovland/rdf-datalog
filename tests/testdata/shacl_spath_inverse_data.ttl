@@ -1,0 +1,9 @@
+# SHACL sh:inversePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# ex:Bob ex:parentOf ex:Alice, so an inverse-path lookup from ex:Alice along
+# ex:parentOf finds ex:Bob. ex:Carol has no such incoming edge.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice a ex:Person .
+ex:Bob a ex:Person ; ex:parentOf ex:Alice .
+ex:Carol a ex:Person .

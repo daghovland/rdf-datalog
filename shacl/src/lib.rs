@@ -23,6 +23,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod evaluate;
 pub mod graph;
+pub mod path;
 pub mod shapes;
 pub mod translate;
 pub mod vocab;

@@ -1,0 +1,13 @@
+# SHACL sequence path (RDF list of paths).
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# Every targeted node must have a grandparent (ex:hasParent/ex:hasParent).
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:GrandparentShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Carol ;
+    sh:property [
+        sh:path ( ex:hasParent ex:hasParent ) ;
+        sh:minCount 1 ;
+    ] .
