@@ -1,0 +1,12 @@
+# Issue #311 regression — sh:uniqueLang per-language-tag counting.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:UniqueLangCountShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Carol, ex:Dave ;
+    sh:property [
+        sh:path ex:label ;
+        sh:uniqueLang true ;
+    ] .

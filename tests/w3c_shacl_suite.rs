@@ -435,7 +435,6 @@ fn w3c_shacl_core_property() {
     let skip: &[&str] = &[
         "Test of sh:and at property shape 001",
         "Test of sh:datatype at property shape 003",
-        "Test of sh:minExclusive at property shape 002",
         "Test of sh:not at property shape 001",
         "Test of sh:or at property shape 001",
         "Test of sh:or of sh:datatypes at property shape 001",
@@ -444,10 +443,7 @@ fn w3c_shacl_core_property() {
         "Test of sh:qualifiedValueShapesDisjoint at property shape 001",
         "Test of validation report for ill-formed literals",
         "Test of sh:lessThan at property shape 002",
-        "Test of sh:maxExclusive at property shape 001",
-        "Test of sh:maxInclusive at property shape 001",
         "Test of sh:nodeKind at property shape 001",
-        "Test of sh:uniqueLang at property shape 001",
     ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/property");

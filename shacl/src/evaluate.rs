@@ -280,14 +280,25 @@ fn eval_prop_constraint(
         }
 
         // §4.3 value range
+        //
+        // Per spec, a value node that cannot be compared to the bound (e.g.
+        // not a literal, or a literal whose datatype isn't ordered against
+        // the bound's) is itself a violation — the same "incomparable ⇒
+        // violation" rule already applied to sh:lessThan (#303). Previously
+        // these constraints silently skipped incomparable values instead of
+        // reporting them. See
+        // https://www.w3.org/TR/shacl/#ConstraintComponentsValueRange and
+        // https://github.com/daghovland/rdf-datalog/issues/311.
         MinInclusive(bound) => {
             let viol = graph::intern_iri(work, &vocab::viol_min_inclusive(si, pi));
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
-                        && v < *b
-                    {
+                    let violates = match (&bound_val, lit_comparable(data, val)) {
+                        (Some(b), Some(v)) => v < *b,
+                        _ => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -299,9 +310,11 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
-                        && v > *b
-                    {
+                    let violates = match (&bound_val, lit_comparable(data, val)) {
+                        (Some(b), Some(v)) => v > *b,
+                        _ => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -313,9 +326,11 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
-                        && v <= *b
-                    {
+                    let violates = match (&bound_val, lit_comparable(data, val)) {
+                        (Some(b), Some(v)) => v <= *b,
+                        _ => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -327,9 +342,11 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    if let (Some(b), Some(v)) = (&bound_val, lit_comparable(data, val))
-                        && v >= *b
-                    {
+                    let violates = match (&bound_val, lit_comparable(data, val)) {
+                        (Some(b), Some(v)) => v >= *b,
+                        _ => true,
+                    };
+                    if violates {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -434,20 +451,37 @@ fn eval_prop_constraint(
         }
 
         // §4.4.5 sh:uniqueLang
+        //
+        // Per spec: one validation result per *language tag* that is used by
+        // more than one value node — not one result per duplicate occurrence.
+        // E.g. three values tagged "en" is one violation (for "en"), not
+        // two. `sh:value` is reported as the first value node seen with that
+        // tag (a representative, since the spec does not mandate which of
+        // the several offending literals is used). See
+        // https://www.w3.org/TR/shacl/#UniqueLangConstraintComponent and
+        // https://github.com/daghovland/rdf-datalog/issues/311.
         UniqueLang => {
             let viol = graph::intern_iri(work, &vocab::viol_unique_lang(si, pi));
             for node in targets {
                 let vals = values_of(*node);
-                let mut seen_langs: HashSet<String> = HashSet::new();
+                // Preserve first-seen order per language via a Vec of
+                // (lang, first_value, count) rather than a HashMap, so
+                // result order is deterministic without an extra sort.
+                let mut by_lang: Vec<(String, GraphElementId, u32)> = Vec::new();
                 for val in &vals {
                     if let GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. }) =
                         data.resources.get_graph_element(*val)
                     {
                         let lower = lang.to_lowercase();
-                        if !seen_langs.insert(lower) {
-                            // Duplicate language tag → violation (focus-node level)
-                            add_viol(work, *node, viol, *val);
+                        match by_lang.iter_mut().find(|(l, _, _)| *l == lower) {
+                            Some((_, _, count)) => *count += 1,
+                            None => by_lang.push((lower, *val, 1)),
                         }
+                    }
+                }
+                for (_, first_val, count) in by_lang {
+                    if count > 1 {
+                        add_viol(work, *node, viol, first_val);
                     }
                 }
             }

@@ -159,6 +159,10 @@ fn shacl_testdata_parses() {
         "shacl_s266_lessthan_shapes.ttl",
         "shacl_s266_languagein_data.ttl",
         "shacl_s266_languagein_shapes.ttl",
+        "shacl_s311_uniquelang_data.ttl",
+        "shacl_s311_uniquelang_shapes.ttl",
+        "shacl_s311_range_incomparable_data.ttl",
+        "shacl_s311_range_incomparable_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -513,7 +517,14 @@ fn regression_issue_256_mincount_n() {
 /// Covers `sh:minInclusive` (§4.3.2) and `sh:maxInclusive` (§4.3.4).
 /// `ex:Bob` age 23 → within [0, 150] → conforms.
 /// `ex:Alice` age 220 → exceeds `sh:maxInclusive 150` → 1 violation.
-/// `ex:Ted` age `"twenty one"` → non-numeric; range comparison inapplicable → conforms.
+/// `ex:Ted` age `"twenty one"` → not a literal comparable to the bound, so
+/// per spec "if v is not a literal, or the comparison does not return true,
+/// there is a validation result" — this is itself a violation, not exempt
+/// from the constraint. Confirmed against the W3C SHACL test suite's
+/// `core/property/maxExclusive-001` and `minExclusive-002` fixtures (a
+/// non-comparable value node — including a plain string against a numeric
+/// bound — must violate). See
+/// https://github.com/daghovland/rdf-datalog/issues/311.
 #[test]
 fn spec_s4_3_value_range() {
     let data = load("shacl_s4_range_data.ttl");
@@ -522,8 +533,11 @@ fn spec_s4_3_value_range() {
     assert!(!report.conforms);
     assert_eq!(
         report.results.len(),
-        1,
-        "only ex:Alice (age 220) exceeds maxInclusive 150"
+        3,
+        "ex:Alice (age 220) exceeds maxInclusive 150 (1 violation); ex:Ted \
+         (age \"twenty one\") is not comparable to the numeric bound, so it \
+         violates both sh:minInclusive and sh:maxInclusive independently \
+         (2 violations)"
     );
 }
 
@@ -2410,5 +2424,69 @@ fn regression_310_nodekind_node_shape_reports_focus_node_as_value() {
         Some(focus),
         "sh:value for a node-shape-level (pathless) sh:nodeKind violation \
          must equal the focus node, not nil"
+    );
+}
+
+// ── Issue #311 — property-shape-scoped constraint gaps ───────────────────────
+//
+// Surfaced by the W3C SHACL test suite (core/property/*). See
+// https://github.com/daghovland/rdf-datalog/issues/311.
+
+/// `sh:uniqueLang` must report one violation per *language tag* that is used
+/// by more than one value node, not one violation per duplicate occurrence
+/// beyond the first. Previously three values sharing a language tag produced
+/// two violations (one per extra occurrence) instead of one.
+#[test]
+fn regression_311_uniquelang_counts_per_language_not_per_occurrence() {
+    let data = load("shacl_s311_uniquelang_data.ttl");
+    let shapes = load("shacl_s311_uniquelang_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+
+    let carol_violations = report
+        .results
+        .iter()
+        .filter(|r| r.focus_node.as_deref() == Some(ex("Carol").as_str()))
+        .count();
+    assert_eq!(
+        carol_violations, 1,
+        "ex:Carol has 3 values sharing \"en\" — that's 1 duplicated language, so 1 violation"
+    );
+
+    let dave_violations = report
+        .results
+        .iter()
+        .filter(|r| r.focus_node.as_deref() == Some(ex("Dave").as_str()))
+        .count();
+    assert_eq!(
+        dave_violations, 2,
+        "ex:Dave has \"en\" used 3x and \"de\" used 2x — that's 2 duplicated \
+         languages, so 2 violations"
+    );
+}
+
+/// `sh:minExclusive`/`sh:maxExclusive` (and their Inclusive counterparts) must
+/// report a violation for a value node that cannot be compared to the bound
+/// (wrong datatype, or a non-literal), not silently skip it. Previously such
+/// values produced no violation at all — a false negative. Confirmed against
+/// the W3C SHACL suite's `core/property/maxExclusive-001` and
+/// `core/property/minExclusive-002` fixtures.
+#[test]
+fn regression_311_range_incomparable_value_violates() {
+    let data = load("shacl_s311_range_incomparable_data.ttl");
+    let shapes = load("shacl_s311_range_incomparable_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert!(
+        !has_violation(&report, &ex("Ok1")),
+        "ex:Ok1 (score 5, within (0, 10)) should conform"
+    );
+    assert!(
+        has_violation(&report, &ex("Bad1")),
+        "ex:Bad1 (score \"not a number\") is not comparable to the numeric bounds — must violate"
+    );
+    assert!(
+        has_violation(&report, &ex("Bad2")),
+        "ex:Bad2 (score is an IRI, not a literal) is not comparable — must violate"
     );
 }
