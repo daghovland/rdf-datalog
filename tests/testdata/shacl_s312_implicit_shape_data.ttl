@@ -1,0 +1,4 @@
+# Issue #312 — implicit shape recognition data graph.
+PREFIX ex: <http://example.com/ns#>
+
+ex:untypedTarget ex:label "an IRI, not a blank node" .

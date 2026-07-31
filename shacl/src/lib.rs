@@ -31,7 +31,7 @@ use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, Triple};
 use dag_rdf::{Datastore, GraphElementId};
 use datalog::evaluate_rules;
 use ingress::RDF_TYPE;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -39,33 +39,54 @@ use std::collections::HashSet;
 ///
 /// Spec: <https://www.w3.org/TR/shacl/#severity>. A shape's own `sh:severity`
 /// determines the severity of every result it produces; the default when
-/// unset is `sh:Violation`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// unset is `sh:Violation`. `sh:severity` may also be an arbitrary
+/// user-defined IRI (SHACL does not restrict its range to the three built-in
+/// terms) — `Custom` preserves that IRI verbatim rather than collapsing it to
+/// `Violation`. See
+/// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Severity {
     #[default]
     Violation,
     Warning,
     Info,
+    /// A `sh:severity` value other than the three built-in terms, keyed by
+    /// its full IRI.
+    Custom(String),
 }
 
 impl Severity {
-    /// Parse a `sh:severity` object IRI (`sh:Violation`/`sh:Warning`/`sh:Info`).
-    /// Returns `None` for any other IRI.
+    /// Parse a `sh:severity` object IRI. The three built-in terms map to
+    /// their named variants; any other IRI becomes `Severity::Custom` (SHACL
+    /// does not restrict `sh:severity`'s range), so this always returns
+    /// `Some`.
     pub fn from_iri(iri: &str) -> Option<Self> {
-        match iri {
-            vocab::SH_VIOLATION => Some(Severity::Violation),
-            vocab::SH_WARNING => Some(Severity::Warning),
-            vocab::SH_INFO => Some(Severity::Info),
-            _ => None,
+        Some(match iri {
+            vocab::SH_VIOLATION => Severity::Violation,
+            vocab::SH_WARNING => Severity::Warning,
+            vocab::SH_INFO => Severity::Info,
+            other => Severity::Custom(other.to_string()),
+        })
+    }
+
+    /// The full `sh:resultSeverity` object IRI for this severity.
+    pub fn iri(&self) -> &str {
+        match self {
+            Severity::Violation => vocab::SH_VIOLATION,
+            Severity::Warning => vocab::SH_WARNING,
+            Severity::Info => vocab::SH_INFO,
+            Severity::Custom(iri) => iri.as_str(),
         }
     }
 
-    /// The `sh:` term name (`"sh:Violation"`, …) used when serialising a report.
-    pub fn turtle_term(self) -> &'static str {
+    /// The `sh:` term name (`"sh:Violation"`, …), or `<iri>` for a custom
+    /// severity, used when serialising a report.
+    pub fn turtle_term(&self) -> String {
         match self {
-            Severity::Violation => "sh:Violation",
-            Severity::Warning => "sh:Warning",
-            Severity::Info => "sh:Info",
+            Severity::Violation => "sh:Violation".to_string(),
+            Severity::Warning => "sh:Warning".to_string(),
+            Severity::Info => "sh:Info".to_string(),
+            Severity::Custom(iri) => format!("<{iri}>"),
         }
     }
 }
@@ -106,9 +127,9 @@ impl ViolMeta {
     /// `source_shape_id` is the shapes-graph node that actually declares the
     /// constraint responsible for this violation: the property shape's own
     /// node for a property-shape-scoped violation, or `shape.shapes_id`
-    /// itself for a node-level constraint. `shape` still supplies
-    /// `severity`/`message`, which are shape-level (node-shape) concerns in
-    /// this crate today, not (yet) overridable per property shape.
+    /// itself for a node-level constraint. `shape` supplies `severity`/
+    /// `message` (shape-level, node-shape concerns) unless overridden by a
+    /// property shape's own `sh:severity` — see `new_with_severity_override`.
     fn new(
         shapes_store: &Datastore,
         shape: &shapes::ParsedShape,
@@ -116,8 +137,30 @@ impl ViolMeta {
         path: Option<&str>,
         component: &'static str,
     ) -> Self {
+        Self::new_with_severity_override(
+            shapes_store,
+            shape,
+            source_shape_id,
+            path,
+            component,
+            None,
+        )
+    }
+
+    /// As [`new`](Self::new), but `severity_override` — a property shape's
+    /// own `sh:severity`, when declared — takes precedence over the parent
+    /// node shape's severity. See
+    /// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
+    fn new_with_severity_override(
+        shapes_store: &Datastore,
+        shape: &shapes::ParsedShape,
+        source_shape_id: GraphElementId,
+        path: Option<&str>,
+        component: &'static str,
+        severity_override: Option<Severity>,
+    ) -> Self {
         ViolMeta {
-            severity: shape.severity,
+            severity: severity_override.unwrap_or_else(|| shape.severity.clone()),
             source_shape: graph::element_display(shapes_store, source_shape_id),
             path: path.map(str::to_string),
             component,
@@ -166,14 +209,15 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
     // it independently occurs anywhere in the data graph — the shapes graph
     // and data graph are ordinarily different documents. IRI/blank-node
     // `sh:targetNode` values already resolved correctly before this fix
-    // (`lookup_elem` looked them up directly against `data`'s existing
-    // resource map), so only a literal `Target::Node` needs the augmented
-    // copy below; skip the clone entirely otherwise; this validate() runs on
-    // a hot path and a `Datastore` clone is not free.
+    // (`evaluate::lookup_elem_value` looked them up directly against `data`'s
+    // existing resource map), so only a literal `Target::Node` needs the
+    // augmented copy below; skip the clone entirely otherwise; this
+    // validate() runs on a hot path and a `Datastore` clone is not free.
     //
     // Intern every literal `Target::Node` value into an augmented copy of
-    // `data` up front so that `data_targets`/`lookup_elem` below always find
-    // it, even though it appears only in the shapes graph.
+    // `data` up front so that `data_targets`'s call to
+    // `evaluate::lookup_elem_value` below always finds it, even though it
+    // appears only in the shapes graph.
     // `translate::intern_elem` is idempotent (backed by `add_resource`), and
     // Phase 1's `translate::shapes_to_rules` already interns the same values
     // into `work` independently — this keeps the read-only `data` view
@@ -238,7 +282,7 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
             out.push_str(" ;\n   sh:result [\n");
             out.push_str("       a sh:ValidationResult ;\n");
             out.push_str("       sh:resultSeverity ");
-            out.push_str(result.severity.turtle_term());
+            out.push_str(&result.severity.turtle_term());
             if let Some(focus) = &result.focus_node {
                 out.push_str(" ;\n       sh:focusNode ");
                 out.push_str(&turtle_term(focus));
@@ -360,23 +404,21 @@ fn closed_violations(
 
 /// Compute the focus nodes for `shape` directly from the `data` store.
 fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphElementId> {
-    let rdf_type_id = graph::lookup_iri(data, RDF_TYPE);
     let mut nodes: Vec<GraphElementId> = Vec::new();
 
     for target in &shape.targets {
         match target {
             shapes::Target::Node(elem) => {
-                if let Some(id) = lookup_elem(elem, data) {
+                // Literal-valued sh:targetNode (e.g. `sh:targetNode 32`) is
+                // resolved the same way as any other literal shapes-graph
+                // value referenced against `data` — see #312.
+                if let Some(id) = evaluate::lookup_elem_value(data, elem) {
                     push_unique(&mut nodes, id);
                 }
             }
             shapes::Target::Class(class_iri) | shapes::Target::ImplicitClass(class_iri) => {
-                if let (Some(rdf_type_id), Some(class_id)) =
-                    (rdf_type_id, graph::lookup_iri(data, class_iri))
-                {
-                    for t in data.get_triples_with_object_predicate(class_id, rdf_type_id) {
-                        push_unique(&mut nodes, t.subject);
-                    }
+                for id in class_target_instances(data, class_iri) {
+                    push_unique(&mut nodes, id);
                 }
             }
             shapes::Target::SubjectsOf(pred_iri) => {
@@ -398,16 +440,51 @@ fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphEleme
     nodes
 }
 
-/// Resolve a `sh:targetNode` value (IRI, blank node, or literal) to its
-/// `GraphElementId` in `data`, or `None` if that exact term was never
-/// interned (i.e. it appears nowhere in the data graph, so it cannot be a
-/// focus node). Delegates to [`evaluate::lookup_elem_value`], which already
-/// handles all three `ElemValue` variants — literal `sh:targetNode` values
-/// (e.g. `sh:targetNode "aldi"^^xsd:integer`) were previously dropped here,
-/// silently under-counting node-shape-scoped violations. See
-/// [#310](https://github.com/daghovland/rdf-datalog/issues/310).
-fn lookup_elem(elem: &shapes::ElemValue, data: &Datastore) -> Option<GraphElementId> {
-    evaluate::lookup_elem_value(data, elem)
+/// Resolve a `sh:targetClass`/implicit-class-target IRI to its focus nodes in
+/// `data`: every node whose `rdf:type` is `class_iri` or a (transitive)
+/// `rdfs:subClassOf` subclass of it, per SHACL spec §2.1.3.1
+/// (`?this rdf:type/rdfs:subClassOf* $class`). Shared between the direct
+/// Phase-2 evaluation path (`data_targets`, above) and the Datalog
+/// rule-generation path (`translate::target_rules`) — both need identical
+/// target semantics. See [#312](https://github.com/daghovland/rdf-datalog/issues/312).
+pub(crate) fn class_target_instances(data: &Datastore, class_iri: &str) -> Vec<GraphElementId> {
+    let mut nodes = Vec::new();
+    let (Some(rdf_type_id), Some(class_id)) = (
+        graph::lookup_iri(data, RDF_TYPE),
+        graph::lookup_iri(data, class_iri),
+    ) else {
+        return nodes;
+    };
+    for c in class_and_subclasses(data, class_id) {
+        for t in data.get_triples_with_object_predicate(c, rdf_type_id) {
+            push_unique(&mut nodes, t.subject);
+        }
+    }
+    nodes
+}
+
+/// Return `class_id` together with every class transitively related to it by
+/// `rdfs:subClassOf` (`{c}` if `data` has no such triples at all — the
+/// no-hierarchy case degenerates to the direct-instances-only behaviour this
+/// replaced). Used to resolve `sh:targetClass`/implicit class targets per
+/// SHACL spec §2.1.3.1 (`?this rdf:type/rdfs:subClassOf* $class`). See #312.
+fn class_and_subclasses(data: &Datastore, class_id: GraphElementId) -> HashSet<GraphElementId> {
+    let mut classes = HashSet::new();
+    classes.insert(class_id);
+    let Some(sub_class_of_id) = graph::lookup_iri(data, ingress::RDFS_SUB_CLASS_OF) else {
+        return classes;
+    };
+    let mut queue: VecDeque<GraphElementId> = VecDeque::new();
+    queue.push_back(class_id);
+    while let Some(c) = queue.pop_front() {
+        // t.subject rdfs:subClassOf c  =>  t.subject is a (transitive) subclass of c
+        for t in data.get_triples_with_object_predicate(c, sub_class_of_id) {
+            if classes.insert(t.subject) {
+                queue.push_back(t.subject);
+            }
+        }
+    }
+    classes
 }
 
 fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {
@@ -441,7 +518,7 @@ fn collect_violations(
             let meta = pred_meta.get(&q.predicate).copied();
             ValidationResult {
                 focus_node: Some(focus),
-                severity: meta.map(|m| m.severity).unwrap_or_default(),
+                severity: meta.map(|m| m.severity.clone()).unwrap_or_default(),
                 message: meta.and_then(|m| m.message.clone()),
                 result_path: meta.and_then(|m| m.path.clone()),
                 source_shape: meta.map(|m| m.source_shape.clone()).unwrap_or_default(),

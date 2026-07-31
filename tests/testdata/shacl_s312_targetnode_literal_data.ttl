@@ -1,0 +1,8 @@
+# Issue #312 — literal-valued sh:targetNode data graph.
+# The literal 32 must appear somewhere in the data graph for it to be
+# resolvable as a focus node (RDF literals are never triple subjects, so the
+# "32" that sh:targetNode 32 refers to has to already be an interned literal
+# value in this graph — here, as the object of ex:count).
+PREFIX ex: <http://example.com/ns#>
+
+ex:Counter ex:count 32 .

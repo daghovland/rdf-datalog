@@ -34,7 +34,7 @@ use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
 use dagalog::run_sparql_query;
 use ingress::IriReference;
 use shacl::graph::{element_display, is_blank_node};
-use shacl::{Severity, validate};
+use shacl::validate;
 use std::path::{Path, PathBuf};
 use turtle::parse_turtle_with_base;
 
@@ -260,14 +260,6 @@ fn ds_id(ds: &Datastore, el: &GraphElement) -> dag_rdf::GraphElementId {
         .unwrap_or_else(|| panic!("element {el:?} not interned in its own datastore"))
 }
 
-fn severity_iri(s: Severity) -> &'static str {
-    match s {
-        Severity::Violation => "http://www.w3.org/ns/shacl#Violation",
-        Severity::Warning => "http://www.w3.org/ns/shacl#Warning",
-        Severity::Info => "http://www.w3.org/ns/shacl#Info",
-    }
-}
-
 /// Load all self-contained test files reachable (two `mf:include` hops) from
 /// `core/manifest.ttl` under directory `subdir`, e.g. `"node"`.
 fn load_shacl_manifest(subdir: &str) -> Vec<ShaclTestEntry> {
@@ -327,7 +319,7 @@ fn compare_report(entry: &ShaclTestEntry) -> Option<String> {
 
 fn results_match(expected: &ExpectedResult, actual: &shacl::ValidationResult) -> bool {
     if let Some(sev) = &expected.severity
-        && sev.as_str() != severity_iri(actual.severity)
+        && sev.as_str() != actual.severity.iri()
     {
         return false;
     }
@@ -472,9 +464,12 @@ fn w3c_shacl_core_misc() {
         entries.len()
     );
     // All core/misc entries (sh:deactivated 002, sh:severity 001/002) were
-    // triaged under https://github.com/daghovland/rdf-datalog/issues/312 and
-    // found to already conform, as a side effect of the violation-metadata
-    // rework in #300/#303/#309/#316. No skips remain.
+    // fixed under https://github.com/daghovland/rdf-datalog/issues/312:
+    // literal-valued sh:targetNode was silently dropped by target
+    // resolution, and a shape recognised only via a target-declaring
+    // predicate (no explicit rdf:type sh:NodeShape/sh:PropertyShape) was
+    // never picked up by shape discovery. See shacl/src/lib.rs and
+    // shacl/src/shapes.rs. No skips remain.
     let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/misc");
@@ -488,10 +483,12 @@ fn w3c_shacl_core_targets() {
         "expected at least 5 core/targets entries, got {}",
         entries.len()
     );
-    // "Test of implicit sh:targetClass 001" was triaged under
-    // https://github.com/daghovland/rdf-datalog/issues/312 and found to already
-    // conform (implicit class-as-shape target resolution, shapes.rs:99/261,
-    // was already in place). No skips remain.
+    // "Test of implicit sh:targetClass 001" was fixed under
+    // https://github.com/daghovland/rdf-datalog/issues/312: sh:targetClass /
+    // implicit class-as-shape target resolution now applies the
+    // rdfs:subClassOf* closure required by SHACL spec §2.1.3.1
+    // (`?this rdf:type/rdfs:subClassOf* $class`) — see
+    // shacl::class_target_instances in shacl/src/lib.rs. No skips remain.
     let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/targets");

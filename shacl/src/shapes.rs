@@ -198,6 +198,11 @@ pub struct ParsedPropShape {
     pub or_inners: Vec<InnerShapeRef>,
     /// `sh:xone (s1 s2 …)` declared directly on this property shape.
     pub xone_inners: Vec<InnerShapeRef>,
+    /// `sh:severity` declared directly on this property shape, overriding
+    /// the parent node shape's severity for violations it produces. `None`
+    /// means "not declared here" — the parent shape's severity applies. See
+    /// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
+    pub severity: Option<crate::Severity>,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -271,6 +276,16 @@ pub(crate) fn is_deactivated(shapes: &Datastore, shape_id: GraphElementId) -> bo
 // ── Top-level entry point ─────────────────────────────────────────────────────
 
 /// Parse all `sh:NodeShape` and `sh:PropertyShape` nodes from `shapes`.
+///
+/// Per SHACL spec §3.1, a node is a shape whenever it either carries an
+/// explicit `rdf:type sh:NodeShape`/`sh:PropertyShape`/`rdfs:Class`
+/// declaration, *or* is the subject of one of the target-declaring
+/// predicates (`sh:targetNode`/`sh:targetClass`/`sh:targetSubjectsOf`/
+/// `sh:targetObjectsOf`) — a shape does not need to be typed explicitly to
+/// be recognised, and a target declaration alone is sufficient. Missing this
+/// second case meant a shape like `ex:S sh:targetNode ex:x ; sh:nodeKind
+/// sh:BlankNode .` (no `rdf:type` triple at all) was silently skipped
+/// entirely. See [#312](https://github.com/daghovland/rdf-datalog/issues/312).
 pub fn parse_shapes(shapes: &Datastore) -> Vec<ParsedShape> {
     let mut found: Vec<GraphElementId> = Vec::new();
 
@@ -282,6 +297,21 @@ pub fn parse_shapes(shapes: &Datastore) -> Vec<ParsedShape> {
             (rdf_type_id, graph::lookup_iri(shapes, type_iri))
         {
             for t in shapes.get_triples_with_object_predicate(type_id, rdf_type_id) {
+                if !found.contains(&t.subject) {
+                    found.push(t.subject);
+                }
+            }
+        }
+    }
+
+    for target_pred in [
+        SH_TARGET_NODE,
+        SH_TARGET_CLASS,
+        SH_TARGET_SUBJECTS_OF,
+        SH_TARGET_OBJECTS_OF,
+    ] {
+        if let Some(pred_id) = graph::lookup_iri(shapes, target_pred) {
+            for t in shapes.get_triples_with_predicate(pred_id) {
                 if !found.contains(&t.subject) {
                     found.push(t.subject);
                 }
@@ -337,6 +367,9 @@ pub(crate) fn parse_one_shape(
                 and_inners: direct_and_inners,
                 or_inners: direct_or_inners,
                 xone_inners: direct_xone_inners,
+                severity: graph::get_object(shapes, shape_id, SH_SEVERITY)
+                    .and_then(|id| graph::iri_string(shapes, id))
+                    .and_then(|iri| crate::Severity::from_iri(&iri)),
             });
         }
     }
@@ -457,6 +490,9 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                 and_inners: shape_list_refs(shapes, prop_node, SH_AND),
                 or_inners: shape_list_refs(shapes, prop_node, SH_OR),
                 xone_inners: shape_list_refs(shapes, prop_node, SH_XONE),
+                severity: graph::get_object(shapes, prop_node, SH_SEVERITY)
+                    .and_then(|id| graph::iri_string(shapes, id))
+                    .and_then(|iri| crate::Severity::from_iri(&iri)),
             })
         })
         .collect()

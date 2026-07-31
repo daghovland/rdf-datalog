@@ -1,0 +1,13 @@
+# Issue #312 — literal-valued sh:targetNode shapes graph.
+# Source: https://www.w3.org/TR/shacl/#targetNode
+# sh:targetNode may be a literal (not just an IRI/blank node); the focus node
+# is then the literal itself. ex:TestShape targets the integer literal 32,
+# which is not xsd:boolean, so it should violate sh:datatype.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:TestShape
+    a sh:NodeShape ;
+    sh:datatype xsd:boolean ;
+    sh:targetNode 32 .

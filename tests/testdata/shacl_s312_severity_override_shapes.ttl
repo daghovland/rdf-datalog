@@ -1,0 +1,20 @@
+# Issue #312 — property-shape sh:severity override + custom sh:severity IRI.
+# Source: https://www.w3.org/TR/shacl/#severity
+# ex:TestShape1 is recognised as a shape purely via sh:targetNode (no
+# rdf:type triple at all — see shacl_s312_implicit_shape_*), declares a
+# custom (non-built-in) sh:severity, and has a nested property shape
+# (ex:TestShape2) that overrides the severity for its own violations.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:TestShape1
+    sh:nodeKind sh:BlankNode ;
+    sh:property ex:TestShape2 ;
+    sh:severity ex:MySeverity ;
+    sh:targetNode ex:InvalidResource1 .
+
+ex:TestShape2
+    sh:path ex:property ;
+    sh:datatype xsd:integer ;
+    sh:severity sh:Info .
