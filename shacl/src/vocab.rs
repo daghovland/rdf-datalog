@@ -73,6 +73,8 @@ pub const SH_NODE: &str = "http://www.w3.org/ns/shacl#node";
 pub const SH_QUALIFIED_VALUE_SHAPE: &str = "http://www.w3.org/ns/shacl#qualifiedValueShape";
 pub const SH_QUALIFIED_MIN_COUNT: &str = "http://www.w3.org/ns/shacl#qualifiedMinCount";
 pub const SH_QUALIFIED_MAX_COUNT: &str = "http://www.w3.org/ns/shacl#qualifiedMaxCount";
+pub const SH_QUALIFIED_VALUE_SHAPES_DISJOINT: &str =
+    "http://www.w3.org/ns/shacl#qualifiedValueShapesDisjoint";
 
 // §4.8 Other
 pub const SH_CLOSED: &str = "http://www.w3.org/ns/shacl#closed";
@@ -224,6 +226,27 @@ pub fn viol_or(shape_idx: usize) -> String {
 
 pub fn viol_xone(shape_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:xone")
+}
+
+// sh:not/sh:and/sh:or/sh:xone declared directly inside a sh:property block —
+// distinct predicate namespace from the node-shape-scoped viol_not/and/or/xone
+// above, since both are keyed by shape_idx alone and would otherwise collide
+// when the same node shape has both a node-level and a property-level
+// combinator. See https://github.com/daghovland/rdf-datalog/issues/311.
+pub fn viol_prop_not(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:prop-not")
+}
+
+pub fn viol_prop_and(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:prop-and")
+}
+
+pub fn viol_prop_or(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:prop-or")
+}
+
+pub fn viol_prop_xone(shape_idx: usize, prop_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:prop-xone")
 }
 
 // §4.1 value type (Phase 2)

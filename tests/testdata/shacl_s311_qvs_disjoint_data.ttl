@@ -1,0 +1,21 @@
+# Issue #311 regression — sh:qualifiedValueShapesDisjoint.
+# Mirrors the W3C SHACL suite's core/property/qualifiedValueShapesDisjoint-001
+# fixture. https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX ex: <http://example.com/ns#>
+
+ex:Finger1 a ex:Finger .
+ex:Finger2 a ex:Finger .
+ex:Finger3 a ex:Finger .
+ex:FingerAndThumb a ex:Finger, ex:Thumb .
+
+# 3 plain fingers + 1 dual-typed digit. The shape requires exactly 1 thumb
+# and exactly 4 fingers, both qualifiedValueShapesDisjoint. Since the dual
+# digit conforms to both sibling shapes, disjoint semantics exclude it from
+# BOTH counts: thumb qualifying count = 0 (needs 1), finger qualifying
+# count = 3 (needs 4) — 2 violations.
+ex:InvalidHand ex:digit ex:Finger1, ex:Finger2, ex:Finger3, ex:FingerAndThumb .
+
+# A hand with a separate real thumb and 4 real fingers conforms.
+ex:Finger4 a ex:Finger .
+ex:Thumb1 a ex:Thumb .
+ex:ValidHand ex:digit ex:Finger1, ex:Finger2, ex:Finger3, ex:Finger4, ex:Thumb1 .

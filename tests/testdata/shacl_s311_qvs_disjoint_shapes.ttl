@@ -1,0 +1,22 @@
+# Issue #311 regression — sh:qualifiedValueShapesDisjoint.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:HandShape
+    a sh:NodeShape ;
+    sh:targetNode ex:InvalidHand, ex:ValidHand ;
+    sh:property [
+        sh:path ex:digit ;
+        sh:qualifiedValueShape [ sh:class ex:Thumb ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:qualifiedValueShapesDisjoint true ;
+    ] ;
+    sh:property [
+        sh:path ex:digit ;
+        sh:qualifiedValueShape [ sh:class ex:Finger ] ;
+        sh:qualifiedMinCount 4 ;
+        sh:qualifiedMaxCount 4 ;
+        sh:qualifiedValueShapesDisjoint true ;
+    ] .

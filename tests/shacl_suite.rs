@@ -163,6 +163,12 @@ fn shacl_testdata_parses() {
         "shacl_s311_uniquelang_shapes.ttl",
         "shacl_s311_range_incomparable_data.ttl",
         "shacl_s311_range_incomparable_shapes.ttl",
+        "shacl_s311_prop_combinators_data.ttl",
+        "shacl_s311_prop_combinators_shapes.ttl",
+        "shacl_s311_illformed_data.ttl",
+        "shacl_s311_illformed_shapes.ttl",
+        "shacl_s311_qvs_disjoint_data.ttl",
+        "shacl_s311_qvs_disjoint_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -2488,5 +2494,91 @@ fn regression_311_range_incomparable_value_violates() {
     assert!(
         has_violation(&report, &ex("Bad2")),
         "ex:Bad2 (score is an IRI, not a literal) is not comparable — must violate"
+    );
+}
+
+/// `sh:and` declared directly inside a `sh:property` block must apply to the
+/// path-traversed value nodes, not to the focus node. Previously
+/// `ParsedPropShape` had no field for it at all, so it was silently dropped.
+#[test]
+fn regression_311_prop_scoped_and() {
+    let data = load("shacl_s311_prop_combinators_data.ttl");
+    let shapes = load("shacl_s311_prop_combinators_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("AndOk")));
+    assert!(has_violation(&report, &ex("AndBad")));
+}
+
+/// `sh:or` declared directly inside a `sh:property` block.
+#[test]
+fn regression_311_prop_scoped_or() {
+    let data = load("shacl_s311_prop_combinators_data.ttl");
+    let shapes = load("shacl_s311_prop_combinators_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("OrOk1")));
+    assert!(!has_violation(&report, &ex("OrOk2")));
+    assert!(has_violation(&report, &ex("OrBad")));
+}
+
+/// `sh:not` declared directly inside a `sh:property` block.
+#[test]
+fn regression_311_prop_scoped_not() {
+    let data = load("shacl_s311_prop_combinators_data.ttl");
+    let shapes = load("shacl_s311_prop_combinators_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!has_violation(&report, &ex("NotOk")));
+    assert!(has_violation(&report, &ex("NotBad")));
+}
+
+/// `sh:datatype` must reject a literal whose type IRI matches but whose
+/// lexical form is ill-formed for that datatype (out of range, or not
+/// parseable at all), not just compare the type IRI. Confirmed against the
+/// W3C SHACL suite's `core/property/datatype-ill-formed` and
+/// `core/property/or-datatypes-001` fixtures (the latter's
+/// `"none"^^xsd:boolean` must fail every `sh:or` disjunct, including the
+/// `xsd:boolean` one).
+#[test]
+fn regression_311_datatype_ill_formed_lexical_form() {
+    let data = load("shacl_s311_illformed_data.ttl");
+    let shapes = load("shacl_s311_illformed_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("Good")),
+        "ex:Good \"5\"^^xsd:byte is well-formed and in range — conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("BadRange")),
+        "ex:BadRange \"300\"^^xsd:byte is out of xsd:byte's value space — must violate"
+    );
+    assert!(
+        has_violation(&report, &ex("BadLexical")),
+        "ex:BadLexical \"c\"^^xsd:byte isn't a valid integer at all — must violate"
+    );
+}
+
+/// `sh:qualifiedValueShapesDisjoint`: a value node conforming to a sibling
+/// qualified value shape must not count toward this shape's own qualifying
+/// count. Previously this flag was not parsed at all. Mirrors the W3C SHACL
+/// suite's `core/property/qualifiedValueShapesDisjoint-001` fixture.
+#[test]
+fn regression_311_qualified_value_shapes_disjoint() {
+    let data = load("shacl_s311_qvs_disjoint_data.ttl");
+    let shapes = load("shacl_s311_qvs_disjoint_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert!(
+        !has_violation(&report, &ex("ValidHand")),
+        "ex:ValidHand has a distinct thumb and 4 distinct fingers — conforms"
+    );
+    let invalid_violations = report
+        .results
+        .iter()
+        .filter(|r| r.focus_node.as_deref() == Some(ex("InvalidHand").as_str()))
+        .count();
+    assert_eq!(
+        invalid_violations, 2,
+        "ex:InvalidHand's dual-typed digit is excluded from both sibling \
+         counts by sh:qualifiedValueShapesDisjoint, so both the thumb (0 < 1) \
+         and finger (3 < 4) bounds are violated"
     );
 }

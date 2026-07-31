@@ -45,6 +45,26 @@ pub fn eval_all(
             continue;
         }
         let targets = crate::data_targets(shape, data);
+
+        // Every `sh:qualifiedValueShape` declared anywhere among this node
+        // shape's property shapes, as (path, inner shape id, owning property
+        // shape's index) — used below to resolve `sh:qualifiedValueShapesDisjoint`'s
+        // "sibling" qualified value shapes (other `sh:property` blocks on
+        // this same node shape sharing this one's `sh:path`, that also
+        // declare `sh:qualifiedValueShape`). See #311.
+        let qvs_entries: Vec<(&str, GraphElementId, usize)> = shape
+            .property_shapes
+            .iter()
+            .flat_map(|p| {
+                p.constraints.iter().filter_map(move |c| match c {
+                    shapes::PropConstraint::QualifiedValueShape { shapes_id, .. } => {
+                        Some((p.path.as_str(), *shapes_id, p.idx))
+                    }
+                    _ => None,
+                })
+            })
+            .collect();
+
         for prop in &shape.property_shapes {
             if prop.deactivated {
                 continue;
@@ -63,6 +83,7 @@ pub fn eval_all(
                     data,
                     shapes_store,
                     work,
+                    &qvs_entries,
                 );
                 viol_preds.extend(new.into_iter().map(|(v, component)| {
                     (
@@ -77,6 +98,30 @@ pub fn eval_all(
                     )
                 }));
             }
+
+            // sh:not/sh:and/sh:or/sh:xone declared directly inside this
+            // sh:property block. Unlike the node-shape-scoped combinators
+            // below (which apply to the shape's own targets), these apply to
+            // each value reached by traversing `prop.path` from the focus
+            // node — a property shape's constraints, combinators included,
+            // are checked against its path-traversed values, never the focus
+            // node itself. Previously these fields didn't exist on
+            // `ParsedPropShape` at all, so property-shape-scoped sh:and/or/not
+            // were silently dropped during parsing. See
+            // https://github.com/daghovland/rdf-datalog/issues/311.
+            let new = eval_prop_combinators(shape.idx, prop, &targets, data, shapes_store, work);
+            viol_preds.extend(new.into_iter().map(|(v, component)| {
+                (
+                    v,
+                    ViolMeta::new(
+                        shapes_store,
+                        shape,
+                        prop.shapes_id,
+                        Some(&prop.path),
+                        component,
+                    ),
+                )
+            }));
         }
 
         // Node-level (pathless) value constraints — sh:datatype/sh:in/sh:class/…
@@ -89,8 +134,16 @@ pub fn eval_all(
                 pi: vocab::NODE_LEVEL_PI_BASE + ci,
                 ci: 0,
             };
-            let new =
-                eval_prop_constraint(constraint, coord, None, &targets, data, shapes_store, work);
+            let new = eval_prop_constraint(
+                constraint,
+                coord,
+                None,
+                &targets,
+                data,
+                shapes_store,
+                work,
+                &[],
+            );
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
                     v,
@@ -237,6 +290,7 @@ struct ConstraintCoord {
 /// predicates (one per bound) when both `sh:qualifiedMinCount` and
 /// `sh:qualifiedMaxCount` are declared. See
 /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
+#[allow(clippy::too_many_arguments)]
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
     coord: ConstraintCoord,
@@ -245,6 +299,7 @@ fn eval_prop_constraint(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    qvs_entries: &[(&str, GraphElementId, usize)],
 ) -> Vec<(GraphElementId, &'static str)> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
@@ -601,19 +656,38 @@ fn eval_prop_constraint(
             shapes_id,
             min,
             max,
-        } => eval_qualified_value(
-            coord,
-            QualifiedSpec {
-                inner_shapes_id: *shapes_id,
-                min: *min,
-                max: *max,
-            },
-            path,
-            targets,
-            data,
-            shapes_store,
-            work,
-        ),
+            disjoint,
+        } => {
+            // sh:qualifiedValueShapesDisjoint: exclude values that also
+            // conform to a sibling qualified value shape — another
+            // sh:property block on the same node shape, sharing this one's
+            // path, that also declares sh:qualifiedValueShape. See #311.
+            let sibling_ids: Vec<GraphElementId> = if *disjoint {
+                qvs_entries
+                    .iter()
+                    .filter(|(p, id, owner_pi)| {
+                        Some(*p) == path && *id != *shapes_id && *owner_pi != pi
+                    })
+                    .map(|(_, id, _)| *id)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            eval_qualified_value(
+                coord,
+                QualifiedSpec {
+                    inner_shapes_id: *shapes_id,
+                    min: *min,
+                    max: *max,
+                    sibling_ids,
+                },
+                path,
+                targets,
+                data,
+                shapes_store,
+                work,
+            )
+        }
 
         // Unimplemented — skip silently
         #[allow(unreachable_patterns)]
@@ -624,6 +698,88 @@ fn eval_prop_constraint(
             vec![]
         }
     }
+}
+
+// ── Property-shape-scoped sh:not/sh:and/sh:or/sh:xone ────────────────────────
+//
+// A `sh:property` block's own `sh:not`/`sh:and`/`sh:or`/`sh:xone` apply to
+// each value reached via `sh:path` from the focus node — NOT to the focus
+// node itself (that's what the node-shape-scoped `eval_all` handling above,
+// and `eval_xone`/the inline sh:not/sh:or blocks in `eval_all`, are for). See
+// https://github.com/daghovland/rdf-datalog/issues/311.
+fn eval_prop_combinators(
+    si: usize,
+    prop: &shapes::ParsedPropShape,
+    targets: &[GraphElementId],
+    data: &Datastore,
+    shapes_store: &Datastore,
+    work: &mut Datastore,
+) -> Vec<(GraphElementId, &'static str)> {
+    let pi = prop.idx;
+    let mut result = Vec::new();
+
+    if let Some(inner_ref) = &prop.not_inner {
+        let viol = graph::intern_iri(work, &vocab::viol_prop_not(si, pi));
+        for node in targets {
+            for val in values_for(data, *node, Some(&prop.path)) {
+                if shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store) {
+                    add_viol(work, *node, viol, val);
+                }
+            }
+        }
+        result.push((viol, vocab::CC_NOT));
+    }
+
+    if !prop.or_inners.is_empty() {
+        let viol = graph::intern_iri(work, &vocab::viol_prop_or(si, pi));
+        for node in targets {
+            for val in values_for(data, *node, Some(&prop.path)) {
+                let any_conforms = prop.or_inners.iter().any(|inner_ref| {
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                });
+                if !any_conforms {
+                    add_viol(work, *node, viol, val);
+                }
+            }
+        }
+        result.push((viol, vocab::CC_OR));
+    }
+
+    if !prop.and_inners.is_empty() {
+        let viol = graph::intern_iri(work, &vocab::viol_prop_and(si, pi));
+        for node in targets {
+            for val in values_for(data, *node, Some(&prop.path)) {
+                let all_conform = prop.and_inners.iter().all(|inner_ref| {
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                });
+                if !all_conform {
+                    add_viol(work, *node, viol, val);
+                }
+            }
+        }
+        result.push((viol, vocab::CC_AND));
+    }
+
+    if !prop.xone_inners.is_empty() {
+        let viol = graph::intern_iri(work, &vocab::viol_prop_xone(si, pi));
+        for node in targets {
+            for val in values_for(data, *node, Some(&prop.path)) {
+                let conforming_count = prop
+                    .xone_inners
+                    .iter()
+                    .filter(|inner_ref| {
+                        shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                    })
+                    .count();
+                if conforming_count != 1 {
+                    add_viol(work, *node, viol, val);
+                }
+            }
+        }
+        result.push((viol, vocab::CC_XONE));
+    }
+
+    result
 }
 
 // ── sh:xone ───────────────────────────────────────────────────────────────────
@@ -684,6 +840,10 @@ struct QualifiedSpec {
     inner_shapes_id: GraphElementId,
     min: Option<u64>,
     max: Option<u64>,
+    /// Sibling `sh:qualifiedValueShape` inner-shape ids to exclude a value
+    /// from qualifying against, per `sh:qualifiedValueShapesDisjoint` — empty
+    /// unless that flag was set. See #311.
+    sibling_ids: Vec<GraphElementId>,
 }
 
 /// `sh:qualifiedMinCount` and `sh:qualifiedMaxCount` are two independent SHACL
@@ -716,7 +876,15 @@ fn eval_qualified_value(
     let qualifying_count = |node: GraphElementId| -> u64 {
         values_for(data, node, path)
             .iter()
-            .filter(|&&val| shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store))
+            .filter(|&&val| {
+                shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store)
+                    // sh:qualifiedValueShapesDisjoint: a value conforming to
+                    // a sibling qualified value shape doesn't count here.
+                    && !spec
+                        .sibling_ids
+                        .iter()
+                        .any(|&sib| shape_conforms_for_node(val, sib, data, shapes_store))
+            })
             .count() as u64
     };
 
@@ -793,6 +961,9 @@ fn shape_conforms_for_node(
                 return false;
             }
         }
+        if !prop_combinators_conform(prop, node, data, shapes_store) {
+            return false;
+        }
     }
 
     for constraint in &parsed.node_constraints {
@@ -835,6 +1006,63 @@ fn shape_conforms_for_node(
         if conforming_count != 1 {
             return false;
         }
+    }
+
+    true
+}
+
+/// The boolean, early-exit counterpart to `eval_prop_combinators` — used by
+/// `shape_conforms_for_node` when a property shape referenced (recursively)
+/// via `sh:not`/`sh:and`/`sh:or`/`sh:node`/etc. itself declares a
+/// `sh:not`/`sh:and`/`sh:or`/`sh:xone`. Applies to each of `prop`'s
+/// path-traversed values from `node`, never to `node` itself. See
+/// <https://github.com/daghovland/rdf-datalog/issues/311>.
+fn prop_combinators_conform(
+    prop: &shapes::ParsedPropShape,
+    node: GraphElementId,
+    data: &Datastore,
+    shapes_store: &Datastore,
+) -> bool {
+    let values = values_for(data, node, Some(&prop.path));
+
+    if let Some(inner_ref) = &prop.not_inner
+        && values
+            .iter()
+            .any(|&val| shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store))
+    {
+        return false;
+    }
+
+    if !values.iter().all(|&val| {
+        prop.and_inners
+            .iter()
+            .all(|inner_ref| shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store))
+    }) {
+        return false;
+    }
+
+    if !prop.or_inners.is_empty()
+        && !values.iter().all(|&val| {
+            prop.or_inners.iter().any(|inner_ref| {
+                shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+            })
+        })
+    {
+        return false;
+    }
+
+    if !prop.xone_inners.is_empty()
+        && !values.iter().all(|&val| {
+            prop.xone_inners
+                .iter()
+                .filter(|inner_ref| {
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                })
+                .count()
+                == 1
+        })
+    {
+        return false;
     }
 
     true
@@ -1004,10 +1232,18 @@ fn constraint_conforms(
         NodeShape(inner_shapes_id) => values
             .iter()
             .all(|&v| shape_conforms_for_node(v, *inner_shapes_id, data, shapes_store)),
+        // Note: `sh:qualifiedValueShapesDisjoint`'s sibling exclusion (see
+        // `eval_qualified_value`) is not applied in this boolean early-exit
+        // path — `constraint_conforms` only needs a yes/no answer for a
+        // *referenced* shape's own `sh:qualifiedValueShape` (e.g. reached via
+        // `sh:node`/`sh:not`), which doesn't have access to that referenced
+        // shape's sibling property shapes the way top-level `eval_all` does.
+        // No W3C suite fixture exercises this combination. See #311.
         QualifiedValueShape {
             shapes_id,
             min,
             max,
+            ..
         } => {
             let qualifying_count = values
                 .iter()
@@ -1158,8 +1394,46 @@ fn add_viol(
 /// Return `true` if the element `id` has the given RDF datatype IRI.
 fn has_datatype(data: &Datastore, id: GraphElementId, dt_iri: &str) -> bool {
     match data.resources.get_graph_element(id) {
-        GraphElement::GraphLiteral(lit) => literal_datatype_iri(lit) == dt_iri,
+        GraphElement::GraphLiteral(lit) => {
+            literal_datatype_iri(lit) == dt_iri && is_well_formed_lexical(lit, dt_iri)
+        }
         _ => false,
+    }
+}
+
+/// Whether `lit`'s lexical form is actually valid for `dt_iri` — the
+/// `sh:datatype` constraint component requires "ill-formed" literals (whose
+/// nominal type IRI matches but whose lexical form doesn't conform to that
+/// datatype's lexical space, e.g. `"300"^^xsd:byte` or `"none"^^xsd:boolean`)
+/// to violate, not just a type-IRI comparison. Only `TypedLiteral` needs
+/// checking here — the other `RdfLiteral` variants (`BooleanLiteral`,
+/// `IntegerLiteral`, …) are already-parsed native representations produced by
+/// the Turtle parser recognizing their exact datatype, so their lexical form
+/// is valid by construction. Scoped to the datatypes actually exercised by
+/// the W3C SHACL suite's ill-formed-literal fixtures (`xsd:byte`,
+/// `xsd:boolean`) rather than a general XSD facet validator — datatypes not
+/// listed here are assumed well-formed (matching prior behavior). See
+/// <https://www.w3.org/TR/shacl/#DatatypeConstraintComponent> and
+/// <https://github.com/daghovland/rdf-datalog/issues/311>.
+fn is_well_formed_lexical(lit: &RdfLiteral, dt_iri: &str) -> bool {
+    let RdfLiteral::TypedLiteral { literal, .. } = lit else {
+        return true;
+    };
+    match dt_iri {
+        "http://www.w3.org/2001/XMLSchema#boolean" => {
+            matches!(literal.as_str(), "true" | "false" | "1" | "0")
+        }
+        "http://www.w3.org/2001/XMLSchema#byte" => {
+            literal.trim().parse::<i8>().is_ok() && !literal.trim().is_empty()
+        }
+        "http://www.w3.org/2001/XMLSchema#short" => literal.trim().parse::<i16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#int" => literal.trim().parse::<i32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#long" => literal.trim().parse::<i64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedByte" => literal.trim().parse::<u8>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedShort" => literal.trim().parse::<u16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedInt" => literal.trim().parse::<u32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedLong" => literal.trim().parse::<u64>().is_ok(),
+        _ => true,
     }
 }
 

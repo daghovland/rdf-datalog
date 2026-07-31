@@ -1,0 +1,35 @@
+# Issue #311 regression — sh:and/sh:or/sh:not scoped directly inside a
+# sh:property block. Previously `ParsedPropShape` had no fields for these
+# combinators at all (only the node-shape-scoped `ParsedShape` did), so they
+# were silently dropped during parsing.
+# https://github.com/daghovland/rdf-datalog/issues/311
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:AndShape
+    a sh:NodeShape ;
+    sh:targetNode ex:AndOk, ex:AndBad ;
+    sh:property [
+        sh:path ex:address ;
+        sh:and (
+            [ sh:property [ sh:path ex:suburb ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path ex:postalCode ; sh:minCount 1 ] ]
+        ) ;
+    ] .
+
+ex:OrShape
+    a sh:NodeShape ;
+    sh:targetNode ex:OrOk1, ex:OrOk2, ex:OrBad ;
+    sh:property [
+        sh:path ex:tag ;
+        sh:or ( [ sh:datatype xsd:string ] [ sh:datatype xsd:boolean ] ) ;
+    ] .
+
+ex:NotShape
+    a sh:NodeShape ;
+    sh:targetNode ex:NotOk, ex:NotBad ;
+    sh:property [
+        sh:path ex:score ;
+        sh:not [ sh:datatype xsd:integer ] ;
+    ] .
