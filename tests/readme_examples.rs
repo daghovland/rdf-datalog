@@ -123,7 +123,7 @@ fn readme_owl_same_as() {
     let ontology = rdf2owl(&mut ds).ontology;
     let rules = owl2datalog(&mut ds.resources, &ontology);
     assert!(!rules.is_empty(), "OWL-RL should produce Datalog rules");
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 
     // ind2 gets the same type as ind1 via owl:sameAs
     let typed = run_sparql_query(

@@ -35,7 +35,7 @@ fn load_and_extract_rules(name: &str) -> (Datastore, usize) {
     let axiom_count = ontology_doc.ontology.axioms.len();
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     let rule_count = rules.len();
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
     let _ = axiom_count;
     (ds, rule_count)
 }
@@ -275,7 +275,7 @@ fn descriptor_from_imf_ontology_non_cyclic() {
         "expected Datalog rules from cycle-imf-test.ttl"
     );
     // Must not panic during materialisation
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── TestApiOntology.MaxQualifiedCardinalityIsIgnored ─────────────────────────
@@ -290,7 +290,7 @@ fn max_qualified_cardinality_is_ignored() {
     let ontology_doc = rdf2owl(&mut ds);
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     // Must not panic
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── TestApiOntology.DuplicateRulesWorks ──────────────────────────────────────
@@ -346,7 +346,7 @@ fn load_ido_ontology_works() {
     );
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     assert!(!rules.is_empty(), "LIS-14.ttl should yield Datalog rules");
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── Regression tests for issue #298 ──────────────────────────────────────────

@@ -387,7 +387,8 @@ fn bench_memory_overhead(c: &mut Criterion) {
         let before = read_vm_rss_kb();
         let (mut ds, v) = lubm.generate();
         let rules = lubm.make_rules(&v);
-        let _reasoner = IncrementalReasoner::new(rules, &mut ds);
+        let _reasoner = IncrementalReasoner::new(rules, &mut ds)
+            .expect("LUBM rules should not be contradictory");
         let after = read_vm_rss_kb();
         eprintln!(
             "[lubm/memory_overhead] scale=1: quads={} derived={} RSS_delta={}KB",
@@ -404,7 +405,8 @@ fn bench_memory_overhead(c: &mut Criterion) {
             || lubm.generate(),
             |(mut ds, v)| {
                 let rules = lubm.make_rules(&v);
-                let reasoner = IncrementalReasoner::new(rules, &mut ds);
+                let reasoner = IncrementalReasoner::new(rules, &mut ds)
+                    .expect("LUBM rules should not be contradictory");
                 (ds, reasoner)
             },
             BatchSize::LargeInput,
@@ -421,12 +423,15 @@ fn bench_bf_single_delete(c: &mut Criterion) {
             || {
                 let (mut ds, v) = lubm.generate();
                 let rules = lubm.make_rules(&v);
-                let reasoner = IncrementalReasoner::new(rules, &mut ds);
+                let reasoner = IncrementalReasoner::new(rules, &mut ds)
+                    .expect("LUBM rules should not be contradictory");
                 let to_delete = LubmGenerator::pick_deletions(&ds, 1);
                 (ds, reasoner, to_delete)
             },
             |(mut ds, mut reasoner, to_delete)| {
-                reasoner.apply_deletions(&mut ds, &to_delete);
+                reasoner
+                    .apply_deletions(&mut ds, &to_delete)
+                    .expect("deletion should not trigger a contradiction");
             },
             BatchSize::LargeInput,
         );
@@ -482,14 +487,17 @@ fn bench_bf_vs_full_remat(c: &mut Criterion) {
                         || {
                             let (mut ds, v) = lubm.generate();
                             let rules = lubm.make_rules(&v);
-                            let reasoner = IncrementalReasoner::new(rules, &mut ds);
+                            let reasoner = IncrementalReasoner::new(rules, &mut ds)
+                                .expect("LUBM rules should not be contradictory");
                             let n_ext = ds.named_graphs.extensional_quads().count();
                             let delta_count = std::cmp::max(1, n_ext * pct / 100);
                             let to_delete = LubmGenerator::pick_deletions(&ds, delta_count);
                             (ds, reasoner, to_delete)
                         },
                         |(mut ds, mut reasoner, to_delete)| {
-                            reasoner.apply_deletions(&mut ds, &to_delete);
+                            reasoner
+                                .apply_deletions(&mut ds, &to_delete)
+                                .expect("deletion should not trigger a contradiction");
                         },
                         BatchSize::LargeInput,
                     );
@@ -506,7 +514,8 @@ fn bench_bf_vs_full_remat(c: &mut Criterion) {
                             let (mut ds, v) = lubm.generate();
                             let rules = lubm.make_rules(&v);
                             // Materialise so intensional_quads is populated.
-                            let _reasoner = IncrementalReasoner::new(rules.clone(), &mut ds);
+                            let _reasoner = IncrementalReasoner::new(rules.clone(), &mut ds)
+                                .expect("LUBM rules should not be contradictory");
                             let n_ext = ds.named_graphs.extensional_quads().count();
                             let delta_count = std::cmp::max(1, n_ext * pct / 100);
                             let to_delete = LubmGenerator::pick_deletions(&ds, delta_count);
@@ -527,7 +536,8 @@ fn bench_bf_vs_full_remat(c: &mut Criterion) {
                                 ds.named_graphs.add_quad(q);
                             }
                             // Full re-materialisation from scratch.
-                            evaluate_rules(rules, &mut ds);
+                            evaluate_rules(rules, &mut ds)
+                                .expect("LUBM rules should not be contradictory");
                         },
                         BatchSize::LargeInput,
                     );
@@ -560,7 +570,8 @@ fn bench_insert_seminaive(c: &mut Criterion) {
                     // Build and materialise the base store.
                     let (mut base_ds, base_v) = base_lubm.generate();
                     let base_rules = base_lubm.make_rules(&base_v);
-                    let reasoner = IncrementalReasoner::new(base_rules, &mut base_ds);
+                    let reasoner = IncrementalReasoner::new(base_rules, &mut base_ds)
+                        .expect("LUBM rules should not be contradictory");
 
                     // Build the full corpus and collect extra extensional quads.
                     let (full_ds, _) = full_lubm.generate();
@@ -578,7 +589,9 @@ fn bench_insert_seminaive(c: &mut Criterion) {
                     (base_ds, reasoner, insert_delta)
                 },
                 |(mut ds, mut reasoner, inserts)| {
-                    reasoner.apply_insertions(&mut ds, &inserts);
+                    reasoner
+                        .apply_insertions(&mut ds, &inserts)
+                        .expect("insertion should not trigger a contradiction");
                 },
                 BatchSize::LargeInput,
             );

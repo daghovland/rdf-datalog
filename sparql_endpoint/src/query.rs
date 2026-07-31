@@ -17,6 +17,7 @@ use crate::{
     AppState,
     constraints::{check_owl_nothing, format_409_body},
     negotiate::{SelectFormat, negotiate_select_format},
+    reasoner_delta::apply_reasoner_delta,
     serialize::{
         serialize_construct_ntriples,
         sparql_json::{ask_to_sparql_json, to_sparql_json},
@@ -219,6 +220,16 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
     };
     let (net_inserts, net_deletes) = match result {
         Ok(delta) => delta,
+        // A genuine Contradiction (RuleHead::Contradiction rule fired) is a
+        // client-caused constraint violation, not a server error: the store
+        // has already been rolled back by `apply_prepared_update`. Report it
+        // the same way as the existing owl:Nothing check below (409),
+        // instead of a generic 500. See
+        // https://github.com/daghovland/rdf-datalog/issues/301
+        Err(crate::sparql_update::UpdateError::Contradiction(msg)) => {
+            let body = format!("Transaction rejected: {msg}\n");
+            return (StatusCode::CONFLICT, body).into_response();
+        }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -244,14 +255,24 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
                 store.add_quad(q);
             }
             // Update the reasoner with the inverse delta so derived facts
-            // reflect the reverted state.
+            // reflect the reverted state. This reverts back to a state that
+            // was already known-consistent (the pre-update snapshot), so a
+            // Contradiction here would indicate a bug rather than bad client
+            // data; surface it as a 500 rather than trying to be clever.
+            // See https://github.com/daghovland/rdf-datalog/issues/301
             if let Some(ref reasoner_arc) = state.reasoner {
                 let mut reasoner = reasoner_arc.lock().await;
-                if !net_inserts.is_empty() {
-                    reasoner.apply_deletions(&mut store, &net_inserts);
-                }
-                if !net_deletes.is_empty() {
-                    reasoner.apply_insertions(&mut store, &net_deletes);
+                if let Err(e) =
+                    apply_reasoner_delta(&mut reasoner, &mut store, &net_inserts, &net_deletes)
+                {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!(
+                            "failed to roll back after owl:Nothing violation \
+                             (store may be inconsistent): {e}"
+                        ),
+                    )
+                        .into_response();
                 }
             }
             let body = format_409_body(&violations);

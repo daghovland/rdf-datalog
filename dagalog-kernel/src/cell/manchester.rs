@@ -27,7 +27,7 @@ pub fn execute_manchester_file(ds: &mut Datastore, path: &Path) -> Result<String
 
     let rules = owl2rl2datalog::owl2datalog(&mut ds.resources, &ontology);
     let rule_count = rules.len();
-    datalog::evaluate_rules(rules, ds);
+    datalog::evaluate_rules(rules, ds).map_err(|e| e.to_string())?;
 
     let total_added = ds.named_graphs.quad_count - before;
     Ok(format!(

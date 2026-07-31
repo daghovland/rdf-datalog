@@ -14,6 +14,7 @@ Contact: hovlanddag@gmail.com
 //! Spec: <https://www.w3.org/TR/sparql11-update/>
 
 use crate::persistence::{LogEntry, to_repr};
+use crate::reasoner_delta::{DeltaError, apply_reasoner_delta};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
 use datalog::IncrementalReasoner;
@@ -21,6 +22,39 @@ use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
 use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, SolutionRow, execute, parse_query};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
+
+/// Error from [`apply_prepared_update`].
+///
+/// Distinguishes a client-triggered logical contradiction (mapped to `409
+/// Conflict` by the endpoint, mirroring the existing `owl:Nothing`
+/// constraint-violation convention) from any other update failure (parse
+/// error, rejected `LOAD`, persistence error, etc — mapped to 400/500 as
+/// before). See [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+#[derive(Debug)]
+pub enum UpdateError {
+    /// A `RuleHead::Contradiction` rule fired while re-materialising after
+    /// this update. The live store has already been rolled back to its
+    /// pre-update state (net delta undone, derived closure rebuilt from the
+    /// surviving base facts) by the time this is returned.
+    Contradiction(String),
+    /// Any other update failure. Message is user-facing.
+    Other(String),
+}
+
+impl fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UpdateError::Contradiction(m) | UpdateError::Other(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl From<String> for UpdateError {
+    fn from(s: String) -> Self {
+        UpdateError::Other(s)
+    }
+}
 
 // ── AST ───────────────────────────────────────────────────────────────────────
 
@@ -815,7 +849,7 @@ pub fn apply_prepared_update(
     ops: Vec<PreparedOp>,
     reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
-) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), String> {
+) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), UpdateError> {
     // Pending delta: buffered across all INSERT DATA / DELETE DATA /
     // PatternUpdate ops.  Nothing touches the live store for these
     // operations until all ops succeed, ensuring that a later failure
@@ -932,7 +966,8 @@ pub fn apply_prepared_update(
                             "LOAD <{source}> was rejected: remote network access is disabled. \
                              Start the server with --network=allow to enable remote loading. \
                              See https://github.com/daghovland/rdf-datalog/issues/119"
-                        ));
+                        )
+                        .into());
                     }
                     // LOAD SILENT: fail silently per the SPARQL Update spec.
                 }
@@ -949,7 +984,7 @@ pub fn apply_prepared_update(
                     match fetch_result {
                         Err(e) => {
                             if !silent {
-                                return Err(format!("LOAD <{source}> failed: {e}"));
+                                return Err(format!("LOAD <{source}> failed: {e}").into());
                             }
                             // LOAD SILENT: suppress network errors per SPARQL 1.1 Update spec.
                         }
@@ -964,7 +999,7 @@ pub fn apply_prepared_update(
                             if let Err(e) = parse_result
                                 && !silent
                             {
-                                return Err(e);
+                                return Err(e.into());
                             }
                         }
                     }
@@ -1000,13 +1035,14 @@ pub fn apply_prepared_update(
     }
 
     // Reason once over the net delta accumulated across the entire request.
+    // On a genuine Contradiction, `apply_reasoner_delta` rolls the delta back
+    // and rebuilds a consistent closure before returning — see
+    // https://github.com/daghovland/rdf-datalog/issues/301.
     if let Some(r) = reasoner {
-        if !net_deletes.is_empty() {
-            r.apply_deletions(store, &net_deletes);
-        }
-        if !net_inserts.is_empty() {
-            r.apply_insertions(store, &net_inserts);
-        }
+        apply_reasoner_delta(r, store, &net_deletes, &net_inserts).map_err(|e| match e {
+            DeltaError::Contradiction(m) => UpdateError::Contradiction(m),
+            DeltaError::RollbackFailed(m) => UpdateError::Other(m),
+        })?;
     }
 
     Ok((net_inserts, net_deletes))
@@ -1343,7 +1379,9 @@ fn load_fetched(
 /// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
     let (prepared, _) = prepare_update(store, ops)?;
-    apply_prepared_update(store, prepared, None, NetworkPolicy::Deny).map(|_| ())
+    apply_prepared_update(store, prepared, None, NetworkPolicy::Deny)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn ensure_trailing_dot(content: &str) -> String {
@@ -1646,7 +1684,7 @@ mod tests {
         let (prepared, _) = prepare_update(&store, ops).unwrap();
         let result = apply_prepared_update(&mut store, prepared, None, policy);
         assert!(result.is_err(), "Deny policy must return error");
-        let msg = result.unwrap_err();
+        let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("remote network access is disabled"),
             "unexpected message: {msg}"

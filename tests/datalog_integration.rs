@@ -243,7 +243,7 @@ ex:Alice ex:hasAge "30" .
     turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
     let rules = datalog_parser::parse_file(&testdata("properties.datalog"), &mut ds).unwrap();
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     // SPARQL: Alice should now be typed as AgeValue (via range inference)
     let sparql = r#"
@@ -276,7 +276,7 @@ ex:Nobody a ex:Fish .
 
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
     assert_eq!(rules.len(), 2);
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <https://example.com/test#> SELECT ?x WHERE { ?x a ex:Mammal . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -332,7 +332,8 @@ fn contradiction_rule_parsed_but_does_not_panic() {
     // Should not panic during materialisation
     let ttl = r#"@prefix ex: <https://example.com/> . ex:Alice a ex:ValidClass ."#;
     turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
-    datalog::evaluate_rules(rules, &mut ds); // must not panic
+    datalog::evaluate_rules(rules, &mut ds)
+        .expect("contradiction rule body should not be satisfied by this data"); // must not panic
 }
 
 // ── Stratified negation ───────────────────────────────────────────────────────
@@ -369,7 +370,7 @@ ex:c a ex:person .
         strata.len()
     );
 
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x ?y WHERE { ?x ex:unrelated ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -480,7 +481,7 @@ ex:bob   ex:age 15 .
         ],
     };
 
-    datalog::evaluate_rules(vec![rule], &mut ds);
+    datalog::evaluate_rules(vec![rule], &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -564,7 +565,7 @@ ex:b ex:label "hello" .
         ],
     };
 
-    datalog::evaluate_rules(vec![rule], &mut ds);
+    datalog::evaluate_rules(vec![rule], &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -643,7 +644,7 @@ ex:b ex:p "literal_val" .
         ],
     };
 
-    datalog::evaluate_rules(vec![rule], &mut ds);
+    datalog::evaluate_rules(vec![rule], &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -725,7 +726,7 @@ ex:b ex:p "abc"^^xsd:string .
         ],
     };
 
-    datalog::evaluate_rules(vec![rule], &mut ds);
+    datalog::evaluate_rules(vec![rule], &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -809,7 +810,7 @@ ex:b ex:label "bar" .
         ],
     };
 
-    datalog::evaluate_rules(vec![rule], &mut ds);
+    datalog::evaluate_rules(vec![rule], &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x ex:violation ?y . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -902,7 +903,7 @@ ex:violation[?x] :- [?x, ex:age, ?a], FILTER(?a < 20) .
         "body[1] should be FilterAtom"
     );
 
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x a ex:violation . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -970,7 +971,7 @@ ex:violation[?x] :- [?x, ex:val, ?v], FILTER(xsd:integer(?v) = 42) .
         "body[1] should be FilterAtom"
     );
 
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     let sparql = "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x a ex:violation . }";
     let result = run_sparql_query(&ds, sparql).unwrap();
@@ -1023,7 +1024,7 @@ ex:b ex:parent ex:c .
 "#;
     turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
-    datalog::evaluate_rules(rules.clone(), &mut ds);
+    datalog::evaluate_rules(rules.clone(), &mut ds).unwrap();
 
     // Verify grandparent(a,c) was derived.
     let sparql = "SELECT ?o WHERE { <http://example.org/a> <http://example.org/grandparent> ?o }";
@@ -1055,7 +1056,7 @@ ex:b ex:parent ex:c .
     });
 
     // Re-materialise from the remaining base facts.
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     // grandparent(a,c) must no longer hold.
     let after = run_sparql_query(&ds, sparql).unwrap();
@@ -1090,7 +1091,7 @@ ex:c ex:parent  ex:b .
 "#;
     turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
-    datalog::evaluate_rules(rules.clone(), &mut ds);
+    datalog::evaluate_rules(rules.clone(), &mut ds).unwrap();
 
     let sparql = "SELECT ?z WHERE { <http://example.org/a> <http://example.org/uncle> ?z }";
     let before = run_sparql_query(&ds, sparql).unwrap();
@@ -1119,7 +1120,7 @@ ex:c ex:parent  ex:b .
         obj: b_id,
     });
 
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 
     let after = run_sparql_query(&ds, sparql).unwrap();
     assert!(
@@ -1143,5 +1144,5 @@ ex:b[?x] :- ex:person[?x], NOT ex:a[?x] .
     let data = "@prefix ex: <http://example.org/> . ex:alice a ex:person .";
     turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
 }

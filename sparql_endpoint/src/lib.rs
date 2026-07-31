@@ -19,6 +19,7 @@ pub mod ottr_endpoint;
 pub mod persistence;
 pub mod query;
 pub mod query_builder;
+pub mod reasoner_delta;
 pub mod registry;
 pub mod rml_endpoint;
 pub mod serialize;
@@ -311,7 +312,11 @@ pub async fn serve_on_listener(
         None
     } else {
         let rules = config.initial_rules.clone();
-        let reasoner = IncrementalReasoner::new(rules, &mut *store.write().await);
+        let reasoner = IncrementalReasoner::new(rules, &mut *store.write().await).map_err(|e| {
+            std::io::Error::other(format!(
+                "initial rules + data are contradictory, refusing to start: {e}"
+            ))
+        })?;
         Some(Arc::new(Mutex::new(reasoner)))
     };
 

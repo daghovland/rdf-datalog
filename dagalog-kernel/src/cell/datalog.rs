@@ -5,7 +5,7 @@ pub fn execute_datalog(ds: &mut Datastore, rules_src: &str) -> Result<String, St
     let rules =
         datalog_parser::parse(rules_src, ds).map_err(|e| format!("Datalog parse error: {}", e))?;
     let count = rules.len();
-    datalog::evaluate_rules(rules, ds);
+    datalog::evaluate_rules(rules, ds).map_err(|e| e.to_string())?;
     Ok(format!(
         "Applied {} rule{}.",
         count,

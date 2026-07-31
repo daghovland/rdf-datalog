@@ -183,7 +183,7 @@ pub fn apply_ontologies(
     all_rules.extend(owl2datalog(&mut datastore.resources, ontology));
     let rule_count = all_rules.len();
 
-    datalog::evaluate_rules(all_rules, datastore);
+    datalog::evaluate_rules(all_rules, datastore).map_err(|e| e.to_string())?;
 
     let triples_after = datastore.named_graphs.quad_count;
 
@@ -200,12 +200,16 @@ pub fn apply_ontologies(
 /// Extracts OWL axioms from the current triple set, converts them to Datalog
 /// rules, and runs naive forward-chaining to closure.  Returns the number of
 /// triples added by the reasoning step.
-pub fn run_owlrl_reasoning(datastore: &mut Datastore) -> usize {
+///
+/// Returns `Err` if the data is genuinely, correctly-derived inconsistent
+/// (a `RuleHead::Contradiction` rule fires) instead of panicking — see
+/// [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+pub fn run_owlrl_reasoning(datastore: &mut Datastore) -> Result<usize, String> {
     let before = datastore.named_graphs.quad_count;
     let ontology_doc = rdf2owl(datastore);
     let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
-    datalog::evaluate_rules(rules, datastore);
-    datastore.named_graphs.quad_count - before
+    datalog::evaluate_rules(rules, datastore).map_err(|e| e.to_string())?;
+    Ok(datastore.named_graphs.quad_count - before)
 }
 
 // ── RML mapping ───────────────────────────────────────────────────────────────
@@ -257,7 +261,7 @@ pub fn apply_rules(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<usize
         all_rules.append(&mut rules);
     }
     let rule_count = all_rules.len();
-    datalog::evaluate_rules(all_rules, datastore);
+    datalog::evaluate_rules(all_rules, datastore).map_err(|e| e.to_string())?;
     Ok(rule_count)
 }
 
@@ -591,7 +595,7 @@ SELECT ?person WHERE { ?person a ex:Person . }
         // Ontology IS the data file here; re-load for reasoning
         let ontology_doc = rdf2owl(&mut ds);
         let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
-        datalog::evaluate_rules(rules, &mut ds);
+        datalog::evaluate_rules(rules, &mut ds).unwrap();
 
         let sparql = r#"
 PREFIX ex: <http://example.org/family#>

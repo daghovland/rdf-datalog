@@ -20,6 +20,7 @@ Contact: hovlanddag@gmail.com
 use crate::{
     AppState,
     persistence::{LogEntry, to_repr},
+    reasoner_delta::apply_reasoner_delta,
     serialize::{
         serialize_graph, serialize_nquads, serialize_nquads_graph, serialize_trig,
         serialize_trig_graph,
@@ -562,8 +563,12 @@ pub async fn gsp_put_inner(
             .into_iter()
             .filter(|q| store.named_graphs.contains(q))
             .collect();
-        reasoner.apply_deletions(&mut store, &existing_old);
-        reasoner.apply_insertions(&mut store, &new_quads);
+        // See https://github.com/daghovland/rdf-datalog/issues/301: a genuine
+        // Contradiction from client-supplied data is rolled back and reported
+        // as 409/500 instead of panicking.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &existing_old, &new_quads) {
+            return e.into_response();
+        }
     } else {
         store.remove_graph(graph_id);
         copy_default_graph_to(&tmp, &mut store, graph_id);
@@ -637,7 +642,10 @@ pub async fn gsp_delete_inner(
             .filter(|q| store.named_graphs.contains(q))
             .collect();
         let mut reasoner = reasoner_arc.lock().await;
-        reasoner.apply_deletions(&mut store, &existing);
+        // See https://github.com/daghovland/rdf-datalog/issues/301.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &existing, &[]) {
+            return e.into_response();
+        }
     } else {
         store.remove_graph(graph_id);
     }
@@ -721,7 +729,10 @@ pub async fn gsp_post_inner(
             let new_quads =
                 translate_default_graph_quads(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
             let mut reasoner = reasoner_arc.lock().await;
-            reasoner.apply_insertions(&mut store, &new_quads);
+            // See https://github.com/daghovland/rdf-datalog/issues/301.
+            if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &[], &new_quads) {
+                return e.into_response();
+            }
         } else {
             copy_default_graph_to(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
         }
@@ -769,7 +780,10 @@ pub async fn gsp_post_inner(
         if let Some(ref reasoner_arc) = state.reasoner {
             let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
             let mut reasoner = reasoner_arc.lock().await;
-            reasoner.apply_insertions(&mut store, &new_quads);
+            // See https://github.com/daghovland/rdf-datalog/issues/301.
+            if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &[], &new_quads) {
+                return e.into_response();
+            }
         } else {
             copy_default_graph_to(&tmp, &mut store, graph_id);
         }
@@ -828,7 +842,10 @@ pub async fn gsp_post_inner(
                 })
                 .collect();
             let mut reasoner = reasoner_arc.lock().await;
-            reasoner.apply_insertions(&mut store, &new_quads);
+            // See https://github.com/daghovland/rdf-datalog/issues/301.
+            if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &[], &new_quads) {
+                return e.into_response();
+            }
         } else {
             copy_dataset_to(&tmp, &mut store);
         }
@@ -869,7 +886,10 @@ pub async fn gsp_post_inner(
     if let Some(ref reasoner_arc) = state.reasoner {
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let mut reasoner = reasoner_arc.lock().await;
-        reasoner.apply_insertions(&mut store, &new_quads);
+        // See https://github.com/daghovland/rdf-datalog/issues/301.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &[], &new_quads) {
+            return e.into_response();
+        }
     } else {
         copy_default_graph_to(&tmp, &mut store, graph_id);
     }
@@ -977,8 +997,10 @@ pub async fn direct_gsp_put(
             .filter(|q| store.named_graphs.contains(q))
             .collect();
         let mut reasoner = reasoner_arc.lock().await;
-        reasoner.apply_deletions(&mut store, &existing_old);
-        reasoner.apply_insertions(&mut store, &new_quads);
+        // See https://github.com/daghovland/rdf-datalog/issues/301.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &existing_old, &new_quads) {
+            return e.into_response();
+        }
     } else {
         store.remove_graph(graph_id);
         copy_default_graph_to(&tmp, &mut store, graph_id);
@@ -1025,7 +1047,10 @@ pub async fn direct_gsp_delete(
             .filter(|q| store.named_graphs.contains(q))
             .collect();
         let mut reasoner = reasoner_arc.lock().await;
-        reasoner.apply_deletions(&mut store, &existing);
+        // See https://github.com/daghovland/rdf-datalog/issues/301.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &existing, &[]) {
+            return e.into_response();
+        }
     } else {
         store.remove_graph(graph_id);
     }
@@ -1112,7 +1137,10 @@ pub async fn direct_gsp_post(
     if let Some(ref reasoner_arc) = state.reasoner {
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let mut reasoner = reasoner_arc.lock().await;
-        reasoner.apply_insertions(&mut store, &new_quads);
+        // See https://github.com/daghovland/rdf-datalog/issues/301.
+        if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &[], &new_quads) {
+            return e.into_response();
+        }
     } else {
         copy_default_graph_to(&tmp, &mut store, graph_id);
     }

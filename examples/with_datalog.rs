@@ -24,7 +24,7 @@ fn main() {
             ex:worksFor[?y, ?org] .
     ";
     let rules = datalog_parser::parse(rules_src, &mut ds).expect("failed to parse rules");
-    datalog::evaluate_rules(rules, &mut ds);
+    datalog::evaluate_rules(rules, &mut ds).expect("rules should not be contradictory");
 
     let sparql = "
         PREFIX ex: <http://example.org/>

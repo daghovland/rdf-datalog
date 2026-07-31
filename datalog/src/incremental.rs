@@ -347,7 +347,8 @@ mod tests {
         ds.named_graphs.add_quad(fact_ab);
         ds.named_graphs.add_quad(fact_bc);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -476,7 +477,8 @@ mod tests {
         };
         ds.named_graphs.add_quad(fact_bc);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         // No derived A→C yet (no A→B).
         let derived_ac = Quad {
@@ -546,7 +548,8 @@ mod tests {
         ds.named_graphs.add_quad(fact_bc);
         ds.named_graphs.add_quad(fact_cd);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
