@@ -59,6 +59,7 @@ fn shacl_testdata_parses() {
         "shacl_s261_lexical_form_shapes.ttl",
         "shacl_s310_targetnode_literal_data.ttl",
         "shacl_s310_targetnode_literal_shapes.ttl",
+        "shacl_s310_nodekind_literal.ttl",
         "shacl_s4_class_data.ttl",
         "shacl_s4_class_shapes.ttl",
         "shacl_s4_datatype_data.ttl",
@@ -2372,5 +2373,42 @@ fn regression_issue_310_literal_targetnode_conforms() {
         !has_violation(&report, focus),
         "a literal sh:targetNode value that satisfies the node shape's \
          constraint must conform, not just avoid a crash"
+    );
+}
+
+/// A node-shape-level (pathless) `sh:nodeKind` violation must report
+/// `sh:value` as the focus node itself, not `nil`. Same shape used as both
+/// data and shapes graph: `"true"^^xsd:boolean` is the `sh:targetNode`
+/// (and hence the focus node) and fails `sh:nodeKind sh:IRI`.
+///
+/// See https://github.com/daghovland/rdf-datalog/issues/310. Matches the
+/// same "pathless constraint must report the focus node as sh:value"
+/// pattern already fixed for `sh:and`/`sh:or`/`sh:not`/`sh:xone` by #309
+/// (see `regression_309_*` tests above).
+#[test]
+fn regression_310_nodekind_node_shape_reports_focus_node_as_value() {
+    let ds = load("shacl_s310_nodekind_literal.ttl");
+    let report = shacl::validate(&ds, &ds).expect("validation must not error");
+    assert!(!report.conforms);
+    let focus = "true^^http://www.w3.org/2001/XMLSchema#boolean";
+    let result = report
+        .results
+        .iter()
+        .find(|r| r.focus_node.as_deref() == Some(focus))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a violation for focus node {focus}, got: {:?}",
+                report.results
+            )
+        });
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#NodeKindConstraintComponent")
+    );
+    assert_eq!(
+        result.value.as_deref(),
+        Some(focus),
+        "sh:value for a node-shape-level (pathless) sh:nodeKind violation \
+         must equal the focus node, not nil"
     );
 }

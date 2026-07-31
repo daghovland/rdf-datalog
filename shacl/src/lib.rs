@@ -162,26 +162,42 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         return Err(shapes::describe_shape_cycle(shapes, &cycle));
     }
 
-    // A `sh:targetNode` value (IRI, blank node, or literal) is a focus node
-    // regardless of whether it independently occurs anywhere in the data
-    // graph — the shapes graph and data graph are ordinarily different
-    // documents. Intern every `Target::Node` value into an augmented copy of
+    // A literal `sh:targetNode` value is a focus node regardless of whether
+    // it independently occurs anywhere in the data graph — the shapes graph
+    // and data graph are ordinarily different documents. IRI/blank-node
+    // `sh:targetNode` values already resolved correctly before this fix
+    // (`lookup_elem` looked them up directly against `data`'s existing
+    // resource map), so only a literal `Target::Node` needs the augmented
+    // copy below; skip the clone entirely otherwise; this validate() runs on
+    // a hot path and a `Datastore` clone is not free.
+    //
+    // Intern every literal `Target::Node` value into an augmented copy of
     // `data` up front so that `data_targets`/`lookup_elem` below always find
-    // it, even for a literal `sh:targetNode` that appears only in the shapes
-    // graph. `translate::intern_elem` is idempotent (backed by
-    // `add_resource`), and Phase 1's `translate::shapes_to_rules` already
-    // interns the same values into `work` independently — this keeps the
-    // read-only `data` view consistent with it. See
+    // it, even though it appears only in the shapes graph.
+    // `translate::intern_elem` is idempotent (backed by `add_resource`), and
+    // Phase 1's `translate::shapes_to_rules` already interns the same values
+    // into `work` independently — this keeps the read-only `data` view
+    // consistent with it. See
     // [#310](https://github.com/daghovland/rdf-datalog/issues/310).
-    let mut data = data.clone();
-    for shape in &parsed {
-        for target in &shape.targets {
-            if let shapes::Target::Node(elem) = target {
-                translate::intern_elem(elem, &mut data);
-            }
+    let literal_node_targets: Vec<&shapes::ElemValue> = parsed
+        .iter()
+        .flat_map(|shape| &shape.targets)
+        .filter_map(|target| match target {
+            shapes::Target::Node(elem @ shapes::ElemValue::Literal { .. }) => Some(elem),
+            _ => None,
+        })
+        .collect();
+    let owned_data;
+    let data: &Datastore = if literal_node_targets.is_empty() {
+        data
+    } else {
+        let mut augmented = data.clone();
+        for elem in literal_node_targets {
+            translate::intern_elem(elem, &mut augmented);
         }
-    }
-    let data = &data;
+        owned_data = augmented;
+        &owned_data
+    };
 
     let mut work = data.clone();
 

@@ -1,0 +1,16 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# See https://github.com/daghovland/rdf-datalog/issues/310
+#
+# A node-shape-level (pathless) sh:nodeKind constraint must report sh:value
+# as the focus node itself (SHACL sec 3.4.1: sh:value for a pathless
+# constraint is the focus node), not `nil`. A literal sh:targetNode
+# ("true"^^xsd:boolean, sh:nodeKind sh:IRI) discriminates this: the focus
+# node itself IS the literal, so the wrong ("nil") sh:value is easy to miss
+# if the focus node happens to be an IRI/resource elsewhere.
+ex:STargetLiteralNodeKindViolates
+    a sh:NodeShape ;
+    sh:targetNode "true"^^xsd:boolean ;
+    sh:nodeKind sh:IRI .
