@@ -28,7 +28,7 @@ pub mod translate;
 pub mod vocab;
 
 use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, Triple};
-use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
+use dag_rdf::{Datastore, GraphElementId};
 use datalog::evaluate_rules;
 use ingress::RDF_TYPE;
 use std::collections::HashSet;
@@ -161,6 +161,43 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
     if let Some(cycle) = shapes::find_shape_reference_cycle(shapes, &parsed) {
         return Err(shapes::describe_shape_cycle(shapes, &cycle));
     }
+
+    // A literal `sh:targetNode` value is a focus node regardless of whether
+    // it independently occurs anywhere in the data graph — the shapes graph
+    // and data graph are ordinarily different documents. IRI/blank-node
+    // `sh:targetNode` values already resolved correctly before this fix
+    // (`lookup_elem` looked them up directly against `data`'s existing
+    // resource map), so only a literal `Target::Node` needs the augmented
+    // copy below; skip the clone entirely otherwise; this validate() runs on
+    // a hot path and a `Datastore` clone is not free.
+    //
+    // Intern every literal `Target::Node` value into an augmented copy of
+    // `data` up front so that `data_targets`/`lookup_elem` below always find
+    // it, even though it appears only in the shapes graph.
+    // `translate::intern_elem` is idempotent (backed by `add_resource`), and
+    // Phase 1's `translate::shapes_to_rules` already interns the same values
+    // into `work` independently — this keeps the read-only `data` view
+    // consistent with it. See
+    // [#310](https://github.com/daghovland/rdf-datalog/issues/310).
+    let literal_node_targets: Vec<&shapes::ElemValue> = parsed
+        .iter()
+        .flat_map(|shape| &shape.targets)
+        .filter_map(|target| match target {
+            shapes::Target::Node(elem @ shapes::ElemValue::Literal { .. }) => Some(elem),
+            _ => None,
+        })
+        .collect();
+    let owned_data;
+    let data: &Datastore = if literal_node_targets.is_empty() {
+        data
+    } else {
+        let mut augmented = data.clone();
+        for elem in literal_node_targets {
+            translate::intern_elem(elem, &mut augmented);
+        }
+        owned_data = augmented;
+        &owned_data
+    };
 
     let mut work = data.clone();
 
@@ -361,18 +398,16 @@ fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphEleme
     nodes
 }
 
+/// Resolve a `sh:targetNode` value (IRI, blank node, or literal) to its
+/// `GraphElementId` in `data`, or `None` if that exact term was never
+/// interned (i.e. it appears nowhere in the data graph, so it cannot be a
+/// focus node). Delegates to [`evaluate::lookup_elem_value`], which already
+/// handles all three `ElemValue` variants — literal `sh:targetNode` values
+/// (e.g. `sh:targetNode "aldi"^^xsd:integer`) were previously dropped here,
+/// silently under-counting node-shape-scoped violations. See
+/// [#310](https://github.com/daghovland/rdf-datalog/issues/310).
 fn lookup_elem(elem: &shapes::ElemValue, data: &Datastore) -> Option<GraphElementId> {
-    match elem {
-        shapes::ElemValue::Iri(iri) => graph::lookup_iri(data, iri),
-        shapes::ElemValue::BlankNode(n) => data
-            .resources
-            .resource_map
-            .get(&GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(
-                *n,
-            )))
-            .copied(),
-        shapes::ElemValue::Literal { .. } => None,
-    }
+    evaluate::lookup_elem_value(data, elem)
 }
 
 fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {

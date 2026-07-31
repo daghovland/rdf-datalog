@@ -1,0 +1,28 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# See https://github.com/daghovland/rdf-datalog/issues/310
+#
+# A literal-valued sh:targetNode: the literal never appears in the (separate)
+# data graph. It must still become a focus node - node_targets() must not
+# require the target literal to already be interned in the data store.
+#
+# Deliberately a plain (untagged) string literal against sh:datatype
+# xsd:integer, so the mismatch is a straightforward datatype-tag mismatch -
+# not an ill-typed-lexical-form case like "aldi"^^xsd:integer, which is a
+# separate, still-open gap tracked by
+# https://github.com/daghovland/rdf-datalog/issues/318 (sh:datatype doesn't
+# check lexical validity). Using that case here would make this regression
+# test depend on an unrelated bug being fixed too.
+ex:STargetLiteralViolates
+    a sh:NodeShape ;
+    sh:targetNode "not a number" ;
+    sh:datatype xsd:integer .
+
+# Control: a literal sh:targetNode that DOES satisfy the node-level
+# constraint must conform (not merely "not crash").
+ex:STargetLiteralConforms
+    a sh:NodeShape ;
+    sh:targetNode "99"^^xsd:integer ;
+    sh:datatype xsd:integer .

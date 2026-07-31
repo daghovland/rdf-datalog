@@ -403,24 +403,20 @@ fn w3c_shacl_core_node() {
         // https://github.com/daghovland/rdf-datalog/issues/308.
         "Test of sh:closed at node shape 001",
         "Test of sh:closed at node shape 002",
-        // Node-shape-scoped (pathless) value-type/range constraints:
-        // false negatives or under/over-counted violations. See
-        // https://github.com/daghovland/rdf-datalog/issues/310.
+        // Three separate, narrower root causes found while fixing #310 (not
+        // the dropped-literal-sh:targetNode bug that issue was filed for):
+        // multi-valued sh:class only keeps the first occurrence; sh:datatype
+        // doesn't check lexical validity; value-range constraints
+        // (min/maxInclusive/Exclusive) silently skip rather than violate for
+        // a value node that isn't a comparable literal at all. See
+        // https://github.com/daghovland/rdf-datalog/issues/318.
         "Test of sh:class at node shape 003 multiple classes, overlapping target sets",
         "Test of sh:datatype at node shape 001",
-        "Test of sh:datatype at node shape 002",
-        "Test of sh:languageIn at node shape 001",
         "Test of sh:maxExclusive at node shape 001",
         "Test of sh:maxInclusive at node shape 001",
-        "Test of sh:maxLength at node shape 001",
         "Test of sh:minExclusive at node shape 001",
-        "Test of sh:minInclusive at node shape 001",
         "Test of sh:minInclusive at node shape 002 - dateTime with timezone",
         "Test of sh:minInclusive at node shape 003 - dateTime without timezone",
-        "Test of sh:minLength at node shape 001",
-        "Test of sh:nodeKind at node shape 001",
-        "Test of sh:pattern at node shape 001",
-        "Test of sh:pattern at node shape 002",
     ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/node");
