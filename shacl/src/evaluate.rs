@@ -16,7 +16,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! Spec: <https://www.w3.org/TR/shacl/#core-components>
 
-use crate::{ViolMeta, graph, shapes, vocab};
+use crate::{ViolMeta, graph, path, shapes, vocab};
 use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, RdfResource};
 use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
@@ -52,13 +52,13 @@ pub fn eval_all(
         // "sibling" qualified value shapes (other `sh:property` blocks on
         // this same node shape sharing this one's `sh:path`, that also
         // declare `sh:qualifiedValueShape`). See #311.
-        let qvs_entries: Vec<(&str, GraphElementId, usize)> = shape
+        let qvs_entries: Vec<(&path::ShPath, GraphElementId, usize)> = shape
             .property_shapes
             .iter()
             .flat_map(|p| {
                 p.constraints.iter().filter_map(move |c| match c {
                     shapes::PropConstraint::QualifiedValueShape { shapes_id, .. } => {
-                        Some((p.path.as_str(), *shapes_id, p.idx))
+                        Some((&p.path, *shapes_id, p.idx))
                     }
                     _ => None,
                 })
@@ -92,7 +92,7 @@ pub fn eval_all(
                             shapes_store,
                             shape,
                             prop.shapes_id,
-                            Some(&prop.path),
+                            Some(prop.path_display.as_str()),
                             component,
                             prop.severity.clone(),
                         ),
@@ -118,7 +118,7 @@ pub fn eval_all(
                         shapes_store,
                         shape,
                         prop.shapes_id,
-                        Some(&prop.path),
+                        Some(prop.path_display.as_str()),
                         component,
                         prop.severity.clone(),
                     ),
@@ -297,12 +297,12 @@ struct ConstraintCoord {
 fn eval_prop_constraint(
     constraint: &shapes::PropConstraint,
     coord: ConstraintCoord,
-    path: Option<&str>,
+    path: Option<&path::ShPath>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
-    qvs_entries: &[(&str, GraphElementId, usize)],
+    qvs_entries: &[(&path::ShPath, GraphElementId, usize)],
 ) -> Vec<(GraphElementId, &'static str)> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
@@ -812,7 +812,7 @@ fn eval_xone(
 fn eval_node_shape(
     coord: ConstraintCoord,
     inner_shapes_id: GraphElementId,
-    path: Option<&str>,
+    path: Option<&path::ShPath>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
@@ -859,7 +859,7 @@ struct QualifiedSpec {
 fn eval_qualified_value(
     coord: ConstraintCoord,
     spec: QualifiedSpec,
-    path: Option<&str>,
+    path: Option<&path::ShPath>,
     targets: &[GraphElementId],
     data: &Datastore,
     shapes_store: &Datastore,
@@ -1075,7 +1075,7 @@ fn prop_combinators_conform(
 fn constraint_conforms(
     constraint: &shapes::PropConstraint,
     node: GraphElementId,
-    path: Option<&str>,
+    path: Option<&path::ShPath>,
     data: &Datastore,
     shapes_store: &Datastore,
 ) -> bool {
@@ -1368,12 +1368,19 @@ fn path_values(data: &Datastore, node: GraphElementId, path_iri: &str) -> Vec<Gr
         .collect()
 }
 
-/// Resolve the "values to test" for a focus node against a constraint: path-traversed
-/// values for a property-shape constraint (`path = Some(iri)`), or just the focus node
-/// itself for a node-level (pathless) constraint (`path = None`). See #260.
-fn values_for(data: &Datastore, node: GraphElementId, path: Option<&str>) -> Vec<GraphElementId> {
+/// Resolve the "values to test" for a focus node against a constraint:
+/// path-traversed values for a property-shape constraint (`path =
+/// Some(path_expr)`, evaluated via `path::values_from`, whether `path_expr`
+/// is a plain predicate or a compound property-path expression), or just
+/// the focus node itself for a node-level (pathless) constraint (`path =
+/// None`). See #260, #307.
+fn values_for(
+    data: &Datastore,
+    node: GraphElementId,
+    path: Option<&path::ShPath>,
+) -> Vec<GraphElementId> {
     match path {
-        Some(p) => path_values(data, node, p),
+        Some(p) => path::values_from(data, node, p),
         None => vec![node],
     }
 }

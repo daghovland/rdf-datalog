@@ -73,49 +73,46 @@ only simple-predicate property shapes contribute to `sh:closed`'s allowed
 set (a property shape whose path is a compound expression isn't naming one
 predicate to allow).
 
-## Evaluation strategy: eager materialization, not a parallel evaluator
+## Evaluation strategy: shared path-extension logic, two consumers
 
-Both `translate.rs` (Datalog rule generation — `graph::intern_iri(work,
-&prop.path)` used directly as the rule body's predicate) and `evaluate.rs`
-(direct constraint evaluation — `values_for`/`path_values` querying
-`data.get_triples_with_subject_predicate`) currently assume a path *is* a
-single predicate `GraphElementId`. Rather than threading path-expression
-evaluation through both independently (duplicating traversal logic and
-doubling the surface for bugs), a compound path's full extension is computed
-**once**, up front, and materialized as ordinary ground triples under a
-fresh synthetic predicate IRI (`urn:dagalog:shacl:pathext:{shape_idx}:
-{prop_idx}`). Every existing predicate-based mechanism then treats a
-compound path exactly like a simple one, with no further changes needed to
-either `translate.rs`'s rule generation or `evaluate.rs`'s value lookup.
+`translate.rs` (Datalog rule generation) and `evaluate.rs` (direct
+constraint evaluation) both used to assume a path *is* a single predicate
+`GraphElementId`. Rather than threading path-expression evaluation through
+both independently (duplicating traversal logic and doubling the surface
+for bugs), one function — `path::pairs(data, path) -> HashSet<(subject,
+object)>` — computes a compound path's full extension, and each consumer
+uses it the way that fits its own scope and mutability constraints:
 
-`path::resolve_all_paths(parsed: &mut [ParsedShape], data: &mut Datastore)`
-runs once per `validate()` call, before any Datalog materialisation and
-before `pre_compute_violations`/`shapes_to_rules` see the shapes:
-- Simple `Predicate(iri)` paths: intern the IRI, no new triples (zero
-  overhead for the common case).
-- Compound paths: compute the path's extension as a set of `(subject,
-  object)` pairs over `data` (see below), intern the synthetic predicate,
-  and add one ground triple per pair to `data`.
+- **`evaluate.rs`** (Phase 2, direct evaluation, read-only against the
+  original data graph) calls `path::values_from(data, node, path)`, which
+  re-evaluates `pairs` per focus node and filters to that node — no stored
+  predicate, no mutation. This also transparently covers `sh:not`/`sh:and`/
+  `sh:or` inner shapes, which `shape_conforms_for_node` re-parses ad hoc via
+  `shapes::parse_one_shape` on every call (not part of the top-level
+  `Vec<ParsedShape>`) — there is no stable place to cache a resolved
+  predicate id against such a shape, so a design requiring pre-resolution
+  breaks for them (this was tried and reverted after 38 existing tests
+  started panicking — inner shapes reached `values_for` with an
+  unresolved path).
+- **`translate.rs`** (Phase 1, Datalog rule generation) calls
+  `path::resolve_one_path(work, path, shape_idx, prop_idx)`, which
+  interns a simple `Predicate(iri)` path directly (zero overhead beyond
+  pre-#307 behaviour) or, for a compound path, materializes `pairs`' result
+  as ground triples in `work` under a fresh synthetic predicate IRI
+  (`urn:dagalog:shacl:pathext:{shape_idx}:{prop_idx}`) — every existing
+  Datalog rule-generation code path then treats it exactly like a simple
+  predicate. This only ever runs against `work` (Datalog's own working
+  store, already how this crate encodes derived facts — see `translate.rs`'s
+  module doc) for the finitely-many top-level property shapes in the parsed
+  `Vec<ParsedShape>`, so there's no cross-store id-space concern and no
+  need for `sh:closed` (which scans the *original* data graph, never
+  `work`) to filter anything out.
 
-Both the `data` passed to `pre_compute_violations`/`evaluate::eval_all` and
-`work` (used by `translate::shapes_to_rules`/Datalog) must see identical
-`GraphElementId`s for the synthetic predicate and its triples. `validate()`
-already conditionally clones `data` into an owned copy to intern literal
-`sh:targetNode` values before `work = data.clone()`; path resolution is
-folded into that same owned copy, and `work` is cloned from it afterwards —
-one clone, one id space, both consumers see the materialized edges.
-
-Each resolved property shape gets a `path_pred: Option<GraphElementId>`
-(`None` until `resolve_all_paths` runs — a genuinely-uninitialized value
-rather than a sentinel constant) and a `path_display: String` computed
+Each `ParsedPropShape` still gets a `path_display: String` computed
 directly at parse time (no data access needed): the IRI itself for a simple
-path, or `_:path{shape_idx}_{prop_idx}` for a compound one. `translate.rs`
-and `evaluate.rs`'s per-property-shape logic call `prop.path_pred()` (a
-thin accessor that `.expect()`s resolution already ran) wherever they
-previously called `graph::intern_iri(work, &prop.path)` /
-`Some(&prop.path)` for value lookup, and `prop.path_display.as_str()`
-wherever they previously used `Some(&prop.path)` to build a `ViolMeta` for
-reporting.
+path, or `_:path{shape_idx}_{prop_idx}` for a compound one — used wherever
+a `ViolMeta`/report needs a `sh:resultPath` string, in both `translate.rs`
+and `evaluate.rs`.
 
 ### Path extension (`path::pairs`)
 
@@ -142,14 +139,16 @@ Test-suite-sized graphs only (W3C fixtures, hand-written unit tests) — this
 is not written for web-scale graphs; a future largeish-graph performance
 pass is out of scope here.
 
-## `sh:closed` and synthetic predicates
+## `sh:closed`
 
 `closed_violations` (`lib.rs`) scans `data.get_triples_with_subject(node_id)`
-for every predicate on a focus node — since path resolution now also writes
-into `data`, a synthetic path predicate on a node that happens to be a
-`sh:closed` focus node would otherwise show up as a spurious "extra
-property" violation. `closed_violations` skips any predicate whose IRI
-starts with `path::SYNTHETIC_PATH_PREFIX`.
+for every predicate on a focus node. Because `path::resolve_one_path`'s
+synthetic-predicate materialization only ever touches `work` (never the
+original `data` that `closed_violations` scans), a compound path's
+bookkeeping predicate can never show up there as a spurious "extra
+property" violation — no filtering needed. `parse_closed`'s allowed-set
+computation (`ShPath::as_simple_iri`, above) is the only other `sh:closed`
+change.
 
 ## `sh:resultPath` reporting
 
@@ -188,3 +187,29 @@ commit and un-ignored one at a time as each path kind goes green. The 12
 listed W3C fixtures are unskipped in `tests/w3c_shacl_suite.rs`'s
 `w3c_shacl_core_path` test one at a time in the same order, as each is
 confirmed passing.
+
+## Outcome
+
+All 12 previously-skipped W3C `core/path` fixtures pass; the skip list in
+`w3c_shacl_core_path` is now empty. Two subtleties surfaced only once real
+fixtures were un-skipped (not anticipated by the initial design above):
+
+- **`parse_path`'s cycle guard was too aggressive.** A `seen` set that
+  permanently marks every visited shapes-graph node (rather than only the
+  current recursion stack) rejects a path that legitimately *reuses* one
+  blank node in two positions — e.g. `sh:path ( _:pinv _:pinv )`, a
+  two-step sequence repeating one `[ sh:inversePath ex:p ]` node (see
+  `path-complex-002.ttl`, "Test of complex path validation results"). Fixed
+  by pushing/popping `path_id` around each recursive call (mirroring
+  `shapes.rs`'s existing `dfs_find_cycle` DFS-stack pattern) instead of a
+  monotonic "ever seen" set — this still catches a genuine cycle (a node
+  that is its own ancestor) while allowing sibling reuse.
+- **Ambiguous path-node precedence.** The W3C suite's "strange path"
+  fixtures deliberately attach an `sh:inversePath` triple to a blank node
+  that is *also* a well-formed `rdf:first`/`rdf:rest` list — testing that a
+  conformant reader picks one interpretation consistently. `parse_path`
+  checks "is this an RDF list" before the special-predicate
+  (`sh:inversePath`/`sh:*OrPath`) cases, matching the expected reports in
+  `path-strange-{001,002}.ttl`.
+
+No fixtures needed to be deferred; no follow-up issue was filed.

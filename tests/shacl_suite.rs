@@ -2879,7 +2879,6 @@ fn regression_318_datatype_date_timezone_is_well_formed() {
 /// `[ sh:inversePath ex:parentOf ]` — from a focus node, find subjects `s`
 /// such that `s ex:parentOf <focus>`.
 #[test]
-#[ignore = "sh:inversePath not yet implemented — see #307"]
 fn spath_inverse_path() {
     let data = load("shacl_spath_inverse_data.ttl");
     let shapes = load("shacl_spath_inverse_shapes.ttl");
@@ -2894,7 +2893,6 @@ fn spath_inverse_path() {
 
 /// `( ex:hasParent ex:hasParent )` — a two-step sequence path (grandparent).
 #[test]
-#[ignore = "sequence sh:path not yet implemented — see #307"]
 fn spath_sequence_path() {
     let data = load("shacl_spath_sequence_data.ttl");
     let shapes = load("shacl_spath_sequence_shapes.ttl");
@@ -2910,7 +2908,6 @@ fn spath_sequence_path() {
 /// `[ sh:alternativePath ( ex:worksFor ex:employedBy ) ]` — union of two
 /// predicates.
 #[test]
-#[ignore = "sh:alternativePath not yet implemented — see #307"]
 fn spath_alternative_path() {
     let data = load("shacl_spath_alternative_data.ttl");
     let shapes = load("shacl_spath_alternative_shapes.ttl");
@@ -2927,7 +2924,6 @@ fn spath_alternative_path() {
 /// spouse if any. Exercises sh:class, a Phase 1 (Datalog-translated)
 /// constraint, over a compound path.
 #[test]
-#[ignore = "sh:zeroOrOnePath not yet implemented — see #307"]
 fn spath_zero_or_one_path() {
     let data = load("shacl_spath_zero_or_one_data.ttl");
     let shapes = load("shacl_spath_zero_or_one_shapes.ttl");
@@ -2942,7 +2938,6 @@ fn spath_zero_or_one_path() {
 
 /// `[ sh:oneOrMorePath ex:parent ]` — transitive-closure (fixpoint) path.
 #[test]
-#[ignore = "sh:oneOrMorePath not yet implemented — see #307"]
 fn spath_one_or_more_path() {
     let data = load("shacl_spath_one_or_more_data.ttl");
     let shapes = load("shacl_spath_one_or_more_shapes.ttl");

@@ -533,20 +533,7 @@ fn w3c_shacl_core_path() {
     // `sh:path`. `path-unused-001` is not skipped: it only *declares*
     // dangling complex-path blank nodes that the shape itself never
     // references (the shape's own constraint is a plain `sh:class`).
-    let skip: &[&str] = &[
-        "Test of path sh:alternativePath 001",
-        "Test of path complex (rdf:type/rdfs:subClassOf*) 001",
-        "Test of complex path validation results",
-        "Test of path sh:inversePath 001",
-        "Test of path sh:oneOrMorePath 001",
-        "Test of path sequence 001",
-        "Test of path sequence 002",
-        "Test of path sequence with duplicate 001",
-        "Test of strange path 001 two valid paths together",
-        "Test of strange path 002 valid and invalid paths together",
-        "Test of path sh:zeroOrMorePath 001",
-        "Test of path sh:zeroOrOnePath 001",
-    ];
+    let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/path");
 }
