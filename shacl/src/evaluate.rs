@@ -1038,7 +1038,10 @@ fn is_instance_of_class_or_subclass(
 /// Look up an `ElemValue` (from the shapes graph) as a `GraphElementId` in `data`,
 /// without mutating `data` (unlike `translate::intern_elem`, which is only used
 /// against the mutable working store during rule generation).
-fn lookup_elem_value(data: &Datastore, elem: &shapes::ElemValue) -> Option<GraphElementId> {
+pub(crate) fn lookup_elem_value(
+    data: &Datastore,
+    elem: &shapes::ElemValue,
+) -> Option<GraphElementId> {
     use dag_rdf::{GraphElement as GE, RdfResource};
     match elem {
         shapes::ElemValue::Iri(iri) => graph::lookup_iri(data, iri),

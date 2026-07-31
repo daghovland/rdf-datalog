@@ -28,7 +28,7 @@ pub mod translate;
 pub mod vocab;
 
 use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, Triple};
-use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
+use dag_rdf::{Datastore, GraphElementId};
 use datalog::evaluate_rules;
 use ingress::RDF_TYPE;
 use std::collections::HashSet;
@@ -361,18 +361,16 @@ fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphEleme
     nodes
 }
 
+/// Resolve a `sh:targetNode` value (IRI, blank node, or literal) to its
+/// `GraphElementId` in `data`, or `None` if that exact term was never
+/// interned (i.e. it appears nowhere in the data graph, so it cannot be a
+/// focus node). Delegates to [`evaluate::lookup_elem_value`], which already
+/// handles all three `ElemValue` variants — literal `sh:targetNode` values
+/// (e.g. `sh:targetNode "aldi"^^xsd:integer`) were previously dropped here,
+/// silently under-counting node-shape-scoped violations. See
+/// [#310](https://github.com/daghovland/rdf-datalog/issues/310).
 fn lookup_elem(elem: &shapes::ElemValue, data: &Datastore) -> Option<GraphElementId> {
-    match elem {
-        shapes::ElemValue::Iri(iri) => graph::lookup_iri(data, iri),
-        shapes::ElemValue::BlankNode(n) => data
-            .resources
-            .resource_map
-            .get(&GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(
-                *n,
-            )))
-            .copied(),
-        shapes::ElemValue::Literal { .. } => None,
-    }
+    evaluate::lookup_elem_value(data, elem)
 }
 
 fn push_unique(vec: &mut Vec<GraphElementId>, id: GraphElementId) {
