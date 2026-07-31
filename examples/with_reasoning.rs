@@ -20,7 +20,7 @@ fn main() {
     println!("Before OWL-RL reasoning: {before} foaf:Person instance(s)");
 
     // Run OWL-RL materialisation (propagates rdfs:subClassOf, owl:equivalentClass, etc.)
-    run_owlrl_reasoning(&mut ds);
+    run_owlrl_reasoning(&mut ds).expect("employees.ttl should not be contradictory");
 
     // After reasoning: Carol is also inferred to be a foaf:Person
     let after = count_persons(&ds);

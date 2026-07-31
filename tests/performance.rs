@@ -134,7 +134,7 @@ fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
 
     // ── Phase 4: Materialisation ─────────────────────────────────────────────
     let t3 = Instant::now();
-    evaluate_rules(rules, &mut datastore);
+    evaluate_rules(rules, &mut datastore).expect("real-world ontology should not be contradictory");
     let post_reasoning_quad_count = datastore.named_graphs.quad_count;
     report("Datalog materialisation", t3.elapsed().as_millis());
     println!("    quads before:          {}", pre_reasoning_quad_count);
@@ -746,7 +746,10 @@ fn gene_ontology_materialise_progress() {
 
     // ── Iterate materialisation one step at a time ────────────────────────────
     // Seeds ground facts for each stratum first.
-    for quad in programs.iter().flat_map(|p| p.materialise_seed_facts()) {
+    for quad in programs.iter().flat_map(|p| {
+        p.materialise_seed_facts()
+            .expect("GO ontology seed facts should not be contradictory")
+    }) {
         datastore.named_graphs.add_quad(quad);
     }
 
@@ -770,11 +773,11 @@ fn gene_ontology_materialise_progress() {
             .saturating_sub(delta_start);
 
         match program.materialise_one_iteration(&mut datastore, delta_start) {
-            None => {
+            Ok(None) => {
                 println!("  Fixpoint reached after {iter} iterations.");
                 break;
             }
-            Some((new_start, inferred)) => {
+            Ok(Some((new_start, inferred))) => {
                 total_inferred += inferred;
                 println!(
                     "  {:>4}  {:>12}  {:>12}  {:>8}  {:>8}  ({} ms)",
@@ -787,6 +790,7 @@ fn gene_ontology_materialise_progress() {
                 );
                 delta_start = new_start;
             }
+            Err(e) => panic!("GO ontology materialisation should not be contradictory: {e}"),
         }
     }
 

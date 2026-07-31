@@ -19,7 +19,7 @@ pub use datalog::{
     get_substitutions, is_fact, is_safe_rule, merge_partial_match_maps, wildcard_quad_pattern,
 };
 pub use incremental::IncrementalReasoner;
-pub use reasoner::{DatalogProgram, evaluate_rules};
+pub use reasoner::{DatalogProgram, ReasoningError, evaluate_rules};
 pub use stratifier::RulePartitioner;
 pub use types::*;
 pub use unification::{PatternEdge, depending_rules, intentional_rules, quad_patterns_unifiable};

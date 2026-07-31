@@ -96,7 +96,7 @@ Individual: fido
         !rules.is_empty(),
         "SubClassOf must compile to at least one rule"
     );
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 
     assert!(
         has_triple(&ds, "fido", RDF_TYPE, "Animal"),
@@ -162,7 +162,7 @@ Individual: alice
 
     // Reason over the parsed TBox.
     let rules = owl2datalog(&mut ds.resources, &ontology);
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 
     assert!(
         has_triple(&ds, "fido", RDF_TYPE, "Animal"),

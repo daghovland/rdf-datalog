@@ -35,7 +35,7 @@ fn load_and_extract_rules(name: &str) -> (Datastore, usize) {
     let axiom_count = ontology_doc.ontology.axioms.len();
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     let rule_count = rules.len();
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
     let _ = axiom_count;
     (ds, rule_count)
 }
@@ -275,7 +275,7 @@ fn descriptor_from_imf_ontology_non_cyclic() {
         "expected Datalog rules from cycle-imf-test.ttl"
     );
     // Must not panic during materialisation
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── TestApiOntology.MaxQualifiedCardinalityIsIgnored ─────────────────────────
@@ -290,7 +290,7 @@ fn max_qualified_cardinality_is_ignored() {
     let ontology_doc = rdf2owl(&mut ds);
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     // Must not panic
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── TestApiOntology.DuplicateRulesWorks ──────────────────────────────────────
@@ -346,7 +346,7 @@ fn load_ido_ontology_works() {
     );
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     assert!(!rules.is_empty(), "LIS-14.ttl should yield Datalog rules");
-    evaluate_rules(rules, &mut ds);
+    evaluate_rules(rules, &mut ds).unwrap();
 }
 
 // ── Regression tests for issue #298 ──────────────────────────────────────────
@@ -407,18 +407,23 @@ fn maxcardinality_zero_without_violation_does_not_panic() {
 /// `ex:hasChild` edge, which genuinely violates the `maxCardinality 0`
 /// restriction. This must still be detected as a contradiction.
 ///
-/// The reasoner currently signals a genuine contradiction via `panic!`
-/// (`datalog/src/reasoner.rs`) rather than a `Result::Err` — see the
-/// follow-up issue linked from the `datalog` reasoner module docs — so this
-/// test asserts the (documented, deliberately out of scope for #298's fix)
-/// panicking behavior rather than a clean error. The important thing this
-/// regression test guards is that the contradiction is *still detected at
-/// all*: a naive fix for the non-violating case above could easily regress
-/// into silently accepting genuine violations too.
+/// The reasoner signals a genuine contradiction via
+/// `Err(datalog::ReasoningError::Contradiction)` rather than a `panic!` —
+/// see [#301](https://github.com/daghovland/rdf-datalog/issues/301). The
+/// important thing this regression test guards is that the contradiction is
+/// *still detected at all*: a naive fix for the non-violating case above
+/// could easily regress into silently accepting genuine violations too.
 #[test]
-#[should_panic(expected = "Contradiction during reasoning")]
 fn maxcardinality_zero_violation_is_still_detected() {
-    let _ = load_and_extract_rules("maxcardinality0_violation.ttl");
+    let mut ds = Datastore::new(500_000);
+    load_file(&mut ds, &testdata("maxcardinality0_violation.ttl")).expect("ontology must load");
+    let ontology_doc = rdf2owl(&mut ds);
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    let result = evaluate_rules(rules, &mut ds);
+    assert!(
+        matches!(result, Err(datalog::ReasoningError::Contradiction(_))),
+        "expected a Contradiction error, got {result:?}"
+    );
 }
 
 // ── Tests that cannot be translated (not implemented) ────────────────────────

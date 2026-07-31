@@ -170,7 +170,12 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
 
     // Translate remaining constraints to Datalog rules and materialise.
     let (rules, rule_viols) = translate::shapes_to_rules(&parsed, shapes, &mut work);
-    evaluate_rules(rules, &mut work);
+    // A SHACL constraint should never compile to a Datalog Contradiction rule
+    // (SHACL violations are represented as synthetic marker predicates, not
+    // via RuleHead::Contradiction), so this should not fail in practice. See
+    // https://github.com/daghovland/rdf-datalog/issues/301.
+    evaluate_rules(rules, &mut work)
+        .map_err(|e| format!("unexpected contradiction while validating SHACL shapes: {e}"))?;
     all_viol_preds.extend(rule_viols);
 
     let results = collect_violations(&work, &all_viol_preds);
