@@ -934,6 +934,30 @@ fn spec_s4_8_1_closed() {
     );
 }
 
+/// Regression test for [#308](https://github.com/daghovland/rdf-datalog/issues/308):
+/// a `sh:closed` violation's `sh:resultPath` must be populated with the
+/// offending (non-allow-listed) predicate — the same value already, correctly,
+/// reported as `sh:value`. Reuses the §4.8.1 fixtures above (`ex:Rex` has
+/// `ex:breed`, which is not permitted by `ClosedExampleShape`).
+#[test]
+fn regression_308_closed_populates_result_path() {
+    let data = load("shacl_s4_closed_data.ttl");
+    let shapes = load("shacl_s4_closed_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(report.results.len(), 1);
+    let result = &report.results[0];
+    assert_eq!(
+        result.result_path.as_deref(),
+        Some("http://example.com/ns#breed"),
+        "sh:closed violation must report the offending predicate as sh:resultPath"
+    );
+    assert_eq!(
+        result.result_path, result.value,
+        "for sh:closed, sh:resultPath and sh:value must be the same offending predicate"
+    );
+}
+
 /// SHACL §4.8.2 — `sh:hasValue`: the value set must include the specified value.
 ///
 /// Source: <https://www.w3.org/TR/shacl/#HasValueConstraintComponent>

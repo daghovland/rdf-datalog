@@ -516,11 +516,27 @@ fn collect_violations(
                 }
             };
             let meta = pred_meta.get(&q.predicate).copied();
+            // sh:closed is unlike every other constraint component here: one
+            // synthetic violation predicate is shared across *all* offending
+            // predicates for a given shape (see `closed_violations`), so
+            // `ViolMeta::path` can't carry a fixed value for it the way it
+            // does for path-scoped constraints. Per spec
+            // (https://www.w3.org/TR/shacl/#ClosedConstraintComponent),
+            // `sh:resultPath` for a `ClosedConstraintComponent` result is the
+            // offending predicate itself — the same value already reported
+            // as `sh:value` (`q.obj`) — so derive it per-triple instead of
+            // from static `ViolMeta` metadata. See #308.
+            let is_closed = meta.is_some_and(|m| m.component == vocab::CC_CLOSED);
+            let result_path = if is_closed {
+                val.clone()
+            } else {
+                meta.and_then(|m| m.path.clone())
+            };
             ValidationResult {
                 focus_node: Some(focus),
                 severity: meta.map(|m| m.severity.clone()).unwrap_or_default(),
                 message: meta.and_then(|m| m.message.clone()),
-                result_path: meta.and_then(|m| m.path.clone()),
+                result_path,
                 source_shape: meta.map(|m| m.source_shape.clone()).unwrap_or_default(),
                 source_constraint: meta.map(|m| m.component.to_string()),
                 value: val,

@@ -512,9 +512,6 @@ fn w3c_shacl_core_complex() {
         // relies on SHACL-SPARQL-ish meta-shape machinery — out of scope,
         // same as core/sparql/ (#54).
         "frozen eat your own ( eat your own frozen dogfood )",
-        // sh:closed violations don't populate sh:resultPath. See
-        // https://github.com/daghovland/rdf-datalog/issues/308.
-        "Test of personexample",
     ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/complex");
