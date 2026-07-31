@@ -936,9 +936,10 @@ fn spec_s4_8_1_closed() {
 
 /// Regression test for [#308](https://github.com/daghovland/rdf-datalog/issues/308):
 /// a `sh:closed` violation's `sh:resultPath` must be populated with the
-/// offending (non-allow-listed) predicate — the same value already, correctly,
-/// reported as `sh:value`. Reuses the §4.8.1 fixtures above (`ex:Rex` has
-/// `ex:breed`, which is not permitted by `ClosedExampleShape`).
+/// offending (non-allow-listed) predicate, while `sh:value` remains the
+/// actual offending triple's object. Reuses the §4.8.1 fixtures above
+/// (`ex:Rex` has `ex:breed "Labrador"`, which is not permitted by
+/// `ClosedExampleShape`).
 #[test]
 fn regression_308_closed_populates_result_path() {
     let data = load("shacl_s4_closed_data.ttl");
@@ -953,8 +954,9 @@ fn regression_308_closed_populates_result_path() {
         "sh:closed violation must report the offending predicate as sh:resultPath"
     );
     assert_eq!(
-        result.result_path, result.value,
-        "for sh:closed, sh:resultPath and sh:value must be the same offending predicate"
+        result.value.as_deref(),
+        Some("(Labrador)"),
+        "sh:closed violation's sh:value must remain the actual offending triple's object"
     );
 }
 

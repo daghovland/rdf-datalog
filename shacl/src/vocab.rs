@@ -208,8 +208,18 @@ pub fn viol_in(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:in")
 }
 
-pub fn viol_closed(shape_idx: usize) -> String {
-    format!("urn:dagalog:shacl:viol:{shape_idx}:closed")
+/// `sh:closed` is data-driven: the set of offending predicates for a shape
+/// isn't known until the data graph is scanned (unlike every other
+/// constraint, which is keyed by a fixed `prop_idx` from the shapes graph
+/// alone). Each distinct offending predicate therefore gets its own
+/// violation predicate, disambiguated by `pred_id` — the offending
+/// predicate's own `GraphElementId` (stable within a single `validate()`
+/// call since `work` starts as a clone of `data`, see `closed_violations`) —
+/// so `sh:resultPath` can vary per offending predicate while `sh:value`
+/// still carries the real triple object. See
+/// [#308](https://github.com/daghovland/rdf-datalog/issues/308).
+pub fn viol_closed(shape_idx: usize, pred_id: u32) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:closed:{pred_id}")
 }
 
 pub fn viol_not(shape_idx: usize) -> String {

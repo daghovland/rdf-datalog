@@ -353,10 +353,12 @@ fn pre_compute_violations(
             continue;
         }
         if let Some(allowed_iris) = &shape.closed {
-            let pred = closed_violations(shape, allowed_iris, data, work);
-            viol_preds.push((
-                pred,
-                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_CLOSED),
+            viol_preds.extend(closed_violations(
+                shape,
+                allowed_iris,
+                data,
+                shapes_store,
+                work,
             ));
         }
     }
@@ -367,37 +369,65 @@ fn pre_compute_violations(
 
 /// Compute `sh:closed` violations directly from the data graph.
 ///
-/// Each `(focusNode, forbiddenPredicate)` pair that occurs in the data becomes
-/// one violation triple.  Because we query `data` (before any Datalog derivation),
-/// synthetic helper predicates added to `work` are never seen.
+/// Each `(focusNode, forbiddenPredicate, value)` triple that occurs in the
+/// data becomes one violation triple, carrying the real value as the object
+/// (so `sh:value` is correct) — the offending predicate itself is instead
+/// encoded into a per-predicate synthetic violation predicate (see
+/// `vocab::viol_closed`) so that `sh:resultPath`, threaded through this
+/// entry's own `ViolMeta`, can vary per offending predicate even though a
+/// single shape can have several. Because we query `data` (before any
+/// Datalog derivation), synthetic helper predicates added to `work` are
+/// never seen. See [#308](https://github.com/daghovland/rdf-datalog/issues/308).
 fn closed_violations(
     shape: &shapes::ParsedShape,
     allowed_iris: &[String],
     data: &Datastore,
+    shapes_store: &Datastore,
     work: &mut Datastore,
-) -> GraphElementId {
+) -> Vec<(GraphElementId, ViolMeta)> {
     // IDs of allowed predicates in the DATA store.
     let allowed: HashSet<GraphElementId> = allowed_iris
         .iter()
         .filter_map(|iri| graph::lookup_iri(data, iri))
         .collect();
 
-    let viol_pred = graph::intern_iri(work, &vocab::viol_closed(shape.idx));
+    // One violation predicate per distinct offending predicate encountered,
+    // interned lazily as we scan the data.
+    let mut viol_preds: std::collections::HashMap<GraphElementId, GraphElementId> =
+        std::collections::HashMap::new();
+    let mut metas: Vec<(GraphElementId, ViolMeta)> = Vec::new();
 
     for node_id in data_targets(shape, data) {
         for triple in data.get_triples_with_subject(node_id) {
-            if !allowed.contains(&triple.predicate) {
-                // node_id and triple.predicate are valid IDs in `work` because
-                // `work` is a clone of `data` (same resource list, same IDs).
-                work.add_triple(Triple {
-                    subject: node_id,
-                    predicate: viol_pred,
-                    obj: triple.predicate,
-                });
+            if allowed.contains(&triple.predicate) {
+                continue;
             }
+            let viol_pred = *viol_preds.entry(triple.predicate).or_insert_with(|| {
+                let pred =
+                    graph::intern_iri(work, &vocab::viol_closed(shape.idx, triple.predicate));
+                let path = graph::element_display(data, triple.predicate);
+                metas.push((
+                    pred,
+                    ViolMeta::new(
+                        shapes_store,
+                        shape,
+                        shape.shapes_id,
+                        Some(&path),
+                        vocab::CC_CLOSED,
+                    ),
+                ));
+                pred
+            });
+            // node_id and triple.obj are valid IDs in `work` because `work`
+            // is a clone of `data` (same resource list, same IDs).
+            work.add_triple(Triple {
+                subject: node_id,
+                predicate: viol_pred,
+                obj: triple.obj,
+            });
         }
     }
-    viol_pred
+    metas
 }
 
 // ── Target computation from original data ─────────────────────────────────────
@@ -516,27 +546,11 @@ fn collect_violations(
                 }
             };
             let meta = pred_meta.get(&q.predicate).copied();
-            // sh:closed is unlike every other constraint component here: one
-            // synthetic violation predicate is shared across *all* offending
-            // predicates for a given shape (see `closed_violations`), so
-            // `ViolMeta::path` can't carry a fixed value for it the way it
-            // does for path-scoped constraints. Per spec
-            // (https://www.w3.org/TR/shacl/#ClosedConstraintComponent),
-            // `sh:resultPath` for a `ClosedConstraintComponent` result is the
-            // offending predicate itself — the same value already reported
-            // as `sh:value` (`q.obj`) — so derive it per-triple instead of
-            // from static `ViolMeta` metadata. See #308.
-            let is_closed = meta.is_some_and(|m| m.component == vocab::CC_CLOSED);
-            let result_path = if is_closed {
-                val.clone()
-            } else {
-                meta.and_then(|m| m.path.clone())
-            };
             ValidationResult {
                 focus_node: Some(focus),
                 severity: meta.map(|m| m.severity.clone()).unwrap_or_default(),
                 message: meta.and_then(|m| m.message.clone()),
-                result_path,
+                result_path: meta.and_then(|m| m.path.clone()),
                 source_shape: meta.map(|m| m.source_shape.clone()).unwrap_or_default(),
                 source_constraint: meta.map(|m| m.component.to_string()),
                 value: val,
