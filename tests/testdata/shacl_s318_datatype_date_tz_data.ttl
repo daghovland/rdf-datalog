@@ -1,0 +1,12 @@
+# Issue #318 regression — xsd:date's lexical space permits an optional
+# trailing timezone fragment (Z or +-HH:MM); sh:datatype's lexical-validity
+# check must accept it rather than reporting a spurious violation.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:PlainDate ex:when "2020-06-01"^^xsd:date .
+ex:ZuluDate ex:when "2020-06-01Z"^^xsd:date .
+ex:OffsetDate ex:when "2020-06-01-05:00"^^xsd:date .
+ex:BadDate ex:when "not-a-date"^^xsd:date .
+ex:MultibyteBadDate ex:when "2020-😀-01"^^xsd:date .

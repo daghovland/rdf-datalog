@@ -1,0 +1,12 @@
+# Issue #318 regression — a shape declaring `sh:class ex:Person ;
+# sh:class ex:Animal .` must require the value node to be an instance of
+# BOTH classes (each occurrence is an independent constraint).
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:MultiClassShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Both, ex:OnlyPerson ;
+    sh:class ex:Person ;
+    sh:class ex:Animal .

@@ -352,11 +352,9 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    let violates = match (&bound_val, lit_comparable(data, val)) {
-                        (Some(b), Some(v)) => v < *b,
-                        _ => true,
-                    };
-                    if violates {
+                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
+                        matches!(ord, Ordering::Greater | Ordering::Equal)
+                    }) {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -368,11 +366,9 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    let violates = match (&bound_val, lit_comparable(data, val)) {
-                        (Some(b), Some(v)) => v > *b,
-                        _ => true,
-                    };
-                    if violates {
+                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
+                        matches!(ord, Ordering::Less | Ordering::Equal)
+                    }) {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -384,11 +380,9 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    let violates = match (&bound_val, lit_comparable(data, val)) {
-                        (Some(b), Some(v)) => v <= *b,
-                        _ => true,
-                    };
-                    if violates {
+                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
+                        matches!(ord, Ordering::Greater)
+                    }) {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -400,11 +394,9 @@ fn eval_prop_constraint(
             let bound_val = bound_to_comparable(data, shapes_store, bound);
             for node in targets {
                 for val in values_of(*node) {
-                    let violates = match (&bound_val, lit_comparable(data, val)) {
-                        (Some(b), Some(v)) => v >= *b,
-                        _ => true,
-                    };
-                    if violates {
+                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
+                        matches!(ord, Ordering::Less)
+                    }) {
                         add_viol(work, *node, viol, val);
                     }
                 }
@@ -1200,37 +1192,42 @@ fn constraint_conforms(
                 )
             })
         }),
+        // A value node that isn't comparable to the bound at all (not a
+        // literal, or a literal whose datatype isn't ordered against the
+        // bound's) must be treated as a violation, not skipped — matching
+        // `eval_prop_constraint`'s "incomparable ⇒ violation" discipline. See
+        // https://github.com/daghovland/rdf-datalog/issues/318.
         MinInclusive(bound) => {
-            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
-                return true;
-            };
-            values
-                .iter()
-                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc >= b))
+            let b = bound_to_comparable(data, shapes_store, bound);
+            values.iter().all(|&v| {
+                !range_violates(&b, lit_comparable(data, v), |ord| {
+                    matches!(ord, Ordering::Greater | Ordering::Equal)
+                })
+            })
         }
         MaxInclusive(bound) => {
-            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
-                return true;
-            };
-            values
-                .iter()
-                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc <= b))
+            let b = bound_to_comparable(data, shapes_store, bound);
+            values.iter().all(|&v| {
+                !range_violates(&b, lit_comparable(data, v), |ord| {
+                    matches!(ord, Ordering::Less | Ordering::Equal)
+                })
+            })
         }
         MinExclusive(bound) => {
-            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
-                return true;
-            };
-            values
-                .iter()
-                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc > b))
+            let b = bound_to_comparable(data, shapes_store, bound);
+            values.iter().all(|&v| {
+                !range_violates(&b, lit_comparable(data, v), |ord| {
+                    matches!(ord, Ordering::Greater)
+                })
+            })
         }
         MaxExclusive(bound) => {
-            let Some(b) = bound_to_comparable(data, shapes_store, bound) else {
-                return true;
-            };
-            values
-                .iter()
-                .all(|&v| lit_comparable(data, v).is_none_or(|vc| vc < b))
+            let b = bound_to_comparable(data, shapes_store, bound);
+            values.iter().all(|&v| {
+                !range_violates(&b, lit_comparable(data, v), |ord| {
+                    matches!(ord, Ordering::Less)
+                })
+            })
         }
         NodeShape(inner_shapes_id) => values
             .iter()
@@ -1411,37 +1408,87 @@ fn has_datatype(data: &Datastore, id: GraphElementId, dt_iri: &str) -> bool {
 /// Whether `lit`'s lexical form is actually valid for `dt_iri` — the
 /// `sh:datatype` constraint component requires "ill-formed" literals (whose
 /// nominal type IRI matches but whose lexical form doesn't conform to that
-/// datatype's lexical space, e.g. `"300"^^xsd:byte` or `"none"^^xsd:boolean`)
-/// to violate, not just a type-IRI comparison. Only `TypedLiteral` needs
-/// checking here — the other `RdfLiteral` variants (`BooleanLiteral`,
-/// `IntegerLiteral`, …) are already-parsed native representations produced by
-/// the Turtle parser recognizing their exact datatype, so their lexical form
-/// is valid by construction. Scoped to the datatypes actually exercised by
-/// the W3C SHACL suite's ill-formed-literal fixtures (`xsd:byte`,
-/// `xsd:boolean`) rather than a general XSD facet validator — datatypes not
-/// listed here are assumed well-formed (matching prior behavior). See
+/// datatype's lexical space, e.g. `"300"^^xsd:byte`, `"none"^^xsd:boolean`, or
+/// `"aldi"^^xsd:integer`) to violate, not just a type-IRI comparison. Only
+/// `TypedLiteral` needs checking here — the other `RdfLiteral` variants
+/// (`BooleanLiteral`, `IntegerLiteral`, …) are already-parsed native
+/// representations produced by the Turtle parser recognizing their exact
+/// datatype, so their lexical form is valid by construction. Scoped to the
+/// datatypes actually exercised by the W3C SHACL suite's ill-formed-literal
+/// fixtures (`xsd:byte`, `xsd:boolean`, `xsd:integer`, `xsd:decimal`,
+/// `xsd:float`, `xsd:double`, `xsd:date`, `xsd:dateTime`) rather than a
+/// general XSD facet validator — datatypes not listed here are assumed
+/// well-formed (matching prior behavior). See
 /// <https://www.w3.org/TR/shacl/#DatatypeConstraintComponent> and
-/// <https://github.com/daghovland/rdf-datalog/issues/311>.
+/// <https://github.com/daghovland/rdf-datalog/issues/311>,
+/// <https://github.com/daghovland/rdf-datalog/issues/318>.
 fn is_well_formed_lexical(lit: &RdfLiteral, dt_iri: &str) -> bool {
     let RdfLiteral::TypedLiteral { literal, .. } = lit else {
         return true;
     };
+    let trimmed = literal.trim();
     match dt_iri {
         "http://www.w3.org/2001/XMLSchema#boolean" => {
-            matches!(literal.as_str(), "true" | "false" | "1" | "0")
+            matches!(trimmed, "true" | "false" | "1" | "0")
         }
-        "http://www.w3.org/2001/XMLSchema#byte" => {
-            literal.trim().parse::<i8>().is_ok() && !literal.trim().is_empty()
+        "http://www.w3.org/2001/XMLSchema#byte" => trimmed.parse::<i8>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#short" => trimmed.parse::<i16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#int" => trimmed.parse::<i32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#long" => trimmed.parse::<i64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#integer" => trimmed.parse::<i128>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#nonNegativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n >= 0)
         }
-        "http://www.w3.org/2001/XMLSchema#short" => literal.trim().parse::<i16>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#int" => literal.trim().parse::<i32>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#long" => literal.trim().parse::<i64>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#unsignedByte" => literal.trim().parse::<u8>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#unsignedShort" => literal.trim().parse::<u16>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#unsignedInt" => literal.trim().parse::<u32>().is_ok(),
-        "http://www.w3.org/2001/XMLSchema#unsignedLong" => literal.trim().parse::<u64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#positiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n > 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#nonPositiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n <= 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#negativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n < 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#unsignedByte" => trimmed.parse::<u8>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedShort" => trimmed.parse::<u16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedInt" => trimmed.parse::<u32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedLong" => trimmed.parse::<u64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#decimal" => trimmed.parse::<f64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#float" => trimmed.parse::<f32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#double" => trimmed.parse::<f64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#date" => parse_xsd_date_lexical(trimmed).is_some(),
+        "http://www.w3.org/2001/XMLSchema#dateTime" => {
+            trimmed.parse::<chrono::DateTime<chrono::Utc>>().is_ok()
+                || trimmed.parse::<chrono::NaiveDateTime>().is_ok()
+        }
         _ => true,
     }
+}
+
+/// Parse an `xsd:date` lexical form, tolerating an optional trailing
+/// timezone fragment (`Z` or `±HH:MM`) that `xsd:date`'s lexical space
+/// permits but `chrono::NaiveDate::from_str` rejects outright (it only
+/// accepts a bare `%Y-%m-%d`). The timezone, if present, is not retained —
+/// callers that need it for ordering (`Comparable`) don't currently
+/// distinguish timezoned/timezone-less dates the way they do for
+/// `dateTime` (see `parse_datetime_comparable`); this only needs to decide
+/// well-formedness for `sh:datatype`.
+fn parse_xsd_date_lexical(s: &str) -> Option<chrono::NaiveDate> {
+    if let Ok(d) = s.parse::<chrono::NaiveDate>() {
+        return Some(d);
+    }
+    let date_part = if let Some(stripped) = s.strip_suffix('Z') {
+        stripped
+    } else if s.len() > 6 && s.is_char_boundary(s.len() - 6) {
+        let (head, tail) = s.split_at(s.len() - 6);
+        if (tail.starts_with('+') || tail.starts_with('-')) && tail.as_bytes()[3] == b':' {
+            head
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    date_part.parse::<chrono::NaiveDate>().ok()
 }
 
 fn literal_datatype_iri(lit: &RdfLiteral) -> &str {
@@ -1481,38 +1528,43 @@ fn matches_node_kind(data: &Datastore, id: GraphElementId, nk: &shapes::NodeKind
 
 // ── Comparable value (for range + lessThan) ───────────────────────────────────
 
-/// An ordered value suitable for numeric/date comparisons.
+/// An ordered value suitable for numeric/date comparisons. `DateTime` and
+/// `DateTimeNaive` are kept distinct because an `xsd:dateTime` lexical form
+/// with a timezone offset and one without are not orderable against each
+/// other per XSD's partial order (an implementation-defined 14-hour
+/// indeterminate zone) — see `minInclusive-003` (`dateTime without
+/// timezone`) in the W3C SHACL suite, which requires timezoned values to be
+/// reported as violations against a timezone-less bound while a
+/// timezone-less value equal to the bound still conforms.
 #[derive(PartialEq)]
 enum Comparable {
     Numeric(f64),
     Date(chrono::NaiveDate),
     DateTime(chrono::DateTime<chrono::Utc>),
+    DateTimeNaive(chrono::NaiveDateTime),
 }
 
-impl Eq for Comparable {}
+/// Deliberately `PartialOrd`-only (no `Ord`): two `Comparable`s of different
+/// variants (e.g. `Numeric` vs. `Date`, or a timezoned vs. timezone-less
+/// `DateTime`) are not comparable at all and must yield `None`, not a
+/// same-as-equal fallback. Callers (the `sh:minInclusive`/`maxInclusive`/
+/// `minExclusive`/`maxExclusive` arms in `eval_prop_constraint` and
+/// `constraint_conforms`) treat `None` as "cannot be validly compared to the
+/// bound", which per spec is itself a violation — the same discipline
+/// `sparql_compare` already established for `sh:lessThan`/
+/// `sh:lessThanOrEquals` (#266). This also resolves the narrower
+/// mismatched-comparable-variant gap tracked in #304: previously mismatched
+/// variants fell through to "equal", silently hiding the incomparability.
+/// See <https://github.com/daghovland/rdf-datalog/issues/318> and
+/// <https://github.com/daghovland/rdf-datalog/issues/304>.
 impl PartialOrd for Comparable {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Comparable {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (Comparable::Numeric(a), Comparable::Numeric(b)) => {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            (Comparable::Date(a), Comparable::Date(b)) => a.cmp(b),
-            (Comparable::DateTime(a), Comparable::DateTime(b)) => a.cmp(b),
-            // Mismatched variants (e.g. Numeric vs. Date) are not actually
-            // equal — they're a type error / "cannot be compared" per
-            // SPARQL/XPath comparison semantics. This fallthrough is used by
-            // `bound_to_comparable` for the sh:minInclusive/maxInclusive/
-            // minExclusive/maxExclusive value-range components, which is a
-            // known, tracked gap distinct from the sh:lessThan/
-            // lessThanOrEquals fix in #266 (which replaced this Ord-based
-            // path with `sparql_compare` for those two components only).
-            // See https://github.com/daghovland/rdf-datalog/issues/304.
-            _ => std::cmp::Ordering::Equal,
+            (Comparable::Numeric(a), Comparable::Numeric(b)) => a.partial_cmp(b),
+            (Comparable::Date(a), Comparable::Date(b)) => Some(a.cmp(b)),
+            (Comparable::DateTime(a), Comparable::DateTime(b)) => Some(a.cmp(b)),
+            (Comparable::DateTimeNaive(a), Comparable::DateTimeNaive(b)) => Some(a.cmp(b)),
+            _ => None,
         }
     }
 }
@@ -1521,6 +1573,27 @@ fn lit_comparable(data: &Datastore, id: GraphElementId) -> Option<Comparable> {
     match data.resources.get_graph_element(id) {
         GraphElement::GraphLiteral(lit) => lit_to_comparable(lit),
         _ => None,
+    }
+}
+
+/// Shared "does this value violate a `sh:minInclusive`/`maxInclusive`/
+/// `minExclusive`/`maxExclusive` bound" predicate. `is_ok` receives the
+/// `Ordering` of the value against the bound (`value.cmp(bound)`) and
+/// returns whether that ordering satisfies the constraint (conforms); this
+/// function negates it into "violates". Any case where the bound or the
+/// value isn't a `Comparable` at all, or the two are different `Comparable`
+/// variants (mismatched types, or a timezoned vs. timezone-less
+/// `xsd:dateTime` — see `Comparable`'s doc comment), is "cannot be validly
+/// compared" and therefore always violates, per
+/// <https://github.com/daghovland/rdf-datalog/issues/318>.
+fn range_violates(
+    bound: &Option<Comparable>,
+    value: Option<Comparable>,
+    is_ok: impl Fn(Ordering) -> bool,
+) -> bool {
+    match (bound, value) {
+        (Some(b), Some(v)) => !v.partial_cmp(b).is_some_and(is_ok),
+        _ => true,
     }
 }
 
@@ -1538,6 +1611,7 @@ enum SparqlCmpValue {
     Bool(bool),
     Date(chrono::NaiveDate),
     DateTime(chrono::DateTime<chrono::Utc>),
+    DateTimeNaive(chrono::NaiveDateTime),
 }
 
 fn sparql_cmp_value(data: &Datastore, id: GraphElementId) -> Option<SparqlCmpValue> {
@@ -1556,6 +1630,7 @@ fn sparql_cmp_value(data: &Datastore, id: GraphElementId) -> Option<SparqlCmpVal
                 Comparable::Numeric(n) => SparqlCmpValue::Numeric(n),
                 Comparable::Date(d) => SparqlCmpValue::Date(d),
                 Comparable::DateTime(dt) => SparqlCmpValue::DateTime(dt),
+                Comparable::DateTimeNaive(dt) => SparqlCmpValue::DateTimeNaive(dt),
             }),
         },
         _ => None,
@@ -1580,6 +1655,7 @@ fn sparql_compare(
         (Bool(x), Bool(y)) => Some(x.cmp(&y)),
         (Date(x), Date(y)) => Some(x.cmp(&y)),
         (DateTime(x), DateTime(y)) => Some(x.cmp(&y)),
+        (DateTimeNaive(x), DateTimeNaive(y)) => Some(x.cmp(&y)),
         _ => None,
     }
 }
@@ -1612,15 +1688,27 @@ fn lit_to_comparable(lit: &RdfLiteral) -> Option<Comparable> {
                     .ok()
                     .map(Comparable::Date)
             } else if iri == XSD_DATE_TIME {
-                literal
-                    .parse::<chrono::DateTime<chrono::Utc>>()
-                    .ok()
-                    .map(Comparable::DateTime)
+                parse_datetime_comparable(literal)
             } else {
                 None
             }
         }
         _ => None,
+    }
+}
+
+/// Parse an `xsd:dateTime` lexical form into a `Comparable`, preserving
+/// whether it carried a timezone offset — timezoned and timezone-less
+/// dateTimes are not comparable to each other (see `Comparable`'s doc
+/// comment / #318).
+fn parse_datetime_comparable(literal: &str) -> Option<Comparable> {
+    if let Ok(dt) = literal.parse::<chrono::DateTime<chrono::Utc>>() {
+        Some(Comparable::DateTime(dt))
+    } else {
+        literal
+            .parse::<chrono::NaiveDateTime>()
+            .ok()
+            .map(Comparable::DateTimeNaive)
     }
 }
 
@@ -1654,10 +1742,7 @@ fn bound_to_comparable(
                     .ok()
                     .map(Comparable::Date)
             } else if dt.contains("dateTime") {
-                value
-                    .parse::<chrono::DateTime<chrono::Utc>>()
-                    .ok()
-                    .map(Comparable::DateTime)
+                parse_datetime_comparable(value)
             } else {
                 // Plain number without explicit datatype
                 value.parse::<f64>().ok().map(Comparable::Numeric)

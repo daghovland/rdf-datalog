@@ -177,6 +177,16 @@ fn shacl_testdata_parses() {
         "shacl_s312_targetclass_subclass_shapes.ttl",
         "shacl_s312_severity_override_data.ttl",
         "shacl_s312_severity_override_shapes.ttl",
+        "shacl_s318_multiclass_data.ttl",
+        "shacl_s318_multiclass_shapes.ttl",
+        "shacl_s318_datatype_integer_data.ttl",
+        "shacl_s318_datatype_integer_shapes.ttl",
+        "shacl_s304_range_cross_type_data.ttl",
+        "shacl_s304_range_cross_type_shapes.ttl",
+        "shacl_s318_range_datetime_tz_data.ttl",
+        "shacl_s318_range_datetime_tz_shapes.ttl",
+        "shacl_s318_datatype_date_tz_data.ttl",
+        "shacl_s318_datatype_date_tz_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -2700,5 +2710,124 @@ fn regression_312_custom_severity_and_property_shape_override() {
         node_kind_result.value.as_deref(),
         Some("http://example.com/ns#InvalidResource1"),
         "sh:value for a pathless (node-level) constraint is the focus node itself"
+    );
+}
+
+// ── Issue #318 regressions ─────────────────────────────────────────────────
+
+/// `sh:class` is a repeatable parameter: `sh:class ex:Person ; sh:class
+/// ex:Animal .` is two independent constraints, both of which must hold.
+/// Previously `parse_prop_constraints` used `graph::get_object` (singular)
+/// and silently dropped every occurrence after the first.
+/// https://github.com/daghovland/rdf-datalog/issues/318
+#[test]
+fn regression_318_multi_valued_class_all_constraints_apply() {
+    let data = load("shacl_s318_multiclass_data.ttl");
+    let shapes = load("shacl_s318_multiclass_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("Both")),
+        "ex:Both is both ex:Person and ex:Animal — conforms to both sh:class constraints"
+    );
+    assert!(
+        has_violation(&report, &ex("OnlyPerson")),
+        "ex:OnlyPerson is not ex:Animal — must violate the second sh:class occurrence"
+    );
+}
+
+/// `sh:datatype` must reject a literal whose lexical form doesn't actually
+/// parse under the tagged datatype, not just compare the type IRI:
+/// `"aldi"^^xsd:integer` is tagged xsd:integer but isn't an integer.
+/// https://github.com/daghovland/rdf-datalog/issues/318
+#[test]
+fn regression_318_datatype_integer_ill_formed_lexical_form() {
+    let data = load("shacl_s318_datatype_integer_data.ttl");
+    let shapes = load("shacl_s318_datatype_integer_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("Good")),
+        "ex:Good \"42\"^^xsd:integer is well-formed — conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("Bad")),
+        "ex:Bad \"aldi\"^^xsd:integer is ill-typed — must violate"
+    );
+}
+
+/// `sh:minInclusive` (and by the same code path `sh:maxInclusive`/
+/// `sh:minExclusive`/`sh:maxExclusive`) must treat an `xsd:dateTime` with a
+/// timezone offset as incomparable to a bound without one (and vice versa):
+/// they are not orderable against each other per XSD's partial order. A
+/// timezone-less value equal to a timezone-less bound must still compare
+/// normally and conform. Mirrors the W3C SHACL suite's `minInclusive-003`
+/// ("dateTime without timezone") fixture.
+/// https://github.com/daghovland/rdf-datalog/issues/318
+#[test]
+fn regression_318_range_datetime_timezone_mismatch_violates() {
+    let data = load("shacl_s318_range_datetime_tz_data.ttl");
+    let shapes = load("shacl_s318_range_datetime_tz_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("SameNaive")),
+        "ex:SameNaive's timezone-less dateTime equals the timezone-less bound — conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("Timezoned")),
+        "ex:Timezoned's dateTime has a timezone offset the bound lacks — incomparable, must violate"
+    );
+}
+
+/// Issue #304 regression, resolved as a side effect of #318's fix: a value
+/// node that IS a recognized comparable literal, but of a different
+/// `Comparable` kind than the bound (numeric vs. `xsd:date`), must be
+/// treated as incomparable — the previous `Ord`-based fallthrough silently
+/// treated mismatched variants as `Equal`, hiding the incomparability.
+/// https://github.com/daghovland/rdf-datalog/issues/304
+#[test]
+fn regression_304_range_cross_type_comparable_violates() {
+    let data = load("shacl_s304_range_cross_type_data.ttl");
+    let shapes = load("shacl_s304_range_cross_type_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("Ok")),
+        "ex:Ok's xsd:date value is >= the xsd:date bound — conforms"
+    );
+    assert!(
+        has_violation(&report, &ex("Bad")),
+        "ex:Bad's numeric value is a different Comparable kind than the xsd:date bound — must violate, not fall through to Equal"
+    );
+}
+
+/// `xsd:date`'s lexical space permits an optional trailing timezone
+/// fragment (`Z` or `±HH:MM`); `sh:datatype`'s lexical-validity check
+/// (added for #318) must not reject a well-formed timezoned date as
+/// ill-formed just because `chrono::NaiveDate::from_str` only accepts the
+/// bare `%Y-%m-%d` form.
+/// https://github.com/daghovland/rdf-datalog/issues/318
+#[test]
+fn regression_318_datatype_date_timezone_is_well_formed() {
+    let data = load("shacl_s318_datatype_date_tz_data.ttl");
+    let shapes = load("shacl_s318_datatype_date_tz_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !has_violation(&report, &ex("PlainDate")),
+        "a bare xsd:date must conform"
+    );
+    assert!(
+        !has_violation(&report, &ex("ZuluDate")),
+        "\"2020-06-01Z\"^^xsd:date is well-formed — must conform, not violate"
+    );
+    assert!(
+        !has_violation(&report, &ex("OffsetDate")),
+        "\"2020-06-01-05:00\"^^xsd:date is well-formed — must conform, not violate"
+    );
+    assert!(
+        has_violation(&report, &ex("BadDate")),
+        "\"not-a-date\"^^xsd:date is not a valid xsd:date lexical form — must violate"
+    );
+    assert!(
+        has_violation(&report, &ex("MultibyteBadDate")),
+        "a multibyte character where the timezone-offset check looks (byte-index math \
+         must not panic on a non-char-boundary index) is not a valid xsd:date — must violate"
     );
 }

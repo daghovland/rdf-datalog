@@ -1,0 +1,13 @@
+# Issue #318 regression — see shacl_s318_range_datetime_tz_data.ttl.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:RangeDateTimeTzShape
+    a sh:NodeShape ;
+    sh:targetNode ex:SameNaive, ex:Timezoned ;
+    sh:property [
+        sh:path ex:when ;
+        sh:minInclusive "2002-10-10T12:00:00"^^xsd:dateTime ;
+    ] .

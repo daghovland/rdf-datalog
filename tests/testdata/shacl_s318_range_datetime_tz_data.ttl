@@ -1,0 +1,10 @@
+# Issue #318 regression — an xsd:dateTime with a timezone offset is not
+# orderable against an xsd:dateTime bound without one (and vice versa); the
+# mismatch must violate. A timezone-less value equal to a timezone-less
+# bound must still conform normally.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:SameNaive ex:when "2002-10-10T12:00:00"^^xsd:dateTime .
+ex:Timezoned ex:when "2002-10-10T12:00:00-05:00"^^xsd:dateTime .
