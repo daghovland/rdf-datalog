@@ -369,6 +369,79 @@ nothing else in the corpus trips any shape. Each new shape was also proven
 to fire on a targeted synthetic violation, not just parsed. See
 `tests/backlog_ontology.rs` for the automated version of all of this.
 
+## `agp:` agent-provenance vocabulary (#326)
+
+Added alongside `bl:` for [issue #326](https://github.com/daghovland/rdf-datalog/issues/326)
+(a sub-issue of the agent-provenance epic
+[#306](https://github.com/daghovland/rdf-datalog/issues/306)). Full design
+rationale lives in
+[`docs/plans/AGENT_PROVENANCE_PLAN.md`](../../docs/plans/AGENT_PROVENANCE_PLAN.md)
+(already reviewed and resolved by the repo owner) -- this section records
+two follow-up decisions made while actually writing
+[`agentprov-vocabulary.ttl`](agentprov-vocabulary.ttl) that the plan doc
+doesn't cover, using the same "why, not what" convention as the rest of
+this document.
+
+### `agp:summaryText` has no `rdfs:domain`
+
+**Finding.** `agp:summaryText` is used on both `agp:TranscriptSummary` and
+`agp:Decision` (a decision point's own distilled reasoning). A first draft
+gave it `rdfs:domain agp:TranscriptSummary`, matching every other
+single-class-domain property in this file. That's wrong: `rdfs:domain` is
+an entailment, not documentation -- `X agp:summaryText "..."` `⊨` `X a
+agp:TranscriptSummary` under RDFS semantics, for every `X`, including an
+`agp:Decision`. Plain SHACL validation (what `tests/agentprov_ontology.rs`
+actually runs) never triggered this, since this engine performs no
+RDFS/OWL-RL entailment at plain-SPARQL-or-SHACL time (see "`rdfs:subClassOf`
+is not free" above, which is the identical class of bug).
+
+**Verified directly (not just reasoned about), both directions**: with
+`rdfs:domain agp:TranscriptSummary` reinstated on a scratch copy of the
+vocabulary, `dagalog -d <fixture with only ex:decision1 a agp:Decision> -o
+<scratch copy> -Q 'SELECT ?x WHERE { ?x a agp:TranscriptSummary }'` returned
+`ex:decision1` -- reproducing the bug exactly, a real derivation, not a
+hypothetical one. With the domain removed (as shipped in
+`agentprov-vocabulary.ttl`), the identical query against the identical
+fixture returns nothing. (Had the domain stayed, the derived
+`ex:decision1 a agp:TranscriptSummary` would go on to fail
+`agp:TranscriptSummaryRequiredFieldsShape` and `agp:SummaryGeneratedByShape`
+for lack of `agp:reasoningFor`/`prov:wasGeneratedBy` -- a real, silent
+contradiction if this vocabulary is ever run through `apply_ontologies`
+rather than validated with plain SHACL alone.)
+
+**Decision:** `agp:summaryText` declares no `rdfs:domain` at all. A `owl:unionOf
+(agp:TranscriptSummary agp:Decision)` domain was considered and rejected for
+now -- this repo already has one open, unresolved reasoner-crash bug from an
+under-tested OWL axiom over this exact kind of fixture (see "An OWL
+`maxCardinality` restriction was attempted, then reverted" above, tracked as
+[#298](https://github.com/daghovland/rdf-datalog/issues/298)), and adding a
+second untested axiom shape in the same PR that introduces `#298`'s sibling
+vocabulary isn't worth the risk for a domain declaration that buys little
+(nothing in this vocabulary's current SHACL shapes or SPARQL query library
+plans needs `agp:summaryText`'s domain to be inferable). Revisit if a real
+use case needs it, and test it through the reasoner first if so.
+
+### `agp:Decision` is explicitly disjoint from `agp:AgentSession`/`agp:TranscriptSummary`
+
+Mirrors `bl:`'s own Disjointness section above. `agp:AgentSession`
+(`rdfs:subClassOf prov:Activity`) and `agp:TranscriptSummary`
+(`rdfs:subClassOf prov:Entity`) already inherit disjointness from each
+other through their PROV-O superclasses -- verified directly:
+`tests/testdata/prov-o.ttl` asserts `prov:Activity owl:disjointWith
+prov:Entity`. `agp:Decision`, however, has no PROV-O superclass to inherit
+disjointness through, so `agp:Decision owl:disjointWith agp:AgentSession,
+agp:TranscriptSummary` is asserted directly in `agentprov-vocabulary.ttl`.
+
+**Checked against the #298 hazard before shipping.** This repo already has
+one open, unresolved reasoner `panic!` bug (#298, see above) triggered by
+an under-tested OWL axiom over this exact vocabulary/fixture family, so
+this disjointness axiom was not shipped on parsing alone: ran the full
+multi-type grounding fixture (`agp:AgentSession`, `agp:TranscriptSummary`,
+`agp:Decision`, a `bl:PullRequest`, and `prov:SoftwareAgent`/`prov:Person`
+individuals, all together) through `apply_ontologies` with `--ontology
+backlog/ontology/agentprov-vocabulary.ttl` active. Completes cleanly, no
+panic -- the axiom does not trigger #298's failure mode.
+
 ## What's still open (deliberately, past this issue's scope)
 
 - `bl:Label` individuals carry only `rdfs:label` today, no color/description
