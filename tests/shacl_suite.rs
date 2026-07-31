@@ -57,6 +57,8 @@ fn shacl_testdata_parses() {
         "shacl_s2_target_objects_shapes.ttl",
         "shacl_s261_lexical_form_data.ttl",
         "shacl_s261_lexical_form_shapes.ttl",
+        "shacl_s310_targetnode_literal_data.ttl",
+        "shacl_s310_targetnode_literal_shapes.ttl",
         "shacl_s4_class_data.ttl",
         "shacl_s4_class_shapes.ttl",
         "shacl_s4_datatype_data.ttl",
@@ -2329,4 +2331,46 @@ fn regression_309_xone_reports_focus_node_as_value() {
             "sh:value must equal the focus node for a node-shape-level violation"
         );
     }
+}
+
+// ── Issue #310 — literal-valued sh:targetNode dropped from node-shape ──────
+// targets. Unlike the W3C suite fixtures (where the data graph and shapes
+// graph happen to be the same document, so the literal is coincidentally
+// already interned in `data`), these use genuinely separate data/shapes
+// files: the target literal appears ONLY in the shapes graph. This is the
+// discriminating case for the fix in `shacl::lookup_elem`
+// (`shacl/src/lib.rs`), which now delegates to
+// `evaluate::lookup_elem_value` - the same lookup already used for
+// `sh:in`/`sh:hasValue` literal comparisons.
+
+#[test]
+fn regression_issue_310_literal_targetnode_violates() {
+    let data = load("shacl_s310_targetnode_literal_data.ttl");
+    let shapes = load("shacl_s310_targetnode_literal_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "a literal sh:targetNode value absent from the data graph must \
+         still become a focus node and be checked against the node shape's \
+         constraints"
+    );
+    let focus = "(not a number)";
+    assert!(
+        has_violation(&report, focus),
+        "expected a violation for literal focus node {focus}, got: {:?}",
+        report.results
+    );
+}
+
+#[test]
+fn regression_issue_310_literal_targetnode_conforms() {
+    let data = load("shacl_s310_targetnode_literal_data.ttl");
+    let shapes = load("shacl_s310_targetnode_literal_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    let focus = "99^^http://www.w3.org/2001/XMLSchema#integer";
+    assert!(
+        !has_violation(&report, focus),
+        "a literal sh:targetNode value that satisfies the node shape's \
+         constraint must conform, not just avoid a crash"
+    );
 }

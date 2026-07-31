@@ -162,6 +162,27 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         return Err(shapes::describe_shape_cycle(shapes, &cycle));
     }
 
+    // A `sh:targetNode` value (IRI, blank node, or literal) is a focus node
+    // regardless of whether it independently occurs anywhere in the data
+    // graph — the shapes graph and data graph are ordinarily different
+    // documents. Intern every `Target::Node` value into an augmented copy of
+    // `data` up front so that `data_targets`/`lookup_elem` below always find
+    // it, even for a literal `sh:targetNode` that appears only in the shapes
+    // graph. `translate::intern_elem` is idempotent (backed by
+    // `add_resource`), and Phase 1's `translate::shapes_to_rules` already
+    // interns the same values into `work` independently — this keeps the
+    // read-only `data` view consistent with it. See
+    // [#310](https://github.com/daghovland/rdf-datalog/issues/310).
+    let mut data = data.clone();
+    for shape in &parsed {
+        for target in &shape.targets {
+            if let shapes::Target::Node(elem) = target {
+                translate::intern_elem(elem, &mut data);
+            }
+        }
+    }
+    let data = &data;
+
     let mut work = data.clone();
 
     // Pre-compute violations for constraints that must see only the original data triples

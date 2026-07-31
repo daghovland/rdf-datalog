@@ -100,12 +100,18 @@ pub fn eval_all(
         }
 
         // sh:nodeKind at node shape level — check each target node itself.
+        // sh:value for a node-shape-scoped (pathless) constraint is the focus
+        // node itself (SHACL §4.1.3/§3.4.1) — e.g. `sh:targetNode "true"^^
+        // xsd:boolean ; sh:nodeKind sh:IRI` must report `sh:value
+        // "true"^^xsd:boolean`, not omit it. Previously used `nil` here (the
+        // "no value" sentinel), which under-reported this field for every
+        // node-shape sh:nodeKind violation. See
+        // https://github.com/daghovland/rdf-datalog/issues/310.
         if let Some(nk) = &shape.node_kind {
             let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
-            let nil = graph::intern_iri(work, vocab::INT_NIL);
             for node in &targets {
                 if !matches_node_kind(data, *node, nk) {
-                    add_viol(work, *node, viol, nil);
+                    add_viol(work, *node, viol, *node);
                 }
             }
             viol_preds.push((

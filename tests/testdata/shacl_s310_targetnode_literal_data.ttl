@@ -1,0 +1,12 @@
+@prefix ex: <http://example.com/ns#> .
+
+# See https://github.com/daghovland/rdf-datalog/issues/310
+#
+# Deliberately does NOT mention the literal "aldi"^^xsd:integer or
+# 99^^xsd:integer used as sh:targetNode values in the shapes file below.
+# sh:targetNode literal values must become focus nodes regardless of
+# whether that literal happens to already be a graph element in the data
+# graph - the data graph and shapes graph are ordinarily different
+# documents, unlike the W3C suite fixtures (which load the same file as
+# both, making this case easy to miss).
+ex:unrelated ex:p ex:q .
