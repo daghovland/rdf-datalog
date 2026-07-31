@@ -147,6 +147,20 @@ impl IncrementalReasoner {
     /// contradictory (should not happen if the invariant "the store was
     /// consistent before the rejected change" holds — callers should treat
     /// this as a serious, non-recoverable-by-rollback error).
+    ///
+    /// **Precondition — every intensional (derived) quad in `base` must be
+    /// re-derivable from `self.programs`.** This rebuild keeps only
+    /// `base.named_graphs.extensional_quads()` and re-runs *this reasoner's
+    /// own* strata (`self.programs`) over them; every stratum this instance
+    /// owns is re-derived correctly (including strata earlier than the one
+    /// that contradicted — see `test_rebuild_from_base_preserves_earlier_stratum_derivations`
+    /// in this module's tests). But an intensional quad produced by some
+    /// *other*, unrelated `evaluate_rules`/`DatalogProgram` call — e.g. an
+    /// eager OWL-RL materialisation done once up front and never registered
+    /// with this `IncrementalReasoner` — is invisible to this reasoner's
+    /// `derived_from` index and will be silently discarded, not re-derived.
+    /// Do not call this on a store that mixes this reasoner's incrementally-
+    /// maintained closure with derived quads from a separate reasoning pass.
     pub fn rebuild_from_base(&mut self, base: &mut Datastore) -> Result<(), ReasoningError> {
         let base_facts: Vec<Quad> = base.named_graphs.extensional_quads().collect();
         let hint = base_facts.len() as u32;
@@ -743,5 +757,130 @@ mod tests {
             .apply_insertions(&mut ds, &[fact_cd])
             .expect("reasoner must remain usable after recovering from a contradiction");
         assert!(ds.named_graphs.contains(&fact_cd));
+    }
+
+    /// `rebuild_from_base` re-runs *every* stratum of `self.programs`, in
+    /// order, from the surviving extensional facts — so a contradiction that
+    /// fires in a later stratum must not lose facts derived by an earlier
+    /// stratum: rebuilding re-derives them too.
+    ///
+    /// (This is specific to the strata *this* `IncrementalReasoner` owns.
+    /// Any intensional quad in the store produced by a *different*,
+    /// unrelated `evaluate_rules`/`DatalogProgram` call — not part of
+    /// `self.programs` — is not tracked by this reasoner's `derived_from`
+    /// index and would be discarded by a rebuild. See the precondition
+    /// documented on [`IncrementalReasoner::rebuild_from_base`].)
+    ///
+    /// Setup: stratum 1 copies `?x p ?y` to `?x p3 ?y`. Stratum 2 (depends
+    /// negatively on `p3`, so it stratifies after stratum 1) contradicts on
+    /// `?x p2 ?y` unless `?x p3 ?y` also holds. Base facts: `a p b` (derives
+    /// `a p3 b` in stratum 1). Inserting `c p2 d` — with no `c p3 d` — fires
+    /// the stratum-2 contradiction. After retracting the offending insert and
+    /// calling `rebuild_from_base`, `a p3 b` (stratum 1's derivation, wholly
+    /// unrelated to the contradiction) must still be present.
+    #[test]
+    fn test_rebuild_from_base_preserves_earlier_stratum_derivations() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let p3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p3".to_string(),
+            )));
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+
+        // Stratum 1: ?x p3 ?y :- ?x p ?y
+        let copy_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p3),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        // Stratum 2 (negatively depends on p3, derived above):
+        // Contradiction :- ?x p2 ?y, NOT ?x p3 ?y
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p3),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![copy_rule, contradiction_rule], &mut ds).unwrap();
+
+        let derived_ab3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p3,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "stratum 1 should have derived a p3 b at initial materialisation"
+        );
+
+        // Insert c p2 d: no c p3 d exists, so stratum 2's contradiction fires.
+        let fact_cd_p2 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p2,
+            obj: d,
+        };
+        let result = reasoner.apply_insertions(&mut ds, &[fact_cd_p2]);
+        match result {
+            Err(ReasoningError::Contradiction(_)) => {}
+            Ok(_) => panic!("expected a Contradiction error, got Ok"),
+        }
+
+        // Recover: retract the offending insert, then rebuild.
+        ds.named_graphs.remove_quad(fact_cd_p2);
+        reasoner
+            .rebuild_from_base(&mut ds)
+            .expect("rebuild from the now-consistent base facts must succeed");
+
+        assert!(
+            !ds.named_graphs.contains(&fact_cd_p2),
+            "offending insert should have been retracted"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "stratum 1's derivation (a p3 b) must survive a rebuild triggered \
+             by an unrelated stratum-2 contradiction"
+        );
     }
 }

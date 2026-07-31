@@ -99,15 +99,16 @@ pub fn apply_reasoner_delta(
 ) -> Result<(), DeltaError> {
     let mut contradiction: Option<String> = None;
 
-    if contradiction.is_none() && !net_deletes.is_empty() {
-        if let Err(e) = reasoner.apply_deletions(store, net_deletes) {
-            contradiction = Some(e.to_string());
-        }
+    if !net_deletes.is_empty()
+        && let Err(e) = reasoner.apply_deletions(store, net_deletes)
+    {
+        contradiction = Some(e.to_string());
     }
-    if contradiction.is_none() && !net_inserts.is_empty() {
-        if let Err(e) = reasoner.apply_insertions(store, net_inserts) {
-            contradiction = Some(e.to_string());
-        }
+    if contradiction.is_none()
+        && !net_inserts.is_empty()
+        && let Err(e) = reasoner.apply_insertions(store, net_inserts)
+    {
+        contradiction = Some(e.to_string());
     }
 
     if let Some(msg) = contradiction {
