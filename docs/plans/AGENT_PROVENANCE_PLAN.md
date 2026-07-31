@@ -20,7 +20,11 @@ provenance relations, not by re-reading full conversation logs.
 - `backlog/ontology/vocabulary.ttl` — `bl:` namespace, models `bl:Issue`,
   `bl:PullRequest`, `bl:Epic`, `bl:Crate`; reuses `doap:Project` for the
   repo itself. No file/function/commit-level entities, no agent/authorship
-  modeling at all today.
+  modeling at all today. **`backlog/` is planned to be extracted into its
+  own separate repo** (repo owner, 2026-07-31) — it's a generic,
+  project-agnostic ontology + tooling package, not something specific to
+  `rdf-datalog`. This directly shapes where the new agent-provenance
+  material goes — see "Placement" below.
 - PROV-O is **not used anywhere in live code or ontologies** — the only
   presence is `tests/testdata/prov-o.ttl`, the real W3C ontology, exercised
   by `tests/real_world_ontologies.rs` purely as a "can we load a real OWL
@@ -145,17 +149,48 @@ numbers — lines drift too fast to be worth tracking) that
 `agp:reasoningFor` can also target, without changing anything in Phase 1's
 design.
 
+### Placement (resolved 2026-07-31)
+
+Split by whether the material is generic/portable or specific to this
+repo's own history, matching how `backlog/` itself is heading for
+extraction into a separate repo:
+
+- **The `agp:` vocabulary and its SHACL shapes are generic** — reusable by
+  any project that wants agent-provenance triples, exactly like `bl:`
+  itself. They live alongside the existing ontology files, as new sibling
+  files (not folded into `vocabulary.ttl`/`shapes.ttl` themselves, to keep
+  each concern independently reviewable):
+  - `backlog/ontology/agentprov-vocabulary.ttl`
+  - `backlog/ontology/agentprov-shapes.ttl`
+
+  These travel with `backlog/` when it's extracted.
+- **Individual transcript summaries are specific to `rdf-datalog`'s own
+  history** — real PR numbers, real session reasoning about this
+  codebase — and must NOT move when `backlog/` is extracted. They live in
+  a new top-level directory that stays in this repo:
+  - `provenance/summaries/pr-<N>.ttl` (one file per finished PR)
+  - `provenance/queries/*.sparql` (mirroring `backlog/queries/`, for the
+    provenance-specific query library in "SPARQL query library additions"
+    above)
+
+  `provenance/`'s Turtle files `@import`/reference the `agp:`/`bl:`
+  vocabulary by IRI as normal (no local copy), the same way
+  `backlog/examples/*.ttl` references `bl:` today.
+
 ## Authoring workflow (how the data actually gets created)
 
 **Phase 1 (near-term, hand-authored, mirrors `backlog/examples/`):**
 When an agent finishes a PR under this repo's existing workflow (CLAUDE.md
 step 6, "Commit, push, open a PR"), it also writes one small Turtle file
-under `provenance/summaries/pr-<N>.ttl` containing exactly one
-`agp:TranscriptSummary` — a few sentences distilling the actual reasoning
-(not a transcript dump), `agp:reasoningFor` the PR/issue, `prov:wasGeneratedBy`
-a session resource, `prov:wasAttributedTo` the agent. This is a NEW step to
-add to CLAUDE.md's workflow once this design is approved — not yet added,
-pending review.
+under `provenance/summaries/pr-<N>.ttl` (see "Placement" above) containing
+exactly one `agp:TranscriptSummary` — a few sentences distilling the
+actual reasoning (not a transcript dump), `agp:reasoningFor` the PR/issue,
+`prov:wasGeneratedBy` a session resource, `prov:wasAttributedTo` the agent.
+**Self-authored summaries are acceptable for now** (repo owner,
+2026-07-31) — the PR-finishing agent writes its own summary rather than a
+separate reviewing agent; revisit if self-reporting bias turns out to be a
+real problem in practice. This is a NEW step to add to CLAUDE.md's workflow
+once implementation lands — not yet added.
 
 **Phase 2 (future, separate issue, depends on #284):** an automated
 ingestion tool that reads real transcripts (or PR descriptions, which
@@ -173,12 +208,25 @@ one. Explicitly out of scope for the first PR under this plan.
   no `transcriptRef` at all is a fully valid, complete
   `agp:TranscriptSummary`.
 
-## Open questions for the repo owner (raised before implementation starts)
+## Review status
 
-See the follow-up question in-conversation — this plan is written to be
-reviewed, not started; nothing here is implemented yet, and no issue this
-plan produces should be labeled `ready` without that review, per this
-repo's own agent workflow rules.
+Resolved by the repo owner, 2026-07-31:
+
+1. **Authoring**: self-authored summaries (the PR-finishing agent writes
+   its own) are acceptable for now — see "Authoring workflow" above.
+2. **Granularity**: not explicitly revisited; the recommended PR/issue-level
+   scope (no `agp:CodeLocation` in Phase 1) stands as the default. Flag if
+   that reading is wrong.
+3. **Placement**: resolved with a split — generic `agp:` vocabulary/shapes
+   go in `backlog/ontology/` (travels with `backlog/`'s eventual repo
+   extraction); this repo's own transcript-summary instance data goes in a
+   new `provenance/` top-level directory that stays put — see "Placement"
+   above.
+
+Nothing is implemented yet. No issue this plan produces should be labeled
+`ready` without the repo owner's explicit go-ahead, per this repo's own
+agent workflow rules — this review resolves the design, not the
+`ready` gate itself.
 
 ## References
 
