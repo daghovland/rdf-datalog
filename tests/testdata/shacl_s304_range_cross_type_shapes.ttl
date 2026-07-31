@@ -1,0 +1,15 @@
+# Issue #304 regression — a numeric value node compared against an
+# xsd:date sh:minInclusive bound is a mismatched-Comparable-variant pair:
+# must violate, not fall through to "equal" (the previous Ord-based bug).
+# https://github.com/daghovland/rdf-datalog/issues/304
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:RangeCrossTypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Ok, ex:Bad ;
+    sh:property [
+        sh:path ex:when ;
+        sh:minInclusive "2020-01-01"^^xsd:date ;
+    ] .

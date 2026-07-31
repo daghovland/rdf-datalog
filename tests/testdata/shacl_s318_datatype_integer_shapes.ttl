@@ -1,0 +1,14 @@
+# Issue #318 regression — an ill-typed literal (tag says xsd:integer, lexical
+# form doesn't parse as one) must violate sh:datatype, not conform.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:IntegerDatatypeShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Good, ex:Bad ;
+    sh:property [
+        sh:path ex:value ;
+        sh:datatype xsd:integer ;
+    ] .

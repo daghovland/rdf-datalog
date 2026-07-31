@@ -1,0 +1,9 @@
+# Issue #318 regression — sh:datatype must check that the lexical form
+# actually parses under the tagged datatype, not just compare the type IRI.
+# "aldi"^^xsd:integer is tagged xsd:integer but isn't a valid integer.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:Good ex:value "42"^^xsd:integer .
+ex:Bad ex:value "aldi"^^xsd:integer .

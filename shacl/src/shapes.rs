@@ -514,10 +514,10 @@ pub fn parse_prop_constraints(
     {
         cs.push(PropConstraint::MaxCount(n));
     }
-    if let Some(id) = graph::get_object(shapes, prop_node, SH_CLASS)
-        && let Some(iri) = graph::iri_string(shapes, id)
-    {
-        cs.push(PropConstraint::Class(iri));
+    for id in graph::get_objects(shapes, prop_node, SH_CLASS) {
+        if let Some(iri) = graph::iri_string(shapes, id) {
+            cs.push(PropConstraint::Class(iri));
+        }
     }
     if let Some(id) = graph::get_object(shapes, prop_node, SH_DATATYPE)
         && let Some(iri) = graph::iri_string(shapes, id)

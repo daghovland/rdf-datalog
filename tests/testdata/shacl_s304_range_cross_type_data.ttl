@@ -1,0 +1,10 @@
+# Issue #304 regression — a value node that IS a recognized comparable
+# literal, but of a different kind than the bound (e.g. numeric vs.
+# xsd:date), must be treated as incomparable (violation), not silently
+# "equal" to the bound.
+# https://github.com/daghovland/rdf-datalog/issues/304
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:Ok ex:when "2020-06-01"^^xsd:date .
+ex:Bad ex:when 42 .

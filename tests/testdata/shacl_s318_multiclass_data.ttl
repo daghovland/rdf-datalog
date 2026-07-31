@@ -1,0 +1,8 @@
+# Issue #318 regression — sh:class is a repeatable parameter: each
+# occurrence is an independent constraint, so a value node must be an
+# instance of *every* declared class, not just the first one parsed.
+# https://github.com/daghovland/rdf-datalog/issues/318
+PREFIX ex: <http://example.com/ns#>
+
+ex:Both a ex:Person, ex:Animal .
+ex:OnlyPerson a ex:Person .
