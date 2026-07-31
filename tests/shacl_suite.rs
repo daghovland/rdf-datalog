@@ -143,6 +143,16 @@ fn shacl_testdata_parses() {
         "shacl_s258_xone_shapes.ttl",
         "shacl_s258_qualified_data.ttl",
         "shacl_s258_qualified_shapes.ttl",
+        "shacl_spath_inverse_data.ttl",
+        "shacl_spath_inverse_shapes.ttl",
+        "shacl_spath_sequence_data.ttl",
+        "shacl_spath_sequence_shapes.ttl",
+        "shacl_spath_alternative_data.ttl",
+        "shacl_spath_alternative_shapes.ttl",
+        "shacl_spath_zero_or_one_data.ttl",
+        "shacl_spath_zero_or_one_shapes.ttl",
+        "shacl_spath_one_or_more_data.ttl",
+        "shacl_spath_one_or_more_shapes.ttl",
         "shacl_s262_deactivated_data.ttl",
         "shacl_s262_deactivated_shapes.ttl",
         "shacl_s278_cycle_data.ttl",
@@ -2855,5 +2865,92 @@ fn regression_318_datatype_date_timezone_is_well_formed() {
         has_violation(&report, &ex("MultibyteBadDate")),
         "a multibyte character where the timezone-offset check looks (byte-index math \
          must not panic on a non-char-boundary index) is not a valid xsd:date — must violate"
+    );
+}
+
+// ── SHACL property paths (sh:inversePath / sequence / sh:alternativePath /
+// sh:zeroOrOnePath / sh:oneOrMorePath / sh:zeroOrMorePath) ───────────────────
+//
+// See https://github.com/daghovland/rdf-datalog/issues/307 and
+// docs/plans/SHACL_COMPLEX_PATHS_PLAN.md. Unignored one path-kind at a time,
+// simplest (inverse) to hardest (fixpoint quantified paths), per CLAUDE.md's
+// TDD phases.
+
+/// `[ sh:inversePath ex:parentOf ]` — from a focus node, find subjects `s`
+/// such that `s ex:parentOf <focus>`.
+#[test]
+#[ignore = "sh:inversePath not yet implemented — see #307"]
+fn spath_inverse_path() {
+    let data = load("shacl_spath_inverse_data.ttl");
+    let shapes = load("shacl_spath_inverse_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Carol has no incoming ex:parentOf edge"
+    );
+}
+
+/// `( ex:hasParent ex:hasParent )` — a two-step sequence path (grandparent).
+#[test]
+#[ignore = "sequence sh:path not yet implemented — see #307"]
+fn spath_sequence_path() {
+    let data = load("shacl_spath_sequence_data.ttl");
+    let shapes = load("shacl_spath_sequence_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Carol (the sequence's second-to-last data node) has no grandparent"
+    );
+}
+
+/// `[ sh:alternativePath ( ex:worksFor ex:employedBy ) ]` — union of two
+/// predicates.
+#[test]
+#[ignore = "sh:alternativePath not yet implemented — see #307"]
+fn spath_alternative_path() {
+    let data = load("shacl_spath_alternative_data.ttl");
+    let shapes = load("shacl_spath_alternative_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Carol has neither ex:worksFor nor ex:employedBy"
+    );
+}
+
+/// `[ sh:zeroOrOnePath ex:hasSpouse ]` — the focus node itself, plus its
+/// spouse if any. Exercises sh:class, a Phase 1 (Datalog-translated)
+/// constraint, over a compound path.
+#[test]
+#[ignore = "sh:zeroOrOnePath not yet implemented — see #307"]
+fn spath_zero_or_one_path() {
+    let data = load("shacl_spath_zero_or_one_data.ttl");
+    let shapes = load("shacl_spath_zero_or_one_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Carol's spouse (ex:NotAPerson) is not an ex:Person"
+    );
+}
+
+/// `[ sh:oneOrMorePath ex:parent ]` — transitive-closure (fixpoint) path.
+#[test]
+#[ignore = "sh:oneOrMorePath not yet implemented — see #307"]
+fn spath_one_or_more_path() {
+    let data = load("shacl_spath_one_or_more_data.ttl");
+    let shapes = load("shacl_spath_one_or_more_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Isolated has no ex:parent ancestor at all"
     );
 }

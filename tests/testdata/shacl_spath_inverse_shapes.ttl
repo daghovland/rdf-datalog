@@ -1,0 +1,13 @@
+# SHACL sh:inversePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# Every targeted node must have at least one incoming ex:parentOf edge.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:HasParentShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Carol ;
+    sh:property [
+        sh:path [ sh:inversePath ex:parentOf ] ;
+        sh:minCount 1 ;
+    ] .

@@ -1,0 +1,8 @@
+# SHACL sequence path (RDF list of paths).
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# ex:Alice's grandparent (ex:hasParent/ex:hasParent) is ex:Carol.
+# ex:Carol has no grandparent at all.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:hasParent ex:Bob .
+ex:Bob ex:hasParent ex:Carol .

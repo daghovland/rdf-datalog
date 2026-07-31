@@ -1,0 +1,9 @@
+# SHACL sh:alternativePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# ex:Alice and ex:Bob each reach ex:Acme via one of two alternative
+# predicates; ex:Carol reaches it via neither.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Alice ex:worksFor ex:Acme .
+ex:Bob ex:employedBy ex:Acme .
+ex:Carol a ex:Person .

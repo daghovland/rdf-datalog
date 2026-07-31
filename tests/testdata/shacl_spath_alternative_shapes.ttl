@@ -1,0 +1,14 @@
+# SHACL sh:alternativePath property path.
+# Source: https://www.w3.org/TR/shacl/#property-paths
+# Every targeted node must have at least one value via ex:worksFor OR
+# ex:employedBy.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:EmployedShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Bob, ex:Carol ;
+    sh:property [
+        sh:path [ sh:alternativePath ( ex:worksFor ex:employedBy ) ] ;
+        sh:minCount 1 ;
+    ] .
