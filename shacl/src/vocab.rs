@@ -214,8 +214,8 @@ pub fn viol_not(shape_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:not")
 }
 
-pub fn viol_and(shape_idx: usize, sub_idx: usize) -> String {
-    format!("urn:dagalog:shacl:viol:{shape_idx}:and:{sub_idx}")
+pub fn viol_and(shape_idx: usize) -> String {
+    format!("urn:dagalog:shacl:viol:{shape_idx}:and")
 }
 
 pub fn viol_or(shape_idx: usize) -> String {

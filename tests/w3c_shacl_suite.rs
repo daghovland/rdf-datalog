@@ -399,17 +399,6 @@ fn w3c_shacl_core_node() {
         entries.len()
     );
     let skip: &[&str] = &[
-        // sh:and leaks the inner branch's constraint component instead of
-        // reporting sh:AndConstraintComponent; sh:or/sh:not/sh:xone are
-        // missing sh:value at node-shape (pathless) scope. See
-        // https://github.com/daghovland/rdf-datalog/issues/309.
-        "Test of sh:and at node shape 001",
-        "Test of sh:and at node shape 002",
-        "Test of sh:not at node shape 001",
-        "Test of sh:not at node shape 002",
-        "Test of sh:or at node shape 001",
-        "Test of sh:xone at node shape 001",
-        "Test of validation report for shape xone-duplicate by property constraints",
         // sh:closed violations don't populate sh:resultPath. See
         // https://github.com/daghovland/rdf-datalog/issues/308.
         "Test of sh:closed at node shape 001",

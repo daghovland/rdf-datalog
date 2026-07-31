@@ -139,10 +139,12 @@ pub fn eval_all(
         // style above.
         if let Some(inner_ref) = &shape.not_inner {
             let viol = graph::intern_iri(work, &vocab::viol_not(shape.idx));
-            let nil = graph::intern_iri(work, vocab::INT_NIL);
             for node in &targets {
                 if shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store) {
-                    add_viol(work, *node, viol, nil);
+                    // Node-shape-level (pathless) violation: sh:value is the
+                    // focus node itself. See
+                    // https://github.com/daghovland/rdf-datalog/issues/309.
+                    add_viol(work, *node, viol, *node);
                 }
             }
             viol_preds.push((
@@ -155,13 +157,15 @@ pub fn eval_all(
         // for why this moved from Datalog-rule generation to direct evaluation.
         if !shape.or_inners.is_empty() {
             let viol = graph::intern_iri(work, &vocab::viol_or(shape.idx));
-            let nil = graph::intern_iri(work, vocab::INT_NIL);
             for node in &targets {
                 let any_conforms = shape.or_inners.iter().any(|inner_ref| {
                     shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
                 });
                 if !any_conforms {
-                    add_viol(work, *node, viol, nil);
+                    // Node-shape-level (pathless) violation: sh:value is the
+                    // focus node itself. See
+                    // https://github.com/daghovland/rdf-datalog/issues/309.
+                    add_viol(work, *node, viol, *node);
                 }
             }
             viol_preds.push((
@@ -170,58 +174,32 @@ pub fn eval_all(
             ));
         }
 
-        // sh:and — Phase 2 constraints inside inner shapes must also be evaluated.
-        // Phase 1 constraints (minCount etc.) are handled via Datalog in translate.rs.
-        // The "prop index" offset mirrors the one used in translate.rs (sub_idx * 10_000)
-        // so violation IRI names are consistent.
-        for (sub_idx, inner_ref) in shape.and_inners.iter().enumerate() {
-            let inner_id = inner_ref.shapes_id;
-            // A deactivated inner shape contributes no constraints. See #262.
-            if shapes::is_deactivated(shapes_store, inner_id) {
-                continue;
-            }
-            for (inner_pi, prop_node) in
-                graph::get_objects(shapes_store, inner_id, crate::vocab::SH_PROPERTY)
-                    .into_iter()
-                    .enumerate()
-            {
-                if shapes::is_deactivated(shapes_store, prop_node) {
-                    continue;
-                }
-                let path = graph::get_object(shapes_store, prop_node, crate::vocab::SH_PATH)
-                    .and_then(|id| graph::iri_string(shapes_store, id));
-                if let Some(path_str) = path {
-                    let constraints = shapes::parse_prop_constraints(shapes_store, prop_node);
-                    for (ci, constraint) in constraints.iter().enumerate() {
-                        let coord = ConstraintCoord {
-                            si: shape.idx,
-                            pi: sub_idx * 10_000 + inner_pi,
-                            ci,
-                        };
-                        let new = eval_prop_constraint(
-                            constraint,
-                            coord,
-                            Some(&path_str),
-                            &targets,
-                            data,
-                            shapes_store,
-                            work,
-                        );
-                        viol_preds.extend(new.into_iter().map(|(v, component)| {
-                            (
-                                v,
-                                ViolMeta::new(
-                                    shapes_store,
-                                    shape,
-                                    prop_node,
-                                    Some(&path_str),
-                                    component,
-                                ),
-                            )
-                        }));
-                    }
+        // sh:and — violation iff at least one inner shape does NOT conform for
+        // the focus node. Per spec (§4.6.1), the reported violation is
+        // sh:and's OWN constraint component (sh:AndConstraintComponent),
+        // sourced from the enclosing shape itself — never the specific inner
+        // branch/constraint that happened to fail. `shape_conforms_for_node`
+        // (already used by sh:or/sh:not/sh:xone above) recursively covers
+        // every constraint kind an inner shape can declare — Phase 1
+        // (minCount/…), Phase 2 (datatype/pattern/…), and nested logical
+        // combinators — so a single boolean check per inner shape is
+        // sufficient; no separate Datalog-rule generation is needed for
+        // sh:and (unlike the old, leaky implementation this replaced). See
+        // https://github.com/daghovland/rdf-datalog/issues/309.
+        if !shape.and_inners.is_empty() {
+            let viol = graph::intern_iri(work, &vocab::viol_and(shape.idx));
+            for node in &targets {
+                let all_conform = shape.and_inners.iter().all(|inner_ref| {
+                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
+                });
+                if !all_conform {
+                    add_viol(work, *node, viol, *node);
                 }
             }
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes_store, shape, shape.shapes_id, None, vocab::CC_AND),
+            ));
         }
     }
     viol_preds
@@ -619,7 +597,6 @@ fn eval_xone(
 ) -> Vec<GraphElementId> {
     let si = shape.idx;
     let viol = graph::intern_iri(work, &vocab::viol_xone(si));
-    let nil = graph::intern_iri(work, vocab::INT_NIL);
 
     for node in targets {
         let conforming_count = shape
@@ -630,7 +607,10 @@ fn eval_xone(
             })
             .count();
         if conforming_count != 1 {
-            add_viol(work, *node, viol, nil);
+            // Node-shape-level (pathless) violation: sh:value is the focus
+            // node itself. See
+            // https://github.com/daghovland/rdf-datalog/issues/309.
+            add_viol(work, *node, viol, *node);
         }
     }
     vec![viol]
