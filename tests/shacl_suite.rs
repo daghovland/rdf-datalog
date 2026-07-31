@@ -169,6 +169,14 @@ fn shacl_testdata_parses() {
         "shacl_s311_illformed_shapes.ttl",
         "shacl_s311_qvs_disjoint_data.ttl",
         "shacl_s311_qvs_disjoint_shapes.ttl",
+        "shacl_s312_targetnode_literal_data.ttl",
+        "shacl_s312_targetnode_literal_shapes.ttl",
+        "shacl_s312_implicit_shape_data.ttl",
+        "shacl_s312_implicit_shape_shapes.ttl",
+        "shacl_s312_targetclass_subclass_data.ttl",
+        "shacl_s312_targetclass_subclass_shapes.ttl",
+        "shacl_s312_severity_override_data.ttl",
+        "shacl_s312_severity_override_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -2359,8 +2367,8 @@ fn regression_309_xone_reports_focus_node_as_value() {
 // graph happen to be the same document, so the literal is coincidentally
 // already interned in `data`), these use genuinely separate data/shapes
 // files: the target literal appears ONLY in the shapes graph. This is the
-// discriminating case for the fix in `shacl::lookup_elem`
-// (`shacl/src/lib.rs`), which now delegates to
+// discriminating case for the fix in `shacl::data_targets`
+// (`shacl/src/lib.rs`), which now resolves literal `sh:targetNode` values via
 // `evaluate::lookup_elem_value` - the same lookup already used for
 // `sh:in`/`sh:hasValue` literal comparisons.
 
@@ -2580,5 +2588,117 @@ fn regression_311_qualified_value_shapes_disjoint() {
         "ex:InvalidHand's dual-typed digit is excluded from both sibling \
          counts by sh:qualifiedValueShapesDisjoint, so both the thumb (0 < 1) \
          and finger (3 < 4) bounds are violated"
+    );
+}
+
+// ── Issue #312 — misc/targets false negatives found via the W3C SHACL suite ──
+//
+// See https://github.com/daghovland/rdf-datalog/issues/312 and
+// tests/w3c_shacl_suite.rs (core/misc, core/targets). Four independent root
+// causes, each covered by its own fixture pair above.
+
+/// Literal-valued `sh:targetNode` (e.g. `sh:targetNode 32`) was silently
+/// dropped by target resolution — `lib.rs::data_targets`/`lookup_elem`
+/// returned `None` for any literal `ElemValue`, so the shape never had any
+/// focus nodes at all and vacuously conformed. Source:
+/// <https://www.w3.org/TR/shacl/#targetNode>.
+#[test]
+fn regression_312_literal_target_node_datatype_violation() {
+    let data = load("shacl_s312_targetnode_literal_data.ttl");
+    let shapes = load("shacl_s312_targetnode_literal_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "literal focus node 32 is not xsd:boolean, must violate sh:datatype"
+    );
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(
+        report.results[0].source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#DatatypeConstraintComponent")
+    );
+}
+
+/// A node is a SHACL shape whenever it is the subject of a target-declaring
+/// triple (here `sh:targetNode`), even with no explicit
+/// `rdf:type sh:NodeShape` triple at all — SHACL spec §3.1. Shape discovery
+/// previously only recognised `rdf:type sh:NodeShape`/`sh:PropertyShape`/
+/// `rdfs:Class`, silently skipping shapes like this one entirely.
+#[test]
+fn regression_312_implicit_shape_via_target_node_only() {
+    let data = load("shacl_s312_implicit_shape_data.ttl");
+    let shapes = load("shacl_s312_implicit_shape_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "ex:UntypedShape (no rdf:type triple) must still be recognised as a shape \
+         and its sh:nodeKind sh:BlankNode constraint must fire against the IRI target"
+    );
+    assert_eq!(
+        report.results[0].source_constraint.as_deref(),
+        Some("http://www.w3.org/ns/shacl#NodeKindConstraintComponent")
+    );
+}
+
+/// `sh:targetClass` (and the implicit class-as-shape target) is defined over
+/// `?this rdf:type/rdfs:subClassOf* $class` (SHACL spec §2.1.3.1): instances
+/// of a *subclass* of the target class are focus nodes too, not just direct
+/// instances of the class itself.
+#[test]
+fn regression_312_targetclass_subclass_closure() {
+    let data = load("shacl_s312_targetclass_subclass_data.ttl");
+    let shapes = load("shacl_s312_targetclass_subclass_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "ex:disallowedInstance is only a direct instance of ex:SubClass, a subclass \
+         of the targeted ex:SuperClass — the subclass closure must still pick it up \
+         as a focus node and flag it via sh:in"
+    );
+    assert!(has_violation(&report, &ex("disallowedInstance")));
+    assert!(!has_violation(&report, &ex("AllowedInstance")));
+}
+
+/// `sh:severity` may be an arbitrary IRI, not just the three built-in terms —
+/// SHACL does not restrict its range. A property shape's own `sh:severity`
+/// also overrides its parent node shape's severity for violations the
+/// property shape itself produces.
+#[test]
+fn regression_312_custom_severity_and_property_shape_override() {
+    let data = load("shacl_s312_severity_override_data.ttl");
+    let shapes = load("shacl_s312_severity_override_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert_eq!(report.results.len(), 2);
+
+    let datatype_result = report
+        .results
+        .iter()
+        .find(|r| {
+            r.source_constraint.as_deref()
+                == Some("http://www.w3.org/ns/shacl#DatatypeConstraintComponent")
+        })
+        .expect("ex:TestShape2's sh:datatype xsd:integer must violate on \"true\"^^xsd:boolean");
+    assert_eq!(
+        datatype_result.severity,
+        shacl::Severity::Info,
+        "ex:TestShape2's own sh:severity sh:Info must override the parent shape's severity"
+    );
+
+    let node_kind_result = report
+        .results
+        .iter()
+        .find(|r| {
+            r.source_constraint.as_deref()
+                == Some("http://www.w3.org/ns/shacl#NodeKindConstraintComponent")
+        })
+        .expect("ex:TestShape1's sh:nodeKind sh:BlankNode must violate on the IRI focus node");
+    assert_eq!(
+        node_kind_result.severity,
+        shacl::Severity::Custom("http://example.com/ns#MySeverity".to_string()),
+        "a custom (non-built-in) sh:severity IRI must be preserved verbatim"
+    );
+    assert_eq!(
+        node_kind_result.value.as_deref(),
+        Some("http://example.com/ns#InvalidResource1"),
+        "sh:value for a pathless (node-level) constraint is the focus node itself"
     );
 }

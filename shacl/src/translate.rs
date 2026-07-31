@@ -68,7 +68,7 @@ pub fn shapes_to_rules(
         let target_pred = graph::intern_iri(work, &int_target(si));
 
         // Target rules
-        rules.extend(target_rules(shape, target_pred, true_id, rdf_type_id, work));
+        rules.extend(target_rules(shape, target_pred, true_id, work));
 
         // Property shape constraints
         for prop in &shape.property_shapes {
@@ -94,12 +94,13 @@ pub fn shapes_to_rules(
                 viol_preds.extend(new.into_iter().map(|v| {
                     (
                         v,
-                        ViolMeta::new(
+                        ViolMeta::new_with_severity_override(
                             shapes,
                             shape,
                             prop.shapes_id,
                             Some(&prop.path),
                             constraint.component_iri(),
+                            prop.severity.clone(),
                         ),
                     )
                 }));
@@ -170,7 +171,6 @@ fn target_rules(
     shape: &ParsedShape,
     target_pred: GraphElementId,
     true_id: GraphElementId,
-    rdf_type_id: GraphElementId,
     work: &mut Datastore,
 ) -> Vec<Rule> {
     let mut rules = Vec::new();
@@ -181,19 +181,16 @@ fn target_rules(
                 rules.push(fact(node_id, target_pred, true_id));
             }
             Target::Class(class_iri) | Target::ImplicitClass(class_iri) => {
-                let class_id = graph::intern_iri(work, class_iri);
-                rules.push(Rule {
-                    head: RuleHead::NormalHead(dgp(
-                        Term::Variable("n".into()),
-                        Term::Resource(target_pred),
-                        Term::Resource(true_id),
-                    )),
-                    body: vec![pos(
-                        Term::Variable("n".into()),
-                        Term::Resource(rdf_type_id),
-                        Term::Resource(class_id),
-                    )],
-                });
+                // Resolved as ground facts (rather than a single `?n rdf:type
+                // $class` rule) so the `rdfs:subClassOf*` closure required by
+                // SHACL spec §2.1.3.1 applies here too — `work` still equals
+                // the original data graph at this point in the pipeline, so
+                // querying it directly is safe and matches
+                // `crate::class_target_instances`, the same helper the
+                // direct-evaluation path (`data_targets`) uses. See #312.
+                for node_id in crate::class_target_instances(work, class_iri) {
+                    rules.push(fact(node_id, target_pred, true_id));
+                }
             }
             Target::SubjectsOf(pred_iri) => {
                 let pred_id = graph::intern_iri(work, pred_iri);

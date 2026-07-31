@@ -1,0 +1,6 @@
+# Issue #312 — property-shape sh:severity override + custom sh:severity IRI
+# data graph.
+PREFIX ex: <http://example.com/ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+ex:InvalidResource1 ex:property "true"^^xsd:boolean .

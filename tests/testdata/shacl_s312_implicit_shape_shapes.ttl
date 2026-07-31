@@ -1,0 +1,11 @@
+# Issue #312 — implicit shape recognition shapes graph.
+# Source: https://www.w3.org/TR/shacl/#shapes
+# Per SHACL spec §3.1 a node is a shape whenever it is the subject of a
+# target-declaring triple (sh:targetNode here), even with no explicit
+# `rdf:type sh:NodeShape` triple at all.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:UntypedShape
+    sh:targetNode ex:untypedTarget ;
+    sh:nodeKind sh:BlankNode .

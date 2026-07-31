@@ -1,0 +1,11 @@
+# Issue #312 — sh:targetClass / rdfs:subClassOf closure shapes graph.
+# Source: https://www.w3.org/TR/shacl/#targetClass — a target class's focus
+# nodes include instances of its subclasses (`?this rdf:type/rdfs:subClassOf*
+# $class`), not just direct instances of the class itself.
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:SuperShape
+    a sh:NodeShape ;
+    sh:targetClass ex:SuperClass ;
+    sh:in ( ex:AllowedInstance ) .

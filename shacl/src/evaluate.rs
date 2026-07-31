@@ -88,12 +88,13 @@ pub fn eval_all(
                 viol_preds.extend(new.into_iter().map(|(v, component)| {
                     (
                         v,
-                        ViolMeta::new(
+                        ViolMeta::new_with_severity_override(
                             shapes_store,
                             shape,
                             prop.shapes_id,
                             Some(&prop.path),
                             component,
+                            prop.severity.clone(),
                         ),
                     )
                 }));
@@ -113,12 +114,13 @@ pub fn eval_all(
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
                     v,
-                    ViolMeta::new(
+                    ViolMeta::new_with_severity_override(
                         shapes_store,
                         shape,
                         prop.shapes_id,
                         Some(&prop.path),
                         component,
+                        prop.severity.clone(),
                     ),
                 )
             }));
@@ -154,12 +156,13 @@ pub fn eval_all(
 
         // sh:nodeKind at node shape level — check each target node itself.
         // sh:value for a node-shape-scoped (pathless) constraint is the focus
-        // node itself (SHACL §4.1.3/§3.4.1) — e.g. `sh:targetNode "true"^^
-        // xsd:boolean ; sh:nodeKind sh:IRI` must report `sh:value
+        // node itself (SHACL §4.1.3/§3.4.1, also §2.1.2) — e.g. `sh:targetNode
+        // "true"^^xsd:boolean ; sh:nodeKind sh:IRI` must report `sh:value
         // "true"^^xsd:boolean`, not omit it. Previously used `nil` here (the
         // "no value" sentinel), which under-reported this field for every
         // node-shape sh:nodeKind violation. See
-        // https://github.com/daghovland/rdf-datalog/issues/310.
+        // https://github.com/daghovland/rdf-datalog/issues/310 and
+        // https://github.com/daghovland/rdf-datalog/issues/312.
         if let Some(nk) = &shape.node_kind {
             let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
             for node in &targets {
@@ -1314,6 +1317,10 @@ fn is_instance_of_class_or_subclass(
 /// Look up an `ElemValue` (from the shapes graph) as a `GraphElementId` in `data`,
 /// without mutating `data` (unlike `translate::intern_elem`, which is only used
 /// against the mutable working store during rule generation).
+///
+/// Also used by `crate::data_targets` for literal-valued `sh:targetNode`
+/// (e.g. `sh:targetNode 32`) — see
+/// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
 pub(crate) fn lookup_elem_value(
     data: &Datastore,
     elem: &shapes::ElemValue,

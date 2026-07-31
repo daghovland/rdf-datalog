@@ -1,0 +1,12 @@
+# Issue #312 — sh:targetClass / rdfs:subClassOf closure data graph.
+# ex:SubClass is a rdfs:subClassOf ex:SuperClass. ex:disallowedInstance is
+# only a direct rdf:type ex:SubClass — never ex:SuperClass directly — so it
+# is only a focus node of ex:SuperShape via the subclass closure.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:SubClass rdfs:subClassOf ex:SuperClass .
+
+ex:disallowedInstance a ex:SubClass .
+ex:AllowedInstance a ex:SubClass .
