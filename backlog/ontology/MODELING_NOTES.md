@@ -393,13 +393,21 @@ agp:TranscriptSummary` under RDFS semantics, for every `X`, including an
 `agp:Decision`. Plain SHACL validation (what `tests/agentprov_ontology.rs`
 actually runs) never triggered this, since this engine performs no
 RDFS/OWL-RL entailment at plain-SPARQL-or-SHACL time (see "`rdfs:subClassOf`
-is not free" above, which is the identical class of bug) -- but running the
-fixture through this repo's own reasoner (`apply_ontologies` with `--ontology
-backlog/ontology/agentprov-vocabulary.ttl`) would derive every `agp:Decision`
-individual is also an `agp:TranscriptSummary`, which then fails
+is not free" above, which is the identical class of bug).
+
+**Verified directly (not just reasoned about), both directions**: with
+`rdfs:domain agp:TranscriptSummary` reinstated on a scratch copy of the
+vocabulary, `dagalog -d <fixture with only ex:decision1 a agp:Decision> -o
+<scratch copy> -Q 'SELECT ?x WHERE { ?x a agp:TranscriptSummary }'` returned
+`ex:decision1` -- reproducing the bug exactly, a real derivation, not a
+hypothetical one. With the domain removed (as shipped in
+`agentprov-vocabulary.ttl`), the identical query against the identical
+fixture returns nothing. (Had the domain stayed, the derived
+`ex:decision1 a agp:TranscriptSummary` would go on to fail
 `agp:TranscriptSummaryRequiredFieldsShape` and `agp:SummaryGeneratedByShape`
 for lack of `agp:reasoningFor`/`prov:wasGeneratedBy` -- a real, silent
-contradiction, not a hypothetical one.
+contradiction if this vocabulary is ever run through `apply_ontologies`
+rather than validated with plain SHACL alone.)
 
 **Decision:** `agp:summaryText` declares no `rdfs:domain` at all. A `owl:unionOf
 (agp:TranscriptSummary agp:Decision)` domain was considered and rejected for
@@ -423,6 +431,16 @@ other through their PROV-O superclasses -- verified directly:
 prov:Entity`. `agp:Decision`, however, has no PROV-O superclass to inherit
 disjointness through, so `agp:Decision owl:disjointWith agp:AgentSession,
 agp:TranscriptSummary` is asserted directly in `agentprov-vocabulary.ttl`.
+
+**Checked against the #298 hazard before shipping.** This repo already has
+one open, unresolved reasoner `panic!` bug (#298, see above) triggered by
+an under-tested OWL axiom over this exact vocabulary/fixture family, so
+this disjointness axiom was not shipped on parsing alone: ran the full
+multi-type grounding fixture (`agp:AgentSession`, `agp:TranscriptSummary`,
+`agp:Decision`, a `bl:PullRequest`, and `prov:SoftwareAgent`/`prov:Person`
+individuals, all together) through `apply_ontologies` with `--ontology
+backlog/ontology/agentprov-vocabulary.ttl` active. Completes cleanly, no
+panic -- the axiom does not trigger #298's failure mode.
 
 ## What's still open (deliberately, past this issue's scope)
 
