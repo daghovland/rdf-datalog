@@ -114,12 +114,13 @@ pub fn eval_all(
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
                     v,
-                    ViolMeta::new(
+                    ViolMeta::new_with_severity_override(
                         shapes_store,
                         shape,
                         prop.shapes_id,
                         Some(&prop.path),
                         component,
+                        prop.severity.clone(),
                     ),
                 )
             }));
