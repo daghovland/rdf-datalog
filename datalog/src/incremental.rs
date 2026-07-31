@@ -21,7 +21,7 @@ Contact: hovlanddag@gmail.com
 //! Related issue: [#109](https://github.com/daghovland/rdf-datalog/issues/109),
 //! part of epic [#83](https://github.com/daghovland/rdf-datalog/issues/83).
 
-use crate::reasoner::DatalogProgram;
+use crate::reasoner::{DatalogProgram, ReasoningError};
 use crate::stratifier::RulePartitioner;
 use crate::types::Rule;
 use dag_rdf::{Datastore, Quad, QuadTable};
@@ -44,23 +44,41 @@ impl IncrementalReasoner {
     /// Materialise from scratch with derivation tracking enabled.
     ///
     /// Stratifies `rules` and runs semi-naive materialisation over each stratum in order.
-    pub fn new(rules: Vec<Rule>, base: &mut Datastore) -> Self {
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` if a genuine, correctly-derived
+    /// inconsistency is found — instead of panicking, see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). `base` may
+    /// contain a partially-materialised closure in that case; the caller owns the
+    /// store and should discard/reset it rather than reuse a half-built reasoner.
+    pub fn new(rules: Vec<Rule>, base: &mut Datastore) -> Result<Self, ReasoningError> {
         let stratifier = RulePartitioner::new(rules);
         let strata = stratifier.order_rules();
         let mut programs: Vec<DatalogProgram> =
             strata.into_iter().map(DatalogProgram::new).collect();
         for program in &mut programs {
-            program.materialise_seminaive(base);
+            program.materialise_seminaive(base)?;
         }
-        IncrementalReasoner { programs }
+        Ok(IncrementalReasoner { programs })
     }
 
     /// Apply a batch of base-fact deletions using the BF algorithm.
     ///
     /// Returns the number of derived facts removed from the closure.
-    pub fn apply_deletions(&mut self, base: &mut Datastore, deletes: &[Quad]) -> usize {
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` if re-derivation after the
+    /// deletion produces a genuine inconsistency (e.g. a negated body atom that
+    /// is only satisfied once the deleted fact is gone) — see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). On error,
+    /// `base` and `self` may be left with the delete already applied and a
+    /// partially-rebuilt closure; callers should recover via
+    /// [`Self::rebuild_from_base`] rather than trust the partial state.
+    pub fn apply_deletions(
+        &mut self,
+        base: &mut Datastore,
+        deletes: &[Quad],
+    ) -> Result<usize, ReasoningError> {
         if deletes.is_empty() {
-            return 0;
+            return Ok(0);
         }
 
         // --- Backward phase ---
@@ -90,15 +108,59 @@ impl IncrementalReasoner {
     ///
     /// Inserts the quads into the store and re-runs semi-naive evaluation so that
     /// only quads triggered by the new base facts produce new inferences.
-    pub fn apply_insertions(&mut self, base: &mut Datastore, inserts: &[Quad]) {
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` on a genuine, correctly-derived
+    /// inconsistency instead of panicking — see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). On error, the
+    /// inserted base facts and any partially-derived closure remain in `base`;
+    /// callers should recover via [`Self::rebuild_from_base`] rather than trust
+    /// the partial state.
+    pub fn apply_insertions(
+        &mut self,
+        base: &mut Datastore,
+        inserts: &[Quad],
+    ) -> Result<(), ReasoningError> {
         for q in inserts {
             base.named_graphs.add_quad(*q);
         }
         // Re-run semi-naive; already-present derived facts are skipped by the dedup
         // check in `add_intensional_quad`, so only genuinely new inferences are added.
         for program in &mut self.programs {
-            program.materialise_seminaive(base);
+            program.materialise_seminaive(base)?;
         }
+        Ok(())
+    }
+
+    /// Rebuild the derived closure from scratch using only the base
+    /// (extensional) facts currently present in `base`, discarding any
+    /// partially-materialised derived facts and derivation records.
+    ///
+    /// Intended for callers (e.g. `sparql_endpoint`) to restore a consistent
+    /// state after [`Self::apply_insertions`]/[`Self::apply_deletions`] returns
+    /// `Err(ReasoningError::Contradiction)` partway through materialisation:
+    /// undo whatever base-fact change triggered the contradiction (so the
+    /// surviving base facts are known-consistent), then call this to rebuild a
+    /// sound closure over them. See
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+    ///
+    /// Returns `Err` if the surviving base facts are *themselves* already
+    /// contradictory (should not happen if the invariant "the store was
+    /// consistent before the rejected change" holds — callers should treat
+    /// this as a serious, non-recoverable-by-rollback error).
+    pub fn rebuild_from_base(&mut self, base: &mut Datastore) -> Result<(), ReasoningError> {
+        let base_facts: Vec<Quad> = base.named_graphs.extensional_quads().collect();
+        let hint = base_facts.len() as u32;
+        base.named_graphs = QuadTable::new(hint);
+        for q in base_facts {
+            base.named_graphs.add_quad(q);
+        }
+        for program in &mut self.programs {
+            program.derived_from = Default::default();
+        }
+        for program in &mut self.programs {
+            program.materialise_seminaive(base)?;
+        }
+        Ok(())
     }
 
     // --- Internal helpers ---
@@ -139,7 +201,13 @@ impl IncrementalReasoner {
     /// Forward phase: remove PD from the closure, then re-derive surviving facts.
     ///
     /// Returns the number of facts that were permanently removed (not re-derived).
-    fn forward_phase(&mut self, base: &mut Datastore, pd: HashSet<Quad>) -> usize {
+    ///
+    /// See [`Self::apply_deletions`] for the `Err` contract.
+    fn forward_phase(
+        &mut self,
+        base: &mut Datastore,
+        pd: HashSet<Quad>,
+    ) -> Result<usize, ReasoningError> {
         let removed = pd.len();
         // Retract PD facts and their derivation records from both the store and the index.
         for q in &pd {
@@ -152,16 +220,22 @@ impl IncrementalReasoner {
         // surviving base facts.  Facts that were in PD but are re-derived will be
         // re-inserted by `add_intensional_quad` (dedup ensures no double-counting).
         for program in &mut self.programs {
-            program.materialise_seminaive(base);
+            program.materialise_seminaive(base)?;
         }
-        removed
+        Ok(removed)
     }
 
     /// Full re-materialisation fallback for large deletes.
     ///
     /// Removes the deleted base facts, snapshots surviving base facts, tears down
     /// the derived closure, and rebuilds from scratch.
-    fn full_rematerialise(&mut self, base: &mut Datastore, deletes: &[Quad]) -> usize {
+    ///
+    /// See [`Self::apply_deletions`] for the `Err` contract.
+    fn full_rematerialise(
+        &mut self,
+        base: &mut Datastore,
+        deletes: &[Quad],
+    ) -> Result<usize, ReasoningError> {
         // Remove base facts.
         for q in deletes {
             base.named_graphs.remove_quad(*q);
@@ -179,11 +253,11 @@ impl IncrementalReasoner {
         let before = base.named_graphs.quad_count;
         for program in &mut self.programs {
             program.derived_from = Default::default();
-            program.materialise_seminaive(base);
+            program.materialise_seminaive(base)?;
         }
         // Return the number of newly derived facts (may differ from the original PD size
         // since some may have been re-derivable, but we report the new derivations added).
-        base.named_graphs.quad_count - before
+        Ok(base.named_graphs.quad_count - before)
     }
 }
 
@@ -273,7 +347,7 @@ mod tests {
         ds.named_graphs.add_quad(fact_ab);
         ds.named_graphs.add_quad(fact_bc);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds);
+        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -287,7 +361,7 @@ mod tests {
         );
 
         // Delete A→B: the only derivation of A→C uses it as a witness.
-        reasoner.apply_deletions(&mut ds, &[fact_ab]);
+        reasoner.apply_deletions(&mut ds, &[fact_ab]).unwrap();
 
         assert!(
             !ds.named_graphs.contains(&fact_ab),
@@ -359,7 +433,7 @@ mod tests {
         };
 
         let mut reasoner =
-            IncrementalReasoner::new(vec![transitivity_rule(g, p), alias_rule], &mut ds);
+            IncrementalReasoner::new(vec![transitivity_rule(g, p), alias_rule], &mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -373,7 +447,7 @@ mod tests {
         );
 
         // Delete A→B: removes the transitivity path, but alias path survives.
-        reasoner.apply_deletions(&mut ds, &[fact_ab]);
+        reasoner.apply_deletions(&mut ds, &[fact_ab]).unwrap();
 
         assert!(
             !ds.named_graphs.contains(&fact_ab),
@@ -402,7 +476,7 @@ mod tests {
         };
         ds.named_graphs.add_quad(fact_bc);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds);
+        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         // No derived A→C yet (no A→B).
         let derived_ac = Quad {
@@ -423,7 +497,7 @@ mod tests {
             predicate: p,
             obj: b,
         };
-        reasoner.apply_insertions(&mut ds, &[fact_ab]);
+        reasoner.apply_insertions(&mut ds, &[fact_ab]).unwrap();
 
         assert!(
             ds.named_graphs.contains(&fact_ab),
@@ -472,7 +546,7 @@ mod tests {
         ds.named_graphs.add_quad(fact_bc);
         ds.named_graphs.add_quad(fact_cd);
 
-        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds);
+        let mut reasoner = IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -507,7 +581,7 @@ mod tests {
         );
 
         // Step 1: delete B→C.
-        reasoner.apply_deletions(&mut ds, &[fact_bc]);
+        reasoner.apply_deletions(&mut ds, &[fact_bc]).unwrap();
 
         assert!(
             !ds.named_graphs.contains(&fact_bc),
@@ -521,7 +595,7 @@ mod tests {
             predicate: p,
             obj: c,
         };
-        reasoner.apply_insertions(&mut ds, &[new_base_ac]);
+        reasoner.apply_insertions(&mut ds, &[new_base_ac]).unwrap();
 
         // A→C is now present (either re-derived or as a base fact).
         assert!(
@@ -539,5 +613,132 @@ mod tests {
             !ds.named_graphs.contains(&derived_bd),
             "B→D should remain absent: no surviving path from B to D"
         );
+    }
+
+    /// `IncrementalReasoner::new` must return `Err(ReasoningError::Contradiction)`
+    /// instead of panicking when the initial materialisation derives a genuine
+    /// contradiction. See https://github.com/daghovland/rdf-datalog/issues/301.
+    #[test]
+    fn test_new_returns_err_on_contradiction() {
+        let (mut ds, g, a, p, b, _c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let result = IncrementalReasoner::new(vec![contradiction_rule], &mut ds);
+        match result {
+            Err(ReasoningError::Contradiction(_)) => {}
+            Ok(_) => panic!("expected a Contradiction error, got Ok"),
+        }
+    }
+
+    /// `apply_insertions` must return `Err(ReasoningError::Contradiction)` (not
+    /// panic) when a newly-inserted base fact triggers a contradiction rule, and
+    /// `rebuild_from_base` must recover a consistent, usable reasoner/store
+    /// afterwards (once the offending insert is retracted).
+    /// See https://github.com/daghovland/rdf-datalog/issues/301.
+    #[test]
+    fn test_apply_insertions_contradiction_then_rebuild_recovers() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+
+        // A rule flags a contradiction whenever ?x p ?y AND ?x p2 ?y both hold
+        // for the same (x, y) — i.e. a "disjoint properties" style check.
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        // Start from a consistent state: only A→p2→B is present, no A→p→B yet.
+        let fact_ab_p2 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p2,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab_p2);
+        // An unrelated fact that should survive the whole ordeal.
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_bc);
+
+        let mut reasoner = IncrementalReasoner::new(vec![contradiction_rule], &mut ds).unwrap();
+
+        // Now insert A→p→B: combined with A→p2→B, this triggers the contradiction.
+        let fact_ab_p = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let result = reasoner.apply_insertions(&mut ds, &[fact_ab_p]);
+        match result {
+            Err(ReasoningError::Contradiction(_)) => {}
+            Ok(_) => panic!("expected a Contradiction error, got Ok"),
+        }
+
+        // Recover: retract the offending insert and rebuild the closure.
+        ds.named_graphs.remove_quad(fact_ab_p);
+        reasoner
+            .rebuild_from_base(&mut ds)
+            .expect("rebuild from the now-consistent base facts must succeed");
+
+        // The store is usable again: the offending fact is gone, the
+        // unrelated fact survived, and a subsequent operation still works.
+        assert!(
+            !ds.named_graphs.contains(&fact_ab_p),
+            "offending insert should have been retracted"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_bc),
+            "unrelated fact should survive the contradiction + recovery"
+        );
+
+        // A follow-up, non-contradictory insertion still works after recovery.
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p2,
+            obj: b,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[fact_cd])
+            .expect("reasoner must remain usable after recovering from a contradiction");
+        assert!(ds.named_graphs.contains(&fact_cd));
     }
 }

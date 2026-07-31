@@ -16,6 +16,34 @@ use crate::types::{
 };
 use dag_rdf::Datastore;
 use std::collections::HashMap;
+use std::fmt;
+
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+/// Error produced while materialising a Datalog program.
+///
+/// Currently the only variant: a genuine, correctly-derived logical
+/// contradiction (a rule whose head is [`RuleHead::Contradiction`] had its
+/// body satisfied). Previously this crashed the whole process via `panic!`;
+/// see [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReasoningError {
+    /// A `RuleHead::Contradiction` rule fired. The `String` describes the
+    /// triggering rule (its `Display` output).
+    Contradiction(String),
+}
+
+impl fmt::Display for ReasoningError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReasoningError::Contradiction(rule) => {
+                write!(f, "Contradiction during reasoning: {rule}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReasoningError {}
 
 // ── DatalogProgram ────────────────────────────────────────────────────────────
 
@@ -81,15 +109,13 @@ impl DatalogProgram {
             .collect()
     }
 
-    fn get_facts(&self) -> Vec<dag_rdf::Quad> {
+    fn get_facts(&self) -> Result<Vec<dag_rdf::Quad>, ReasoningError> {
         self.rules
             .iter()
             .filter(|r| is_fact(r))
             .map(|r| match &r.head {
-                RuleHead::Contradiction => {
-                    panic!("Contradiction in facts — inconsistency detected. Aborting.")
-                }
-                RuleHead::NormalHead(p) => apply_substitution_quad(&empty_substitution(), p),
+                RuleHead::Contradiction => Err(ReasoningError::Contradiction(format!("{r}"))),
+                RuleHead::NormalHead(p) => Ok(apply_substitution_quad(&empty_substitution(), p)),
             })
             .collect()
     }
@@ -97,7 +123,12 @@ impl DatalogProgram {
     /// Return the ground facts encoded directly in rules (body-less rules).
     /// Callers that want to drive materialisation manually must seed these before
     /// calling `materialise_one_iteration`.
-    pub fn materialise_seed_facts(&self) -> Vec<dag_rdf::Quad> {
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` if a body-less
+    /// `RuleHead::Contradiction` rule is present (an inconsistency asserted
+    /// directly, with no body to evaluate) — see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+    pub fn materialise_seed_facts(&self) -> Result<Vec<dag_rdf::Quad>, ReasoningError> {
         self.get_facts()
     }
 
@@ -106,14 +137,20 @@ impl DatalogProgram {
     /// Returns `(new_delta_start, inferred_count)` where `inferred_count` is the number
     /// of quads added this iteration.  Returns `None` when the fixpoint is reached
     /// (no new quads were produced in the previous iteration).
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` if a `RuleHead::Contradiction`
+    /// rule's body is satisfied by the current store — a genuine, correctly-derived
+    /// inconsistency. Callers must not treat a partially-applied iteration as
+    /// having produced a sound closure; see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301).
     pub fn materialise_one_iteration(
         &mut self,
         datastore: &mut Datastore,
         delta_start: usize,
-    ) -> Option<(usize, usize)> {
+    ) -> Result<Option<(usize, usize)>, ReasoningError> {
         let delta_end = datastore.named_graphs.quad_count;
         if delta_start >= delta_end {
-            return None; // fixpoint reached
+            return Ok(None); // fixpoint reached
         }
 
         let delta: Vec<dag_rdf::Quad> =
@@ -134,10 +171,10 @@ impl DatalogProgram {
                 let head_pattern = match &rule_match.partial_rule.rule.head {
                     RuleHead::Contradiction => {
                         if !evaluate(datastore, &rule_match).is_empty() {
-                            panic!(
-                                "Contradiction during reasoning: {}",
+                            return Err(ReasoningError::Contradiction(format!(
+                                "{}",
                                 rule_match.partial_rule.rule
-                            );
+                            )));
                         }
                         continue;
                     }
@@ -175,7 +212,7 @@ impl DatalogProgram {
         }
 
         let new_count = datastore.named_graphs.quad_count - delta_end;
-        Some((delta_end, new_count))
+        Ok(Some((delta_end, new_count)))
     }
 
     /// Semi-naive forward-chaining materialisation over the quad store.
@@ -184,24 +221,36 @@ impl DatalogProgram {
     /// added in the previous iteration — rather than scanning the whole store.
     /// Joins for non-triggering body atoms still use the full indexed store.
     /// This gives O(delta × rules) work per iteration instead of O(store × rules).
-    pub fn materialise_seminaive(&mut self, datastore: &mut Datastore) {
-        for quad in self.get_facts() {
+    ///
+    /// Returns `Err(ReasoningError::Contradiction)` on a genuine, correctly-derived
+    /// inconsistency, instead of panicking (see
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301)). The store may
+    /// already contain some quads derived earlier in the same run when this
+    /// happens; callers that need a clean rollback should restore/rebuild from the
+    /// base facts (e.g. [`crate::IncrementalReasoner::rebuild_from_base`]) rather
+    /// than trust the partially-materialised closure.
+    pub fn materialise_seminaive(
+        &mut self,
+        datastore: &mut Datastore,
+    ) -> Result<(), ReasoningError> {
+        for quad in self.get_facts()? {
             datastore.named_graphs.add_quad(quad);
         }
 
         let mut delta_start: usize = 0;
         loop {
-            match self.materialise_one_iteration(datastore, delta_start) {
+            match self.materialise_one_iteration(datastore, delta_start)? {
                 None => break,
                 Some((new_start, _)) => delta_start = new_start,
             }
         }
+        Ok(())
     }
 
     /// Naive materialisation kept for regression comparison.
     #[allow(dead_code)]
-    fn materialise_naive(&self, datastore: &mut Datastore) {
-        for quad in self.get_facts() {
+    fn materialise_naive(&self, datastore: &mut Datastore) -> Result<(), ReasoningError> {
+        for quad in self.get_facts()? {
             datastore.named_graphs.add_quad(quad);
         }
         let mut changed = true;
@@ -218,10 +267,10 @@ impl DatalogProgram {
                     let head_pattern = match &rule_match.partial_rule.rule.head {
                         RuleHead::Contradiction => {
                             if !evaluate(datastore, &rule_match).is_empty() {
-                                panic!(
-                                    "Contradiction during reasoning: {}",
+                                return Err(ReasoningError::Contradiction(format!(
+                                    "{}",
                                     rule_match.partial_rule.rule
-                                );
+                                )));
                             }
                             continue;
                         }
@@ -243,19 +292,27 @@ impl DatalogProgram {
                 }
             }
         }
+        Ok(())
     }
 }
 
 // ── Top-level evaluate ────────────────────────────────────────────────────────
 
 /// Stratify `rules` and materialise each stratum in order over `datastore`.
-pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) {
+///
+/// Returns `Err(ReasoningError::Contradiction)` if any stratum derives a
+/// genuine inconsistency (a `RuleHead::Contradiction` rule body is satisfied),
+/// instead of panicking — see
+/// [#301](https://github.com/daghovland/rdf-datalog/issues/301). `datastore`
+/// may contain a partially-materialised closure in that case.
+pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) -> Result<(), ReasoningError> {
     let stratifier = RulePartitioner::new(rules);
     let stratification = stratifier.order_rules();
     for partition in stratification {
         let mut program = DatalogProgram::new(partition);
-        program.materialise_seminaive(datastore);
+        program.materialise_seminaive(datastore)?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -339,7 +396,7 @@ mod tests {
         };
 
         let mut program = DatalogProgram::new(vec![rule]);
-        program.materialise_seminaive(&mut ds);
+        program.materialise_seminaive(&mut ds).unwrap();
 
         // The derived quad (a, p, c) should exist
         let derived_ac = Quad {
@@ -410,7 +467,7 @@ mod tests {
 
         // No rules → program does nothing, index stays empty.
         let mut program = DatalogProgram::new(vec![]);
-        program.materialise_seminaive(&mut ds);
+        program.materialise_seminaive(&mut ds).unwrap();
 
         assert!(
             !program.derived_from.has_derivation(&fact_ab),
@@ -462,7 +519,7 @@ mod tests {
         };
 
         let mut program = DatalogProgram::new(vec![rule]);
-        program.materialise_seminaive(&mut ds);
+        program.materialise_seminaive(&mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -566,7 +623,7 @@ mod tests {
         };
 
         let mut program = DatalogProgram::new(vec![rule_transit, rule_alias]);
-        program.materialise_seminaive(&mut ds);
+        program.materialise_seminaive(&mut ds).unwrap();
 
         let derived_ac = Quad {
             triple_id: g,
@@ -580,6 +637,74 @@ mod tests {
             derivations.len() >= 2,
             "expected at least 2 derivation paths for (a, p, c), got {}",
             derivations.len()
+        );
+    }
+
+    /// A genuine, correctly-derived contradiction must surface as
+    /// `Err(ReasoningError::Contradiction)` instead of panicking.
+    ///
+    /// Setup: fact (a, p, b); rule `{ ?x p ?y } => Contradiction`.
+    /// The rule's body is satisfied by the fact, so materialisation must
+    /// return an error rather than crash the process.
+    /// See https://github.com/daghovland/rdf-datalog/issues/301.
+    #[test]
+    fn test_contradiction_returns_err_not_panic() {
+        let (mut ds, g, a, p, b, _c) = setup_abpc_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let mut program = DatalogProgram::new(vec![contradiction_rule]);
+        let result = program.materialise_seminaive(&mut ds);
+
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
+        );
+    }
+
+    /// [`evaluate_rules`] (the top-level entry point used throughout the
+    /// codebase) must also propagate the contradiction as `Err` rather than
+    /// panicking.
+    #[test]
+    fn test_evaluate_rules_propagates_contradiction() {
+        let (mut ds, g, a, p, b, _c) = setup_abpc_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let result = evaluate_rules(vec![contradiction_rule], &mut ds);
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
         );
     }
 }
