@@ -471,12 +471,11 @@ fn w3c_shacl_core_misc() {
         "expected at least 5 core/misc entries, got {}",
         entries.len()
     );
-    // See https://github.com/daghovland/rdf-datalog/issues/312.
-    let skip: &[&str] = &[
-        "Test of sh:deactivated 002",
-        "Test of sh:severity 001",
-        "Test of sh:severity 002",
-    ];
+    // All core/misc entries (sh:deactivated 002, sh:severity 001/002) were
+    // triaged under https://github.com/daghovland/rdf-datalog/issues/312 and
+    // found to already conform, as a side effect of the violation-metadata
+    // rework in #300/#303/#309/#316. No skips remain.
+    let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/misc");
 }
@@ -489,8 +488,11 @@ fn w3c_shacl_core_targets() {
         "expected at least 5 core/targets entries, got {}",
         entries.len()
     );
-    // See https://github.com/daghovland/rdf-datalog/issues/312.
-    let skip: &[&str] = &["Test of implicit sh:targetClass 001"];
+    // "Test of implicit sh:targetClass 001" was triaged under
+    // https://github.com/daghovland/rdf-datalog/issues/312 and found to already
+    // conform (implicit class-as-shape target resolution, shapes.rs:99/261,
+    // was already in place). No skips remain.
+    let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/targets");
 }
@@ -504,6 +506,11 @@ fn w3c_shacl_core_validation_reports() {
         entries.len()
     );
     // See https://github.com/daghovland/rdf-datalog/issues/312.
+    // "Test of validation report for shape shared by property constraints" was
+    // triaged under #312 and found to be a property-shape-scoped duplicate-report
+    // gap (a shape reached twice via two sh:property constraints), not a misc/
+    // deactivated/severity/targetClass issue. Tracked under
+    // https://github.com/daghovland/rdf-datalog/issues/311 instead.
     let skip: &[&str] = &["Test of validation report for shape shared by property constraints"];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/validation-reports");
