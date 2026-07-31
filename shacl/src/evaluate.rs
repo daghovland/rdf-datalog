@@ -1520,8 +1520,8 @@ enum Comparable {
 /// `sh:lessThanOrEquals` (#266). This also resolves the narrower
 /// mismatched-comparable-variant gap tracked in #304: previously mismatched
 /// variants fell through to "equal", silently hiding the incomparability.
-/// See https://github.com/daghovland/rdf-datalog/issues/318 and
-/// https://github.com/daghovland/rdf-datalog/issues/304.
+/// See <https://github.com/daghovland/rdf-datalog/issues/318> and
+/// <https://github.com/daghovland/rdf-datalog/issues/304>.
 impl PartialOrd for Comparable {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
@@ -1550,7 +1550,7 @@ fn lit_comparable(data: &Datastore, id: GraphElementId) -> Option<Comparable> {
 /// variants (mismatched types, or a timezoned vs. timezone-less
 /// `xsd:dateTime` — see `Comparable`'s doc comment), is "cannot be validly
 /// compared" and therefore always violates, per
-/// https://github.com/daghovland/rdf-datalog/issues/318.
+/// <https://github.com/daghovland/rdf-datalog/issues/318>.
 fn range_violates(
     bound: &Option<Comparable>,
     value: Option<Comparable>,
