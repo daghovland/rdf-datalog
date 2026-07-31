@@ -1478,7 +1478,7 @@ fn parse_xsd_date_lexical(s: &str) -> Option<chrono::NaiveDate> {
     }
     let date_part = if let Some(stripped) = s.strip_suffix('Z') {
         stripped
-    } else if s.len() > 6 {
+    } else if s.len() > 6 && s.is_char_boundary(s.len() - 6) {
         let (head, tail) = s.split_at(s.len() - 6);
         if (tail.starts_with('+') || tail.starts_with('-')) && tail.as_bytes()[3] == b':' {
             head

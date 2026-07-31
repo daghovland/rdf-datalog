@@ -9,3 +9,4 @@ ex:PlainDate ex:when "2020-06-01"^^xsd:date .
 ex:ZuluDate ex:when "2020-06-01Z"^^xsd:date .
 ex:OffsetDate ex:when "2020-06-01-05:00"^^xsd:date .
 ex:BadDate ex:when "not-a-date"^^xsd:date .
+ex:MultibyteBadDate ex:when "2020-😀-01"^^xsd:date .

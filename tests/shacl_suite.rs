@@ -2825,4 +2825,9 @@ fn regression_318_datatype_date_timezone_is_well_formed() {
         has_violation(&report, &ex("BadDate")),
         "\"not-a-date\"^^xsd:date is not a valid xsd:date lexical form — must violate"
     );
+    assert!(
+        has_violation(&report, &ex("MultibyteBadDate")),
+        "a multibyte character where the timezone-offset check looks (byte-index math \
+         must not panic on a non-char-boundary index) is not a valid xsd:date — must violate"
+    );
 }

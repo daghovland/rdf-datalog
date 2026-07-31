@@ -6,7 +6,7 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 ex:DateTzShape
     a sh:NodeShape ;
-    sh:targetNode ex:PlainDate, ex:ZuluDate, ex:OffsetDate, ex:BadDate ;
+    sh:targetNode ex:PlainDate, ex:ZuluDate, ex:OffsetDate, ex:BadDate, ex:MultibyteBadDate ;
     sh:property [
         sh:path ex:when ;
         sh:datatype xsd:date ;
