@@ -1,0 +1,106 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# The dagalog agent-provenance / transcript-summary vocabulary. See issue
+# #326 <https://github.com/daghovland/rdf-datalog/issues/326> (a sub-issue
+# of the agent-provenance epic #306) and
+# docs/plans/AGENT_PROVENANCE_PLAN.md (this repo's root) for the full design
+# and the reasoning behind every decision recorded here. Grounded against
+# the inline fixture in ../../tests/agentprov_ontology.rs -- every
+# class/property below is exercised by at least one triple there.
+#
+# Deliberately does NOT redeclare prov:Entity / prov:Activity / prov:Agent /
+# prov:SoftwareAgent / prov:Person or any of PROV-O's relation properties --
+# they are USED directly by IRI, exactly like vocabulary.ttl uses
+# doap:Project without redeclaring it (see MODELING_NOTES.md "DOAP vs.
+# bespoke bl:Crate" for that precedent). This vocabulary supplies only what
+# PROV-O doesn't already have: the summary text itself, and a direct
+# shortcut from a summary to the bl: work item it explains.
+
+<https://dagalog.dev/ns/agentprov>
+    a owl:Ontology ;
+    rdfs:label "dagalog agent-provenance vocabulary" ;
+    rdfs:comment "Vocabulary for recording distilled agent-session/transcript-summary provenance (why a change was made, not just what/when), linked to bl: work items and grounded in PROV-O. Part of the agent-provenance epic (#306)." ;
+    owl:versionInfo "0.1.0-draft" .
+
+# ── Classes ─────────────────────────────────────────────────────────────────
+
+agp:AgentSession
+    a rdfs:Class, owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Agent session" ;
+    rdfs:comment "One agent run: a top-level Claude Code session, or a delegated sub-agent invocation. Has prov:startedAtTime/prov:endedAtTime, prov:wasAssociatedWith an agent, optionally agp:parentSession (a sub-agent's dispatching session -- mirrors this repo's own orchestrator/sub-agent pattern) and prov:used (the issue(s) it worked from)." .
+
+agp:TranscriptSummary
+    a rdfs:Class, owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Transcript summary" ;
+    rdfs:comment "A short, distilled piece of reasoning, NOT a raw transcript dump -- only distilled summaries go into RDF, never raw transcript text (see AGENT_PROVENANCE_PLAN.md \"Privacy / size\"). prov:wasGeneratedBy an agp:AgentSession. Has exactly one agp:summaryText and prov:wasAttributedTo exactly one agent (a shortcut, asserted directly rather than always derived by re-tracing wasGeneratedBy/wasAssociatedWith -- see agp:reasoningFor's comment for the identical rationale applied to the work-item link)." .
+
+agp:Decision
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Decision" ;
+    rdfs:comment "An optional, finer breakdown of a agp:TranscriptSummary into one distinct fork in the reasoning (e.g. \"decision point 1\" / \"decision point 2\" in a review exchange). Not required on every summary -- add only where a session actually reasoned through multiple distinct forks worth recording separately. Has agp:summaryText (the fork's own distilled reasoning) and repeatable agp:alternative (the rejected options)." .
+
+# NOTE: no agp:Agent, agp:SoftwareAgent, or agp:Person class -- agents
+# themselves reuse prov:SoftwareAgent (e.g. "Claude Sonnet 5") and
+# prov:Person (the human, e.g. Dag) directly, no new class needed. A
+# session's agent prov:actedOnBehalfOf the human who authorized it, matching
+# PROV's own delegation pattern (and mirroring how sub-agents in this repo
+# act on behalf of the orchestrating session, which in turn acts on behalf
+# of the user).
+#
+# NOTE: no new code-entity class either -- Phase 1 reuses bl:Issue/
+# bl:PullRequest/bl:Crate as-is (via bl:WorkItem, agp:reasoningFor's range)
+# rather than introducing file/function-level identifiers. See
+# AGENT_PROVENANCE_PLAN.md "Granularity" for why this is the recommended
+# starting scope, and what a Phase 2 agp:CodeLocation class would add.
+
+# ── Properties ───────────────────────────────────────────────────────────────
+
+agp:summaryText
+    a owl:DatatypeProperty ;
+    rdfs:domain agp:TranscriptSummary ;
+    rdfs:range xsd:string ;
+    rdfs:label "summary text" ;
+    rdfs:comment "The distilled prose explaining the reasoning. Short (a paragraph or two), not a full transcript -- see the ontology header's privacy note. Also used (with the same meaning) on agp:Decision, for that decision point's own distilled reasoning." .
+
+agp:reasoningFor
+    a owl:ObjectProperty ;
+    rdfs:domain agp:TranscriptSummary ;
+    rdfs:range bl:WorkItem ;
+    rdfs:label "reasoning for" ;
+    rdfs:comment "Direct shortcut from a summary to the issue/PR it explains. Kept as an explicit assertion (not derived by chaining prov:wasGeneratedBy/prov:used) for the same reason bl:status isn't always derived from bl:hasLabel: the common query (\"what's the reasoning behind PR #300\") shouldn't require a property-path traversal through the full PROV chain every time -- mirrors this repo's existing practice of adding a direct shortcut property alongside a more general indirect path when the direct query is the primary use case." .
+
+agp:transcriptRef
+    a owl:DatatypeProperty ;
+    rdfs:domain agp:TranscriptSummary ;
+    rdfs:range xsd:string ;
+    rdfs:label "transcript reference" ;
+    rdfs:comment "OPTIONAL pointer to where the full transcript lives (e.g. a local path or internal session ID), for someone with access who wants to go deeper. Not resolvable by SPARQL itself; purely informational. Must be safe to omit or redact -- a agp:TranscriptSummary with no agp:transcriptRef at all is a fully valid, complete summary (see the ontology header's privacy note)." .
+
+agp:decisionPoint
+    a owl:ObjectProperty ;
+    rdfs:domain agp:TranscriptSummary ;
+    rdfs:range agp:Decision ;
+    rdfs:label "decision point" ;
+    rdfs:comment "OPTIONAL link from a summary to one of its finer-grained agp:Decision forks. Repeatable -- a summary covering several distinct forks in the reasoning has one agp:decisionPoint per fork. Not required on every summary; see agp:Decision's comment." .
+
+agp:alternative
+    a owl:DatatypeProperty ;
+    rdfs:domain agp:Decision ;
+    rdfs:range xsd:string ;
+    rdfs:label "alternative" ;
+    rdfs:comment "A rejected option at this decision point, as distilled prose. Repeatable -- a decision point with two rejected alternatives carries two agp:alternative triples." .
+
+agp:parentSession
+    a owl:ObjectProperty ;
+    rdfs:domain agp:AgentSession ;
+    rdfs:range agp:AgentSession ;
+    rdfs:label "parent session" ;
+    rdfs:comment "For sub-agent delegation: the dispatching session that launched this one. Mirrors this repo's own orchestrator/sub-agent pattern (CLAUDE.md's Agent tool usage) -- a top-level session has no agp:parentSession; a delegated sub-agent invocation does." .

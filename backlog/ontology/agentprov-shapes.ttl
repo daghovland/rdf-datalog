@@ -1,0 +1,75 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+# SHACL shapes validating the structural invariants
+# agentprov-vocabulary.ttl establishes but can't itself enforce (RDFS/OWL
+# class axioms are never checked at plain-SPARQL query time in this engine
+# -- see MODELING_NOTES.md "rdfs:subClassOf is not free", which applies
+# here identically to the bl: vocabulary). Written for issue #326 (a
+# sub-issue of the agent-provenance epic #306), mirroring shapes.ttl's own
+# pattern for bl:.
+#
+# Validated against the inline grounding fixture in
+# ../../tests/agentprov_ontology.rs (a toy fictional PR, not real
+# transcript data) rather than a real provenance/ snapshot, since real
+# transcript-summary instance data is out of scope for #326 (tracked as
+# #327). See tests/agentprov_ontology.rs for the automated test harness
+# running these shapes against both the conforming fixture and synthetic
+# violating cases.
+
+# ── Required fields ───────────────────────────────────────────────────────────
+
+# Per AGENT_PROVENANCE_PLAN.md's "SHACL shapes": a summary needs exactly one
+# distilled text, exactly one attributed agent, and at least one work item
+# it explains.
+agp:TranscriptSummaryRequiredFieldsShape
+    a sh:NodeShape ;
+    sh:targetClass agp:TranscriptSummary ;
+    sh:property [
+        sh:path agp:summaryText ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every agp:TranscriptSummary needs exactly one agp:summaryText." ;
+    ] ;
+    sh:property [
+        sh:path prov:wasAttributedTo ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every agp:TranscriptSummary needs exactly one prov:wasAttributedTo." ;
+    ] ;
+    sh:property [
+        sh:path agp:reasoningFor ;
+        sh:minCount 1 ;
+        sh:message "Every agp:TranscriptSummary needs at least one agp:reasoningFor." ;
+    ] .
+
+# ── Session/summary structural links ─────────────────────────────────────────
+
+# Every agent session must record which agent ran it -- otherwise
+# "what has agent X reasoned about" (AGENT_PROVENANCE_PLAN.md's query
+# library) has no way to find it.
+agp:SessionHasAgentShape
+    a sh:NodeShape ;
+    sh:targetClass agp:AgentSession ;
+    sh:property [
+        sh:path prov:wasAssociatedWith ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every agp:AgentSession must have exactly one prov:wasAssociatedWith." ;
+    ] .
+
+# Every summary must be traceable back to the session that produced it, and
+# that session must actually be typed agp:AgentSession (not just any
+# prov:Activity) -- otherwise a summary is an orphaned piece of prose with
+# no accountable session behind it.
+agp:SummaryGeneratedByShape
+    a sh:NodeShape ;
+    sh:targetClass agp:TranscriptSummary ;
+    sh:property [
+        sh:path prov:wasGeneratedBy ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class agp:AgentSession ;
+        sh:message "Every agp:TranscriptSummary must have exactly one prov:wasGeneratedBy pointing at an agp:AgentSession." ;
+    ] .
