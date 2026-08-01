@@ -33,7 +33,7 @@ use clap::Parser;
 use dag_rdf::Datastore;
 use dagalog::{
     OutputFormat, apply_ontologies, apply_ottr_templates, apply_rml_mappings, apply_rules,
-    format_results, load_file, parse_rules, run_sparql_query,
+    compile_ontology_rules, format_results, load_file, parse_rules, run_sparql_query,
 };
 use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, OidcConfig};
@@ -352,27 +352,48 @@ fn run(cli: Cli) -> Result<(), String> {
         }
     }
 
+    // When serving, ontology-derived (OWL2RL) rules and directly-supplied
+    // `.datalog`-file rules are compiled but NOT eagerly evaluated here — they
+    // are collected into `serve_rules` and handed to `IncrementalReasoner::new`
+    // together, inside `serve_on_listener`, so both sources of intensional
+    // quads are materialised in one pass with one tracked `derived_from` index.
+    // Splitting this into an eager, untracked ontology-materialisation pass
+    // plus a separately-tracked rules pass was the root cause of
+    // https://github.com/daghovland/rdf-datalog/issues/319: a
+    // contradiction-triggered rebuild only knew about the reasoner's own
+    // tracked rules, so it silently dropped OWL-RL-derived quads that came
+    // from the untracked pass. For one-shot (non-`--serve`) queries there is
+    // no reasoner to unify with, so both are applied eagerly as before.
+    let mut serve_rules: Vec<datalog::Rule> = Vec::new();
+
     if !cli.ontology.is_empty() {
         if cli.verbose {
             for p in &cli.ontology {
                 eprintln!("loading ontology: {}", p.display());
             }
         }
-        let stats = apply_ontologies(&mut datastore, &cli.ontology)?;
-        if cli.verbose {
-            eprintln!("OWL axioms extracted: {}", stats.axiom_count);
-            eprintln!("Datalog rules generated: {}", stats.rule_count);
-            eprintln!(
-                "Triples after OWL reasoning: {} (+{})",
-                stats.triples_after,
-                stats.triples_after.saturating_sub(stats.triples_before)
-            );
+        if cli.serve {
+            let compilation = compile_ontology_rules(&mut datastore, &cli.ontology)?;
+            if cli.verbose {
+                eprintln!("OWL axioms extracted: {}", compilation.axiom_count);
+                eprintln!("Datalog rules generated: {}", compilation.rules.len());
+            }
+            serve_rules.extend(compilation.rules);
+        } else {
+            let stats = apply_ontologies(&mut datastore, &cli.ontology)?;
+            if cli.verbose {
+                eprintln!("OWL axioms extracted: {}", stats.axiom_count);
+                eprintln!("Datalog rules generated: {}", stats.rule_count);
+                eprintln!(
+                    "Triples after OWL reasoning: {} (+{})",
+                    stats.triples_after,
+                    stats.triples_after.saturating_sub(stats.triples_before)
+                );
+            }
         }
     }
 
-    // When serving, collect rules for IncrementalReasoner (initial materialisation
-    // happens inside serve_on_listener).  For one-shot queries, apply rules eagerly.
-    let serve_rules: Vec<_> = if !cli.rules.is_empty() {
+    if !cli.rules.is_empty() {
         if cli.verbose {
             for p in &cli.rules {
                 eprintln!("loading rules: {}", p.display());
@@ -380,7 +401,8 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         if cli.serve {
             // Defer materialisation to IncrementalReasoner::new inside the server.
-            parse_rules(&mut datastore, &cli.rules)?
+            let mut rules = parse_rules(&mut datastore, &cli.rules)?;
+            serve_rules.append(&mut rules);
         } else {
             let triples_before = datastore.named_graphs.quad_count;
             let rule_count = apply_rules(&mut datastore, &cli.rules)?;
@@ -395,11 +417,8 @@ fn run(cli: Cli) -> Result<(), String> {
                         .saturating_sub(triples_before)
                 );
             }
-            Vec::new() // rules already applied; no need to pass to Config
         }
-    } else {
-        Vec::new()
-    };
+    }
 
     if cli.verbose {
         eprintln!("total triples: {}", datastore.named_graphs.quad_count);

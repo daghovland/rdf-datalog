@@ -161,6 +161,59 @@ pub fn apply_ontologies(
 ) -> Result<ReasoningStats, String> {
     let triples_before = datastore.named_graphs.quad_count;
 
+    let compilation = compile_ontology_rules(datastore, paths)?;
+    let rule_count = compilation.rules.len();
+
+    datalog::evaluate_rules(compilation.rules, datastore).map_err(|e| e.to_string())?;
+
+    let triples_after = datastore.named_graphs.quad_count;
+
+    Ok(ReasoningStats {
+        axiom_count: compilation.axiom_count,
+        rule_count,
+        triples_before,
+        triples_after,
+    })
+}
+
+/// Result of [`compile_ontology_rules`]: ABox triples have already been
+/// materialised into the datastore (they're extensional input data), but the
+/// TBox-derived Datalog rules are returned uncompiled/unevaluated so the
+/// caller can decide how to materialise them.
+pub struct OntologyCompilation {
+    /// Total OWL axiom count (Manchester + RDF-native ontology sources).
+    pub axiom_count: usize,
+    /// Datalog rules compiled from the ontologies' TBox axioms via
+    /// [`owl2datalog`]. Not yet evaluated against the datastore.
+    pub rules: Vec<datalog::Rule>,
+}
+
+/// Load ontology files and compile their TBox axioms to Datalog rules,
+/// WITHOUT materialising those rules against `datastore`.
+///
+/// ABox assertions ARE applied directly to `datastore` as ground quads (via
+/// [`load_file`] for RDF-native sources and [`owl2rl2datalog::assert_abox`]
+/// for `.omn` sources) — they are extensional input data, not rule-derived,
+/// so there is nothing to defer about them. Only the rule-COMPILATION step
+/// (`owl2datalog`) is separated from evaluation here.
+///
+/// This lets a caller merge the returned rules into a larger `Vec<Rule>`
+/// (e.g. alongside directly-supplied `.datalog`-file rules) and hand them
+/// all to a single reasoner in one pass, rather than materialising the
+/// ontology-derived triples through a separate, untracked
+/// [`datalog::evaluate_rules`] call. That split was the root cause of
+/// [#319](https://github.com/daghovland/rdf-datalog/issues/319): a
+/// contradiction-triggered rebuild that only knows about one reasoner's own
+/// tracked rules would silently discard intensional quads produced by an
+/// earlier, separate materialisation pass it never registered.
+///
+/// [`apply_ontologies`] is the eager counterpart: it calls this function and
+/// then immediately evaluates the returned rules, for callers (the one-shot,
+/// non-`--serve` CLI path) that have no reasoner to unify with.
+pub fn compile_ontology_rules(
+    datastore: &mut Datastore,
+    paths: &[std::path::PathBuf],
+) -> Result<OntologyCompilation, String> {
     let mut manchester_axiom_count = 0usize;
     let mut all_rules = Vec::new();
 
@@ -181,17 +234,10 @@ pub fn apply_ontologies(
     let axiom_count = manchester_axiom_count + ontology.axioms.len();
 
     all_rules.extend(owl2datalog(&mut datastore.resources, ontology));
-    let rule_count = all_rules.len();
 
-    datalog::evaluate_rules(all_rules, datastore).map_err(|e| e.to_string())?;
-
-    let triples_after = datastore.named_graphs.quad_count;
-
-    Ok(ReasoningStats {
+    Ok(OntologyCompilation {
         axiom_count,
-        rule_count,
-        triples_before,
-        triples_after,
+        rules: all_rules,
     })
 }
 
