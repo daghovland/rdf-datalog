@@ -193,8 +193,7 @@ impl DerivedFromIndex {
     /// as a result, the key is dropped entirely. No-op if the entry is not
     /// present. See [#320](https://github.com/daghovland/rdf-datalog/issues/320).
     pub fn unrecord(&mut self, derived_quad: &dag_rdf::Quad, derivation: &Derivation) {
-        if let std::collections::hash_map::Entry::Occupied(mut e) =
-            self.index.entry(*derived_quad)
+        if let std::collections::hash_map::Entry::Occupied(mut e) = self.index.entry(*derived_quad)
         {
             let entries = e.get_mut();
             entries.retain(|d| d != derivation);

@@ -230,9 +230,7 @@ impl DatalogProgram {
                         body_witnesses,
                     };
                     let is_new = self.derived_from.record(derived, derivation.clone());
-                    if is_new
-                        && let Some(buf) = track.as_deref_mut()
-                    {
+                    if is_new && let Some(buf) = track.as_deref_mut() {
                         buf.push((derived, derivation));
                     }
                 }

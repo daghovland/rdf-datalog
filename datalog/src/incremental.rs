@@ -114,7 +114,7 @@ impl IncrementalReasoner {
     /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). Unlike the
     /// original implementation, **on error `base` and `self` are restored to
     /// exactly their pre-call state** via a cheap undo-log rollback (see
-    /// [`Self::undo_insertions`]) — no full rebuild is performed. Because
+    /// `undo_insertions`) — no full rebuild is performed. Because
     /// [`dag_rdf::QuadTable::add_quad`]/`add_intensional_quad` only ever
     /// *append*, "everything this call added" is exactly the quad-list
     /// suffix appended since entry, and every genuinely-new `derived_from`
@@ -273,7 +273,7 @@ impl IncrementalReasoner {
     ///
     /// On a genuine contradiction during re-derivation, `base` and `self` are
     /// restored to exactly their pre-`apply_deletions` state via a cheap
-    /// undo-log rollback (see [`Self::undo_deletions`]) instead of requiring
+    /// undo-log rollback (see `undo_deletions`) instead of requiring
     /// the caller to call [`Self::rebuild_from_base`] — cost proportional to
     /// this call's own delta (|PD| plus any re-derivations), not the whole
     /// closure. See [#320](https://github.com/daghovland/rdf-datalog/issues/320)
@@ -315,7 +315,14 @@ impl IncrementalReasoner {
             let result = program.materialise_seminaive_tracked(base, &mut buf);
             tracked.push(buf);
             if let Err(e) = result {
-                self.undo_deletions(base, redelta_start, &tracked, &pd, deletes, &removed_derivations);
+                self.undo_deletions(
+                    base,
+                    redelta_start,
+                    &tracked,
+                    &pd,
+                    deletes,
+                    &removed_derivations,
+                );
                 return Err(e);
             }
         }
@@ -1086,11 +1093,9 @@ mod tests {
         ds.named_graphs.add_quad(fact_cd);
         ds.named_graphs.add_quad(fact_de);
 
-        let mut reasoner = IncrementalReasoner::new(
-            vec![transitivity_rule(g, p), contradiction_rule],
-            &mut ds,
-        )
-        .unwrap();
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p), contradiction_rule], &mut ds)
+                .unwrap();
 
         let derived_ce = Quad {
             triple_id: g,
