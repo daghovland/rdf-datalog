@@ -404,20 +404,38 @@ fn w3c_shacl_core_property() {
     let skip: &[&str] = &[
         // Nested `sh:property` (a property shape containing another
         // `sh:property` block, applying the inner shape to each outer
-        // path-traversed value as a fresh focus node). Not implemented at
-        // all yet — `ParsedPropShape` has no field for nested property
-        // shapes. Additionally, this fixture's expected report has two
-        // *content-identical* results (same focus/path/value, reached via
-        // two different outer paths to the same shared value node) — the
-        // current violation representation (RDF quads in a `Datastore`,
-        // which is set-semantics) cannot represent that multiplicity
-        // without a larger change to how violations are recorded.
+        // path-traversed value as a fresh focus node) is not implemented at
+        // all — `ParsedPropShape` (shacl/src/shapes.rs) has no field for it,
+        // so this fixture currently reports `conforms=true` (zero results),
+        // not even one. Additionally, even with nesting implemented, this
+        // fixture's expected report has two *content-identical* results
+        // (reached via `ex:InvalidPerson1`/`ex:InvalidPerson2`, both pointing
+        // at the same shared `ex:InvalidAddress`), which the current
+        // violation pipeline cannot produce: `add_viol`
+        // (shacl/src/evaluate.rs:1389) records each violation as a quad
+        // `(focus, viol_pred, value)` in `work.named_graphs`, a
+        // full-quad-dedup `QuadTable`; `collect_violations`
+        // (shacl/src/lib.rs:698) then emits exactly one `ValidationResult`
+        // per unique matching triple. Two derivations that happen to produce
+        // the same triple collapse before ever reaching
+        // `Vec<ValidationResult>` — confirmed this is NOT a
+        // `report_to_datastore` (shacl/src/lib.rs:360) serialization
+        // limitation: that function already mints a fresh blank node per
+        // `Vec` entry unconditionally, so it can represent this multiplicity
+        // fine once the `Vec` actually contains two entries. See
+        // https://github.com/daghovland/rdf-datalog/issues/341.
         "Test of sh:property at property shape 001",
-        // Same quad-set-dedup multiplicity limitation as above: this
-        // fixture expects 4 results but 2 pairs are content-identical
-        // (same focus/path/value, different failing comparison partner) —
-        // fixed the "silently skip a value entirely" undercounting bug,
-        // but not this deeper multiplicity limitation.
+        // Same upstream quad-set dedup as above (add_viol/collect_violations,
+        // not report_to_datastore) — nesting-free reproduction, so this is
+        // the cheaper regression-test target for whatever fix lands on
+        // #341. Expects 4 results (each of `ex:first`'s two values times
+        // each of `ex:second`'s two failing comparison partners) but
+        // currently returns 2 (one per `ex:first` value): the `LessThan` arm
+        // in shacl/src/evaluate.rs (~line 594) also short-circuits with
+        // `continue 'outer` after the first failing partner per value, but
+        // that's moot until the marker-fact representation can hold more
+        // than one violation per `(focus, viol_pred, value)` triple anyway.
+        // See https://github.com/daghovland/rdf-datalog/issues/341.
         "Test of sh:lessThan at property shape 002",
         // "Test of sh:nodeKind at property shape 001" was previously skipped
         // here too, attributed to a genuine violation-generation undercount.
