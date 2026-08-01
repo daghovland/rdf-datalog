@@ -103,6 +103,27 @@ pub const SH_INFO: &str = "http://www.w3.org/ns/shacl#Info";
 // See [#264](https://github.com/daghovland/rdf-datalog/issues/264).
 pub const SH_MESSAGE: &str = "http://www.w3.org/ns/shacl#message";
 
+// §3.6 Validation report — https://www.w3.org/TR/shacl/#validation-report
+//
+// Predicates/classes for the `sh:ValidationReport` graph produced by
+// `report_to_turtle`/`report_to_datastore`. See
+// [#314](https://github.com/daghovland/rdf-datalog/issues/314).
+pub const SH_VALIDATION_REPORT: &str = "http://www.w3.org/ns/shacl#ValidationReport";
+pub const SH_VALIDATION_RESULT: &str = "http://www.w3.org/ns/shacl#ValidationResult";
+pub const SH_CONFORMS: &str = "http://www.w3.org/ns/shacl#conforms";
+pub const SH_RESULT: &str = "http://www.w3.org/ns/shacl#result";
+pub const SH_FOCUS_NODE: &str = "http://www.w3.org/ns/shacl#focusNode";
+/// `sh:resultSeverity` — the severity of a *result* in a validation report.
+/// Distinct from `SH_SEVERITY` (`sh:severity`), which is a shape's own
+/// severity declaration in the shapes graph.
+pub const SH_RESULT_SEVERITY: &str = "http://www.w3.org/ns/shacl#resultSeverity";
+pub const SH_RESULT_PATH: &str = "http://www.w3.org/ns/shacl#resultPath";
+pub const SH_VALUE: &str = "http://www.w3.org/ns/shacl#value";
+pub const SH_SOURCE_SHAPE: &str = "http://www.w3.org/ns/shacl#sourceShape";
+pub const SH_SOURCE_CONSTRAINT_COMPONENT: &str =
+    "http://www.w3.org/ns/shacl#sourceConstraintComponent";
+pub const SH_RESULT_MESSAGE: &str = "http://www.w3.org/ns/shacl#resultMessage";
+
 // ── Constraint component IRIs (`sh:sourceConstraintComponent`) ────────────────
 //
 // One IRI per constraint component, exactly as named in the W3C SHACL spec's

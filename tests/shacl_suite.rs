@@ -21,8 +21,9 @@ Contact: hovlanddag@gmail.com
 //!
 //! Run just this file: `cargo test --test shacl_suite`
 
-use dag_rdf::Datastore;
-use dagalog::load_file;
+use dag_rdf::{Datastore, GraphElement, RdfResource};
+use dagalog::{load_file, run_sparql_query};
+use shacl::{Severity, ValidationReport, ValidationResult, report_to_datastore};
 use std::path::Path;
 
 fn testdata(name: &str) -> std::path::PathBuf {
@@ -2947,5 +2948,215 @@ fn spath_one_or_more_path() {
         report.results.len(),
         1,
         "only ex:Isolated has no ex:parent ancestor at all"
+    );
+}
+
+// ── report_to_datastore (#314) ──────────────────────────────────────────────
+//
+// `report_to_datastore` builds the SHACL validation-report graph as RDF quads
+// directly, mirroring `report_to_turtle`'s text emission field-for-field
+// (see that function in `shacl/src/lib.rs`). These tests query the resulting
+// `Datastore` with this crate's own SPARQL executor rather than re-parsing
+// text, so they exercise the quad-building path only.
+
+fn select_one_row(ds: &Datastore, sparql: &str) -> std::collections::HashMap<String, GraphElement> {
+    let result = run_sparql_query(ds, sparql).expect("query should execute");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected exactly one row for query: {sparql}"
+    );
+    result.rows[0].clone()
+}
+
+fn count_rows(ds: &Datastore, sparql: &str) -> usize {
+    run_sparql_query(ds, sparql)
+        .expect("query should execute")
+        .rows
+        .len()
+}
+
+const SPARQL_PREFIX: &str = "PREFIX sh: <http://www.w3.org/ns/shacl#>\n";
+
+fn as_iri_str(el: &GraphElement) -> &str {
+    match el {
+        GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => iri.0.as_str(),
+        other => panic!("expected an IRI, got {other:?}"),
+    }
+}
+
+fn as_string_literal(el: &GraphElement) -> String {
+    match el {
+        GraphElement::GraphLiteral(dag_rdf::RdfLiteral::LiteralString(s)) => s.clone(),
+        other => panic!("expected a plain string literal, got {other:?}"),
+    }
+}
+
+fn as_bool_literal(el: &GraphElement) -> bool {
+    match el {
+        GraphElement::GraphLiteral(dag_rdf::RdfLiteral::BooleanLiteral(b)) => *b,
+        other => panic!("expected a boolean literal, got {other:?}"),
+    }
+}
+
+/// A conforming report: `sh:conforms true`, no `sh:result` triples at all —
+/// even though `report_to_turtle` (and hence `report_to_datastore`) never
+/// look at `report.results` when `conforms` is `true`.
+#[test]
+#[ignore = "#314: report_to_datastore not yet implemented"]
+fn report_to_datastore_conforms() {
+    let report = ValidationReport {
+        conforms: true,
+        results: vec![],
+    };
+    let ds = report_to_datastore(&report);
+
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?r ?conforms WHERE {{ ?r a sh:ValidationReport ; sh:conforms ?conforms }}"
+        ),
+    );
+    assert!(as_bool_literal(&row["conforms"]));
+
+    let n = count_rows(
+        &ds,
+        &format!("{SPARQL_PREFIX}SELECT ?result WHERE {{ ?r sh:result ?result }}"),
+    );
+    assert_eq!(n, 0, "a conforming report must have no sh:result triples");
+}
+
+/// A single fully-populated violation: every `ValidationResult` field set,
+/// all pointing at plain IRIs/string values — checks every predicate
+/// `report_to_turtle` emits (`sh:focusNode`, `sh:resultSeverity`,
+/// `sh:resultPath`, `sh:value`, `sh:sourceShape`,
+/// `sh:sourceConstraintComponent`, `sh:resultMessage`).
+#[test]
+#[ignore = "#314: report_to_datastore not yet implemented"]
+fn report_to_datastore_full_violation() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/Bob".to_string()),
+            severity: Severity::Violation,
+            message: Some("too many things".to_string()),
+            result_path: Some("http://example.org/hasThing".to_string()),
+            source_shape: "http://example.org/BobShape".to_string(),
+            source_constraint: Some(shacl::vocab::CC_MAX_COUNT.to_string()),
+            value: Some("http://example.org/Thing1".to_string()),
+        }],
+    };
+    let ds = report_to_datastore(&report);
+
+    // sh:conforms false, exactly one sh:result.
+    let conforms_row = select_one_row(
+        &ds,
+        &format!("{SPARQL_PREFIX}SELECT ?conforms WHERE {{ ?r a sh:ValidationReport ; sh:conforms ?conforms }}"),
+    );
+    assert!(!as_bool_literal(&conforms_row["conforms"]));
+
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?result ?focus ?severity ?path ?value ?shape ?component ?message WHERE {{
+                ?r sh:result ?result .
+                ?result a sh:ValidationResult ;
+                    sh:focusNode ?focus ;
+                    sh:resultSeverity ?severity ;
+                    sh:resultPath ?path ;
+                    sh:value ?value ;
+                    sh:sourceShape ?shape ;
+                    sh:sourceConstraintComponent ?component ;
+                    sh:resultMessage ?message .
+            }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["focus"]), "http://example.org/Bob");
+    assert_eq!(
+        as_iri_str(&row["severity"]),
+        "http://www.w3.org/ns/shacl#Violation"
+    );
+    assert_eq!(as_iri_str(&row["path"]), "http://example.org/hasThing");
+    assert_eq!(as_iri_str(&row["value"]), "http://example.org/Thing1");
+    assert_eq!(as_iri_str(&row["shape"]), "http://example.org/BobShape");
+    assert_eq!(as_iri_str(&row["component"]), shacl::vocab::CC_MAX_COUNT);
+    assert_eq!(as_string_literal(&row["message"]), "too many things");
+}
+
+/// Blank-node round trip: `sh:sourceShape`/`sh:value` carrying the same
+/// blank-node label (`_:b3`, as produced by `graph::element_display`) must
+/// resolve to the *same* `GraphElementId` in the built store, and a
+/// different label (`_:b7`) on a second result must resolve to a different
+/// one — confirming `report_to_datastore` re-interns blank-node labels
+/// consistently rather than minting a fresh node per field. See
+/// [#314](https://github.com/daghovland/rdf-datalog/issues/314).
+#[test]
+#[ignore = "#314: report_to_datastore not yet implemented"]
+fn report_to_datastore_blank_node_round_trip() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![
+            ValidationResult {
+                focus_node: None,
+                severity: Severity::Violation,
+                message: None,
+                result_path: None,
+                source_shape: "_:b3".to_string(),
+                source_constraint: None,
+                value: Some("_:b3".to_string()),
+            },
+            ValidationResult {
+                focus_node: None,
+                severity: Severity::Violation,
+                message: None,
+                result_path: None,
+                source_shape: "_:b7".to_string(),
+                source_constraint: None,
+                value: None,
+            },
+        ],
+    };
+    let ds = report_to_datastore(&report);
+
+    let rows = run_sparql_query(
+        &ds,
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?result ?shape WHERE {{ ?r sh:result ?result . ?result sh:sourceShape ?shape }}"
+        ),
+    )
+    .expect("query should execute")
+    .rows;
+    assert_eq!(rows.len(), 2);
+
+    for row in &rows {
+        assert!(
+            matches!(
+                &row["shape"],
+                GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(_))
+            ),
+            "sh:sourceShape must be a blank node, got {:?}",
+            row["shape"]
+        );
+    }
+
+    // The result whose sh:value is bound is the one with source_shape "_:b3";
+    // sh:sourceShape and sh:value on that same result must be the identical
+    // blank node (same label interned once).
+    let value_row = select_one_row(
+        &ds,
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?shape ?value WHERE {{ ?r sh:result ?result . ?result sh:sourceShape ?shape ; sh:value ?value }}"
+        ),
+    );
+    assert_eq!(
+        value_row["shape"], value_row["value"],
+        "same blank-node label (_:b3) on sh:sourceShape and sh:value must intern to the same node"
+    );
+
+    // The two results' sh:sourceShape blank nodes (_:b3 vs _:b7) must differ.
+    let all_shapes: Vec<GraphElement> = rows.iter().map(|r| r["shape"].clone()).collect();
+    assert_ne!(
+        all_shapes[0], all_shapes[1],
+        "distinct blank-node labels (_:b3 vs _:b7) must intern to distinct nodes"
     );
 }

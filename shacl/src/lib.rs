@@ -333,6 +333,21 @@ fn turtle_term(s: &str) -> String {
     }
 }
 
+/// Build a `ValidationReport` as a `Datastore` graph (SHACL validation-report
+/// shape), as RDF quads directly — no stringify/reparse round trip through
+/// [`report_to_turtle`]. Mirrors that function's field-by-field emission
+/// exactly, including that no `sh:result` triples are emitted when
+/// `report.conforms` is `true` (even if `report.results` is non-empty).
+///
+/// Blank-node labels embedded in `ValidationResult` string fields (e.g.
+/// `_:b3`, produced by `graph::element_display`) are re-interned
+/// consistently: two fields sharing the same label resolve to the same
+/// `GraphElementId` in the returned store. See
+/// [#314](https://github.com/daghovland/rdf-datalog/issues/314).
+pub fn report_to_datastore(report: &ValidationReport) -> Datastore {
+    todo!("#314: implement after tests are written and stubbed")
+}
+
 // ── Pre-compute violations ────────────────────────────────────────────────────
 
 /// Evaluate constraints that need the original (un-materialised) data graph.
