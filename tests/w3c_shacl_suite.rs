@@ -413,16 +413,21 @@ fn w3c_shacl_core_property() {
     let skip: &[&str] = &[
         // Nested `sh:property` (a property shape containing another
         // `sh:property` block, applying the inner shape to each outer
-        // path-traversed value as a fresh focus node). Not implemented at
-        // all yet — `ParsedPropShape` has no field for nested property
-        // shapes. See https://github.com/daghovland/rdf-datalog/issues/341
-        // for the remaining nesting-support gap; the violation-multiplicity
-        // collapse this fixture also exercised (two content-identical
-        // results reached via two different outer paths to the same shared
-        // value node) was fixed alongside `sh:lessThan`'s equivalent
-        // undercount — see the discriminated-predicate scheme in
-        // `shacl::vocab::viol_discriminated` — but nesting itself is still
-        // unimplemented, so this fixture stays skipped.
+        // path-traversed value as a fresh focus node) is not implemented at
+        // all — `ParsedPropShape` (shacl/src/shapes.rs) has no field for it,
+        // so this fixture currently reports `conforms=true` (zero results),
+        // not even one. Additionally, even with nesting implemented, this
+        // fixture's expected report has two *content-identical* results
+        // (reached via `ex:InvalidPerson1`/`ex:InvalidPerson2`, both pointing
+        // at the same shared `ex:InvalidAddress`) — the same violation-
+        // multiplicity collapse `sh:lessThan`/`sh:lessThanOrEquals` had
+        // (#341), fixed there via a per-derivation discriminated violation
+        // predicate (`shacl::vocab::viol_discriminated`, called from those
+        // two constraint arms in shacl/src/evaluate.rs). That mechanism is
+        // NOT yet applied anywhere else — nested `sh:property`'s eventual
+        // `add_viol` call site will need the same discriminator treatment,
+        // it does not come for free from #341's fix. See
+        // https://github.com/daghovland/rdf-datalog/issues/341.
         "Test of sh:property at property shape 001",
         // "Test of sh:nodeKind at property shape 001" was previously skipped
         // here too, attributed to a genuine violation-generation undercount.
