@@ -23,7 +23,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::reasoner::{DatalogProgram, ReasoningError};
 use crate::stratifier::RulePartitioner;
-use crate::types::Rule;
+use crate::types::{Derivation, Rule};
 use dag_rdf::{Datastore, Quad, QuadTable};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -101,7 +101,7 @@ impl IncrementalReasoner {
         }
 
         // --- Forward phase ---
-        self.forward_phase(base, pd)
+        self.forward_phase(base, pd, deletes)
     }
 
     /// Apply a batch of base-fact insertions.
@@ -111,24 +111,65 @@ impl IncrementalReasoner {
     ///
     /// Returns `Err(ReasoningError::Contradiction)` on a genuine, correctly-derived
     /// inconsistency instead of panicking — see
-    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). On error, the
-    /// inserted base facts and any partially-derived closure remain in `base`;
-    /// callers should recover via [`Self::rebuild_from_base`] rather than trust
-    /// the partial state.
+    /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). Unlike the
+    /// original implementation, **on error `base` and `self` are restored to
+    /// exactly their pre-call state** via a cheap undo-log rollback (see
+    /// `undo_insertions`) — no full rebuild is performed. Because
+    /// [`dag_rdf::QuadTable::add_quad`]/`add_intensional_quad` only ever
+    /// *append*, "everything this call added" is exactly the quad-list
+    /// suffix appended since entry, and every genuinely-new `derived_from`
+    /// entry recorded this call is tracked in a buffer and can be
+    /// `unrecord`ed precisely. This makes rollback cost proportional to
+    /// *this call's own delta*, not the whole closure — see
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    /// [`Self::rebuild_from_base`] remains available as a slower fallback
+    /// (e.g. if a caller wants to double-check soundness after a rollback).
     pub fn apply_insertions(
         &mut self,
         base: &mut Datastore,
         inserts: &[Quad],
     ) -> Result<(), ReasoningError> {
+        let quad_start = base.named_graphs.quad_count;
         for q in inserts {
             base.named_graphs.add_quad(*q);
         }
         // Re-run semi-naive; already-present derived facts are skipped by the dedup
         // check in `add_intensional_quad`, so only genuinely new inferences are added.
+        // Track every genuinely new derivation entry per program so a
+        // contradiction can be undone exactly, without a full rebuild.
+        let mut tracked: Vec<Vec<(Quad, Derivation)>> = Vec::with_capacity(self.programs.len());
         for program in &mut self.programs {
-            program.materialise_seminaive(base)?;
+            let mut buf = Vec::new();
+            let result = program.materialise_seminaive_tracked(base, &mut buf);
+            tracked.push(buf);
+            if let Err(e) = result {
+                self.undo_insertions(base, quad_start, &tracked);
+                return Err(e);
+            }
         }
         Ok(())
+    }
+
+    /// Undo exactly what [`Self::apply_insertions`] changed during a call
+    /// that failed partway through: remove every `(quad, Derivation)` entry
+    /// recorded in `tracked` (per program, in the same order as
+    /// `self.programs`) from each program's `derived_from` index, then
+    /// truncate `base`'s quad table back to `quad_start` — the quad count
+    /// captured before any base fact was inserted or any derivation added.
+    /// Since insertion only ever appends, this restores the exact pre-call
+    /// state at a cost proportional to this call's own delta.
+    fn undo_insertions(
+        &mut self,
+        base: &mut Datastore,
+        quad_start: usize,
+        tracked: &[Vec<(Quad, Derivation)>],
+    ) {
+        for (program, buf) in self.programs.iter_mut().zip(tracked.iter()) {
+            for (q, d) in buf {
+                program.derived_from.unrecord(q, d);
+            }
+        }
+        base.named_graphs.truncate_to(quad_start);
     }
 
     /// Rebuild the derived closure from scratch using only the base
@@ -177,6 +218,20 @@ impl IncrementalReasoner {
         Ok(())
     }
 
+    /// Sum of `materialise_calls` across all strata's `DatalogProgram`s.
+    ///
+    /// Test-only instrumentation proving which rollback path actually ran on
+    /// a contradiction: the undo-log fast path (`undo_insertions`/
+    /// `undo_deletions`) never invokes materialisation again, while
+    /// `rebuild_from_base` always does (once per program) — so a rollback
+    /// that leaves this count unchanged from right after the failed call
+    /// (no extra calls) demonstrates the fast path ran, not a rebuild. See
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    #[cfg(test)]
+    pub(crate) fn materialise_call_count(&self) -> usize {
+        self.programs.iter().map(|p| p.materialise_calls).sum()
+    }
+
     // --- Internal helpers ---
 
     /// Backward phase: BFS through the reverse derivation graph.
@@ -216,27 +271,108 @@ impl IncrementalReasoner {
     ///
     /// Returns the number of facts that were permanently removed (not re-derived).
     ///
-    /// See [`Self::apply_deletions`] for the `Err` contract.
+    /// On a genuine contradiction during re-derivation, `base` and `self` are
+    /// restored to exactly their pre-`apply_deletions` state via a cheap
+    /// undo-log rollback (see `undo_deletions`) instead of requiring
+    /// the caller to call [`Self::rebuild_from_base`] — cost proportional to
+    /// this call's own delta (|PD| plus any re-derivations), not the whole
+    /// closure. See [#320](https://github.com/daghovland/rdf-datalog/issues/320)
+    /// and [`Self::apply_deletions`] for the overall `Err` contract.
     fn forward_phase(
         &mut self,
         base: &mut Datastore,
         pd: HashSet<Quad>,
+        deletes: &[Quad],
     ) -> Result<usize, ReasoningError> {
         let removed = pd.len();
+        // Snapshot every derivation entry PD removal is about to wipe, per
+        // program, so a rollback can restore them exactly (not just
+        // re-derive — a partial re-derivation run may not reach the same
+        // fixpoint the pre-call state had).
+        let mut removed_derivations: Vec<(Quad, usize, Vec<Derivation>)> = Vec::new();
         // Retract PD facts and their derivation records from both the store and the index.
         for q in &pd {
             base.named_graphs.remove_quad(*q);
-            for program in &mut self.programs {
+            for (program_index, program) in self.programs.iter_mut().enumerate() {
+                let derivations = program.derived_from.derivations_for(q);
+                if !derivations.is_empty() {
+                    removed_derivations.push((*q, program_index, derivations.to_vec()));
+                }
                 program.derived_from.remove(q);
             }
         }
+
+        // Everything appended to the quad table from here on (re-derivations)
+        // can be undone by truncating back to this point.
+        let redelta_start = base.named_graphs.quad_count;
+
         // Re-derive: semi-naive will re-add any PD fact that is still provable from the
         // surviving base facts.  Facts that were in PD but are re-derived will be
         // re-inserted by `add_intensional_quad` (dedup ensures no double-counting).
+        let mut tracked: Vec<Vec<(Quad, Derivation)>> = Vec::with_capacity(self.programs.len());
         for program in &mut self.programs {
-            program.materialise_seminaive(base)?;
+            let mut buf = Vec::new();
+            let result = program.materialise_seminaive_tracked(base, &mut buf);
+            tracked.push(buf);
+            if let Err(e) = result {
+                self.undo_deletions(
+                    base,
+                    redelta_start,
+                    &tracked,
+                    &pd,
+                    deletes,
+                    &removed_derivations,
+                );
+                return Err(e);
+            }
         }
         Ok(removed)
+    }
+
+    /// Undo exactly what the forward phase of [`Self::apply_deletions`]
+    /// changed during a call that failed partway through re-derivation:
+    ///
+    /// 1. Remove every `(quad, Derivation)` entry recorded in `tracked`
+    ///    (the re-derivation attempt) from each program's `derived_from` index.
+    /// 2. Truncate the quad table back to `redelta_start`, undoing any quads
+    ///    the re-derivation attempt appended.
+    /// 3. Re-insert every PD quad (as intensional — they were derived facts)
+    ///    and every originally-deleted base fact (as extensional).
+    /// 4. Restore each PD quad's exact pre-removal `derived_from` entries
+    ///    from `removed_derivations`.
+    ///
+    /// Cost is proportional to this call's own delta (|PD| plus whatever the
+    /// aborted re-derivation attempt added), not the whole closure. See
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    #[allow(clippy::too_many_arguments)]
+    fn undo_deletions(
+        &mut self,
+        base: &mut Datastore,
+        redelta_start: usize,
+        tracked: &[Vec<(Quad, Derivation)>],
+        pd: &HashSet<Quad>,
+        deletes: &[Quad],
+        removed_derivations: &[(Quad, usize, Vec<Derivation>)],
+    ) {
+        for (program, buf) in self.programs.iter_mut().zip(tracked.iter()) {
+            for (q, d) in buf {
+                program.derived_from.unrecord(q, d);
+            }
+        }
+        base.named_graphs.truncate_to(redelta_start);
+        for q in pd {
+            base.named_graphs.add_intensional_quad(*q);
+        }
+        for q in deletes {
+            base.named_graphs.add_quad(*q);
+        }
+        for (q, program_index, derivations) in removed_derivations {
+            for d in derivations {
+                self.programs[*program_index]
+                    .derived_from
+                    .record(*q, d.clone());
+            }
+        }
     }
 
     /// Full re-materialisation fallback for large deletes.
@@ -882,5 +1018,344 @@ mod tests {
             "stratum 1's derivation (a p3 b) must survive a rebuild triggered \
              by an unrelated stratum-2 contradiction"
         );
+    }
+
+    /// `apply_insertions` must roll back a contradiction via the cheap
+    /// undo-log fast path (`undo_insertions`), not a full `rebuild_from_base`
+    /// — proven behaviourally: after rollback (a) the store is exactly
+    /// quad-for-quad identical to before the call, including an unrelated
+    /// derived fact from a completely separate derivation chain, and (b)
+    /// `materialise_call_count()` only increased by the number of programs
+    /// materialisation was actually (re-)attempted for during THIS call —
+    /// a full rebuild would additionally re-invoke materialisation for every
+    /// program again during rollback, increasing the count further.
+    /// See https://github.com/daghovland/rdf-datalog/issues/320.
+    #[test]
+    fn test_apply_insertions_contradiction_rollback_uses_undo_log() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+        let e = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/e".to_string(),
+            )));
+
+        // Disjoint-properties contradiction: ?x p ?y AND ?x p2 ?y both hold.
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        // Consistent starting state: A p2 B (no A p B yet).
+        let fact_ab_p2 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p2,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab_p2);
+        // A completely unrelated derivation chain: C -p-> D -p-> E, transitively
+        // deriving C -p-> E. Untouched by anything that follows.
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: d,
+        };
+        let fact_de = Quad {
+            triple_id: g,
+            subject: d,
+            predicate: p,
+            obj: e,
+        };
+        ds.named_graphs.add_quad(fact_cd);
+        ds.named_graphs.add_quad(fact_de);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p), contradiction_rule], &mut ds)
+                .unwrap();
+
+        let derived_ce = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: e,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ce),
+            "unrelated chain C-D-E should have derived C p E before the insert under test"
+        );
+
+        // Snapshot the exact pre-call state.
+        let quads_before = ds.named_graphs.quad_list.clone();
+        let derivations_ce_before: Vec<Vec<crate::types::Derivation>> = reasoner
+            .programs
+            .iter()
+            .map(|p| p.derived_from.derivations_for(&derived_ce).to_vec())
+            .collect();
+        let call_count_before = reasoner.materialise_call_count();
+
+        // Insert A p B: combined with A p2 B, this triggers the contradiction.
+        let fact_ab_p = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let result = reasoner.apply_insertions(&mut ds, &[fact_ab_p]);
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
+        );
+
+        // (a) Exact rollback: quad-for-quad identical to before the call.
+        assert_eq!(
+            ds.named_graphs.quad_list, quads_before,
+            "store must be exactly quad-for-quad identical to its pre-call state"
+        );
+        assert!(
+            !ds.named_graphs.contains(&fact_ab_p),
+            "the offending insert must not be present after rollback"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_ce),
+            "unrelated derived fact C p E must survive the rollback untouched"
+        );
+        let derivations_ce_after: Vec<Vec<crate::types::Derivation>> = reasoner
+            .programs
+            .iter()
+            .map(|p| p.derived_from.derivations_for(&derived_ce).to_vec())
+            .collect();
+        assert_eq!(
+            derivations_ce_after, derivations_ce_before,
+            "unrelated fact's derivation records must be untouched by the rollback"
+        );
+
+        // (b) The undo-log fast path ran, not a full rebuild: materialisation
+        // was invoked exactly once per program for this call's own attempt,
+        // and never again during rollback (a `rebuild_from_base`-style
+        // recovery would invoke it once more per program).
+        let attempted_this_call = reasoner.programs.len();
+        assert_eq!(
+            reasoner.materialise_call_count(),
+            call_count_before + attempted_this_call,
+            "rollback must not have re-invoked materialisation (no rebuild_from_base)"
+        );
+
+        // A follow-up, non-contradictory insertion still works after recovery.
+        let fact_ef = Quad {
+            triple_id: g,
+            subject: e,
+            predicate: p,
+            obj: c,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[fact_ef])
+            .expect("reasoner must remain usable after the undo-log rollback");
+        assert!(ds.named_graphs.contains(&fact_ef));
+    }
+
+    /// `apply_deletions` must roll back a re-derivation-triggered contradiction
+    /// via the cheap undo-log fast path (`undo_deletions`), not a full
+    /// `rebuild_from_base` — proven the same way as the insertions test: exact
+    /// quad-for-quad restoration (including an unrelated derived fact from a
+    /// separate derivation chain) plus a `materialise_call_count()` that only
+    /// grew by this call's own attempted programs.
+    ///
+    /// This specifically exercises the scenario the issue calls out: BF's
+    /// backward phase cannot detect this contradiction (it only traces
+    /// positive-witness dependencies, and nothing positively depends on the
+    /// deleted quad as a witness) — only the forward phase's re-derivation
+    /// pass (a full re-run of `materialise_seminaive`, which re-checks every
+    /// `Contradiction` rule against the surviving state) catches it. See
+    /// https://github.com/daghovland/rdf-datalog/issues/320.
+    #[test]
+    fn test_apply_deletions_contradiction_rollback_uses_undo_log() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let p3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p3".to_string(),
+            )));
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+
+        // Stratum 1: ?x p3 ?y :- ?x p ?y
+        let copy_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p3),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        // Stratum 2 (negatively depends on p3): Contradiction :- ?x p2 ?y, NOT ?x p3 ?y
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p3),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        // Base facts: A p B (derives A p3 B in stratum 1).
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        // C p2 D, guarded by a base (not derived) C p3 D fact — no
+        // contradiction yet, since the NOT p3 condition is unsatisfied.
+        let fact_cd_p2 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p2,
+            obj: d,
+        };
+        let fact_cd_p3 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p3,
+            obj: d,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_cd_p2);
+        ds.named_graphs.add_quad(fact_cd_p3);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![copy_rule, contradiction_rule], &mut ds).unwrap();
+
+        let derived_ab3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p3,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "stratum 1 should have derived A p3 B at initial materialisation"
+        );
+
+        // Nothing positively depends on C p3 D as a witness, so BF's backward
+        // phase will compute an empty PD for it — the contradiction can only
+        // be caught by the forward phase's re-derivation pass.
+        let quads_before = ds.named_graphs.quad_list.clone();
+        let extensional_before: HashMap<Quad, bool> = quads_before
+            .iter()
+            .map(|q| (*q, ds.named_graphs.is_extensional(q)))
+            .collect();
+        let derivations_ab3_before: Vec<Vec<crate::types::Derivation>> = reasoner
+            .programs
+            .iter()
+            .map(|p| p.derived_from.derivations_for(&derived_ab3).to_vec())
+            .collect();
+        let call_count_before = reasoner.materialise_call_count();
+
+        let result = reasoner.apply_deletions(&mut ds, &[fact_cd_p3]);
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
+        );
+
+        // (a) Exact rollback — same quads present with the same
+        // extensional/intensional status. `apply_deletions`'s rollback
+        // re-inserts the deleted base fact via `add_quad` (appending), so
+        // insertion order need not exactly match the original list (unlike
+        // `apply_insertions`'s `truncate_to`-based rollback, which is
+        // order-preserving by construction); set equality plus per-quad
+        // extensional/intensional status is the invariant that actually
+        // matters for correctness.
+        let quads_before_set: HashSet<Quad> = quads_before.iter().copied().collect();
+        let quads_after_set: HashSet<Quad> = ds.named_graphs.quad_list.iter().copied().collect();
+        assert_eq!(
+            quads_after_set, quads_before_set,
+            "store must contain exactly the same quads as before the call"
+        );
+        for (q, was_extensional) in &extensional_before {
+            assert_eq!(
+                ds.named_graphs.is_extensional(q),
+                *was_extensional,
+                "extensional/intensional status of {q:?} must be unchanged by the rollback"
+            );
+        }
+        assert!(
+            ds.named_graphs.contains(&fact_cd_p3),
+            "the base fact targeted for deletion must be restored after rollback"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "stratum 1's unrelated derivation (A p3 B) must survive the rollback"
+        );
+        let derivations_ab3_after: Vec<Vec<crate::types::Derivation>> = reasoner
+            .programs
+            .iter()
+            .map(|p| p.derived_from.derivations_for(&derived_ab3).to_vec())
+            .collect();
+        assert_eq!(
+            derivations_ab3_after, derivations_ab3_before,
+            "unrelated fact's derivation records must be untouched by the rollback"
+        );
+
+        // (b) The undo-log fast path ran, not a full rebuild.
+        let attempted_this_call = reasoner.programs.len();
+        assert_eq!(
+            reasoner.materialise_call_count(),
+            call_count_before + attempted_this_call,
+            "rollback must not have re-invoked materialisation (no rebuild_from_base)"
+        );
+
+        // A follow-up, non-contradictory deletion still works after recovery.
+        reasoner
+            .apply_deletions(&mut ds, &[fact_ab])
+            .expect("reasoner must remain usable after the undo-log rollback");
+        assert!(!ds.named_graphs.contains(&fact_ab));
+        assert!(!ds.named_graphs.contains(&derived_ab3));
     }
 }
