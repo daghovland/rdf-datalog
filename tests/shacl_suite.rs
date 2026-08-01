@@ -23,8 +23,18 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElement, RdfResource};
 use dagalog::{load_file, run_sparql_query};
+use shacl::path::ShPath;
 use shacl::{Severity, ValidationReport, ValidationResult, report_to_datastore};
 use std::path::Path;
+
+/// A simple (single-predicate) `sh:resultPath`'s IRI, or `None` for a
+/// pathless / compound result — most of this suite's regression tests only
+/// ever produce a simple path, so this keeps their assertions terse. See
+/// [#335](https://github.com/daghovland/rdf-datalog/issues/335) for the full
+/// `ShPath` AST `result.result_path` now carries.
+fn simple_path(result: &ValidationResult) -> Option<&str> {
+    result.result_path.as_ref().and_then(ShPath::as_simple_iri)
+}
 
 fn testdata(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -960,7 +970,7 @@ fn regression_308_closed_populates_result_path() {
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
     assert_eq!(
-        result.result_path.as_deref(),
+        simple_path(result),
         Some("http://example.com/ns#breed"),
         "sh:closed violation must report the offending predicate as sh:resultPath"
     );
@@ -1975,10 +1985,7 @@ fn regression_264_mincount_result_path_and_component() {
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
-    assert_eq!(
-        result.result_path.as_deref(),
-        Some("http://example.com/ns#name")
-    );
+    assert_eq!(simple_path(result), Some("http://example.com/ns#name"));
     assert_eq!(
         result.source_constraint.as_deref(),
         Some("http://www.w3.org/ns/shacl#MinCountConstraintComponent")
@@ -1998,10 +2005,7 @@ fn regression_264_class_result_path_and_component() {
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
-    assert_eq!(
-        result.result_path.as_deref(),
-        Some("http://example.com/ns#address")
-    );
+    assert_eq!(simple_path(result), Some("http://example.com/ns#address"));
     assert_eq!(
         result.source_constraint.as_deref(),
         Some("http://www.w3.org/ns/shacl#ClassConstraintComponent")
@@ -2029,10 +2033,7 @@ fn regression_264_pattern_result_path_and_component() {
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
-    assert_eq!(
-        result.result_path.as_deref(),
-        Some("http://example.com/ns#bCode")
-    );
+    assert_eq!(simple_path(result), Some("http://example.com/ns#bCode"));
     assert_eq!(
         result.source_constraint.as_deref(),
         Some("http://www.w3.org/ns/shacl#PatternConstraintComponent")
@@ -3038,7 +3039,7 @@ fn report_to_datastore_full_violation() {
             focus_node: Some("http://example.org/Bob".to_string()),
             severity: Severity::Violation,
             message: Some("too many things".to_string()),
-            result_path: Some("http://example.org/hasThing".to_string()),
+            result_path: Some(ShPath::Predicate("http://example.org/hasThing".to_string())),
             source_shape: "http://example.org/BobShape".to_string(),
             source_constraint: Some(shacl::vocab::CC_MAX_COUNT.to_string()),
             value: Some("http://example.org/Thing1".to_string()),
@@ -3291,4 +3292,173 @@ fn issue_337_report_to_datastore_preserves_lang_literal_value() {
              must not flatten to a plain string literal"
         ),
     }
+}
+
+// ── report_to_datastore: compound sh:resultPath serialization (#335) ────────
+//
+// A complex `sh:path` (sequence/alternative/inverse/zeroOrMore/oneOrMore/
+// zeroOrOne) must serialize back into the exact RDF shape the SHACL spec
+// uses for it, not an opaque triple-less blank node — see
+// `shacl::path::to_datastore` (the reverse of `shacl::path::parse_path`).
+// These queries assert the real defining triples exist, one path kind at a
+// time, plus one nested case exercising recursion.
+
+const RDF_LIST_PREFIX: &str = "PREFIX sh: <http://www.w3.org/ns/shacl#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n";
+
+fn mk_path_report(path: ShPath) -> ValidationReport {
+    ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/x".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: Some(path),
+            source_shape: "http://example.org/Shape".to_string(),
+            source_constraint: None,
+            value: None,
+        }],
+    }
+}
+
+#[test]
+fn report_to_datastore_inverse_path_shape() {
+    let report = mk_path_report(ShPath::Inverse(Box::new(ShPath::Predicate(
+        "http://example.org/parentOf".to_string(),
+    ))));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?p WHERE {{ ?r sh:result ?result . ?result sh:resultPath ?path . ?path sh:inversePath ?p }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["p"]), "http://example.org/parentOf");
+}
+
+#[test]
+fn report_to_datastore_zero_or_more_path_shape() {
+    let report = mk_path_report(ShPath::ZeroOrMore(Box::new(ShPath::Predicate(
+        "http://example.org/parent".to_string(),
+    ))));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?p WHERE {{ ?r sh:result ?result . ?result sh:resultPath ?path . ?path sh:zeroOrMorePath ?p }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["p"]), "http://example.org/parent");
+}
+
+#[test]
+fn report_to_datastore_one_or_more_path_shape() {
+    let report = mk_path_report(ShPath::OneOrMore(Box::new(ShPath::Predicate(
+        "http://example.org/parent".to_string(),
+    ))));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?p WHERE {{ ?r sh:result ?result . ?result sh:resultPath ?path . ?path sh:oneOrMorePath ?p }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["p"]), "http://example.org/parent");
+}
+
+#[test]
+fn report_to_datastore_zero_or_one_path_shape() {
+    let report = mk_path_report(ShPath::ZeroOrOne(Box::new(ShPath::Predicate(
+        "http://example.org/hasSpouse".to_string(),
+    ))));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?p WHERE {{ ?r sh:result ?result . ?result sh:resultPath ?path . ?path sh:zeroOrOnePath ?p }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["p"]), "http://example.org/hasSpouse");
+}
+
+/// `( ex:hasParent ex:hasParent )` — a sequence *is* the RDF list itself
+/// (`sh:resultPath` points directly at the list head), no wrapper blank
+/// node, per SHACL's own Turtle grammar for `sh:path ( … )`.
+#[test]
+fn report_to_datastore_sequence_path_shape() {
+    let report = mk_path_report(ShPath::Sequence(vec![
+        ShPath::Predicate("http://example.org/hasParent".to_string()),
+        ShPath::Predicate("http://example.org/hasParent".to_string()),
+    ]));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?f1 ?f2 ?rest2 WHERE {{
+                ?r sh:result ?result . ?result sh:resultPath ?path .
+                ?path rdf:first ?f1 ; rdf:rest ?rest1 .
+                ?rest1 rdf:first ?f2 ; rdf:rest ?rest2 .
+            }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["f1"]), "http://example.org/hasParent");
+    assert_eq!(as_iri_str(&row["f2"]), "http://example.org/hasParent");
+    assert_eq!(
+        as_iri_str(&row["rest2"]),
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
+    );
+}
+
+/// `[ sh:alternativePath ( ex:worksFor ex:employedBy ) ]` — a fresh blank
+/// node carrying `sh:alternativePath` pointing at the RDF list of branches.
+#[test]
+fn report_to_datastore_alternative_path_shape() {
+    let report = mk_path_report(ShPath::Alternative(vec![
+        ShPath::Predicate("http://example.org/worksFor".to_string()),
+        ShPath::Predicate("http://example.org/employedBy".to_string()),
+    ]));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?f1 ?f2 ?rest2 WHERE {{
+                ?r sh:result ?result . ?result sh:resultPath ?path .
+                ?path sh:alternativePath ?list .
+                ?list rdf:first ?f1 ; rdf:rest ?rest1 .
+                ?rest1 rdf:first ?f2 ; rdf:rest ?rest2 .
+            }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["f1"]), "http://example.org/worksFor");
+    assert_eq!(as_iri_str(&row["f2"]), "http://example.org/employedBy");
+    assert_eq!(
+        as_iri_str(&row["rest2"]),
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
+    );
+}
+
+/// Nested compound path — a sequence whose first step is itself an inverse
+/// path (mirrors the W3C suite's `path-complex-002.ttl` shape). Exercises
+/// `to_datastore`'s recursion, not just single-level wrapping.
+#[test]
+fn report_to_datastore_nested_compound_path_shape() {
+    let report = mk_path_report(ShPath::Sequence(vec![
+        ShPath::Inverse(Box::new(ShPath::Predicate(
+            "http://example.org/childOf".to_string(),
+        ))),
+        ShPath::Predicate("http://example.org/hasParent".to_string()),
+    ]));
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{RDF_LIST_PREFIX}SELECT ?inv ?f2 WHERE {{
+                ?r sh:result ?result . ?result sh:resultPath ?path .
+                ?path rdf:first ?first1 ; rdf:rest ?rest1 .
+                ?first1 sh:inversePath ?inv .
+                ?rest1 rdf:first ?f2 ; rdf:rest rdf:nil .
+            }}"
+        ),
+    );
+    assert_eq!(as_iri_str(&row["inv"]), "http://example.org/childOf");
+    assert_eq!(as_iri_str(&row["f2"]), "http://example.org/hasParent");
 }

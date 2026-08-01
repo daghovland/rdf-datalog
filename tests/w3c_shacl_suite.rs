@@ -221,7 +221,16 @@ fn parse_shacl_test_file(path: &Path) -> Vec<ShaclTestEntry> {
                 // `sh:resultMessage` is intentionally not extracted here — see
                 // the note on `compare_report` below.
                 message: None,
-                result_path: path.map(|e| element_display(&ds, ds_id(&ds, e))),
+                // Parse the expected `sh:resultPath` object out of this same
+                // `ds` (the fixture's own inline expected-report graph) into
+                // the structured `ShPath` AST — same type `validate()`
+                // itself produces, and `compare_report` feeds both sides
+                // through the same `report_to_datastore`, so this fixture's
+                // literal RDF shape (however it happens to write the path)
+                // and the actual side's freshly-serialized shape only need
+                // to be isomorphic, not textually identical. See
+                // https://github.com/daghovland/rdf-datalog/issues/335.
+                result_path: path.and_then(|e| shacl::path::parse_path(&ds, ds_id(&ds, e))),
                 source_shape: shape
                     .map(|e| element_display(&ds, ds_id(&ds, e)))
                     .unwrap_or_default(),
@@ -524,30 +533,17 @@ fn w3c_shacl_core_path() {
     );
     // Complex `sh:path` expressions (sequence/alternative/inverse/
     // zeroOrMore/oneOrMore/zeroOrOne) are fully supported for *validation*
-    // (https://github.com/daghovland/rdf-datalog/issues/328) — conforms,
-    // violation count and focus nodes are all correct for every entry below.
-    // What's skipped is comparing `sh:resultPath` itself: this crate reports
-    // it as an opaque blank node with no further triples (no
-    // `sh:alternativePath`/`sh:inversePath`/RDF-list structure), whereas the
-    // W3C fixtures spell out the full path expression as real RDF. Graph
-    // canonicalization requires true isomorphism, so an opaque blank node can
-    // never match a real subtree, however matching the "meaning" is — the
-    // previous field-by-field comparator masked this by unconditionally
-    // skipping `sh:resultPath` whenever the *expected* term was a blank node.
-    // See https://github.com/daghovland/rdf-datalog/issues/335 for
-    // serializing `sh:resultPath` as a proper path expression instead.
-    // `path-unused-001` is not skipped: it only *declares* dangling
-    // complex-path blank nodes that the shape itself never references (the
-    // shape's own constraint is a plain `sh:class`).
-    let skip: &[&str] = &[
-        "Test of path sh:alternativePath 001",
-        "Test of path complex (rdf:type/rdfs:subClassOf*) 001",
-        "Test of complex path validation results",
-        "Test of path sh:inversePath 001",
-        "Test of path sh:oneOrMorePath 001",
-        "Test of path sequence 001",
-        "Test of path sequence 002",
-    ];
+    // (https://github.com/daghovland/rdf-datalog/issues/328), and
+    // `sh:resultPath` for a compound path is now serialized back into its
+    // full SHACL-spec RDF encoding (`sh:alternativePath`/`sh:inversePath`/
+    // RDF-list structure) rather than reported as an opaque, triple-less
+    // blank node — see `ValidationResult::result_path` (a `path::ShPath`
+    // AST), `path::to_datastore`, and this file's `parse_shacl_test_file`
+    // (which parses the expected side's `sh:resultPath` object into the same
+    // `ShPath` AST via `path::parse_path`, so both sides of `compare_report`
+    // only need to be isomorphic, not textually identical). See
+    // https://github.com/daghovland/rdf-datalog/issues/335. No skips remain.
+    let skip: &[&str] = &[];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/path");
 }
@@ -566,7 +562,9 @@ fn mk_report(focus_node: &str, value: &str) -> ValidationReport {
             focus_node: Some(focus_node.to_string()),
             severity: Severity::Violation,
             message: None,
-            result_path: Some("http://example.org/p".to_string()),
+            result_path: Some(shacl::path::ShPath::Predicate(
+                "http://example.org/p".to_string(),
+            )),
             source_shape: "http://example.org/Shape".to_string(),
             source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
             value: Some(value.to_string()),
@@ -617,7 +615,9 @@ fn canonical_comparator_ignores_blank_node_label_spelling() {
             focus_node: Some("_:b1".to_string()),
             severity: Severity::Violation,
             message: None,
-            result_path: Some("http://example.org/p".to_string()),
+            result_path: Some(shacl::path::ShPath::Predicate(
+                "http://example.org/p".to_string(),
+            )),
             source_shape: "http://example.org/Shape".to_string(),
             source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
             value: Some("_:b2".to_string()),
