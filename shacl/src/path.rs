@@ -170,7 +170,7 @@ fn parse_path_body(
 
 /// Serialize `path` into `ds` as the SHACL-spec RDF encoding of a `sh:path`
 /// object, returning the `GraphElementId` of the root path term — the
-/// reverse of [`parse_path`]/[`parse_path_body`]. A simple `Predicate(iri)`
+/// reverse of [`parse_path`]/`parse_path_body`. A simple `Predicate(iri)`
 /// serializes as the IRI itself (no blank node, matching how a real shapes
 /// graph writes `sh:path ex:foo`); every compound variant gets a fresh
 /// blank node (never shared/deduplicated across calls — see
