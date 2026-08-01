@@ -340,6 +340,27 @@ pub fn viol_less_than_or_equals(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:lessThanOrEquals")
 }
 
+/// A per-derivation discriminated variant of a violation predicate IRI.
+///
+/// `sh:lessThan`/`sh:lessThanOrEquals` can produce several genuinely distinct
+/// violations that share the same `(focus, value)` pair — one per failing
+/// `(value, otherValue)` comparison, per
+/// <https://www.w3.org/TR/shacl/#LessThanConstraintComponent>'s SPARQL-based
+/// validator (one result row per failing pair). Since violations are
+/// recorded as `(focus, viol_pred, value)` quads in a full-quad-dedup
+/// `QuadTable`, two such derivations would collapse into a single quad if
+/// they used the same `viol_pred`. Suffixing the predicate IRI with a
+/// per-derivation counter (`disc`) makes each derivation's quad distinct at
+/// the storage layer while `collect_violations` maps every discriminated
+/// variant back to the identical `ViolMeta` (same severity/path/source
+/// shape/component), so the resulting `ValidationResult`s are
+/// content-identical except for genuinely being separate results — exactly
+/// the multiplicity the W3C suite expects. See
+/// [#341](https://github.com/daghovland/rdf-datalog/issues/341).
+pub fn viol_discriminated(base: &str, disc: usize) -> String {
+    format!("{base}#dup{disc}")
+}
+
 // §4.7 shape-based (Phase 2)
 pub fn viol_node_shape(shape_idx: usize, prop_idx: usize) -> String {
     format!("urn:dagalog:shacl:viol:{shape_idx}:{prop_idx}:node")
