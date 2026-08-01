@@ -591,41 +591,68 @@ fn eval_prop_constraint(
         // failed `<`. See
         // https://www.w3.org/TR/shacl/#LessThanConstraintComponent and
         // https://github.com/daghovland/rdf-datalog/issues/266.
+        //
+        // Per the spec's SPARQL-based validator (`?this $PATH ?value . ?this
+        // $lessThan ?otherValue`, one result row per failing pair), a
+        // violation is reported once per failing `(value, otherValue)` pair,
+        // not once per distinct `value` — so a value that fails against
+        // several `otherValue`s produces that many (content-identical)
+        // results. Each derivation gets its own discriminated violation
+        // predicate (`vocab::viol_discriminated`) so they don't collapse in
+        // the quad-set-backed violation store; `collect_violations` maps
+        // every discriminated predicate back to the same `ViolMeta`. See
+        // https://github.com/daghovland/rdf-datalog/issues/341.
         LessThan(other_path) => {
-            let viol = graph::intern_iri(work, &vocab::viol_less_than(si, pi));
+            let base = vocab::viol_less_than(si, pi);
+            let mut viols = Vec::new();
+            let mut disc = 0usize;
             for node in targets {
-                'outer: for pv in values_of(*node) {
+                for pv in values_of(*node) {
                     for ov in path_values(data, *node, other_path) {
                         let ok = matches!(sparql_compare(data, pv, ov), Some(Ordering::Less));
                         if !ok {
+                            let viol =
+                                graph::intern_iri(work, &vocab::viol_discriminated(&base, disc));
+                            disc += 1;
                             add_viol(work, *node, viol, pv);
-                            continue 'outer;
+                            viols.push(viol);
                         }
                     }
                 }
             }
-            vec![(viol, constraint.component_iri())]
+            viols
+                .into_iter()
+                .map(|v| (v, constraint.component_iri()))
+                .collect()
         }
 
         // §4.5.4 sh:lessThanOrEquals — same "cannot be compared ⇒ violation"
-        // rule as sh:lessThan above.
+        // rule and same per-failing-pair multiplicity as sh:lessThan above.
         LessThanOrEquals(other_path) => {
-            let viol = graph::intern_iri(work, &vocab::viol_less_than_or_equals(si, pi));
+            let base = vocab::viol_less_than_or_equals(si, pi);
+            let mut viols = Vec::new();
+            let mut disc = 0usize;
             for node in targets {
-                'outer: for pv in values_of(*node) {
+                for pv in values_of(*node) {
                     for ov in path_values(data, *node, other_path) {
                         let ok = matches!(
                             sparql_compare(data, pv, ov),
                             Some(Ordering::Less) | Some(Ordering::Equal)
                         );
                         if !ok {
+                            let viol =
+                                graph::intern_iri(work, &vocab::viol_discriminated(&base, disc));
+                            disc += 1;
                             add_viol(work, *node, viol, pv);
-                            continue 'outer;
+                            viols.push(viol);
                         }
                     }
                 }
             }
-            vec![(viol, constraint.component_iri())]
+            viols
+                .into_iter()
+                .map(|v| (v, constraint.component_iri()))
+                .collect()
         }
 
         // §4.7.1 sh:node — values must conform to a referenced node shape
