@@ -52,6 +52,14 @@ pub struct DatalogProgram {
     rule_map: HashMap<QuadWildcard, Vec<PartialRule>>,
     /// Records for each derived quad how it was produced (rule + body witnesses).
     pub derived_from: DerivedFromIndex,
+    /// Number of times [`Self::materialise_seminaive`]/
+    /// [`Self::materialise_seminaive_tracked`] has run to completion or error.
+    /// Exists purely so tests can prove which rollback path
+    /// (`IncrementalReasoner`'s undo-log fast path vs. `rebuild_from_base`)
+    /// actually ran for a given call — the fast path never re-invokes
+    /// materialisation during rollback, `rebuild_from_base` always does. See
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    pub(crate) materialise_calls: usize,
 }
 
 impl DatalogProgram {
@@ -81,6 +89,7 @@ impl DatalogProgram {
             rules,
             rule_map,
             derived_from: DerivedFromIndex::new(),
+            materialise_calls: 0,
         }
     }
 
@@ -148,6 +157,22 @@ impl DatalogProgram {
         datastore: &mut Datastore,
         delta_start: usize,
     ) -> Result<Option<(usize, usize)>, ReasoningError> {
+        self.materialise_one_iteration_tracked(datastore, delta_start, None)
+    }
+
+    /// Same as [`Self::materialise_one_iteration`], but if `track` is
+    /// `Some`, every genuinely new `(derived_quad, Derivation)` entry
+    /// recorded this iteration (i.e. every call to
+    /// [`DerivedFromIndex::record`] that returned `true`) is also appended
+    /// to it. Used by [`Self::materialise_seminaive_tracked`] to build an
+    /// undo log for cheap rollback — see
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    fn materialise_one_iteration_tracked(
+        &mut self,
+        datastore: &mut Datastore,
+        delta_start: usize,
+        mut track: Option<&mut Vec<(dag_rdf::Quad, Derivation)>>,
+    ) -> Result<Option<(usize, usize)>, ReasoningError> {
         let delta_end = datastore.named_graphs.quad_count;
         if delta_start >= delta_end {
             return Ok(None); // fixpoint reached
@@ -200,13 +225,16 @@ impl DatalogProgram {
                         })
                         .collect();
                     // record() deduplicates, so no need to check first.
-                    self.derived_from.record(
-                        derived,
-                        Derivation {
-                            rule_id,
-                            body_witnesses,
-                        },
-                    );
+                    let derivation = Derivation {
+                        rule_id,
+                        body_witnesses,
+                    };
+                    let is_new = self.derived_from.record(derived, derivation.clone());
+                    if is_new
+                        && let Some(buf) = track.as_deref_mut()
+                    {
+                        buf.push((derived, derivation));
+                    }
                 }
             }
         }
@@ -233,13 +261,32 @@ impl DatalogProgram {
         &mut self,
         datastore: &mut Datastore,
     ) -> Result<(), ReasoningError> {
+        let mut track = Vec::new();
+        self.materialise_seminaive_tracked(datastore, &mut track)
+    }
+
+    /// Same as [`Self::materialise_seminaive`], but appends every genuinely
+    /// new `(derived_quad, Derivation)` entry produced during THIS call to
+    /// `track` (in the order they were recorded). Callers implementing
+    /// cheap undo-log rollback (see
+    /// [`crate::IncrementalReasoner::apply_insertions`]/
+    /// [`crate::IncrementalReasoner::apply_deletions`]) use `track` to know
+    /// exactly which `derived_from` entries to remove — via
+    /// [`DerivedFromIndex::unrecord`] — on failure, without re-deriving
+    /// anything. See [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    pub fn materialise_seminaive_tracked(
+        &mut self,
+        datastore: &mut Datastore,
+        track: &mut Vec<(dag_rdf::Quad, Derivation)>,
+    ) -> Result<(), ReasoningError> {
+        self.materialise_calls += 1;
         for quad in self.get_facts()? {
             datastore.named_graphs.add_quad(quad);
         }
 
         let mut delta_start: usize = 0;
         loop {
-            match self.materialise_one_iteration(datastore, delta_start)? {
+            match self.materialise_one_iteration_tracked(datastore, delta_start, Some(track))? {
                 None => break,
                 Some((new_start, _)) => delta_start = new_start,
             }

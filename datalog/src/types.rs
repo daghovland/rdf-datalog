@@ -166,10 +166,41 @@ impl DerivedFromIndex {
     ///
     /// Duplicate derivations (same rule_id and body_witnesses) are silently ignored
     /// so that semi-naive iteration does not double-count witnesses for the same quad.
-    pub fn record(&mut self, derived_quad: dag_rdf::Quad, derivation: Derivation) {
+    ///
+    /// Returns `true` iff this was a genuinely new entry (not a duplicate) —
+    /// callers implementing undo-log rollback (see
+    /// [`crate::IncrementalReasoner::apply_insertions`]) use this to know
+    /// exactly which entries this call added, so [`Self::unrecord`] can
+    /// remove precisely those on failure without disturbing pre-existing
+    /// derivations for the same quad. See
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    pub fn record(&mut self, derived_quad: dag_rdf::Quad, derivation: Derivation) -> bool {
         let entries = self.index.entry(derived_quad).or_default();
         if !entries.contains(&derivation) {
             entries.push(derivation);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove exactly one previously-`record`ed `(derived_quad, derivation)` entry.
+    ///
+    /// Unlike [`Self::remove`] (which drops *every* derivation for `quad`),
+    /// this removes only the single matching entry, leaving any other
+    /// derivations for the same quad intact. Used to undo a specific
+    /// `record` call during rollback. If the quad's entry list becomes empty
+    /// as a result, the key is dropped entirely. No-op if the entry is not
+    /// present. See [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    pub fn unrecord(&mut self, derived_quad: &dag_rdf::Quad, derivation: &Derivation) {
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            self.index.entry(*derived_quad)
+        {
+            let entries = e.get_mut();
+            entries.retain(|d| d != derivation);
+            if entries.is_empty() {
+                e.remove();
+            }
         }
     }
 

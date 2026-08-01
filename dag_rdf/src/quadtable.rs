@@ -128,6 +128,39 @@ impl QuadTable {
         self.intensional_quads = kept_intensional;
     }
 
+    /// Truncate the table back to its first `len` quads (in insertion order),
+    /// discarding everything appended after that point and rebuilding all
+    /// indexes from the surviving prefix.
+    ///
+    /// Intended for cheap undo-log rollback of a failed insertion/re-derivation
+    /// call: since [`Self::add_quad`]/[`Self::add_intensional_quad`] only ever
+    /// *append* to `quad_list` (never insert in the middle), "everything added
+    /// during this call" is exactly `quad_list[len..]` when `len` was the count
+    /// captured before the call started. No-op if `len >= self.quad_list.len()`.
+    ///
+    /// This is O(len) index-rebuild work (the same cost `remove_quad` already
+    /// pays for a single quad) but performs no rule evaluation — unlike a full
+    /// re-materialisation, nothing is re-derived. See
+    /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
+    pub fn truncate_to(&mut self, len: usize) {
+        if len >= self.quad_list.len() {
+            return;
+        }
+        let kept: Vec<Quad> = self.quad_list[..len].to_vec();
+        // Preserve which of the kept quads were intensional (IDB) before we reset.
+        let kept_intensional: HashSet<Quad> = kept
+            .iter()
+            .copied()
+            .filter(|q| self.intensional_quads.contains(q))
+            .collect();
+        let hint = kept.len() as u32;
+        *self = QuadTable::new(hint);
+        for q in kept {
+            self.add_quad(q);
+        }
+        self.intensional_quads = kept_intensional;
+    }
+
     pub fn get_quads_with_subject(
         &self,
         subject: GraphElementId,
