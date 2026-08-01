@@ -277,23 +277,25 @@ fn load_shacl_manifest(subdir: &str) -> Vec<ShaclTestEntry> {
 ///
 /// Both sides are built via `report_to_datastore`, not just the actual side:
 /// routing the expected report through the very same function is what makes
-/// this an apples-to-apples graph comparison. In particular
-/// `report_to_datastore` re-derives an RDF term's kind (IRI / blank node /
-/// plain string literal) from the `ValidationResult` string fields'
-/// `element_display` text form, which is lossy for typed/lang-tagged
-/// literals (e.g. an integer `sh:value` round-trips as a plain string
-/// literal, not `xsd:integer`) — building the expected side the same way
-/// means that lossiness is applied identically on both sides and cancels
-/// out, rather than making an isomorphic pair look different.
+/// this an apples-to-apples graph comparison. `report_to_datastore`
+/// re-derives an RDF term's kind (IRI / blank node / literal, including
+/// datatype/language) from the `ValidationResult` string fields'
+/// `element_display` text form; since [#337](https://github.com/daghovland/rdf-datalog/issues/337),
+/// `element_display` renders literals as genuine Turtle syntax and
+/// `intern_result_term` parses that back into a proper typed/lang-tagged
+/// `RdfLiteral` (not a plain string), so this round trip is faithful — an
+/// integer `sh:value` compares as `xsd:integer` on both sides, not as an
+/// opaque string that happens to cancel out.
 ///
 /// `sh:resultMessage` is deliberately zeroed out on both sides before
 /// canonicalizing (expected: never extracted by the SPARQL query above;
 /// actual: cleared here) — same "never compared" behavior as the
 /// field-by-field comparator this replaced. A lang-tagged `sh:message` (e.g.
-/// `core/misc/message-001.ttl`'s `"Test message"@en`) is emitted by
-/// `report_to_datastore` as a plain string literal, which would make an
-/// otherwise-matching report graph non-isomorphic; see
-/// [#332](https://github.com/daghovland/rdf-datalog/issues/332) for
+/// `core/misc/message-001.ttl`'s `"Test message"@en`) is still emitted by
+/// `report_to_datastore` as a plain string literal — `message` is interned
+/// directly from `ViolMeta`/`shape.message`, not routed through
+/// `element_display`/`intern_result_term`, so #337's fix does not reach it;
+/// see [#332](https://github.com/daghovland/rdf-datalog/issues/332) for
 /// extending the comparison to cover `sh:resultMessage` properly.
 fn compare_report(entry: &ShaclTestEntry) -> Option<String> {
     let data = load_turtle(&entry.data_graph)?;

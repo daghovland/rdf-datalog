@@ -3042,6 +3042,7 @@ dependencies = [
  "num-traits",
  "regex",
  "rust_decimal",
+ "turtle",
 ]
 
 [[package]]

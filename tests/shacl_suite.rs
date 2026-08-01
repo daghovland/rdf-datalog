@@ -966,7 +966,7 @@ fn regression_308_closed_populates_result_path() {
     );
     assert_eq!(
         result.value.as_deref(),
-        Some("(Labrador)"),
+        Some("\"Labrador\""),
         "sh:closed violation's sh:value must remain the actual offending triple's object"
     );
 }
@@ -2430,7 +2430,7 @@ fn regression_issue_310_literal_targetnode_violates() {
          still become a focus node and be checked against the node shape's \
          constraints"
     );
-    let focus = "(not a number)";
+    let focus = "\"not a number\"";
     assert!(
         has_violation(&report, focus),
         "expected a violation for literal focus node {focus}, got: {:?}",
@@ -2443,7 +2443,7 @@ fn regression_issue_310_literal_targetnode_conforms() {
     let data = load("shacl_s310_targetnode_literal_data.ttl");
     let shapes = load("shacl_s310_targetnode_literal_shapes.ttl");
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
-    let focus = "99^^http://www.w3.org/2001/XMLSchema#integer";
+    let focus = "\"99\"^^<http://www.w3.org/2001/XMLSchema#integer>";
     assert!(
         !has_violation(&report, focus),
         "a literal sh:targetNode value that satisfies the node shape's \
@@ -2465,7 +2465,7 @@ fn regression_310_nodekind_node_shape_reports_focus_node_as_value() {
     let ds = load("shacl_s310_nodekind_literal.ttl");
     let report = shacl::validate(&ds, &ds).expect("validation must not error");
     assert!(!report.conforms);
-    let focus = "true^^http://www.w3.org/2001/XMLSchema#boolean";
+    let focus = "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>";
     let result = report
         .results
         .iter()
@@ -3158,4 +3158,137 @@ fn report_to_datastore_blank_node_round_trip() {
         all_shapes[0], all_shapes[1],
         "distinct blank-node labels (_:b3 vs _:b7) must intern to distinct nodes"
     );
+}
+
+// ── Issue #337 — typed/lang-tagged sh:value must not flatten to xsd:string ──
+//
+// `graph::element_display` used to call `RdfLiteral`'s ad-hoc `Display` impl
+// (no quotes, wrong `lang@literal` order), and both `report_to_turtle` and
+// `report_to_datastore` then had to heuristically re-classify that string,
+// which could never recover a literal's datatype/language (everything
+// non-IRI/non-blank-node flattened to a plain string). Fixed by routing
+// `element_display` through `turtle::format_literal` (genuine Turtle literal
+// syntax) and having `intern_result_term` parse that syntax back via
+// `turtle::parse_literal_term`. See
+// https://github.com/daghovland/rdf-datalog/issues/337.
+
+/// A `ValidationResult` with an `xsd:integer`-typed `sh:value` must keep its
+/// datatype through `report_to_turtle`'s text output, not flatten to a plain
+/// string / `xsd:string`.
+#[test]
+fn issue_337_report_to_turtle_preserves_typed_literal_value() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/Bob".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: None,
+            source_shape: "http://example.org/BobShape".to_string(),
+            source_constraint: Some(shacl::vocab::CC_MIN_COUNT.to_string()),
+            value: Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        }],
+    };
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
+        "sh:value must be emitted as a properly typed Turtle literal, not \
+         double-quoted or flattened to a plain string, got: {turtle}"
+    );
+    assert!(
+        !turtle.contains("\"\\\"5\\\""),
+        "must not double-quote an already-formatted Turtle literal, got: {turtle}"
+    );
+}
+
+/// Same as above, but for a language-tagged `sh:value` — must keep `@en`,
+/// not flatten to a plain string / `xsd:string`.
+#[test]
+fn issue_337_report_to_turtle_preserves_lang_literal_value() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/Bob".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: None,
+            source_shape: "http://example.org/BobShape".to_string(),
+            source_constraint: Some(shacl::vocab::CC_MIN_COUNT.to_string()),
+            value: Some("\"hello\"@en".to_string()),
+        }],
+    };
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("\"hello\"@en"),
+        "sh:value must be emitted as a properly lang-tagged Turtle literal, \
+         got: {turtle}"
+    );
+}
+
+/// A `ValidationResult` with an `xsd:integer`-typed `sh:value` must
+/// round-trip through `report_to_datastore` as a real `xsd:integer`-typed
+/// literal (queryable via SPARQL as such), not an opaque `xsd:string`
+/// literal whose lexical form is the entire `"5"^^<…>` text.
+#[test]
+fn issue_337_report_to_datastore_preserves_typed_literal_value() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/Bob".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: None,
+            source_shape: "http://example.org/BobShape".to_string(),
+            source_constraint: Some(shacl::vocab::CC_MIN_COUNT.to_string()),
+            value: Some("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        }],
+    };
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!("{SPARQL_PREFIX}SELECT ?value WHERE {{ ?r sh:result [ sh:value ?value ] }}"),
+    );
+    match &row["value"] {
+        GraphElement::GraphLiteral(dag_rdf::RdfLiteral::TypedLiteral { type_iri, literal }) => {
+            assert_eq!(type_iri.0, "http://www.w3.org/2001/XMLSchema#integer");
+            assert_eq!(literal, "5");
+        }
+        other => panic!(
+            "expected an xsd:integer TypedLiteral, got {other:?} — \
+             typed sh:value must not flatten to a plain string literal"
+        ),
+    }
+}
+
+/// Same as above, but for a language-tagged `sh:value` — must round-trip as
+/// a real `RdfLiteral::LangLiteral`, not a plain string literal.
+#[test]
+fn issue_337_report_to_datastore_preserves_lang_literal_value() {
+    let report = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("http://example.org/Bob".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: None,
+            source_shape: "http://example.org/BobShape".to_string(),
+            source_constraint: Some(shacl::vocab::CC_MIN_COUNT.to_string()),
+            value: Some("\"hello\"@en".to_string()),
+        }],
+    };
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!("{SPARQL_PREFIX}SELECT ?value WHERE {{ ?r sh:result [ sh:value ?value ] }}"),
+    );
+    match &row["value"] {
+        GraphElement::GraphLiteral(dag_rdf::RdfLiteral::LangLiteral { lang, literal }) => {
+            assert_eq!(lang, "en");
+            assert_eq!(literal, "hello");
+        }
+        other => panic!(
+            "expected an @en LangLiteral, got {other:?} — lang-tagged sh:value \
+             must not flatten to a plain string literal"
+        ),
+    }
 }

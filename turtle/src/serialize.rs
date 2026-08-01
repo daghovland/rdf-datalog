@@ -92,7 +92,15 @@ fn triple_term_term(store: &Datastore, key: &TripleTermKey) -> Option<String> {
     }
 }
 
-fn format_literal(lit: &RdfLiteral) -> String {
+/// Format an `RdfLiteral` as spec-compliant Turtle literal syntax:
+/// `"lexical"^^<datatype-iri>` for typed literals, `"lexical"@lang` for
+/// language-tagged ones, correctly quoted/escaped (see `escape_str` in this module).
+///
+/// Public so other crates needing genuine Turtle literal syntax (rather than
+/// `RdfLiteral`'s ad-hoc, non-standard `Display` impl) can reuse this
+/// serializer instead of duplicating it — see `shacl::graph::element_display`
+/// and [#337](https://github.com/daghovland/rdf-datalog/issues/337).
+pub fn format_literal(lit: &RdfLiteral) -> String {
     match lit {
         RdfLiteral::LiteralString(s) => format!("\"{}\"", escape_str(s)),
         RdfLiteral::LangLiteral { lang, literal } => {
