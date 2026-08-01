@@ -17,11 +17,15 @@ Contact: hovlanddag@gmail.com
 //! [#54](https://github.com/daghovland/rdf-datalog/issues/54).
 //!
 //! See [`docs/plans/W3C_SHACL_SUITE_PLAN.md`](../docs/plans/W3C_SHACL_SUITE_PLAN.md)
-//! for the full design rationale, in particular why report comparison here
-//! is a tiered field-by-field comparator rather than full graph isomorphism
-//! (the SHACL suite's manifest structure and this crate's `ValidationResult`
-//! type differ enough from the SPARQL/RDF suites' that neither of those
-//! suites' comparison approach applies directly).
+//! for the full design rationale. Report comparison canonicalizes both the
+//! expected and actual report graphs (via `rdf_canon::canonicalize_graph`,
+//! [RDFC-1.0](https://www.w3.org/TR/rdf-canon/)) and compares the resulting
+//! canonical N-Quads strings for equality, the same approach this repo's
+//! RDF/SPARQL W3C conformance suites already use (see
+//! `compare_construct_with_ttl` in `tests/w3c_sparql11_suite.rs`) — rather
+//! than the hand-written field-by-field comparator with explicit
+//! blank-node-skip flags this replaced. See
+//! [#313](https://github.com/daghovland/rdf-datalog/issues/313).
 //!
 //! Manifests are loaded with this project's own stack — real Turtle parsing
 //! (`turtle::parse_turtle_with_base`) into a `dag_rdf::Datastore`, walked
@@ -33,8 +37,9 @@ Contact: hovlanddag@gmail.com
 use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
 use dagalog::run_sparql_query;
 use ingress::IriReference;
-use shacl::graph::{element_display, is_blank_node};
-use shacl::validate;
+use rdf_canon::canonicalize_graph;
+use shacl::graph::element_display;
+use shacl::{Severity, ValidationReport, ValidationResult, report_to_datastore, validate};
 use std::path::{Path, PathBuf};
 use turtle::parse_turtle_with_base;
 
@@ -123,29 +128,15 @@ fn list_includes(manifest_path: &Path) -> Vec<PathBuf> {
 // ── Per-test manifest entries ────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-struct ExpectedResult {
-    focus_node: Option<String>,
-    severity: Option<String>,
-    component: Option<String>,
-    source_shape: Option<String>,
-    result_path: Option<String>,
-    value: Option<String>,
-    /// `true` if the corresponding raw term is a blank node (unstable across
-    /// the two independent parses involved — see the plan doc). Fields on a
-    /// blank-node term are recorded but never used for comparison.
-    focus_is_blank: bool,
-    source_shape_is_blank: bool,
-    result_path_is_blank: bool,
-    value_is_blank: bool,
-}
-
-#[derive(Debug, Clone)]
 struct ShaclTestEntry {
     label: String,
     data_graph: PathBuf,
     shapes_graph: PathBuf,
-    expected_conforms: bool,
-    expected_results: Vec<ExpectedResult>,
+    /// The manifest's inline expected `sh:ValidationReport`, rebuilt as this
+    /// crate's own `ValidationReport` type so it can be fed through
+    /// `report_to_datastore` symmetrically with the actual report — see
+    /// `compare_report`.
+    expected_report: ValidationReport,
 }
 
 /// Parse one vendored SHACL test file (self-contained: shapes/data graph(s)
@@ -222,17 +213,20 @@ fn parse_shacl_test_file(path: &Path) -> Vec<ShaclTestEntry> {
             let shape = rrow.get("shape");
             let path = rrow.get("path");
             let value = rrow.get("value");
-            expected_results.push(ExpectedResult {
+            expected_results.push(ValidationResult {
                 focus_node: focus.map(|e| element_display(&ds, ds_id(&ds, e))),
-                severity: as_iri(rrow.get("severity")).map(str::to_string),
-                component: as_iri(rrow.get("component")).map(str::to_string),
-                source_shape: shape.map(|e| element_display(&ds, ds_id(&ds, e))),
+                severity: as_iri(rrow.get("severity"))
+                    .and_then(Severity::from_iri)
+                    .unwrap_or_default(),
+                // `sh:resultMessage` is intentionally not extracted here — see
+                // the note on `compare_report` below.
+                message: None,
                 result_path: path.map(|e| element_display(&ds, ds_id(&ds, e))),
+                source_shape: shape
+                    .map(|e| element_display(&ds, ds_id(&ds, e)))
+                    .unwrap_or_default(),
+                source_constraint: as_iri(rrow.get("component")).map(str::to_string),
                 value: value.map(|e| element_display(&ds, ds_id(&ds, e))),
-                focus_is_blank: focus.is_some_and(|e| is_blank_node(&ds, ds_id(&ds, e))),
-                source_shape_is_blank: shape.is_some_and(|e| is_blank_node(&ds, ds_id(&ds, e))),
-                result_path_is_blank: path.is_some_and(|e| is_blank_node(&ds, ds_id(&ds, e))),
-                value_is_blank: value.is_some_and(|e| is_blank_node(&ds, ds_id(&ds, e))),
             });
         }
 
@@ -240,8 +234,10 @@ fn parse_shacl_test_file(path: &Path) -> Vec<ShaclTestEntry> {
             label,
             data_graph: PathBuf::from(data_graph),
             shapes_graph: PathBuf::from(shapes_graph),
-            expected_conforms,
-            expected_results,
+            expected_report: ValidationReport {
+                conforms: expected_conforms,
+                results: expected_results,
+            },
         });
     }
     entries
@@ -274,85 +270,78 @@ fn load_shacl_manifest(subdir: &str) -> Vec<ShaclTestEntry> {
 // ── Comparison ────────────────────────────────────────────────────────────────
 
 /// Compare one entry's expected report against the report actually produced
-/// by `shacl::validate`. See the plan doc for the tiered-comparison
-/// rationale. Returns `None` on match, `Some(reason)` on mismatch.
+/// by `shacl::validate`, by canonicalizing both as RDF graphs (RDFC-1.0, via
+/// `rdf_canon::canonicalize_graph`) and comparing the resulting canonical
+/// N-Quads strings — see the module doc comment. Returns `None` on match,
+/// `Some(reason)` on mismatch.
+///
+/// Both sides are built via `report_to_datastore`, not just the actual side:
+/// routing the expected report through the very same function is what makes
+/// this an apples-to-apples graph comparison. In particular
+/// `report_to_datastore` re-derives an RDF term's kind (IRI / blank node /
+/// plain string literal) from the `ValidationResult` string fields'
+/// `element_display` text form, which is lossy for typed/lang-tagged
+/// literals (e.g. an integer `sh:value` round-trips as a plain string
+/// literal, not `xsd:integer`) — building the expected side the same way
+/// means that lossiness is applied identically on both sides and cancels
+/// out, rather than making an isomorphic pair look different.
+///
+/// `sh:resultMessage` is deliberately zeroed out on both sides before
+/// canonicalizing (expected: never extracted by the SPARQL query above;
+/// actual: cleared here) — same "never compared" behavior as the
+/// field-by-field comparator this replaced. A lang-tagged `sh:message` (e.g.
+/// `core/misc/message-001.ttl`'s `"Test message"@en`) is emitted by
+/// `report_to_datastore` as a plain string literal, which would make an
+/// otherwise-matching report graph non-isomorphic; see
+/// [#332](https://github.com/daghovland/rdf-datalog/issues/332) for
+/// extending the comparison to cover `sh:resultMessage` properly.
 fn compare_report(entry: &ShaclTestEntry) -> Option<String> {
     let data = load_turtle(&entry.data_graph)?;
     let shapes = load_turtle(&entry.shapes_graph)?;
-    let report = match validate(&data, &shapes) {
+    let mut report = match validate(&data, &shapes) {
         Ok(r) => r,
         Err(e) => return Some(format!("validate() returned Err: {e}")),
     };
+    for result in &mut report.results {
+        result.message = None;
+    }
 
-    if report.conforms != entry.expected_conforms {
+    // Cheap checks first: a graph-isomorphism diff is a much worse error
+    // message than "conforms mismatch" / "result count mismatch" for the
+    // common failure shapes.
+    if report.conforms != entry.expected_report.conforms {
         return Some(format!(
             "conforms mismatch: expected {}, got {}",
-            entry.expected_conforms, report.conforms
+            entry.expected_report.conforms, report.conforms
         ));
     }
-    if report.results.len() != entry.expected_results.len() {
+    if report.results.len() != entry.expected_report.results.len() {
         return Some(format!(
             "result count mismatch: expected {}, got {}",
-            entry.expected_results.len(),
+            entry.expected_report.results.len(),
             report.results.len()
         ));
     }
 
-    let mut unused: Vec<&shacl::ValidationResult> = report.results.iter().collect();
-    for expected in &entry.expected_results {
-        let pos = unused
-            .iter()
-            .position(|actual| results_match(expected, actual));
-        match pos {
-            Some(i) => {
-                unused.remove(i);
-            }
-            None => {
-                return Some(format!(
-                    "no actual result matched expected {expected:?}; remaining actual: {unused:?}"
-                ));
-            }
-        }
-    }
-    None
-}
+    let actual_ds = report_to_datastore(&report);
+    let expected_ds = report_to_datastore(&entry.expected_report);
 
-fn results_match(expected: &ExpectedResult, actual: &shacl::ValidationResult) -> bool {
-    if let Some(sev) = &expected.severity
-        && sev.as_str() != actual.severity.iri()
-    {
-        return false;
+    let actual_canon = match canonicalize_graph(&actual_ds, dag_rdf::DEFAULT_GRAPH_ELEMENT_ID) {
+        Ok(c) => c,
+        Err(e) => return Some(format!("canonicalization error (actual): {e}")),
+    };
+    let expected_canon = match canonicalize_graph(&expected_ds, dag_rdf::DEFAULT_GRAPH_ELEMENT_ID) {
+        Ok(c) => c,
+        Err(e) => return Some(format!("canonicalization error (expected): {e}")),
+    };
+
+    if actual_canon == expected_canon {
+        None
+    } else {
+        Some(format!(
+            "report graph mismatch:\n--- actual ---\n{actual_canon}--- expected ---\n{expected_canon}"
+        ))
     }
-    if let Some(comp) = &expected.component
-        && Some(comp.as_str()) != actual.source_constraint.as_deref()
-    {
-        return false;
-    }
-    if !expected.focus_is_blank
-        && let Some(f) = &expected.focus_node
-        && Some(f.as_str()) != actual.focus_node.as_deref()
-    {
-        return false;
-    }
-    if !expected.value_is_blank
-        && let Some(v) = &expected.value
-        && Some(v.as_str()) != actual.value.as_deref()
-    {
-        return false;
-    }
-    if !expected.source_shape_is_blank
-        && let Some(s) = &expected.source_shape
-        && s.as_str() != actual.source_shape
-    {
-        return false;
-    }
-    if !expected.result_path_is_blank
-        && let Some(p) = &expected.result_path
-        && Some(p.as_str()) != actual.result_path.as_deref()
-    {
-        return false;
-    }
-    true
 }
 
 fn run_entries(entries: &[ShaclTestEntry], skip: &[&str]) -> Vec<String> {
@@ -428,14 +417,20 @@ fn w3c_shacl_core_property() {
         // fixed the "silently skip a value entirely" undercounting bug,
         // but not this deeper multiplicity limitation.
         "Test of sh:lessThan at property shape 002",
-        // Confirmed NOT the "greedy comparator" issue originally suspected —
-        // undercounting is real: violations for ex:InstanceWithBlankNode and
-        // ex:InstanceWithBlankNodeAndIRI (the two instances whose only
-        // sh:myProperty values are blank nodes) are never generated at all,
-        // across all 6 sibling nodeKind shapes. Root cause not yet
-        // identified; needs further investigation independent of the fixes
-        // in this PR.
-        "Test of sh:nodeKind at property shape 001",
+        // "Test of sh:nodeKind at property shape 001" was previously skipped
+        // here too, attributed to a genuine violation-generation undercount.
+        // Investigating that claim while switching this suite to
+        // canonicalization-based comparison (#313) found otherwise: `report.
+        // results.len()` and `entry.expected_report.results.len()` are both
+        // 27 for this fixture, and the two report graphs canonicalize
+        // identically. The old field-by-field comparator's greedy multiset
+        // matcher ("try each pairing, remove on match", no backtracking)
+        // is what actually failed — this fixture has many violations sharing
+        // focus/path/value across six sibling `sh:nodeKind` shapes, exactly
+        // the shape a greedy matcher can fail to pair even when a valid
+        // assignment exists (classic bipartite-matching-without-backtracking
+        // failure), which a real graph-isomorphism check (RDFC-1.0
+        // canonicalization) does not have. No skip needed any more.
     ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/property");
@@ -525,15 +520,106 @@ fn w3c_shacl_core_path() {
         "expected at least 10 core/path entries, got {}",
         entries.len()
     );
-    // This crate's `sh:path` parsing (shacl/src/shapes.rs) only supports a
-    // single predicate IRI, not sequence/inverse/alternative/zeroOrMore/
-    // oneOrMore/zeroOrOne SHACL property-path expressions. Tracked by
-    // https://github.com/daghovland/rdf-datalog/issues/307 — every skipped
-    // label below uses a complex (list- or predicate-valued-blank-node)
-    // `sh:path`. `path-unused-001` is not skipped: it only *declares*
-    // dangling complex-path blank nodes that the shape itself never
-    // references (the shape's own constraint is a plain `sh:class`).
-    let skip: &[&str] = &[];
+    // Complex `sh:path` expressions (sequence/alternative/inverse/
+    // zeroOrMore/oneOrMore/zeroOrOne) are fully supported for *validation*
+    // (https://github.com/daghovland/rdf-datalog/issues/328) — conforms,
+    // violation count and focus nodes are all correct for every entry below.
+    // What's skipped is comparing `sh:resultPath` itself: this crate reports
+    // it as an opaque blank node with no further triples (no
+    // `sh:alternativePath`/`sh:inversePath`/RDF-list structure), whereas the
+    // W3C fixtures spell out the full path expression as real RDF. Graph
+    // canonicalization requires true isomorphism, so an opaque blank node can
+    // never match a real subtree, however matching the "meaning" is — the
+    // previous field-by-field comparator masked this by unconditionally
+    // skipping `sh:resultPath` whenever the *expected* term was a blank node.
+    // See https://github.com/daghovland/rdf-datalog/issues/335 for
+    // serializing `sh:resultPath` as a proper path expression instead.
+    // `path-unused-001` is not skipped: it only *declares* dangling
+    // complex-path blank nodes that the shape itself never references (the
+    // shape's own constraint is a plain `sh:class`).
+    let skip: &[&str] = &[
+        "Test of path sh:alternativePath 001",
+        "Test of path complex (rdf:type/rdfs:subClassOf*) 001",
+        "Test of complex path validation results",
+        "Test of path sh:inversePath 001",
+        "Test of path sh:oneOrMorePath 001",
+        "Test of path sequence 001",
+        "Test of path sequence 002",
+    ];
     let failures = run_entries(&entries, skip);
     assert_no_failures(failures, "SHACL core/path");
+}
+
+// ── Unit tests for the canonicalization-based comparator itself ─────────────
+//
+// These exercise `report_to_datastore` + `canonicalize_graph` directly,
+// independent of the full W3C suite, to prove the comparator is correct on
+// its own terms rather than only via the suite's aggregate pass/fail.
+
+/// Build a minimal one-result `ValidationReport`.
+fn mk_report(focus_node: &str, value: &str) -> ValidationReport {
+    ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some(focus_node.to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: Some("http://example.org/p".to_string()),
+            source_shape: "http://example.org/Shape".to_string(),
+            source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
+            value: Some(value.to_string()),
+        }],
+    }
+}
+
+fn canon(report: &ValidationReport) -> String {
+    let ds = report_to_datastore(report);
+    canonicalize_graph(&ds, dag_rdf::DEFAULT_GRAPH_ELEMENT_ID)
+        .expect("canonicalization of a freshly built report graph cannot fail")
+}
+
+#[test]
+fn canonical_comparator_matches_identical_reports() {
+    let a = mk_report("http://example.org/x", "http://example.org/y");
+    let b = mk_report("http://example.org/x", "http://example.org/y");
+    assert_eq!(canon(&a), canon(&b));
+}
+
+#[test]
+fn canonical_comparator_detects_real_mismatch() {
+    let a = mk_report("http://example.org/x", "http://example.org/y");
+    let b = mk_report("http://example.org/x", "http://example.org/DIFFERENT");
+    assert_ne!(canon(&a), canon(&b));
+}
+
+/// The case the removed `*_is_blank` flags existed to paper over: the same
+/// blank node used as *both* `sh:focusNode` and `sh:value` of one result
+/// (e.g. `core/node/class-002.ttl`'s `_:b9751`), but spelled with different
+/// labels across two independently-built reports (as expected-vs-actual
+/// always are, coming from separate parses/`Datastore`s). Graph
+/// canonicalization must recognize these as the same shape regardless of the
+/// arbitrary label, since the label carries no meaning on its own — only the
+/// graph structure (here: one blank node reachable via both `sh:focusNode`
+/// and `sh:value` from the same result) does.
+#[test]
+fn canonical_comparator_ignores_blank_node_label_spelling() {
+    let a = mk_report("_:b9751", "_:b9751");
+    let b = mk_report("_:zzz", "_:zzz");
+    assert_eq!(canon(&a), canon(&b));
+
+    // Sanity check: if the two occurrences *didn't* refer to the same blank
+    // node, that's a structurally different (and detectably different) graph.
+    let c = ValidationReport {
+        conforms: false,
+        results: vec![ValidationResult {
+            focus_node: Some("_:b1".to_string()),
+            severity: Severity::Violation,
+            message: None,
+            result_path: Some("http://example.org/p".to_string()),
+            source_shape: "http://example.org/Shape".to_string(),
+            source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
+            value: Some("_:b2".to_string()),
+        }],
+    };
+    assert_ne!(canon(&a), canon(&c));
 }

@@ -679,7 +679,23 @@ fn collect_violations(
         .filter(|q| pred_meta.contains_key(&q.predicate))
         .map(|q| {
             let focus = graph::element_display(work, q.subject);
-            let val = {
+            let meta = pred_meta.get(&q.predicate).copied();
+            // sh:MinCount/sh:MaxCount/sh:UniqueLang violations are about the
+            // cardinality/shape of an entire value *set*, not any single
+            // value — the SHACL spec's validator definitions for these three
+            // components never populate sh:value, and no fixture in the W3C
+            // SHACL test suite (`tests/testdata/w3c_shacl/core/`) ever
+            // expects one. Suppress it here rather than reporting an
+            // arbitrary witness value that would (falsely) imply a single
+            // value caused the violation. See
+            // [#313](https://github.com/daghovland/rdf-datalog/issues/313).
+            let suppress_value = matches!(
+                meta.map(|m| m.component),
+                Some(vocab::CC_MIN_COUNT) | Some(vocab::CC_MAX_COUNT) | Some(vocab::CC_UNIQUE_LANG)
+            );
+            let val = if suppress_value {
+                None
+            } else {
                 let s = graph::element_display(work, q.obj);
                 if s == vocab::INT_NIL || s == vocab::INT_TRUE {
                     None
@@ -687,7 +703,6 @@ fn collect_violations(
                     Some(s)
                 }
             };
-            let meta = pred_meta.get(&q.predicate).copied();
             ValidationResult {
                 focus_node: Some(focus),
                 severity: meta.map(|m| m.severity.clone()).unwrap_or_default(),
