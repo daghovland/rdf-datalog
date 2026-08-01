@@ -189,8 +189,10 @@ actual reasoning (not a transcript dump), `agp:reasoningFor` the PR/issue,
 **Self-authored summaries are acceptable for now** (repo owner,
 2026-07-31) — the PR-finishing agent writes its own summary rather than a
 separate reviewing agent; revisit if self-reporting bias turns out to be a
-real problem in practice. This is a NEW step to add to CLAUDE.md's workflow
-once implementation lands — not yet added.
+real problem in practice. Added as CLAUDE.md's Implementation workflow step
+6b (issue [#334](https://github.com/daghovland/rdf-datalog/issues/334)),
+which also links the concrete authoring spec: see
+[`TRANSCRIPT_SUMMARY_GUIDELINES.md`](TRANSCRIPT_SUMMARY_GUIDELINES.md).
 
 **Phase 2 (future, separate issue, depends on #284):** an automated
 ingestion tool that reads real transcripts (or PR descriptions, which
@@ -227,6 +229,20 @@ Nothing is implemented yet. No issue this plan produces should be labeled
 `ready` without the repo owner's explicit go-ahead, per this repo's own
 agent workflow rules — this review resolves the design, not the
 `ready` gate itself.
+
+**Update (2026-08-01, issue #334):** the originally-planned Phase 2
+(automated transcript-extraction pipeline) was reframed by the repo owner
+— no ML/heuristic extraction; instead, trust the PR-finishing agent to
+hand-author its own summary (this section's existing "self-authored is
+acceptable" resolution), and build the supporting infrastructure: the
+concrete authoring spec
+([`TRANSCRIPT_SUMMARY_GUIDELINES.md`](TRANSCRIPT_SUMMARY_GUIDELINES.md)),
+strengthened SHACL shapes (`backlog/ontology/agentprov-shapes.ttl`'s
+`sh:minLength`/`sh:maxLength` on `agp:summaryText` and `sh:class
+bl:WorkItem` on `agp:reasoningFor` — see `MODELING_NOTES.md`'s "#334 SHACL
+strengthening"), a glob-based (not hardcoded-single-file) test/CI loader
+for `provenance/summaries/*.ttl` (`tests/provenance_queries.rs`), and
+CLAUDE.md's new step 6b. See #334 for the full discussion.
 
 ## References
 

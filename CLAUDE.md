@@ -53,6 +53,7 @@ All code changes (bug fixes, features) follow this workflow:
    cargo test --workspace
    ```
 6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you."
+6b. **Write a transcript summary** before removing the worktree: one `provenance/summaries/pr-<N>.ttl` file distilling the actual reasoning behind the PR you just finished, per [`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md) (issue [#334](https://github.com/daghovland/rdf-datalog/issues/334), part of the agent-provenance epic [#306](https://github.com/daghovland/rdf-datalog/issues/306)). Self-authored — you write your own summary, not a separate reviewing agent. `tests/provenance_queries.rs` picks up any new file under `provenance/summaries/` automatically and SHACL-validates it against `backlog/ontology/agentprov-shapes.ttl`.
 7. **Remove the worktree** once the PR merges (keep it around until then — conflict-resolution or review-feedback commits may still need to land on the branch):
    ```bash
    git worktree remove .claude/worktrees/<branch-name>

@@ -1,0 +1,57 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# A second worked example for the agent-provenance vocabulary
+# (backlog/ontology/agentprov-vocabulary.ttl, issue #326), distilling the
+# REAL reasoning from PR #328
+# (https://github.com/daghovland/rdf-datalog/pull/328), which closed issue
+# #307 ("SHACL complex sh:path property paths"). Written for issue #334 (a
+# sub-issue of the agent-provenance epic #306), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's authoring convention --
+# this is also the fixture that proves tests/provenance_queries.rs's
+# glob-based loader picks up a NEW summary file automatically, with no test
+# code change (see that guidelines doc's worked-example section).
+#
+# ghpull:328 is asserted as a bl:PullRequest/bl:WorkItem (reusing the
+# backlog# vocabulary's own convention -- real GitHub URL as IRI) purely so
+# agp:reasoningFor has a real bl:WorkItem to point at, per
+# bl:RequiresWorkItemTypeShape and agentprov-shapes.ttl's sh:class
+# bl:WorkItem check on agp:reasoningFor -- it is not a full backlog/
+# snapshot entry. ghissues:307 (the issue this PR closed) is referenced
+# only as an object (bl:closesIssue, prov:used), deliberately never typed
+# bl:Issue -- typing it would subject it to
+# bl:IssueIsEpicXorHasParentShape, which is out of scope for this
+# grounding fixture (mirrors pr-300.ttl's identical choice for
+# ghissues:264).
+#
+# session:pr328's startedAtTime/endedAtTime are real, taken from
+# `gh pr view 328 --json commits,mergedAt`: startedAtTime is the final
+# implementation commit's authoredDate (2026-07-31T21:39:51Z), endedAtTime
+# is the PR's actual mergedAt (2026-07-31T22:01:33Z).
+
+ghpull:328 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: complex sh:path property paths (inverse/sequence/alternative/quantified)" ;
+    bl:number 328 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:307 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr328 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:307 ;
+    prov:startedAtTime "2026-07-31T21:39:51Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T22:01:33Z"^^xsd:dateTime .
+
+session:pr328Summary a agp:TranscriptSummary ;
+    agp:summaryText "shacl/src/shapes.rs did not parse sh:inversePath, sequence paths, sh:alternativePath, or the quantified sh:zeroOrMorePath/sh:oneOrMorePath/sh:zeroOrOnePath forms at all -- ParsedPropShape::path was a plain IRI String. Added a new shacl/src/path.rs module with an ShPath AST parsed from sh:path's RDF object structure, plus path::pairs (shared subject/object extension computation mirroring sparql_parser's property-path reachability semantics), path::values_from (read-only per-focus-node evaluation for sh:not/sh:and/sh:or inner shapes), and path::resolve_one_path (materializes a compound path's extension as synthetic ground triples in translate.rs's Datalog working store, so existing rule-generation code needed no further changes). Two subtleties surfaced only once real fixtures were run: parse_path's cycle guard needed to be a DFS-stack (push/pop) rather than a permanent \"ever seen\" set, since a path can legitimately reuse one blank node in two positions; and an RDF-list reading of a sh:path node must take precedence over sh:inversePath/etc. when a node structurally satisfies both, per the suite's \"strange path\" fixtures. All 12 previously-skipped W3C core/path fixtures now pass." ;
+    agp:reasoningFor ghpull:328 ;
+    prov:wasGeneratedBy session:pr328 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
