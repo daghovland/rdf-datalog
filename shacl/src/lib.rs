@@ -115,8 +115,12 @@ pub struct ViolMeta {
     /// [#264](https://github.com/daghovland/rdf-datalog/issues/264).
     pub source_shape: String,
     /// `sh:path` of the property shape that produced this violation, or
-    /// `None` for a node-level (pathless) constraint.
-    pub path: Option<String>,
+    /// `None` for a node-level (pathless) constraint. Kept as the structured
+    /// AST (rather than a flattened display string) so
+    /// [`report_to_datastore`] can serialize a compound path back into its
+    /// full SHACL-spec RDF encoding — see
+    /// [#335](https://github.com/daghovland/rdf-datalog/issues/335).
+    pub path: Option<path::ShPath>,
     /// `sh:sourceConstraintComponent` IRI for the constraint that produced
     /// this violation.
     pub component: &'static str,
@@ -135,7 +139,7 @@ impl ViolMeta {
         shapes_store: &Datastore,
         shape: &shapes::ParsedShape,
         source_shape_id: GraphElementId,
-        path: Option<&str>,
+        path: Option<path::ShPath>,
         component: &'static str,
     ) -> Self {
         Self::new_with_severity_override(
@@ -156,14 +160,14 @@ impl ViolMeta {
         shapes_store: &Datastore,
         shape: &shapes::ParsedShape,
         source_shape_id: GraphElementId,
-        path: Option<&str>,
+        path: Option<path::ShPath>,
         component: &'static str,
         severity_override: Option<Severity>,
     ) -> Self {
         ViolMeta {
             severity: severity_override.unwrap_or_else(|| shape.severity.clone()),
             source_shape: graph::element_display(shapes_store, source_shape_id),
-            path: path.map(str::to_string),
+            path,
             component,
             message: shape.message.clone(),
         }
@@ -176,7 +180,13 @@ pub struct ValidationResult {
     pub focus_node: Option<String>,
     pub severity: Severity,
     pub message: Option<String>,
-    pub result_path: Option<String>,
+    /// `sh:resultPath` — the structured path AST, not a flattened display
+    /// string, so a compound path (sequence/alternative/inverse/…) can be
+    /// serialized back into its full SHACL-spec RDF (or Turtle) encoding by
+    /// [`report_to_datastore`]/[`report_to_turtle`] rather than reported as
+    /// an opaque, triple-less blank node. See
+    /// [#335](https://github.com/daghovland/rdf-datalog/issues/335).
+    pub result_path: Option<path::ShPath>,
     pub source_shape: String,
     pub source_constraint: Option<String>,
     pub value: Option<String>,
@@ -290,7 +300,7 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
             }
             if let Some(path) = &result.result_path {
                 out.push_str(" ;\n       sh:resultPath ");
-                out.push_str(&turtle_term(path));
+                out.push_str(&path::to_turtle(path));
             }
             if let Some(val) = &result.value {
                 out.push_str(" ;\n       sh:value ");
@@ -421,7 +431,7 @@ pub fn report_to_datastore(report: &ValidationReport) -> Datastore {
                 });
             }
             if let Some(path) = &result.result_path {
-                let id = intern_result_term(&mut ds, path);
+                let id = path::to_datastore(&mut ds, path);
                 ds.add_triple(Triple {
                     subject: result_node,
                     predicate: sh_result_path,
@@ -575,16 +585,13 @@ fn closed_violations(
             let viol_pred = *viol_preds.entry(triple.predicate).or_insert_with(|| {
                 let pred =
                     graph::intern_iri(work, &vocab::viol_closed(shape.idx, triple.predicate));
-                let path = graph::element_display(data, triple.predicate);
+                // The offending predicate is always a real IRI (it's a
+                // predicate position in `data`), never a blank node, so this
+                // is always a simple `Predicate` path — never compound.
+                let path = graph::iri_string(data, triple.predicate).map(path::ShPath::Predicate);
                 metas.push((
                     pred,
-                    ViolMeta::new(
-                        shapes_store,
-                        shape,
-                        shape.shapes_id,
-                        Some(&path),
-                        vocab::CC_CLOSED,
-                    ),
+                    ViolMeta::new(shapes_store, shape, shape.shapes_id, path, vocab::CC_CLOSED),
                 ));
                 pred
             });

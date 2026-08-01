@@ -183,12 +183,6 @@ pub struct ParsedPropShape {
     /// [`crate::path::ShPath`] and
     /// [#307](https://github.com/daghovland/rdf-datalog/issues/307).
     pub path: crate::path::ShPath,
-    /// Display form of `path` for `sh:resultPath` reporting: the IRI itself
-    /// for a simple path, or a synthetic blank-node label
-    /// (`_:path{shape_idx}_{idx}`) for a compound one — spec-compliant
-    /// structural serialization of a compound path back to RDF is deferred,
-    /// see `docs/plans/SHACL_COMPLEX_PATHS_PLAN.md`.
-    pub path_display: String,
     pub constraints: Vec<PropConstraint>,
     /// `sh:deactivated true` on this property shape itself (as opposed to the
     /// parent node shape). Per SHACL §3, a deactivated shape produces no
@@ -344,7 +338,7 @@ pub(crate) fn parse_one_shape(
     let deactivated = is_deactivated(shapes, shape_id);
     let iri = graph::iri_string(shapes, shape_id);
     let targets = parse_targets(shapes, shape_id, &iri);
-    let mut property_shapes = parse_property_shapes(shapes, shape_id, idx);
+    let mut property_shapes = parse_property_shapes(shapes, shape_id);
 
     // A sh:PropertyShape may have sh:path + constraints directly on the shape node
     // (rather than inside a sh:property block). Detect and handle this case.
@@ -365,12 +359,10 @@ pub(crate) fn parse_one_shape(
             || !direct_xone_inners.is_empty()
         {
             let next_idx = property_shapes.len();
-            let path_display = crate::path::display_label(&path, idx, next_idx);
             property_shapes.push(ParsedPropShape {
                 idx: next_idx,
                 shapes_id: shape_id,
                 path,
-                path_display,
                 constraints: direct_constraints,
                 deactivated,
                 not_inner: direct_not_inner,
@@ -482,23 +474,17 @@ fn parse_targets(
     targets
 }
 
-fn parse_property_shapes(
-    shapes: &Datastore,
-    shape_id: GraphElementId,
-    shape_idx: usize,
-) -> Vec<ParsedPropShape> {
+fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<ParsedPropShape> {
     graph::get_objects(shapes, shape_id, SH_PROPERTY)
         .into_iter()
         .enumerate()
         .filter_map(|(idx, prop_node)| {
             let path_id = graph::get_object(shapes, prop_node, SH_PATH)?;
             let path = crate::path::parse_path(shapes, path_id)?;
-            let path_display = crate::path::display_label(&path, shape_idx, idx);
             Some(ParsedPropShape {
                 idx,
                 shapes_id: prop_node,
                 path,
-                path_display,
                 constraints: parse_prop_constraints(shapes, prop_node),
                 deactivated: is_deactivated(shapes, prop_node),
                 not_inner: graph::get_object(shapes, prop_node, SH_NOT)

@@ -33,6 +33,7 @@ Contact: hovlanddag@gmail.com
 use crate::{graph, vocab};
 use dag_rdf::ingress::Triple;
 use dag_rdf::{Datastore, GraphElementId};
+use ingress::{RDF_FIRST, RDF_NIL, RDF_REST};
 use std::collections::{HashMap, HashSet};
 
 /// Prefix for synthetic predicates materializing a compound `sh:path`'s
@@ -167,14 +168,105 @@ fn parse_path_body(
     None
 }
 
-/// Display form of `path` for `sh:resultPath` reporting: the IRI itself for
-/// a simple path, or a synthetic blank-node label for a compound one.
-/// Computed at parse time (no data-graph access needed), independent of
-/// [`resolve_one_path`]'s predicate materialization.
-pub fn display_label(path: &ShPath, shape_idx: usize, prop_idx: usize) -> String {
-    match path.as_simple_iri() {
-        Some(iri) => iri.to_string(),
-        None => format!("_:path{shape_idx}_{prop_idx}"),
+/// Serialize `path` into `ds` as the SHACL-spec RDF encoding of a `sh:path`
+/// object, returning the `GraphElementId` of the root path term — the
+/// reverse of [`parse_path`]/[`parse_path_body`]. A simple `Predicate(iri)`
+/// serializes as the IRI itself (no blank node, matching how a real shapes
+/// graph writes `sh:path ex:foo`); every compound variant gets a fresh
+/// blank node (never shared/deduplicated across calls — see
+/// [#335](https://github.com/daghovland/rdf-datalog/issues/335), which notes
+/// this doesn't matter for RDFC-1.0 graph-canonicalization correctness, only
+/// that the emitted subtree is a real, correctly-shaped path expression each
+/// time) carrying the one triple (`sh:inversePath`/`sh:alternativePath`/
+/// `sh:zeroOrMorePath`/`sh:oneOrMorePath`/`sh:zeroOrOnePath`) SHACL uses to
+/// mark its kind, or — for `Sequence` — no wrapper node at all: a sequence
+/// *is* the RDF list itself (`sh:path ( p1 p2 … )`), so this returns the
+/// list's own head id directly.
+pub fn to_datastore(ds: &mut Datastore, path: &ShPath) -> GraphElementId {
+    match path {
+        ShPath::Predicate(iri) => graph::intern_iri(ds, iri),
+        ShPath::Inverse(inner) => wrap(ds, inner, vocab::SH_INVERSE_PATH),
+        ShPath::ZeroOrMore(inner) => wrap(ds, inner, vocab::SH_ZERO_OR_MORE_PATH),
+        ShPath::OneOrMore(inner) => wrap(ds, inner, vocab::SH_ONE_OR_MORE_PATH),
+        ShPath::ZeroOrOne(inner) => wrap(ds, inner, vocab::SH_ZERO_OR_ONE_PATH),
+        ShPath::Sequence(steps) => build_rdf_list(ds, steps),
+        ShPath::Alternative(branches) => {
+            let list_head = build_rdf_list(ds, branches);
+            wrap_id(ds, list_head, vocab::SH_ALTERNATIVE_PATH)
+        }
+    }
+}
+
+/// `[ <pred_iri> <inner-serialized> ]` — the shared shape of `sh:inversePath`/
+/// `sh:zeroOrMorePath`/`sh:oneOrMorePath`/`sh:zeroOrOnePath`: a fresh blank
+/// node with exactly one triple pointing at `inner`'s own serialization.
+fn wrap(ds: &mut Datastore, inner: &ShPath, pred_iri: &str) -> GraphElementId {
+    let inner_id = to_datastore(ds, inner);
+    wrap_id(ds, inner_id, pred_iri)
+}
+
+/// As [`wrap`], but `inner_id` is already a resolved term (used by
+/// `Alternative`, whose "inner" is the RDF list head, not another `ShPath`).
+fn wrap_id(ds: &mut Datastore, inner_id: GraphElementId, pred_iri: &str) -> GraphElementId {
+    let node = ds.new_anonymous_blank_node();
+    let pred = graph::intern_iri(ds, pred_iri);
+    ds.add_triple(Triple {
+        subject: node,
+        predicate: pred,
+        obj: inner_id,
+    });
+    node
+}
+
+/// Build an RDF list (`rdf:first`/`rdf:rest` chain terminated by `rdf:nil`)
+/// out of `items`, each serialized recursively via [`to_datastore`]. Returns
+/// the list's head id (or `rdf:nil` itself for an empty list, though
+/// `ShPath::Sequence`/`Alternative` never construct one with zero members —
+/// see [`parse_path_body`]'s `0 => None` case, which means a would-be-empty
+/// sequence never becomes a `ShPath` at all).
+fn build_rdf_list(ds: &mut Datastore, items: &[ShPath]) -> GraphElementId {
+    let rdf_nil = graph::intern_iri(ds, RDF_NIL);
+    let mut rest = rdf_nil;
+    for item in items.iter().rev() {
+        let item_id = to_datastore(ds, item);
+        let node = ds.new_anonymous_blank_node();
+        let rdf_first = graph::intern_iri(ds, RDF_FIRST);
+        let rdf_rest = graph::intern_iri(ds, RDF_REST);
+        ds.add_triple(Triple {
+            subject: node,
+            predicate: rdf_first,
+            obj: item_id,
+        });
+        ds.add_triple(Triple {
+            subject: node,
+            predicate: rdf_rest,
+            obj: rest,
+        });
+        rest = node;
+    }
+    rest
+}
+
+/// Inline Turtle-syntax form of `path`, for [`crate::report_to_turtle`]'s
+/// text serializer — the human-readable counterpart of [`to_datastore`].
+/// Mirrors SHACL's own Turtle path-expression grammar exactly (`[
+/// sh:inversePath <p> ]`, `( <p1> <p2> )`, …) rather than the flattened
+/// blank-node-label placeholder this replaced.
+pub fn to_turtle(path: &ShPath) -> String {
+    match path {
+        ShPath::Predicate(iri) => format!("<{iri}>"),
+        ShPath::Inverse(inner) => format!("[ sh:inversePath {} ]", to_turtle(inner)),
+        ShPath::ZeroOrMore(inner) => format!("[ sh:zeroOrMorePath {} ]", to_turtle(inner)),
+        ShPath::OneOrMore(inner) => format!("[ sh:oneOrMorePath {} ]", to_turtle(inner)),
+        ShPath::ZeroOrOne(inner) => format!("[ sh:zeroOrOnePath {} ]", to_turtle(inner)),
+        ShPath::Sequence(steps) => {
+            let items: Vec<String> = steps.iter().map(to_turtle).collect();
+            format!("( {} )", items.join(" "))
+        }
+        ShPath::Alternative(branches) => {
+            let items: Vec<String> = branches.iter().map(to_turtle).collect();
+            format!("[ sh:alternativePath ( {} ) ]", items.join(" "))
+        }
     }
 }
 

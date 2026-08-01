@@ -23,8 +23,18 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElement, RdfResource};
 use dagalog::{load_file, run_sparql_query};
+use shacl::path::ShPath;
 use shacl::{Severity, ValidationReport, ValidationResult, report_to_datastore};
 use std::path::Path;
+
+/// A simple (single-predicate) `sh:resultPath`'s IRI, or `None` for a
+/// pathless / compound result — most of this suite's regression tests only
+/// ever produce a simple path, so this keeps their assertions terse. See
+/// [#335](https://github.com/daghovland/rdf-datalog/issues/335) for the full
+/// `ShPath` AST `result.result_path` now carries.
+fn simple_path(result: &ValidationResult) -> Option<&str> {
+    result.result_path.as_ref().and_then(ShPath::as_simple_iri)
+}
 
 fn testdata(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -960,7 +970,7 @@ fn regression_308_closed_populates_result_path() {
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
     assert_eq!(
-        result.result_path.as_deref(),
+        simple_path(result),
         Some("http://example.com/ns#breed"),
         "sh:closed violation must report the offending predicate as sh:resultPath"
     );
@@ -1976,7 +1986,7 @@ fn regression_264_mincount_result_path_and_component() {
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
     assert_eq!(
-        result.result_path.as_deref(),
+        simple_path(result),
         Some("http://example.com/ns#name")
     );
     assert_eq!(
@@ -1999,7 +2009,7 @@ fn regression_264_class_result_path_and_component() {
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
     assert_eq!(
-        result.result_path.as_deref(),
+        simple_path(result),
         Some("http://example.com/ns#address")
     );
     assert_eq!(
@@ -2030,7 +2040,7 @@ fn regression_264_pattern_result_path_and_component() {
     assert_eq!(report.results.len(), 1);
     let result = &report.results[0];
     assert_eq!(
-        result.result_path.as_deref(),
+        simple_path(result),
         Some("http://example.com/ns#bCode")
     );
     assert_eq!(
@@ -3038,7 +3048,7 @@ fn report_to_datastore_full_violation() {
             focus_node: Some("http://example.org/Bob".to_string()),
             severity: Severity::Violation,
             message: Some("too many things".to_string()),
-            result_path: Some("http://example.org/hasThing".to_string()),
+            result_path: Some(ShPath::Predicate("http://example.org/hasThing".to_string())),
             source_shape: "http://example.org/BobShape".to_string(),
             source_constraint: Some(shacl::vocab::CC_MAX_COUNT.to_string()),
             value: Some("http://example.org/Thing1".to_string()),

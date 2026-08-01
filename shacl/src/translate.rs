@@ -98,7 +98,7 @@ pub fn shapes_to_rules(
                             shapes,
                             shape,
                             prop.shapes_id,
-                            Some(prop.path_display.as_str()),
+                            Some(prop.path.clone()),
                             constraint.component_iri(),
                             prop.severity.clone(),
                         ),
