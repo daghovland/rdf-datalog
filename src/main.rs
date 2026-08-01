@@ -33,7 +33,7 @@ use clap::Parser;
 use dag_rdf::Datastore;
 use dagalog::{
     OutputFormat, apply_ontologies, apply_ottr_templates, apply_rml_mappings, apply_rules,
-    compile_ontology_rules, format_results, load_file, parse_rules, run_sparql_query,
+    collect_serve_rules, format_results, load_file, run_sparql_query,
 };
 use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, OidcConfig};
@@ -354,32 +354,36 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // When serving, ontology-derived (OWL2RL) rules and directly-supplied
     // `.datalog`-file rules are compiled but NOT eagerly evaluated here — they
-    // are collected into `serve_rules` and handed to `IncrementalReasoner::new`
-    // together, inside `serve_on_listener`, so both sources of intensional
-    // quads are materialised in one pass with one tracked `derived_from` index.
-    // Splitting this into an eager, untracked ontology-materialisation pass
-    // plus a separately-tracked rules pass was the root cause of
-    // https://github.com/daghovland/rdf-datalog/issues/319: a
-    // contradiction-triggered rebuild only knew about the reasoner's own
+    // are collected (via `dagalog::collect_serve_rules`) into `serve_rules` and
+    // handed to `IncrementalReasoner::new` together, inside `serve_on_listener`,
+    // so both sources of intensional quads are materialised in one pass with
+    // one tracked `derived_from` index. Splitting this into an eager, untracked
+    // ontology-materialisation pass plus a separately-tracked rules pass was
+    // the root cause of https://github.com/daghovland/rdf-datalog/issues/319:
+    // a contradiction-triggered rebuild only knew about the reasoner's own
     // tracked rules, so it silently dropped OWL-RL-derived quads that came
     // from the untracked pass. For one-shot (non-`--serve`) queries there is
     // no reasoner to unify with, so both are applied eagerly as before.
     let mut serve_rules: Vec<datalog::Rule> = Vec::new();
 
-    if !cli.ontology.is_empty() {
-        if cli.verbose {
-            for p in &cli.ontology {
-                eprintln!("loading ontology: {}", p.display());
-            }
+    if cli.verbose {
+        for p in &cli.ontology {
+            eprintln!("loading ontology: {}", p.display());
         }
-        if cli.serve {
-            let compilation = compile_ontology_rules(&mut datastore, &cli.ontology)?;
-            if cli.verbose {
-                eprintln!("OWL axioms extracted: {}", compilation.axiom_count);
-                eprintln!("Datalog rules generated: {}", compilation.rules.len());
-            }
-            serve_rules.extend(compilation.rules);
-        } else {
+        for p in &cli.rules {
+            eprintln!("loading rules: {}", p.display());
+        }
+    }
+
+    if cli.serve {
+        let (rules, stats) = collect_serve_rules(&mut datastore, &cli.ontology, &cli.rules)?;
+        if cli.verbose && !cli.ontology.is_empty() {
+            eprintln!("OWL axioms extracted: {}", stats.ontology_axiom_count);
+            eprintln!("Datalog rules generated: {}", stats.ontology_rule_count);
+        }
+        serve_rules = rules;
+    } else {
+        if !cli.ontology.is_empty() {
             let stats = apply_ontologies(&mut datastore, &cli.ontology)?;
             if cli.verbose {
                 eprintln!("OWL axioms extracted: {}", stats.axiom_count);
@@ -391,19 +395,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 );
             }
         }
-    }
 
-    if !cli.rules.is_empty() {
-        if cli.verbose {
-            for p in &cli.rules {
-                eprintln!("loading rules: {}", p.display());
-            }
-        }
-        if cli.serve {
-            // Defer materialisation to IncrementalReasoner::new inside the server.
-            let mut rules = parse_rules(&mut datastore, &cli.rules)?;
-            serve_rules.append(&mut rules);
-        } else {
+        if !cli.rules.is_empty() {
             let triples_before = datastore.named_graphs.quad_count;
             let rule_count = apply_rules(&mut datastore, &cli.rules)?;
             if cli.verbose {

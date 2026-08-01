@@ -331,6 +331,61 @@ pub fn parse_rules(
     Ok(all_rules)
 }
 
+/// Ontology-axiom stats reported by [`collect_serve_rules`] for `--verbose`
+/// logging, mirroring the fields of [`OntologyCompilation`] that the CLI
+/// prints. `0`/`0` when `ontology_paths` was empty.
+#[derive(Default)]
+pub struct ServeRulesStats {
+    /// Total OWL axiom count extracted from `ontology_paths` (0 if none given).
+    pub ontology_axiom_count: usize,
+    /// Number of Datalog rules compiled from those axioms (0 if none given).
+    pub ontology_rule_count: usize,
+}
+
+/// The `--serve`-mode counterpart of [`apply_ontologies`] + [`apply_rules`]:
+/// collects ontology-derived (OWL2RL) rules and directly-supplied
+/// `.datalog`-file rules into a single `Vec<Rule>`, WITHOUT materialising
+/// either against `datastore`.
+///
+/// This is the fix for
+/// [#319](https://github.com/daghovland/rdf-datalog/issues/319): previously,
+/// the `--serve` CLI path ran ontology rule compilation through
+/// [`apply_ontologies`] (which eagerly, untracked-ly evaluates them via a
+/// standalone [`datalog::evaluate_rules`] call) and handed only the
+/// `.datalog`-file rules to `IncrementalReasoner::new`. A
+/// contradiction-triggered `rebuild_from_base` inside the server only
+/// replays the reasoner's own tracked rules, so it silently dropped the
+/// untracked OWL-RL-derived quads. By returning both rule sources merged
+/// into one `Vec<Rule>` here, the caller hands them to a single
+/// `IncrementalReasoner`/`Config::initial_rules` in one pass, so both share
+/// one tracked `derived_from` index and survive rebuilds together.
+///
+/// ABox assertions from `ontology_paths` are still applied eagerly as ground
+/// quads (see [`compile_ontology_rules`]) — only rule *evaluation* is
+/// deferred to the caller.
+pub fn collect_serve_rules(
+    datastore: &mut Datastore,
+    ontology_paths: &[PathBuf],
+    rule_paths: &[PathBuf],
+) -> Result<(Vec<datalog::Rule>, ServeRulesStats), String> {
+    let mut serve_rules = Vec::new();
+    let mut stats = ServeRulesStats::default();
+
+    if !ontology_paths.is_empty() {
+        let compilation = compile_ontology_rules(datastore, ontology_paths)?;
+        stats.ontology_axiom_count = compilation.axiom_count;
+        stats.ontology_rule_count = compilation.rules.len();
+        serve_rules.extend(compilation.rules);
+    }
+
+    if !rule_paths.is_empty() {
+        let mut rules = parse_rules(datastore, rule_paths)?;
+        serve_rules.append(&mut rules);
+    }
+
+    Ok((serve_rules, stats))
+}
+
 // ── SPARQL ────────────────────────────────────────────────────────────────────
 
 /// Execute a SPARQL SELECT query string against `datastore`.

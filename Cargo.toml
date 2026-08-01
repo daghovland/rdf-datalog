@@ -32,6 +32,7 @@ jsonld-parser = { path = "jsonld_parser" }
 rdf-canon = { package = "rdf-canonicalization", path = "rdf_canon" }
 serde_json = "1"
 shacl = { path = "shacl" }
+tempfile = "3"
 
 [[bench]]
 name = "gene_ontology"

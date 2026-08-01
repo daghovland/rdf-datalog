@@ -6,27 +6,30 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! Regression test for [#319](https://github.com/daghovland/rdf-datalog/issues/319):
-//! OWL-RL axiom-derived rules and plain `.datalog`-file rules must be
-//! materialised by the *same* `IncrementalReasoner`, sharing one tracked
-//! `derived_from` index, so a contradiction-triggered `rebuild_from_base`
-//! (see `sparql_endpoint::reasoner_delta::apply_reasoner_delta`) does not
-//! silently discard intensional quads that came from the axiom-derived rules.
+//! Companion invariant test for [#319](https://github.com/daghovland/rdf-datalog/issues/319).
 //!
-//! Before the `src/main.rs` fix for #319, the `--serve` path ran ontology
-//! (OWL2RL) rule compilation through a separate, eager, untracked
-//! `datalog::evaluate_rules` call, then handed only the directly-supplied
-//! `.datalog`-file rules to `IncrementalReasoner::new`. Any contradiction
-//! anywhere would trigger `rebuild_from_base`, which rebuilds derived quads
-//! from `self.programs` alone — silently dropping the untracked OWL-RL
-//! quads. This test reproduces that scenario at the `serve_on_listener`
-//! wiring level (not the isolated `IncrementalReasoner` API): it builds one
-//! `Vec<Rule>` combining an OWL2RL-compiled rule (via
-//! `owl2rl2datalog::owl2datalog`, mirroring `dagalog::compile_ontology_rules`)
-//! with a plain hand-written contradiction rule (mirroring a `.datalog`-file
-//! rule), and hands both to a single `IncrementalReasoner` via
-//! `Config::initial_rules`, exactly as the fixed `src/main.rs` `--serve` path
-//! does.
+//! This test does NOT exercise the actual CLI-wiring bug (the split between
+//! `dagalog::apply_ontologies`'s eager, untracked evaluation and
+//! `IncrementalReasoner::new`'s own tracked rules) — that is covered by
+//! `tests/serve_rules_unification.rs` at the repo root, which calls
+//! `dagalog::collect_serve_rules` (the function `src/main.rs`'s `--serve`
+//! branch actually calls) directly. This test passes even against the
+//! pre-#319-fix `src/main.rs`/`src/lib.rs`, because it constructs its
+//! already-merged `Vec<Rule>` by hand rather than going through the CLI's
+//! rule-collection path.
+//!
+//! What THIS test verifies is the reasoner-level invariant the #319 fix
+//! relies on: once OWL-RL axiom-derived rules and plain `.datalog`-file
+//! rules DO share one `IncrementalReasoner` (one tracked `derived_from`
+//! index), a contradiction-triggered `rebuild_from_base` (see
+//! `sparql_endpoint::reasoner_delta::apply_reasoner_delta`) must not
+//! silently discard intensional quads that came from the axiom-derived
+//! rules. It builds one `Vec<Rule>` combining an OWL2RL-compiled rule (via
+//! `owl2rl2datalog::owl2datalog`) with a plain hand-written contradiction
+//! rule (mirroring a `.datalog`-file rule), hands both to a single
+//! `IncrementalReasoner` via `Config::initial_rules`, and confirms the
+//! OWL-RL-derived triple survives a genuine, unrelated contradiction
+//! elsewhere in the store.
 
 mod common;
 
