@@ -345,7 +345,133 @@ fn turtle_term(s: &str) -> String {
 /// `GraphElementId` in the returned store. See
 /// [#314](https://github.com/daghovland/rdf-datalog/issues/314).
 pub fn report_to_datastore(report: &ValidationReport) -> Datastore {
-    todo!("#314: implement after tests are written and stubbed")
+    let mut ds = Datastore::new(64);
+    let rdf_type = graph::intern_iri(&mut ds, RDF_TYPE);
+    let sh_validation_report = graph::intern_iri(&mut ds, vocab::SH_VALIDATION_REPORT);
+    let sh_conforms = graph::intern_iri(&mut ds, vocab::SH_CONFORMS);
+
+    let report_node = ds.new_anonymous_blank_node();
+    ds.add_triple(Triple {
+        subject: report_node,
+        predicate: rdf_type,
+        obj: sh_validation_report,
+    });
+    let conforms_val =
+        ds.add_literal_resource(dag_rdf::RdfLiteral::BooleanLiteral(report.conforms));
+    ds.add_triple(Triple {
+        subject: report_node,
+        predicate: sh_conforms,
+        obj: conforms_val,
+    });
+
+    if !report.conforms {
+        let sh_result = graph::intern_iri(&mut ds, vocab::SH_RESULT);
+        let sh_validation_result = graph::intern_iri(&mut ds, vocab::SH_VALIDATION_RESULT);
+        let sh_result_severity = graph::intern_iri(&mut ds, vocab::SH_RESULT_SEVERITY);
+        let sh_focus_node = graph::intern_iri(&mut ds, vocab::SH_FOCUS_NODE);
+        let sh_result_path = graph::intern_iri(&mut ds, vocab::SH_RESULT_PATH);
+        let sh_value = graph::intern_iri(&mut ds, vocab::SH_VALUE);
+        let sh_source_shape = graph::intern_iri(&mut ds, vocab::SH_SOURCE_SHAPE);
+        let sh_source_constraint_component =
+            graph::intern_iri(&mut ds, vocab::SH_SOURCE_CONSTRAINT_COMPONENT);
+        let sh_result_message = graph::intern_iri(&mut ds, vocab::SH_RESULT_MESSAGE);
+
+        for result in &report.results {
+            let result_node = ds.new_anonymous_blank_node();
+            ds.add_triple(Triple {
+                subject: report_node,
+                predicate: sh_result,
+                obj: result_node,
+            });
+            ds.add_triple(Triple {
+                subject: result_node,
+                predicate: rdf_type,
+                obj: sh_validation_result,
+            });
+
+            // sh:resultSeverity: always a full IRI (Severity::iri()), never a
+            // string/blank-node label, unlike the generic term fields below —
+            // interned directly rather than through `intern_result_term`.
+            let severity_id = graph::intern_iri(&mut ds, result.severity.iri());
+            ds.add_triple(Triple {
+                subject: result_node,
+                predicate: sh_result_severity,
+                obj: severity_id,
+            });
+
+            if let Some(focus) = &result.focus_node {
+                let id = intern_result_term(&mut ds, focus);
+                ds.add_triple(Triple {
+                    subject: result_node,
+                    predicate: sh_focus_node,
+                    obj: id,
+                });
+            }
+            if let Some(path) = &result.result_path {
+                let id = intern_result_term(&mut ds, path);
+                ds.add_triple(Triple {
+                    subject: result_node,
+                    predicate: sh_result_path,
+                    obj: id,
+                });
+            }
+            if let Some(val) = &result.value {
+                let id = intern_result_term(&mut ds, val);
+                ds.add_triple(Triple {
+                    subject: result_node,
+                    predicate: sh_value,
+                    obj: id,
+                });
+            }
+            let source_shape_id = intern_result_term(&mut ds, &result.source_shape);
+            ds.add_triple(Triple {
+                subject: result_node,
+                predicate: sh_source_shape,
+                obj: source_shape_id,
+            });
+
+            if let Some(component) = &result.source_constraint {
+                let id = intern_result_term(&mut ds, component);
+                ds.add_triple(Triple {
+                    subject: result_node,
+                    predicate: sh_source_constraint_component,
+                    obj: id,
+                });
+            }
+            if let Some(msg) = &result.message {
+                let id = ds.add_literal_resource(dag_rdf::RdfLiteral::LiteralString(msg.clone()));
+                ds.add_triple(Triple {
+                    subject: result_node,
+                    predicate: sh_result_message,
+                    obj: id,
+                });
+            }
+        }
+    }
+    ds
+}
+
+/// Intern a `ValidationResult` string field (focus node / path / value /
+/// source shape / source-constraint-component) into `ds`, classifying it
+/// exactly as [`turtle_term`] does for the text serializer: an IRI (`<…>`,
+/// `http://…`, `https://…`, `urn:…`), a blank-node label (`_:…`, re-interned
+/// consistently by label via `get_or_create_named_anon_resource` so the same
+/// label always resolves to the same node within one `report_to_datastore`
+/// call), or otherwise a plain string literal.
+fn intern_result_term(ds: &mut Datastore, s: &str) -> GraphElementId {
+    if s.starts_with('<')
+        || s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with("urn:")
+    {
+        let iri = s.trim_start_matches('<').trim_end_matches('>');
+        graph::intern_iri(ds, iri)
+    } else if let Some(label) = s.strip_prefix("_:") {
+        ds.resources
+            .get_or_create_named_anon_resource(label.to_string())
+    } else {
+        ds.add_literal_resource(dag_rdf::RdfLiteral::LiteralString(s.to_string()))
+    }
 }
 
 // ── Pre-compute violations ────────────────────────────────────────────────────

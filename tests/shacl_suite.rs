@@ -3003,7 +3003,6 @@ fn as_bool_literal(el: &GraphElement) -> bool {
 /// even though `report_to_turtle` (and hence `report_to_datastore`) never
 /// look at `report.results` when `conforms` is `true`.
 #[test]
-#[ignore = "#314: report_to_datastore not yet implemented"]
 fn report_to_datastore_conforms() {
     let report = ValidationReport {
         conforms: true,
@@ -3032,7 +3031,6 @@ fn report_to_datastore_conforms() {
 /// `sh:resultPath`, `sh:value`, `sh:sourceShape`,
 /// `sh:sourceConstraintComponent`, `sh:resultMessage`).
 #[test]
-#[ignore = "#314: report_to_datastore not yet implemented"]
 fn report_to_datastore_full_violation() {
     let report = ValidationReport {
         conforms: false,
@@ -3051,7 +3049,9 @@ fn report_to_datastore_full_violation() {
     // sh:conforms false, exactly one sh:result.
     let conforms_row = select_one_row(
         &ds,
-        &format!("{SPARQL_PREFIX}SELECT ?conforms WHERE {{ ?r a sh:ValidationReport ; sh:conforms ?conforms }}"),
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?conforms WHERE {{ ?r a sh:ValidationReport ; sh:conforms ?conforms }}"
+        ),
     );
     assert!(!as_bool_literal(&conforms_row["conforms"]));
 
@@ -3091,7 +3091,6 @@ fn report_to_datastore_full_violation() {
 /// consistently rather than minting a fresh node per field. See
 /// [#314](https://github.com/daghovland/rdf-datalog/issues/314).
 #[test]
-#[ignore = "#314: report_to_datastore not yet implemented"]
 fn report_to_datastore_blank_node_round_trip() {
     let report = ValidationReport {
         conforms: false,
