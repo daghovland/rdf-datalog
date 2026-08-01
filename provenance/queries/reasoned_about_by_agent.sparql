@@ -1,0 +1,19 @@
+# "What has agent X reasoned about?" -- every agp:TranscriptSummary
+# prov:wasAttributedTo a given agent, with the bl:WorkItem it explains.
+#
+# Parameterized via the VALUES line below -- edit ?agent to point at a
+# different prov:SoftwareAgent/prov:Person to ask about a different one.
+# Shipped pointing at the "Claude Sonnet 5" agent asserted in
+# ../summaries/pr-300.ttl.
+
+PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX session: <https://dagalog.dev/ns/agentprov/session#>
+
+SELECT ?summary ?summaryText ?workItem WHERE {
+  VALUES ?agent { session:claudeSonnet5 }
+  ?summary a agp:TranscriptSummary ;
+    prov:wasAttributedTo ?agent ;
+    agp:summaryText ?summaryText ;
+    agp:reasoningFor ?workItem .
+}

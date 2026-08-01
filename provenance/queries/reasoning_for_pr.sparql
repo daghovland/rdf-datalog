@@ -1,0 +1,17 @@
+# "Why was PR #N merged?" -- look up the agp:TranscriptSummary
+# agp:reasoningFor a given bl:PullRequest and print its agp:summaryText.
+#
+# Parameterized via the VALUES line below -- edit ?pr to point at a
+# different PR's real GitHub URL to ask about a different one. Shipped
+# pointing at PR #300 (https://github.com/daghovland/rdf-datalog/pull/300),
+# the worked example in ../summaries/pr-300.ttl.
+
+PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX ghpull: <https://github.com/daghovland/rdf-datalog/pull/>
+
+SELECT ?summary ?summaryText WHERE {
+  VALUES ?pr { ghpull:300 }
+  ?summary a agp:TranscriptSummary ;
+    agp:reasoningFor ?pr ;
+    agp:summaryText ?summaryText .
+}

@@ -1,0 +1,19 @@
+# "Which sessions worked on issue #N?" -- every agp:AgentSession
+# prov:used a given bl:Issue.
+#
+# Parameterized via the VALUES line below -- edit ?issue to point at a
+# different real GitHub issue URL to ask about a different one. Shipped
+# pointing at issue #264
+# (https://github.com/daghovland/rdf-datalog/issues/264), the issue PR #300
+# closed (see ../summaries/pr-300.ttl).
+
+PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX ghissues: <https://github.com/daghovland/rdf-datalog/issues/>
+
+SELECT ?session ?agent WHERE {
+  VALUES ?issue { ghissues:264 }
+  ?session a agp:AgentSession ;
+    prov:used ?issue ;
+    prov:wasAssociatedWith ?agent .
+}
