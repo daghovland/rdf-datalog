@@ -79,11 +79,21 @@ pub fn iri_string(ds: &Datastore, id: GraphElementId) -> Option<String> {
 }
 
 /// Return a display string for any graph element (IRI, blank node, or literal).
+///
+/// A literal is rendered as genuine, spec-compliant Turtle literal syntax
+/// (`"lexical"^^<datatype-iri>` / `"lexical"@lang` / `"lexical"`) via
+/// `turtle::serialize::format_literal`, not `RdfLiteral`'s ad-hoc `Display`
+/// impl (which produces e.g. `5^^http://…` with no quotes and the wrong
+/// `lang@literal` order). This lets callers that consume this string —
+/// `turtle_term`/`intern_result_term` in `shacl/src/lib.rs` — correctly
+/// recognize it as a literal and preserve its datatype/language instead of
+/// flattening it to a plain string. See
+/// [#337](https://github.com/daghovland/rdf-datalog/issues/337).
 pub fn element_display(ds: &Datastore, id: GraphElementId) -> String {
     match ds.resources.get_graph_element(id) {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => iri.0.clone(),
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(n)) => format!("_:b{n}"),
-        GraphElement::GraphLiteral(lit) => lit.to_string(),
+        GraphElement::GraphLiteral(lit) => turtle::format_literal(lit),
         // Triple terms: display using the Debug representation of the key IDs (#143).
         GraphElement::TripleTerm(k) => format!("<<( {} {} {} )>>", k.subject, k.predicate, k.obj),
     }

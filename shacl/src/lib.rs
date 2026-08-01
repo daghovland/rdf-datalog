@@ -315,11 +315,24 @@ pub fn report_to_turtle(report: &ValidationReport) -> String {
     out
 }
 
-/// Format a value as a Turtle term: IRI `<…>`, blank node `_:…` (as-is, no
-/// quoting — needed since `sh:sourceShape` can now be a blank-node display
-/// string, see `graph::element_display`), or string literal `"…"`.
+/// Format a value as a Turtle term: a literal already in genuine Turtle
+/// syntax (as-is, no re-quoting — see below), IRI `<…>`, blank node `_:…`
+/// (as-is, no quoting — needed since `sh:sourceShape` can now be a
+/// blank-node display string, see `graph::element_display`), or a plain
+/// string that still needs quoting (e.g. `sh:resultMessage`, which is never
+/// routed through `element_display`).
+///
+/// The literal check must come first and is unambiguous: `element_display`
+/// now renders every literal as real Turtle literal syntax starting with
+/// `"` (via `turtle::format_literal`, [#337](https://github.com/daghovland/rdf-datalog/issues/337)),
+/// and no IRI/blank-node display string can start with `"`. Passing such a
+/// string through unchanged (rather than wrapping it in another layer of
+/// quotes) is what keeps `sh:value`/`sh:focusNode`/etc. correctly typed
+/// (`"5"^^<xsd:integer>`, not `"\"5\"^^<xsd:integer>\""`).
 fn turtle_term(s: &str) -> String {
-    if s.starts_with('<')
+    if s.starts_with('"') {
+        s.to_string()
+    } else if s.starts_with('<')
         || s.starts_with("http://")
         || s.starts_with("https://")
         || s.starts_with("urn:")
@@ -453,13 +466,28 @@ pub fn report_to_datastore(report: &ValidationReport) -> Datastore {
 
 /// Intern a `ValidationResult` string field (focus node / path / value /
 /// source shape / source-constraint-component) into `ds`, classifying it
-/// exactly as [`turtle_term`] does for the text serializer: an IRI (`<…>`,
-/// `http://…`, `https://…`, `urn:…`), a blank-node label (`_:…`, re-interned
-/// consistently by label via `get_or_create_named_anon_resource` so the same
-/// label always resolves to the same node within one `report_to_datastore`
-/// call), or otherwise a plain string literal.
+/// exactly as [`turtle_term`] does for the text serializer: genuine Turtle
+/// literal syntax (`"…"^^<…>` / `"…"@…` / `"…"`, produced by
+/// `graph::element_display` — see [#337](https://github.com/daghovland/rdf-datalog/issues/337)),
+/// an IRI (`<…>`, `http://…`, `https://…`, `urn:…`), or a blank-node label
+/// (`_:…`, re-interned consistently by label via
+/// `get_or_create_named_anon_resource` so the same label always resolves to
+/// the same node within one `report_to_datastore` call).
+///
+/// The literal branch actually parses the Turtle syntax back into a proper
+/// `RdfLiteral::TypedLiteral`/`LangLiteral`/`LiteralString` (via
+/// `turtle::parse_literal_term`) rather than wrapping the whole string as an
+/// opaque `LiteralString` — so a typed/lang-tagged `sh:value` etc. survives
+/// `report_to_datastore` with its datatype/language intact. Falls back to a
+/// plain string literal if `s` starts with `"` but is not parseable Turtle
+/// literal syntax (defensive; `element_display` never produces such a
+/// string, so this should not happen in practice).
 fn intern_result_term(ds: &mut Datastore, s: &str) -> GraphElementId {
-    if s.starts_with('<')
+    if s.starts_with('"') {
+        let lit = turtle::parse_literal_term(s)
+            .unwrap_or_else(|| dag_rdf::RdfLiteral::LiteralString(s.to_string()));
+        ds.add_literal_resource(lit)
+    } else if s.starts_with('<')
         || s.starts_with("http://")
         || s.starts_with("https://")
         || s.starts_with("urn:")
