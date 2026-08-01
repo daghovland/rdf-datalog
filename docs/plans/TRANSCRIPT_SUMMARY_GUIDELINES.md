@@ -99,7 +99,7 @@ Concretely, your summary file must itself declare:
 ghpull:<N> a bl:PullRequest, bl:WorkItem ;
     rdfs:label "<the PR's actual title>" ;
     bl:number <N> ;
-    bl:state bl:Closed ;
+    bl:state bl:Closed ;   # bl:Open if writing this prospectively, before merge -- see "Session window"
     bl:closesIssue ghissues:<M> .
 ```
 
@@ -121,14 +121,41 @@ fail).
 ## Session window
 
 `prov:startedAtTime`/`prov:endedAtTime` on the `agp:AgentSession` must be
-real, not invented — pull them from `gh pr view <N> --json commits,mergedAt`.
-`endedAtTime` is the PR's actual `mergedAt`. `startedAtTime`: if the whole
-PR was one continuous session, use the first commit's `authoredDate`; if
-the PR spanned multiple days/sessions (as PR #300 did — first two commits
-landed two days before the final review-and-fix pass), use the final
-commit's `authoredDate` and let the window cover just that closing session,
-per `pr-300.ttl`'s own comment on why a multi-day span would misrepresent
-what "one session" means.
+real, not invented. Two cases, because CLAUDE.md's step 6b writes the
+summary file **before** the PR merges (it happens right after step 6,
+"Commit, push, open a PR," and before step 7's worktree removal) — there
+is no real `mergedAt` yet at authoring time:
+
+- **Retrospective** (summarizing a PR that already merged — e.g. writing
+  a summary for older history, or catching up on a PR that landed without
+  one): pull real timestamps from
+  `gh pr view <N> --json commits,mergedAt`. `endedAtTime` is the PR's
+  actual `mergedAt`; `startedAtTime` is the first commit's `authoredDate`
+  if the whole PR was one continuous session, or the final commit's
+  `authoredDate` if the PR spanned multiple days/sessions (as PR #300 did
+  — first two commits landed two days before the final review-and-fix
+  pass; the window covers just that closing session, per `pr-300.ttl`'s
+  own comment on why a multi-day span would misrepresent what "one
+  session" means). `bl:state bl:Closed` on the referenced PR stub, since
+  it's a real, already-merged fact. Both `pr-300.ttl` and `pr-328.ttl` are
+  retrospective examples.
+- **Prospective** (the normal CLAUDE.md step 6b case — writing your own
+  summary right after opening the PR, in the same session that did the
+  work): `startedAtTime` is still real — the first (or, for a multi-session
+  PR, the most recent relevant) commit's `authoredDate` from `git log`.
+  `endedAtTime` is the real wall-clock time the summary itself is being
+  written (this session's own "now"), NOT a guessed future `mergedAt` — an
+  invented merge timestamp would be a fabricated fact, worse than an
+  honestly-labeled "this is when the session concluded, not when the PR
+  merged." The referenced PR stub gets `bl:state bl:Open` (the real,
+  current state at authoring time — do not write `bl:Closed` prospectively;
+  no shape currently checks this value against the PR's real GitHub state,
+  but writing a false fact defeats the whole point). Nothing in this
+  workflow re-opens the file to flip `bl:Open` to `bl:Closed` once the PR
+  actually merges — the summary is a record of what was known and decided
+  at authoring time, not a live-synced mirror of PR state. See
+  `provenance/summaries/pr-344.ttl` (this very PR, #334/#344) for a worked
+  prospective example.
 
 ## Using `agp:decisionPoint`
 
@@ -173,6 +200,11 @@ hardcoded) — a new file needs no test code change to be picked up.
 - [`provenance/summaries/pr-300.ttl`](../../provenance/summaries/pr-300.ttl)
   — the original #327 example (two decision points).
 - [`provenance/summaries/pr-328.ttl`](../../provenance/summaries/pr-328.ttl)
-  — a second real example added for #334, specifically to prove the
-  glob-based test/CI wiring above actually generalizes past "the one
-  hardcoded file."
+  — a second real, retrospective example added for #334, specifically to
+  prove the glob-based test/CI wiring above actually generalizes past "the
+  one hardcoded file."
+- [`provenance/summaries/pr-344.ttl`](../../provenance/summaries/pr-344.ttl)
+  — a **prospective** example: this very PR's own summary, written under
+  step 6b before merge, following the "Session window" section's
+  prospective case exactly (`bl:state bl:Open`, `endedAtTime` = authoring
+  time, not a guessed `mergedAt`).

@@ -1,0 +1,54 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# A THIRD worked example for the agent-provenance vocabulary
+# (backlog/ontology/agentprov-vocabulary.ttl, issue #326) -- and the first
+# PROSPECTIVE one: written for the very PR (#344) that institutes CLAUDE.md
+# step 6b, following that step's own real workflow (written on the branch,
+# right after opening the PR, before it merges) rather than retrospectively
+# reconstructing it after the fact like pr-300.ttl/pr-328.ttl. See
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window" section,
+# prospective case, for exactly what differs here and why:
+#
+# - ghpull:344's bl:state is bl:Open, the real current state at authoring
+#   time -- NOT bl:Closed, since this PR has not merged yet as this file is
+#   written. Nothing in this workflow re-opens the file later to flip this
+#   once the PR does merge; it's a record of what was known and decided at
+#   authoring time, not a live-synced mirror of PR state.
+# - session:pr344's endedAtTime is the real wall-clock time this summary
+#   itself was written (this session's own "now"), not a guessed future
+#   mergedAt -- an invented merge timestamp would be a fabricated fact.
+#   startedAtTime is the real authoredDate of this branch's first commit
+#   (`git log feat/334-provenance-guidelines -1 --format=%aI`).
+#
+# ghissues:334 (the issue this PR addresses) is referenced only as an
+# object (prov:used), never typed bl:Issue, for the identical reason
+# pr-300.ttl/pr-328.ttl don't type their own referenced issues -- see
+# "The referenced PR/issue stubs" in the guidelines doc.
+
+ghpull:344 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "provenance: transcript-summary guidelines, strengthened SHACL shapes, glob-based loading" ;
+    bl:number 344 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:334 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr344 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:334 ;
+    prov:startedAtTime "2026-08-01T17:54:30Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T17:59:51Z"^^xsd:dateTime .
+
+session:pr344Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #334 was originally framed as an automated ML/heuristic transcript-extraction pipeline, then reframed by the repo owner (2026-08-01 comment): trust the PR-finishing agent to hand-author its own transcript summary instead, and build the infrastructure that makes that trustworthy. Built four pieces: a concrete authoring spec (TRANSCRIPT_SUMMARY_GUIDELINES.md) grounded in the existing pr-300.ttl example; two new SHACL constraints on agentprov-shapes.ttl (sh:minLength/sh:maxLength on agp:summaryText to catch a degenerate one-liner or a raw transcript dump, and sh:class bl:WorkItem on agp:reasoningFor to catch a reference to something that isn't really a work item); a generalized tests/provenance_queries.rs that globs provenance/summaries/*.ttl instead of hardcoding one file, validating each file in its own datastore (not merged) so one file's malformed content can't hide behind another's stubs; and CLAUDE.md's new step 6b. A second, retrospective worked example (pr-328.ttl, distilling real PR #328) was added specifically to prove the glob-based loader actually generalizes past the one file it started with." ;
+    agp:reasoningFor ghpull:344 ;
+    prov:wasGeneratedBy session:pr344 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
