@@ -775,6 +775,64 @@ fn spec_s4_5_4_lessthanorequals() {
     );
 }
 
+/// Regression for the W3C SHACL test suite fixture `lessThan-002.ttl`:
+/// `ex:InvalidInstance1` has two `ex:first` values (1, 2) and two `ex:second`
+/// values ("a", "b"). Both `"a"`/`"b"` are incomparable with a number
+/// (cross-datatype), so per
+/// <https://www.w3.org/TR/shacl/#LessThanConstraintComponent> ("... or where
+/// the two values cannot be compared, there is a validation result") the
+/// spec's SPARQL-based validator (`?this $PATH ?value . ?this $lessThan
+/// ?otherValue`, one result row per failing *pair*) produces one violation
+/// per failing `(value, otherValue)` pair — not one per distinct value. Both
+/// `1` and `2` each fail against both `"a"` and `"b"` independently, so the
+/// correct report has 4 results (two content-identical pairs per value),
+/// which a quad-set-backed violation representation previously collapsed to
+/// 2 (one per distinct value) because the two derivations for a given value
+/// produced byte-identical `(focus, viol_pred, value)` triples. See
+/// [#341](https://github.com/daghovland/rdf-datalog/issues/341) and its
+/// parent [#323](https://github.com/daghovland/rdf-datalog/issues/323).
+#[test]
+fn regression_341_lessthan_multiplicity_per_failing_pair() {
+    // This W3C suite fixture uses a relative `<>` self-reference (both
+    // `sht:dataGraph` and `sht:shapesGraph` point at the file itself), which
+    // needs an absolute base IRI to parse — unlike this suite's other
+    // `tests/testdata/shacl_*.ttl` fixtures (loaded via the plain `load`
+    // helper above), so this test parses directly with
+    // `turtle::parse_turtle_with_base` instead.
+    let path = testdata("w3c_shacl/core/property/lessThan-002.ttl");
+    let text = std::fs::read_to_string(&path).expect("fixture file should exist");
+    let abs = path.canonicalize().unwrap_or(path);
+    let base = format!("file://{}", abs.display());
+    let mut ds = Datastore::new(4_096);
+    turtle::parse_turtle_with_base(&mut ds, text.as_bytes(), &base)
+        .expect("fixture should parse as Turtle");
+    let report = shacl::validate(&ds, &ds).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        4,
+        "expected 4 results (2 failing otherValues × 2 values), got {}",
+        report.results.len()
+    );
+    let mut counts: std::collections::HashMap<Option<String>, usize> =
+        std::collections::HashMap::new();
+    for r in &report.results {
+        *counts.entry(r.value.clone()).or_default() += 1;
+    }
+    assert_eq!(
+        counts.len(),
+        2,
+        "expected exactly 2 distinct sh:value witnesses (1 and 2), got {:?}",
+        counts.keys().collect::<Vec<_>>()
+    );
+    for (val, count) in &counts {
+        assert_eq!(
+            *count, 2,
+            "value {val:?} should appear in exactly 2 distinct results, got {count}"
+        );
+    }
+}
+
 // ── §4.6  Logical Constraint Components ──────────────────────────────────────
 
 /// SHACL §4.6.1 — `sh:not`: the node must NOT conform to the given shape.
