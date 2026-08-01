@@ -1,0 +1,79 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# A worked grounding example for the agent-provenance vocabulary
+# (backlog/ontology/agentprov-vocabulary.ttl, issue #326), distilling the
+# REAL reasoning from PR #300
+# (https://github.com/daghovland/rdf-datalog/pull/300), which closed issue
+# #264 ("shacl::collect_violations never populates ValidationResult detail
+# fields"). Written for issue #327 (a sub-issue of the agent-provenance
+# epic #306), per
+# docs/plans/AGENT_PROVENANCE_PLAN.md's "Placement" section: this file is
+# repo-specific instance data (a real PR number, real session reasoning
+# about rdf-datalog's own history) and lives under the NEW top-level
+# provenance/ directory rather than backlog/, so it stays behind if/when
+# backlog/ is later extracted into its own repo.
+#
+# ghpull:300 is asserted as a bl:PullRequest/bl:WorkItem (reusing the
+# backlog#L vocabulary's own convention -- real GitHub URL as IRI, no
+# invented identifier scheme) purely so agp:reasoningFor has a real
+# bl:WorkItem to point at; it is not a full backlog/ snapshot entry.
+#
+# session:pr300's startedAtTime/endedAtTime are real, not invented: taken
+# from `gh pr view 300 --json commits,mergedAt` -- startedAtTime is the
+# timestamp of the final commit before merge (2026-07-30T14:26:39Z, the
+# review-driven sourceShape/qualified-split fixes below), endedAtTime is
+# the PR's actual mergedAt (2026-07-30T16:32:03Z). The session window
+# covers that final review-and-fix pass, not the whole multi-day PR (the
+# first two commits landed 2026-07-26); a single continuous agent session
+# spanning four calendar days would misrepresent what "one session" means
+# here. agp:transcriptRef is the real Claude-Session URL from PR #300's own
+# merged body.
+
+ghpull:300 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): populate ValidationResult detail fields (resultPath/sourceShape/sourceConstraintComponent/message)" ;
+    bl:number 300 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:264 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr300 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:264 ;
+    agp:transcriptRef "https://claude.ai/code/session_01YGcEC2n8MMwmDfH74aUBng" ;
+    prov:startedAtTime "2026-07-30T14:26:39Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-30T16:32:03Z"^^xsd:dateTime .
+
+# Decision point 1: how sh:sourceShape should resolve when the violation
+# comes from a named property shape rather than an anonymous sh:property
+# block -- the first round of review flagged that sourceShape always fell
+# back to the parent node shape's own identity, even when the actual
+# property shape had its own IRI.
+session:pr300SourceShapeDecision a agp:Decision ;
+    agp:summaryText "sh:sourceShape must resolve to the actual property shape that declared the violated constraint, not the enclosing node shape. ParsedPropShape gained a shapes_id field (the id of its own shape node -- the object of sh:property, or the node shape itself when sh:path is declared directly on it), and ViolMeta::new resolves source_shape from that node via graph::element_display, which never returns None (named shapes render as their IRI, anonymous ones as _:bN)." ;
+    agp:alternative "Leave sourceShape always pointing at the parent node shape, treating the distinction as not worth the added field." .
+
+# Decision point 2: sh:qualifiedMinCount and sh:qualifiedMaxCount are two
+# separate SHACL constraint components in the spec (verified against the
+# normative vocabulary at https://www.w3.org/ns/shacl.ttl -- no unified
+# QualifiedValueShapeConstraintComponent exists), but this crate's model
+# had them sharing one PropConstraint::QualifiedValueShape { min, max }
+# variant with a single violation predicate.
+session:pr300QualifiedSplitDecision a agp:Decision ;
+    agp:summaryText "eval_qualified_value was redesigned to check each declared bound (sh:qualifiedMinCount, sh:qualifiedMaxCount) against its own violation predicate and report its own correct sh:sourceConstraintComponent (QualifiedMinCountConstraintComponent or QualifiedMaxCountConstraintComponent), instead of picking one arbitrarily via a static \"prefer min\" heuristic. When both bounds are declared as an interval, a node can now independently violate one, the other, or both, each with its own correctly-tagged result." ;
+    agp:alternative "Keep the single shared violation predicate and have it statically prefer reporting the min-count component whenever both bounds are declared, even when only the max bound was actually violated." .
+
+session:pr300Summary a agp:TranscriptSummary ;
+    agp:summaryText "shacl::collect_violations unconditionally set result_path, source_shape, source_constraint, and message to None on every ValidationResult, and report_to_turtle correspondingly never emitted sh:resultPath/sh:sourceShape/sh:sourceConstraintComponent/sh:resultMessage; sh:message on a shape was never even parsed. Added ParsedShape::message and PropConstraint::component_iri() (mapping each constraint variant to its W3C sh:sourceConstraintComponent IRI, verified against the normative https://www.w3.org/ns/shacl.ttl, not just spec prose), and threaded a new ViolMeta (severity, source shape, path, constraint-component IRI, message) through pre_compute_violations/shapes_to_rules/eval_all into collect_violations, mirroring the existing Severity-threading pattern from #263. Review then surfaced two further fixes, both landed on this same branch: sourceShape now resolves to the actual property shape rather than always falling back to the parent node shape, and sh:qualifiedMinCount/sh:qualifiedMaxCount are evaluated and reported as independent constraint components rather than one ambiguous check." ;
+    agp:reasoningFor ghpull:300 ;
+    agp:decisionPoint session:pr300SourceShapeDecision, session:pr300QualifiedSplitDecision ;
+    prov:wasGeneratedBy session:pr300 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
