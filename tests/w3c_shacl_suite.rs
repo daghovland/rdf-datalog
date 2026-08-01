@@ -562,7 +562,9 @@ fn mk_report(focus_node: &str, value: &str) -> ValidationReport {
             focus_node: Some(focus_node.to_string()),
             severity: Severity::Violation,
             message: None,
-            result_path: Some(shacl::path::ShPath::Predicate("http://example.org/p".to_string())),
+            result_path: Some(shacl::path::ShPath::Predicate(
+                "http://example.org/p".to_string(),
+            )),
             source_shape: "http://example.org/Shape".to_string(),
             source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
             value: Some(value.to_string()),
@@ -613,7 +615,9 @@ fn canonical_comparator_ignores_blank_node_label_spelling() {
             focus_node: Some("_:b1".to_string()),
             severity: Severity::Violation,
             message: None,
-            result_path: Some(shacl::path::ShPath::Predicate("http://example.org/p".to_string())),
+            result_path: Some(shacl::path::ShPath::Predicate(
+                "http://example.org/p".to_string(),
+            )),
             source_shape: "http://example.org/Shape".to_string(),
             source_constraint: Some("http://www.w3.org/ns/shacl#ClassConstraintComponent".into()),
             value: Some("_:b2".to_string()),
