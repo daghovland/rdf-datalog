@@ -753,6 +753,7 @@ dependencies = [
  "shacl",
  "sparql-endpoint",
  "sparql-parser",
+ "tempfile",
  "tokio",
  "turtle",
 ]
@@ -3132,7 +3133,9 @@ dependencies = [
  "jsonld-parser",
  "jsonwebtoken",
  "ottr",
+ "owl2rl2datalog",
  "rand 0.8.6",
+ "rdf-owl-translator",
  "redb",
  "reqwest",
  "rml",
