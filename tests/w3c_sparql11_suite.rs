@@ -670,19 +670,274 @@ fn compare_with_srx(ds: &Datastore, sparql: &str, srx_path: &str) -> Option<Stri
         ));
     }
 
-    // Multiset comparison (order-insensitive)
-    let mut remaining = expected_rows_norm.clone();
-    for actual_row in &actual_rows {
-        if let Some(pos) = remaining.iter().position(|e| e == actual_row) {
-            remaining.swap_remove(pos);
-        } else {
-            return Some(format!("unexpected row: {:?}", actual_row));
+    let actual_bnodes = distinct_bnode_labels(&actual_rows);
+    let expected_bnodes = distinct_bnode_labels(&expected_rows_norm);
+
+    // Fast path: no blank nodes involved at all, so exact-label multiset
+    // comparison (order-insensitive) is both correct and gives a precise
+    // "missing rows" diagnostic on mismatch.
+    if actual_bnodes.is_empty() && expected_bnodes.is_empty() {
+        let mut remaining = expected_rows_norm.clone();
+        for actual_row in &actual_rows {
+            if let Some(pos) = remaining.iter().position(|e| e == actual_row) {
+                remaining.swap_remove(pos);
+            } else {
+                return Some(format!("unexpected row: {:?}", actual_row));
+            }
         }
+        return if remaining.is_empty() {
+            None
+        } else {
+            Some(format!("missing rows: {:?}", remaining))
+        };
     }
-    if remaining.is_empty() {
+
+    // Blank-node labels are arbitrary per RDF/SPARQL result equivalence —
+    // only their equality *pattern* within/across rows is meaningful, not
+    // their literal spelling. Search for a bijection between the actual and
+    // expected label sets that makes the row multisets equal. See #205
+    // follow-up (BNODE()/plus-1/plus-2 harness gap).
+    if actual_bnodes.len() != expected_bnodes.len() {
+        return Some(format!(
+            "blank-node count mismatch: actual has {} distinct label(s) ({:?}), expected has {} ({:?})",
+            actual_bnodes.len(),
+            actual_bnodes,
+            expected_bnodes.len(),
+            expected_bnodes
+        ));
+    }
+    if actual_bnodes.len() > MAX_BNODE_LABELS_FOR_ISOMORPHISM {
+        return Some(format!(
+            "too many distinct blank-node labels ({}) to check isomorphism (cap {})",
+            actual_bnodes.len(),
+            MAX_BNODE_LABELS_FOR_ISOMORPHISM
+        ));
+    }
+    if bnode_isomorphic_multiset_match(
+        &actual_rows,
+        &expected_rows_norm,
+        &actual_bnodes,
+        &expected_bnodes,
+    ) {
         None
     } else {
-        Some(format!("missing rows: {:?}", remaining))
+        Some(format!(
+            "no blank-node relabelling makes actual rows {:?} match expected rows {:?}",
+            actual_rows, expected_rows_norm
+        ))
+    }
+}
+
+/// Distinct blank-node labels (`SrxValue::Bnode` ids) occurring anywhere in a
+/// set of result rows, sorted for determinism.
+fn distinct_bnode_labels(rows: &[HashMap<String, SrxValue>]) -> Vec<String> {
+    let mut labels: Vec<String> = rows
+        .iter()
+        .flat_map(|row| row.values())
+        .filter_map(|v| match v {
+            SrxValue::Bnode(id) => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// Bound on distinct blank-node labels for the isomorphism search below
+/// (which is `O(n!)` in the worst case via brute-force backtracking). The
+/// W3C suite's own bnode-bearing `functions` entries never exceed a
+/// handful of labels; this cap exists only to keep a future pathological
+/// fixture from hanging the test run instead of failing it promptly.
+const MAX_BNODE_LABELS_FOR_ISOMORPHISM: usize = 8;
+
+/// Replace every `SrxValue::Bnode` label in `rows` per `mapping`, leaving
+/// unmapped labels (and all non-bnode values) untouched.
+fn remap_bnode_labels(
+    rows: &[HashMap<String, SrxValue>],
+    mapping: &HashMap<String, String>,
+) -> Vec<HashMap<String, SrxValue>> {
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .map(|(var, val)| {
+                    let val = match val {
+                        SrxValue::Bnode(id) => {
+                            SrxValue::Bnode(mapping.get(id).cloned().unwrap_or_else(|| id.clone()))
+                        }
+                        other => other.clone(),
+                    };
+                    (var.clone(), val)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Order-insensitive equality of two row sets under exact `SrxValue` equality
+/// (used after a candidate blank-node relabelling has been applied).
+fn rows_equal_as_multiset(
+    actual: &[HashMap<String, SrxValue>],
+    expected: &[HashMap<String, SrxValue>],
+) -> bool {
+    if actual.len() != expected.len() {
+        return false;
+    }
+    let mut remaining = expected.to_vec();
+    for row in actual {
+        match remaining.iter().position(|e| e == row) {
+            Some(pos) => {
+                remaining.swap_remove(pos);
+            }
+            None => return false,
+        }
+    }
+    remaining.is_empty()
+}
+
+/// True iff some bijection from `actual_labels` to `expected_labels` makes
+/// `actual`'s rows equal `expected`'s rows as a multiset (see the module-level
+/// comment on `compare_with_srx` for why blank-node labels must be compared
+/// up to relabelling rather than literally). Brute-force backtracking over
+/// permutations, bounded by `MAX_BNODE_LABELS_FOR_ISOMORPHISM`.
+fn bnode_isomorphic_multiset_match(
+    actual: &[HashMap<String, SrxValue>],
+    expected: &[HashMap<String, SrxValue>],
+    actual_labels: &[String],
+    expected_labels: &[String],
+) -> bool {
+    fn backtrack(
+        actual: &[HashMap<String, SrxValue>],
+        expected: &[HashMap<String, SrxValue>],
+        actual_labels: &[String],
+        expected_labels: &[String],
+        idx: usize,
+        used: &mut [bool],
+        mapping: &mut HashMap<String, String>,
+    ) -> bool {
+        if idx == actual_labels.len() {
+            let remapped = remap_bnode_labels(actual, mapping);
+            return rows_equal_as_multiset(&remapped, expected);
+        }
+        for (j, candidate) in expected_labels.iter().enumerate() {
+            if used[j] {
+                continue;
+            }
+            used[j] = true;
+            mapping.insert(actual_labels[idx].clone(), candidate.clone());
+            if backtrack(
+                actual,
+                expected,
+                actual_labels,
+                expected_labels,
+                idx + 1,
+                used,
+                mapping,
+            ) {
+                return true;
+            }
+            used[j] = false;
+        }
+        mapping.remove(&actual_labels[idx]);
+        false
+    }
+    let mut used = vec![false; expected_labels.len()];
+    let mut mapping = HashMap::new();
+    backtrack(
+        actual,
+        expected,
+        actual_labels,
+        expected_labels,
+        0,
+        &mut used,
+        &mut mapping,
+    )
+}
+
+#[cfg(test)]
+mod bnode_isomorphism_tests {
+    use super::*;
+
+    fn bnode_row(pairs: &[(&str, &str)]) -> HashMap<String, SrxValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), SrxValue::Bnode(v.to_string())))
+            .collect()
+    }
+
+    fn lit_row(pairs: &[(&str, &str)]) -> HashMap<String, SrxValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), SrxValue::PlainLiteral(v.to_string())))
+            .collect()
+    }
+
+    /// Same shape, different labels: e.g. actual uses `b0`/`b1` where
+    /// expected uses `x`/`y` — must be accepted.
+    #[test]
+    fn accepts_relabelled_same_shape() {
+        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b1")])];
+        let expected = vec![bnode_row(&[("a", "x"), ("b", "y")])];
+        let al = distinct_bnode_labels(&actual);
+        let el = distinct_bnode_labels(&expected);
+        assert!(bnode_isomorphic_multiset_match(
+            &actual, &expected, &al, &el
+        ));
+    }
+
+    /// Same label used twice within a row (a shared blank node) must stay
+    /// shared after relabelling — a mapping that splits it apart is wrong.
+    #[test]
+    fn preserves_within_row_identity() {
+        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b0")])];
+        let expected = vec![bnode_row(&[("a", "x"), ("b", "y")])];
+        let al = distinct_bnode_labels(&actual);
+        let el = distinct_bnode_labels(&expected);
+        // actual has 1 distinct label, expected has 2 — genuinely different
+        // shape, must be rejected (caller checks this count before calling,
+        // but the matcher itself must not silently "succeed" here).
+        assert_ne!(al.len(), el.len());
+    }
+
+    /// A genuinely different result (not just a relabelling) must still be
+    /// rejected — the isomorphism search must not be so permissive that any
+    /// bnode-bearing pair of results is accepted.
+    #[test]
+    fn rejects_genuinely_different_results() {
+        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b1")])];
+        let expected = vec![bnode_row(&[("a", "x"), ("b", "x")])];
+        let al = distinct_bnode_labels(&actual);
+        let el = distinct_bnode_labels(&expected);
+        assert_ne!(al.len(), el.len());
+    }
+
+    /// Cross-row consistency: matches the shape of W3C `bnode01` — row 1
+    /// shares a label between two variables, row 2 doesn't; a valid mapping
+    /// must handle both rows simultaneously.
+    #[test]
+    fn handles_multi_row_mixed_sharing() {
+        let actual = vec![
+            bnode_row(&[("b1", "b0"), ("b2", "b0")]),
+            bnode_row(&[("b1", "b2"), ("b2", "b3")]),
+        ];
+        let expected = vec![
+            bnode_row(&[("b1", "b0"), ("b2", "b0")]),
+            bnode_row(&[("b1", "b7"), ("b2", "b9")]),
+        ];
+        let al = distinct_bnode_labels(&actual);
+        let el = distinct_bnode_labels(&expected);
+        assert!(bnode_isomorphic_multiset_match(
+            &actual, &expected, &al, &el
+        ));
+    }
+
+    /// Non-bnode values must still be compared for exact equality — the
+    /// matcher shouldn't accidentally ignore them.
+    #[test]
+    fn non_bnode_values_still_compared_exactly() {
+        let actual = vec![lit_row(&[("a", "1")])];
+        let expected = vec![lit_row(&[("a", "2")])];
+        assert!(!rows_equal_as_multiset(&actual, &expected));
     }
 }
 
@@ -1368,9 +1623,13 @@ fn w3c_sparql11_functions() {
     // "found empty vs. not found" tag rule, REPLACE, CONCAT, IN/NOT IN,
     // COALESCE's integer/integer division promotion, isNumeric's boolean-
     // context dispatch, REGEX's real regex matching, NOW/UUID/STRUUID via
-    // the DATATYPE(DateTimeLiteral) and REGEX fixes). Five entries remain,
-    // for reasons that don't fit the "narrow builtin bug" pattern the rest
-    // did — see the tracking comment on each for specifics:
+    // the DATATYPE(DateTimeLiteral) and REGEX fixes). BNODE()/plus-1/plus-2
+    // were fixed by teaching `compare_with_srx` blank-node-isomorphism
+    // comparison (see `bnode_isomorphic_multiset_match` above) — those three
+    // only ever failed on arbitrary blank-node label spelling, not on any
+    // actual query-evaluation defect. Four entries remain, for reasons that
+    // don't fit the "narrow builtin/harness bug" pattern the rest did — see
+    // the tracking comment on each for specifics:
     let skip: &[&str] = &[
         // IRI()/URI() must resolve a relative-IRI string argument against
         // the query's effective base IRI (`BASE <...>` or the caller-
@@ -1400,27 +1659,23 @@ fn w3c_sparql11_functions() {
         // narrowly. Tracked as a follow-up to #205.
         "STRDT() TypeErrors",
         "STRLANG() TypeErrors",
-        // BNODE()/BNODE(str) and plus-1/plus-2: all four fixtures fail only
-        // because this test harness's SRX comparator (`gel_to_srx`/
-        // `compare_with_srx` above) matches blank nodes by their exact
-        // numeric label (`Bnode(format!("b{}", id))`) rather than up to
-        // blank-node isomorphism — which is what RDF/SPARQL result
-        // equivalence actually requires (blank node labels are arbitrary).
-        // `BNODE()`'s own counter (a process-wide `AtomicU32` static) also
-        // doesn't reset per query and isn't tied to the datastore's own
-        // blank-node counter, so which literal labels come out depends on
-        // process-wide test execution order, not just the query — real
-        // engine behavior (fresh, distinct blank nodes) is correct, but the
-        // exact labels this harness demands aren't reproducible. Fixing this
-        // properly means either (a) teaching the harness isomorphism-based
-        // blank-node comparison, or (b) scoping `BNODE()`'s numbering to a
-        // single query evaluation seeded from the datastore's own counter —
-        // both bigger than a builtin-function fix. Tracked as a follow-up to
-        // #205.
-        "BNODE()",
+        // BNODE(str): the blank-node-isomorphism harness fix above cleared
+        // BNODE()/plus-1/plus-2, but BNODE(str) has a genuine remaining
+        // evaluator bug: `execute.rs`'s "BNODE" arm (~line 2370) discards
+        // its optional string argument entirely and always mints a fresh
+        // blank node. Per SPARQL 1.1 §17.4.2.7, calling BNODE(str) with the
+        // *same* simple-literal argument more than once within a *single*
+        // query solution must return the *same* blank node (fixture
+        // `bnode01`: rows where `?s1 == ?s2` expect `?b1 == ?b2`; rows where
+        // they differ expect `?b1 != ?b2`). Fixing this needs a
+        // per-solution memoization cache (arg string -> blank node id),
+        // scoped to one row of the outer solution-sequence evaluation and
+        // cleared between rows — `eval_expression_value_inner`/
+        // `eval_function_value` currently take no mutable per-solution
+        // state to hang such a cache off, so this is plumbing work similar
+        // in kind to the IRI()/URI() base-IRI-threading gap above, not a
+        // self-contained builtin fix. Tracked as a follow-up to #205.
         "BNODE(str)",
-        "plus-1",
-        "plus-2",
     ];
     let failures: Vec<_> = entries
         .iter()
