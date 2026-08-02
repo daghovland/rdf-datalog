@@ -1,18 +1,19 @@
 # Mapping structured data to RDF with RML
 
 RML (RDF Mapping Language) is a W3C standard for mapping structured data —
-CSV files, JSON files, JSONL streams, and XML files — to RDF triples. Instead
-of writing Rust code or manual Turtle conversion, you declare the mapping
-rules in a `.ttl` file and dagalog does the rest.
+CSV files, JSON files, JSONL streams, XML files, and SQL (SQLite) databases —
+to RDF triples. Instead of writing Rust code or manual Turtle conversion, you
+declare the mapping rules in a `.ttl` file and dagalog does the rest.
 
 ---
 
 ## When to use RML
 
-Use RML when your data already exists as CSV, JSON, or XML and you want to
-bring it into dagalog for querying, reasoning, or linking with ontologies.
-RML handles column/field extraction, IRI template expansion, literal typing,
-language tags, named graphs, and blank nodes declaratively.
+Use RML when your data already exists as CSV, JSON, XML, or a SQL database
+and you want to bring it into dagalog for querying, reasoning, or linking
+with ontologies. RML handles column/field extraction, IRI template
+expansion, literal typing, language tags, named graphs, and blank nodes
+declaratively.
 
 ---
 
@@ -327,12 +328,14 @@ accepted as aliases for `rml:JSONPath`/`rml:XPath`.
 **In scope:** CSV, JSON, JSONL, XML, SQL (SQLite), template IRIs, reference
 literals, language/datatype annotations, named graphs, blank nodes,
 `rml:class`, `rml:iterator`, nested JSONPath/XPath, join conditions
-(`rml:JoinCondition`), FunctionMap (`fnml:functionValue`).
+(`rml:JoinCondition`), FunctionMap (`fnml:functionValue`, completed
+separately under [#27](https://github.com/daghovland/rdf-datalog/issues/27)).
 
 **Not yet implemented:** SQL join pushdown (SQL/SQL joins run through the
-ordinary in-memory hash join, not synthesized into the database — see
-[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md)), PostgreSQL and
-other SQL backends beyond SQLite.
+ordinary in-memory hash join, not synthesized into the database), PostgreSQL
+and other SQL backends beyond SQLite — see
+[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) and
+[#354](https://github.com/daghovland/rdf-datalog/issues/354).
 
 ---
 

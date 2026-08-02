@@ -110,17 +110,21 @@ impl SqlSource {
     }
 }
 
-/// Render a SQL value as its string lexical form, or `None` for `NULL`.
-/// BLOB columns are rejected with a lossy-but-visible placeholder rather
-/// than silently corrupting binary data into "String" form — RML has no
-/// binary term type to map a BLOB onto anyway.
+/// Render a SQL value as its string lexical form, or `None` for `NULL`
+/// (and, by the same "no value" convention, for `BLOB` — RML has no binary
+/// term type to map a BLOB onto, so rather than corrupting it into a lossy
+/// "String" form, the column is treated as absent, same as NULL, and
+/// logged so a mapping author can see why an expected column vanished).
 fn sql_value_to_string(value: ValueRef<'_>) -> Option<String> {
     match value {
         ValueRef::Null => None,
         ValueRef::Integer(i) => Some(i.to_string()),
         ValueRef::Real(f) => Some(f.to_string()),
         ValueRef::Text(t) => Some(String::from_utf8_lossy(t).into_owned()),
-        ValueRef::Blob(_) => None,
+        ValueRef::Blob(_) => {
+            log::warn!("SQL source: BLOB column value skipped (no RML binary term type)");
+            None
+        }
     }
 }
 

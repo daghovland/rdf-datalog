@@ -5,10 +5,12 @@
 >
 > **Implementation status**: phases 1–2 (`SqlSource` via `rusqlite`,
 > `rml:tableName` whole-table scan and `rml:sqlQuery` arbitrary SELECT) are
-> implemented in this PR. **Join tiers (phases 3–4, "Efficient joins" below)
-> are deliberately deferred to a follow-up issue** — this doc's own opening
-> note gated that work on separate user sign-off before any code was
-> written, and that sign-off hasn't happened yet. What this PR *does* prove:
+> implemented (PR #349, closing #26). **Join tiers and PostgreSQL (phases
+> 3–5, "Efficient joins" below) are deliberately deferred to
+> [#354](https://github.com/daghovland/rdf-datalog/issues/354)** — this
+> doc's own opening note gated that work on separate user sign-off before
+> any code was written, and that sign-off hasn't happened yet. What #349
+> *does* prove:
 > once `scan_rows` (in `engine.rs`) handles `LogicalSourceRef::Sql`, the
 > existing hash-join engine (`RML_JOIN_PLAN.md`) already composes with SQL
 > sources for free — a SQL child / SQL parent join produces correct triples
