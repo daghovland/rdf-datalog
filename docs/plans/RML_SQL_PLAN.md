@@ -1,11 +1,30 @@
 # RML SQL Plan: SQL/JDBC sources for `rml`
 
 > Tracked under [#26 RML: SQL/JDBC LogicalSource support](https://github.com/daghovland/rdf-datalog/issues/26).
-> No tests, no stub code, no implementation yet. The next phase is red-phase
-> stub tests (`#[ignore]`d) for user review — do not start that phase without
-> separate sign-off on this design, especially the join-pushdown approach in
-> "Efficient joins" below, since that is the part most likely to need
-> revision before code is written.
+> Branch: `feat/26-rml-sql-jdbc`.
+>
+> **Implementation status**: phases 1–2 (`SqlSource` via `rusqlite`,
+> `rml:tableName` whole-table scan and `rml:sqlQuery` arbitrary SELECT) are
+> implemented (PR #349, closing #26). **Join tiers and PostgreSQL (phases
+> 3–5, "Efficient joins" below) are deliberately deferred to
+> [#354](https://github.com/daghovland/rdf-datalog/issues/354)** — this
+> doc's own opening note gated that work on separate user sign-off before
+> any code was written, and that sign-off hasn't happened yet. What #349
+> *does* prove:
+> once `scan_rows` (in `engine.rs`) handles `LogicalSourceRef::Sql`, the
+> existing hash-join engine (`RML_JOIN_PLAN.md`) already composes with SQL
+> sources for free — a SQL child / SQL parent join produces correct triples
+> through the ordinary hash join, just without pushdown. No
+> `JoinAlgorithm::SqlPushdown` variant or `choose_join_algorithm` function is
+> added here, since nothing would execute it yet and an unused enum variant
+> would misrepresent what's implemented.
+>
+> One correction to this doc's dependency pin: `rusqlite = "0.31"` was stale
+> at implementation time; `cargo add rusqlite --features bundled` resolved
+> to `0.40.1`, which is what ships. Fixtures are built at test time via
+> `tempfile::TempDir` + `rusqlite::Connection::open` rather than committed
+> `.sqlite` binaries, for hermetic, reviewable tests and a clean sandbox
+> `base_dir`.
 
 ## Goal
 

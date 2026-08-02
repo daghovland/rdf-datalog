@@ -7,8 +7,8 @@ use turtle::{parse_turtle, parse_turtle_with_base};
 use crate::RmlError;
 use crate::ast::{
     FunctionCall, FunctionParameter, GraphMap, JoinConditionRef, LogicalSource, LogicalSourceRef,
-    MappingDocument, ObjectMap, PredicateObjectMap, ReferenceFormulation, SubjectMap, TermMap,
-    TermType, TriplesMap,
+    MappingDocument, ObjectMap, PredicateObjectMap, ReferenceFormulation, SqlConnection, SqlQuery,
+    SqlSourceRef, SubjectMap, TermMap, TermType, TriplesMap,
 };
 use crate::functions::{FNML_FUNCTION_VALUE, FNO_EXECUTES};
 
@@ -224,8 +224,33 @@ fn extract_logical_source(
         .and_then(|id| get_literal_string(ds, id))
         .map(|s| s.to_string());
 
+    // A SQL LogicalSource is discriminated by the presence of rml:tableName
+    // or rml:sqlQuery — rml:source is then a path to a SQLite database file
+    // rather than a CSV/JSON/XML file. See docs/plans/RML_SQL_PLAN.md and
+    // https://github.com/daghovland/rdf-datalog/issues/26. Only SQLite is
+    // implemented (phase 1); reference_formulation stays Csv either way,
+    // since SQL rows are column-keyed exactly like CSV rows.
+    let table_name = first_obj(ds, ls_id, &rml("tableName"))
+        .and_then(|id| get_literal_string(ds, id))
+        .map(|s| s.to_string());
+    let sql_query = first_obj(ds, ls_id, &rml("sqlQuery"))
+        .and_then(|id| get_literal_string(ds, id))
+        .map(|s| s.to_string());
+
+    let source = match (table_name, sql_query) {
+        (Some(table), _) => LogicalSourceRef::Sql(SqlSourceRef {
+            connection: SqlConnection::Sqlite(source_str.into()),
+            query: SqlQuery::Table(table),
+        }),
+        (None, Some(query)) => LogicalSourceRef::Sql(SqlSourceRef {
+            connection: SqlConnection::Sqlite(source_str.into()),
+            query: SqlQuery::Query(query),
+        }),
+        (None, None) => LogicalSourceRef::File(source_str.into()),
+    };
+
     Ok(LogicalSource {
-        source: LogicalSourceRef::File(source_str.into()),
+        source,
         reference_formulation,
         iterator,
     })
