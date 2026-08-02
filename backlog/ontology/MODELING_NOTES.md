@@ -442,6 +442,66 @@ individuals, all together) through `apply_ontologies` with `--ontology
 backlog/ontology/agentprov-vocabulary.ttl` active. Completes cleanly, no
 panic -- the axiom does not trigger #298's failure mode.
 
+## #334 SHACL strengthening: catching a malformed hand-authored summary
+
+[Issue #334](https://github.com/daghovland/rdf-datalog/issues/334) (a
+sub-issue of the agent-provenance epic
+[#306](https://github.com/daghovland/rdf-datalog/issues/306)) asked
+`agentprov-shapes.ttl`'s three existing shapes (from #326) to actually
+catch a malformed or degenerate future agent-authored summary, not just
+the structural gaps (missing required properties) they already covered.
+Two additions, both landed on
+`agp:TranscriptSummaryRequiredFieldsShape` (plus a new
+`agp:DecisionRequiredFieldsShape` for `agp:Decision`, previously
+unconstrained entirely):
+
+**`sh:minLength 30`/`sh:maxLength 4000` on `agp:summaryText`.** Catches
+both failure directions the vocabulary's own Privacy note warns about: a
+degenerate one-line non-summary (e.g. "Fixed it.") on the low end, and a
+raw-transcript dump on the high end. Bounds are not arbitrary: measured the
+three real summaries already committed in `provenance/summaries/pr-300.ttl`
+(461/506/1101 characters) and picked round numbers with real headroom on
+both sides (30 well below the shortest real one, 4000 well above the
+longest) rather than tight-fitting the existing corpus, since a
+legitimately thorough summary for a complex PR shouldn't fail CI just for
+being complete. Applied identically to `agp:Decision`'s own
+`agp:summaryText` (a decision point's distilled reasoning is typically
+shorter than a full summary but has no principled reason to need a
+different bound).
+
+**`sh:class bl:WorkItem` on `agp:reasoningFor`.** Before #334, nothing
+checked that `agp:reasoningFor`'s object was actually a work item at all —
+a typo'd IRI or a reference to something never asserted as a
+`bl:Issue`/`bl:PullRequest` would silently pass. `sh:class bl:WorkItem`
+follows `rdfs:subClassOf` closure in this engine (see this shape's own
+neighbor `bl:RequiresWorkItemTypeShape` above, and #265/PR #290) — so it's
+satisfied by anything typed `bl:Issue` or `bl:PullRequest`, without
+requiring the separate literal `a bl:WorkItem` triple those two classes'
+own instances need for `bl:WorkItem`-domained properties. That's the
+correct check *here*: `agp:reasoningFor`'s target only needs to genuinely
+*be* some kind of work item semantically; it is not itself a
+`bl:PullRequest`/`bl:Issue` instance being validated against
+`bl:RequiresWorkItemTypeShape`'s stricter literal-type requirement (that
+shape already fires separately, on the referenced PR/issue stub itself, if
+its own literal type is missing).
+
+**Deliberately not added**: a `sh:class prov:Agent` constraint on
+`prov:wasAttributedTo`/`prov:wasAssociatedWith`. `prov:SoftwareAgent`/
+`prov:Person rdfs:subClassOf prov:Agent` is only asserted in
+`tests/testdata/prov-o.ttl` (the real W3C PROV-O file, loaded only by
+`tests/real_world_ontologies.rs`'s smoke test) — none of the shapes tests
+here load it, and requiring every future summary-validation call site to
+additionally load the full PROV-O ontology just to satisfy one class
+check wasn't judged worth the coupling. Revisit if a real malformed-agent
+case shows up in practice.
+
+Verified all of the above empirically before shipping: the three existing
+real summaries (`pr-300.ttl`) and the new `pr-328.ttl` worked example still
+conform under the strengthened shapes (`tests/provenance_queries.rs`'s
+`every_summary_file_conforms_to_shapes`), and a deliberately malformed
+fixture (missing `agp:reasoningFor`, a 9-character `agp:summaryText`) fails
+(`malformed_summary_fails_shacl_validation`).
+
 ## What's still open (deliberately, past this issue's scope)
 
 - `bl:Label` individuals carry only `rdfs:label` today, no color/description

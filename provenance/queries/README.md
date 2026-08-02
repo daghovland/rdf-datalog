@@ -36,15 +36,26 @@ a different set of `.ttl` files.
   row per `agp:Decision` (not per `agp:alternative` — see the query file's
   own comment for why alternatives aren't joined in here).
 
-All four are exercised against the real `pr-300.ttl` worked example (not
-just parsed) by `tests/provenance_queries.rs` at the repo root.
+All four are exercised against every real `../summaries/*.ttl` file (not
+just parsed) by `tests/provenance_queries.rs` at the repo root, which globs
+the directory rather than naming files individually — a new
+`pr-<N>.ttl` an agent writes (see
+[`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](../../docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md))
+is picked up automatically, with no test code change.
 
-## Worked example
+## Worked examples
 
-`../summaries/pr-300.ttl` distills the actual reasoning from
-[PR #300](https://github.com/daghovland/rdf-datalog/pull/300) (which closed
-[#264](https://github.com/daghovland/rdf-datalog/issues/264)): two genuine
-decision-point forks recorded during that PR's review round —
-`sh:sourceShape` resolution and the `sh:qualifiedMinCount`/
-`sh:qualifiedMaxCount` split — are captured as `agp:Decision` resources
-alongside the summary.
+- `../summaries/pr-300.ttl` distills the actual reasoning from
+  [PR #300](https://github.com/daghovland/rdf-datalog/pull/300) (which
+  closed [#264](https://github.com/daghovland/rdf-datalog/issues/264)): two
+  genuine decision-point forks recorded during that PR's review round —
+  `sh:sourceShape` resolution and the `sh:qualifiedMinCount`/
+  `sh:qualifiedMaxCount` split — are captured as `agp:Decision` resources
+  alongside the summary.
+- `../summaries/pr-328.ttl` distills the actual reasoning from
+  [PR #328](https://github.com/daghovland/rdf-datalog/pull/328) (which
+  closed [#307](https://github.com/daghovland/rdf-datalog/issues/307)):
+  the `shacl/src/path.rs` design for complex `sh:path` property paths.
+  Added for [#334](https://github.com/daghovland/rdf-datalog/issues/334)
+  specifically as a second example, to prove the glob-based loader above
+  actually generalizes past "the one hardcoded file."

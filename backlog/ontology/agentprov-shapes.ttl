@@ -1,4 +1,5 @@
 @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 
@@ -23,6 +24,30 @@
 # Per AGENT_PROVENANCE_PLAN.md's "SHACL shapes": a summary needs exactly one
 # distilled text, exactly one attributed agent, and at least one work item
 # it explains.
+#
+# Strengthened for #334 (see docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md and
+# MODELING_NOTES.md's "#334 SHACL strengthening" section for the full
+# rationale/measurements behind each new constraint below):
+#
+# - agp:summaryText now also carries sh:minLength/sh:maxLength, to catch a
+#   degenerate one-line non-summary (e.g. "Fixed bug.") on the low end, and
+#   a runaway raw-transcript dump on the high end (the vocabulary's own
+#   Privacy note: only distilled summaries belong here, never a transcript
+#   excerpt). Bounds calibrated against the three real summaries in
+#   provenance/summaries/pr-300.ttl (461/506/1101 chars) -- 30 gives real
+#   headroom below the shortest, 4000 gives real headroom above the
+#   longest without being so loose it lets a multi-KB dump through.
+# - agp:reasoningFor now also carries sh:class bl:WorkItem: the target must
+#   be *semantically* a bl:WorkItem (an asserted bl:Issue/bl:PullRequest
+#   subclass, or a literal bl:WorkItem type -- sh:class follows
+#   rdfs:subClassOf in this engine, see shapes.ttl's header note on #265/PR
+#   #290), not an arbitrary/mistyped IRI. This is deliberately sh:class
+#   (semantic membership via subclass closure), NOT the raw
+#   rdf:type/sh:hasValue pattern shapes.ttl uses for
+#   bl:RequiresWorkItemTypeShape -- that shape enforces the LITERAL type
+#   triple every bl:Issue/bl:PullRequest itself needs (a separate, stricter
+#   concern); this one only needs reasoningFor's target to genuinely be
+#   some kind of work item at all.
 agp:TranscriptSummaryRequiredFieldsShape
     a sh:NodeShape ;
     sh:targetClass agp:TranscriptSummary ;
@@ -30,7 +55,9 @@ agp:TranscriptSummaryRequiredFieldsShape
         sh:path agp:summaryText ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "Every agp:TranscriptSummary needs exactly one agp:summaryText." ;
+        sh:minLength 30 ;
+        sh:maxLength 4000 ;
+        sh:message "Every agp:TranscriptSummary needs exactly one agp:summaryText, a distilled paragraph or two (30-4000 chars) -- not a one-line stub, and not a raw transcript dump." ;
     ] ;
     sh:property [
         sh:path prov:wasAttributedTo ;
@@ -41,7 +68,31 @@ agp:TranscriptSummaryRequiredFieldsShape
     sh:property [
         sh:path agp:reasoningFor ;
         sh:minCount 1 ;
-        sh:message "Every agp:TranscriptSummary needs at least one agp:reasoningFor." ;
+        sh:class bl:WorkItem ;
+        sh:message "Every agp:TranscriptSummary needs at least one agp:reasoningFor, and each one must resolve to a real bl:WorkItem (an Issue or PullRequest)." ;
+    ] ;
+    sh:property [
+        sh:path agp:transcriptRef ;
+        sh:maxCount 1 ;
+        sh:message "agp:transcriptRef is optional but must not be repeated -- at most one per agp:TranscriptSummary." ;
+    ] .
+
+# Mirrors agp:TranscriptSummaryRequiredFieldsShape's summaryText bounds for
+# agp:Decision, whose agp:summaryText is its own (typically shorter)
+# distilled fork of reasoning -- see agentprov-vocabulary.ttl's note on why
+# agp:summaryText deliberately has no rdfs:domain (used on both classes).
+# Added for #334: previously nothing required a agp:Decision to have any
+# summaryText at all.
+agp:DecisionRequiredFieldsShape
+    a sh:NodeShape ;
+    sh:targetClass agp:Decision ;
+    sh:property [
+        sh:path agp:summaryText ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:minLength 30 ;
+        sh:maxLength 4000 ;
+        sh:message "Every agp:Decision needs exactly one agp:summaryText, a distilled description of that fork (30-4000 chars)." ;
     ] .
 
 # ── Session/summary structural links ─────────────────────────────────────────
