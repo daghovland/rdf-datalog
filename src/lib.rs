@@ -278,16 +278,19 @@ pub fn apply_rml_mappings(datastore: &mut Datastore, paths: &[PathBuf]) -> Resul
 
 // ── OTTR templates ────────────────────────────────────────────────────────────
 
-/// Expand one or more stOTTR files (templates and/or instances) into `datastore`.
+/// Expand one or more OTTR files (templates and/or instances) into `datastore`.
 ///
-/// Templates and instances may be split across files or combined in a single
-/// file; all documents are parsed, then merged and expanded together via
+/// Each file is either stOTTR text syntax or wOTTR (RDF/Turtle), dispatched by
+/// extension via [`ottr::load_ottr_file`] (`.ttl`/`.turtle`/`.trig` → wOTTR,
+/// everything else → stOTTR). Templates and instances may be split across
+/// files (of either format, mixed) or combined in a single file; all
+/// documents are parsed, then merged and expanded together via
 /// [`ottr::expand_documents`], so a template defined in one file can be
 /// instantiated by instances in another.
 pub fn apply_ottr_templates(datastore: &mut Datastore, paths: &[PathBuf]) -> Result<(), String> {
     let mut docs = Vec::with_capacity(paths.len());
     for path in paths {
-        let doc = ottr::load_stottr_file(path)
+        let doc = ottr::load_ottr_file(path)
             .map_err(|e| format!("OTTR error in {}: {}", path.display(), e))?;
         docs.push(doc);
     }

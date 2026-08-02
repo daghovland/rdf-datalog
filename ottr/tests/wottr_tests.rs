@@ -27,7 +27,7 @@ fn read_fixture(name: &str) -> String {
 /// wired to a single `ottr:Triple` pattern instance, plus a top-level
 /// instance call. Simplest possible wOTTR document.
 #[test]
-#[ignore]
+
 fn parses_template_with_single_triple_pattern_and_expands() {
     let text = read_fixture("no_params.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -52,7 +52,7 @@ fn parses_template_with_single_triple_pattern_and_expands() {
 
 /// Phase 2: parameters without an explicit `ottr:type` default to `OttrType::Iri`.
 #[test]
-#[ignore]
+
 fn untyped_parameters_default_to_iri_type() {
     let text = read_fixture("untyped_params.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -78,7 +78,7 @@ fn untyped_parameters_default_to_iri_type() {
 /// Phase 3: explicit `ottr:IRI`/`ottr:BlankNode`/`ottr:Literal`/datatype-IRI
 /// parameter types are mapped to the corresponding `OttrType` variants.
 #[test]
-#[ignore]
+
 fn explicit_parameter_types_are_mapped() {
     let text = read_fixture("typed_params.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -98,7 +98,7 @@ fn explicit_parameter_types_are_mapped() {
 /// Phase 4: a template instance calling a second user-defined template
 /// (not just the built-in `ottr:Triple`), i.e. nested template expansion.
 #[test]
-#[ignore]
+
 fn nested_user_templates_expand_transitively() {
     let text = read_fixture("nested_templates.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -122,7 +122,7 @@ fn nested_user_templates_expand_transitively() {
 /// `Argument::None`, and (via the existing expander) silently drops the
 /// triple that would have used it.
 #[test]
-#[ignore]
+
 fn ottr_none_argument_drops_the_triple() {
     let text = read_fixture("none_argument.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -140,7 +140,7 @@ fn ottr_none_argument_drops_the_triple() {
 /// Phase 6: `ottr:cross` instance modifier combined with a nested-RDF-list
 /// argument value expands to one triple per list element.
 #[test]
-#[ignore]
+
 fn cross_modifier_expands_nested_list_argument() {
     let text = read_fixture("cross_list.ttl");
     let doc = parse_wottr_str(&text).unwrap();
@@ -161,11 +161,35 @@ fn cross_modifier_expands_nested_list_argument() {
     }
 }
 
+/// Phase 8: `ottr:annotation` instances (metadata on a template, not part of
+/// its expansion pattern) must not leak into the top-level document
+/// instances — they reference an annotation "template" (e.g.
+/// `ex:TemplateAnnotation`) that is typically never defined, so treating them
+/// as ordinary top-level instances would fail expansion with
+/// `UnknownTemplate`.
+#[test]
+fn annotation_instances_are_excluded_from_top_level_instances() {
+    let text = read_fixture("annotation.ttl");
+    let doc = parse_wottr_str(&text).unwrap();
+    assert_eq!(doc.instances.len(), 1);
+
+    let mut ds = Datastore::new(100);
+    ottr::expand_documents(&[doc], &mut ds).unwrap();
+    let rel = ds.add_resource(iri_element("http://example.com/rel"));
+    let a = ds.add_resource(iri_element("http://example.com/A"));
+    let b = ds.add_resource(iri_element("http://example.com/B"));
+    assert!(ds.contains_triple(&Triple {
+        subject: a,
+        predicate: rel,
+        obj: b
+    }));
+}
+
 /// Phase 7: the canonical `ottr:arguments` (list of `ottr:Argument` blank
 /// nodes with `ottr:value`) encoding is equivalent to the compact
 /// `ottr:values` encoding used by the other fixtures.
 #[test]
-#[ignore]
+
 fn canonical_arguments_encoding_is_equivalent_to_compact_values() {
     let text = read_fixture("canonical_arguments.ttl");
     let doc = parse_wottr_str(&text).unwrap();

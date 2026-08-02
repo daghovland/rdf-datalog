@@ -68,18 +68,25 @@ In:
 - Instance parsing, both `ottr:values` (compact) and `ottr:arguments`
   (canonical) encodings.
 - Blank-node variables, `ottr:none`, nested RDF-list arguments (for
-  cross/zipMin).
+  cross/zipMin), `ottr:annotation` exclusion from top-level instances.
 - Top-level (document) instances.
 - `docs/user/ottr-templates.md` wOTTR section.
+- Wiring into all three existing stOTTR surfaces, since — contrary to this
+  plan's original draft, corrected after double-checking — issue #247 (CLI
+  wiring) is in fact already closed and `%%ottr`/`POST /{dataset}/ottr` are
+  already live: `ottr::load_ottr_file` (extension dispatch, used by the CLI's
+  `--ottr` and `%%ottr <file>`), `ottr::parse_ottr_str` (trial-parse fallback,
+  used by inline `%%ottr` cells, which have no filename to dispatch on), and
+  `Content-Type`-based dispatch per multipart part in the HTTP endpoint.
 
 Deferred (noted inline with links, not silently dropped):
-- CLI/Jupyter/HTTP wiring — stOTTR itself isn't wired into these surfaces yet
-  either (issue #247); wiring wOTTR ahead of stOTTR would be inconsistent.
-  Left for #247 or a follow-up once stOTTR wiring lands.
 - `ottr:zipMax` expansion (no `ast::Expander` variant currently — same gap
   already noted for stOTTR in `OTTR_PLAN.md`).
 - Custom `ottr:BaseTemplate`s beyond the built-in `ottr:Triple`.
 - `ottr:nonBlank` enforcement (permissive/warn-only, matching existing stance).
+- Multi-level composed parameter types (`ottr:LUB`, `ottr:Bot`, chained
+  wrappers like `(rdf:List ottr:NEList xsd:int)`) — only the two-element
+  `(rdf:List T)`/`(ottr:NEList T)` form is understood.
 
 ## Test plan (fixtures under `ottr/tests/fixtures/wottr/*.ttl`)
 
