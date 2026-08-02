@@ -138,22 +138,28 @@ Mirrors how #306 was broken down before (#326, #327, #334):
 5. Gap #6 (PR-stub integrity check) — no sub-issue proposed yet, flagged for
    later consideration only.
 
-## Open questions for the repo owner
+## Resolved by the repo owner (2026-08-02)
 
-1. **Backfill scope** (gap #5) — all significant merged PRs from this
-   session's history, or a smaller representative sample? Full backfill is
-   more work but gives a much more realistic test of the query-driven
-   workflow; a sample is faster but might miss edge cases in query design.
-2. **`agp:abstractText` length** — 160 chars proposed (commit-subject-line
-   scale); adjust if that's too tight/loose once a few are actually written.
-3. **Persistent query serving** — everything above still assumes the
-   existing one-shot CLI pattern (`provenance/queries/run.sh`, re-parsing
-   `.ttl` files on every invocation via `cargo run`). That's fine at the
-   current and near-term scale; flagging only that if the summary corpus
-   grows very large, a persistent `dagalog --serve` instance seeded with
-   the backlog+provenance graph (SPARQL over HTTP, no reparse-per-query)
-   would be the natural next step — not proposing it now, just noting where
-   the ceiling is.
+1. **Backfill scope** (gap #5): a representative sample for now, not a full
+   backfill — "that way we catch bugs and modelling issues before too much
+   work is done." #352 scoped down to the sample; full backfill split out
+   as its own follow-up, #355, deliberately sequenced after the sample has
+   proven the schema/queries sound.
+2. **`agp:abstractText` length**: leave the proposed 160-char cap as-is —
+   "trying to be agile here, and adjust when need arises" rather than
+   pre-optimizing a number with no real data behind it yet.
+3. **Persistent query serving — scope raised significantly**: not just "a
+   `dagalog --serve` instance once the provenance corpus gets big." The
+   repo owner wants to plan for the **whole backlog system** (issues, PRs,
+   history, provenance — everything) to become something persistently
+   *served*, and explicitly does NOT want its data model tightly bound to
+   GitHub's own representation long-term — #287 (the GitHub write-back
+   design) is "not that exciting" precisely because binding to GitHub's API
+   surface constrains what the served system could become. This is now its
+   own dedicated plan — see
+   [`docs/plans/SERVED_BACKLOG_PLAN.md`](SERVED_BACKLOG_PLAN.md) — since it
+   spans beyond this issue's provenance-only scope into #282's whole
+   backlog epic and #287's write-back design.
 
 ## References
 
