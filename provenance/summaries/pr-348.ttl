@@ -1,0 +1,47 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Prospective summary (per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# "Session window" section): written on branch feat/246-ottr-wottr right
+# after opening PR #348 and getting all CI checks green, before the PR has
+# merged. ghpull:348's bl:state is bl:Open (the real state at authoring
+# time); session:pr348's endedAtTime is this session's actual wall-clock
+# "now", not a guessed mergedAt. ghissues:246 is referenced only as an
+# object (bl:closesIssue), never typed bl:Issue, for the same reason
+# pr-300.ttl/pr-328.ttl/pr-344.ttl don't type their own referenced issues.
+
+ghpull:348 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "ottr: add wOTTR (RDF/Turtle) front end" ;
+    bl:number 348 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:246 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr348 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:246 ;
+    prov:startedAtTime "2026-08-02T15:44:01Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-02T18:00:57Z"^^xsd:dateTime .
+
+session:pr348Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #246 asked for wOTTR (the RDF/Turtle serialisation of OTTR templates) as a second front end alongside the existing stOTTR text parser, since ottr::ast::StottrDocument and expander.rs were already confirmed format-agnostic. Fetched the actual wOTTR spec (core-vocabulary.owl.ttl and index.html from spec.ottr.xyz/wOTTR/0.4.5/) rather than guessing the grammar, which surfaced the key encoding trick: a parameter's ottr:variable is a blank node, and pattern instances reference that same blank node in their ottr:values/ottr:arguments to mean 'this argument is bound to that parameter' -- so variable identity in wOTTR is literally RDF blank-node identity, which maps directly onto a GraphElementId-keyed HashMap. Wrote docs/plans/WOTTR_PLAN.md, seven ignored fixture-backed tests, then implemented parse_wottr/parse_wottr_str; all seven passed on the first implementation attempt. An advisor review before declaring done caught a real gap the fixtures had missed: ottr:annotation instances (template metadata, not part of the expansion pattern) were being swept into top-level document instances by the exclusion logic, which only subtracted ottr:pattern objects -- since annotation instances reference an annotation 'template' that is normally never defined, this would fail expansion with UnknownTemplate on any real annotated template library. Fixed by also excluding ottr:annotation objects graph-wide, plus an eighth regression test. The advisor also caught that the plan's deferral of CLI/Jupyter/HTTP wiring, justified by 'stOTTR isn't wired into those surfaces either (issue #247)', rested on a false premise -- #247 was already closed. Corrected course: added ottr::load_ottr_file (extension dispatch), ottr::parse_ottr_str (stOTTR-then-wOTTR trial parse for the filename-less inline %%ottr case), and Content-Type dispatch in the HTTP multipart handler, wiring wOTTR into all three surfaces stOTTR already has, and corrected both the plan doc and the PR body to state the real, current facts instead of the outdated ones." ;
+    agp:reasoningFor ghpull:348 ;
+    agp:decisionPoint session:pr348AnnotationDecision, session:pr348WiringDecision ;
+    prov:wasGeneratedBy session:pr348 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr348AnnotationDecision a agp:Decision ;
+    agp:summaryText "Decided to exclude ottr:annotation instances from the top-level document-instance scan graph-wide (not just per-template), since the wOTTR SHACL grammar treats ottr:pattern and ottr:annotation as the complete set of 'this instance belongs to something else' edges, and annotations can attach to any ottr:Signature, not only the ottr:Template subjects already being iterated." ;
+    agp:alternative "Considered only checking ottr:pattern objects for exclusion, since none of the seven original fixtures used ottr:annotation -- rejected once an advisor review pointed out this would silently break on any real wOTTR template library with metadata annotations (a very common real-world case per the spec's own worked example)." .
+
+session:pr348WiringDecision a agp:Decision ;
+    agp:summaryText "Decided to wire wOTTR into the CLI (--ottr), Jupyter kernel (%%ottr, both inline and file forms), and HTTP endpoint (POST /{dataset}/ottr), dispatching by file extension, trial-parse fallback, and Content-Type respectively, rather than deferring all three wiring work to a follow-up issue." ;
+    agp:alternative "The issue text and this PR's first draft cited issue #247 (stOTTR CLI wiring still open) as grounds to defer wOTTR wiring entirely -- rejected after actually checking gh issue view 247, which showed it was already closed and all three surfaces already handle stOTTR live, making the deferral rationale factually wrong rather than merely conservative." .
