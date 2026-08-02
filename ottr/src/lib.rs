@@ -4,6 +4,7 @@ pub mod error;
 pub mod expander;
 pub mod parser;
 pub mod types;
+pub mod wottr;
 
 use ast::StottrDocument;
 use dag_rdf::Datastore;

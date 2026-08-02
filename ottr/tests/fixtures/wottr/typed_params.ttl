@@ -1,0 +1,17 @@
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix ex: <http://example.com/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Typed a ottr:Template ;
+    ottr:parameters (
+        [ ottr:type ottr:IRI ; ottr:variable _:a ]
+        [ ottr:type ottr:BlankNode ; ottr:variable _:b ]
+        [ ottr:type ottr:Literal ; ottr:variable _:c ]
+        [ ottr:type xsd:string ; ottr:variable _:d ]
+    ) ;
+    ottr:pattern
+        [ ottr:of ottr:Triple ;
+          ottr:values ( _:a ex:p _:c ) ] .
+
+[] ottr:of ex:Typed ;
+   ottr:values ( ex:A _:realBlank "hello" "typed"^^xsd:string ) .

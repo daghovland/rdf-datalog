@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 ingress = { path = "../ingress" }
 dag-rdf = { path = "../dag_rdf" }
+turtle = { path = "../turtle" }
 nom = "7.1"
 thiserror = "2"
 log = "0.4"
