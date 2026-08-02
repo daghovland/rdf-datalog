@@ -885,30 +885,71 @@ mod bnode_isomorphism_tests {
         ));
     }
 
-    /// Same label used twice within a row (a shared blank node) must stay
-    /// shared after relabelling — a mapping that splits it apart is wrong.
+    /// Which variables share a blank node is an invariant no relabelling can
+    /// change: actual has `a == b != c`; expected has `a == c != b`. Equal
+    /// label *counts* on both sides (2 each) so the count guard in
+    /// `compare_with_srx` can't short-circuit before the matcher runs — a
+    /// mapping that "fixes" this by reassigning which pair is equal would be
+    /// wrong, and `bnode_isomorphic_multiset_match` must reject it.
     #[test]
     fn preserves_within_row_identity() {
-        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b0")])];
-        let expected = vec![bnode_row(&[("a", "x"), ("b", "y")])];
+        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b0"), ("c", "b1")])];
+        let expected = vec![bnode_row(&[("a", "x"), ("b", "y"), ("c", "x")])];
         let al = distinct_bnode_labels(&actual);
         let el = distinct_bnode_labels(&expected);
-        // actual has 1 distinct label, expected has 2 — genuinely different
-        // shape, must be rejected (caller checks this count before calling,
-        // but the matcher itself must not silently "succeed" here).
-        assert_ne!(al.len(), el.len());
+        assert_eq!(al.len(), el.len());
+        assert!(!bnode_isomorphic_multiset_match(
+            &actual, &expected, &al, &el
+        ));
     }
 
     /// A genuinely different result (not just a relabelling) must still be
     /// rejected — the isomorphism search must not be so permissive that any
-    /// bnode-bearing pair of results is accepted.
+    /// bnode-bearing pair of results is accepted. Equal label counts (2
+    /// each) so this exercises the matcher itself, not the count guard: no
+    /// bijection can turn `{a:b0,b:b1},{a:b0,b:b1}` into
+    /// `{a:x,b:y},{a:y,b:x}` because the sharing pattern across rows
+    /// differs (actual always binds `a`/`b` to the same pair in that order;
+    /// expected swaps them between rows).
     #[test]
     fn rejects_genuinely_different_results() {
-        let actual = vec![bnode_row(&[("a", "b0"), ("b", "b1")])];
-        let expected = vec![bnode_row(&[("a", "x"), ("b", "x")])];
+        let actual = vec![
+            bnode_row(&[("a", "b0"), ("b", "b1")]),
+            bnode_row(&[("a", "b0"), ("b", "b1")]),
+        ];
+        let expected = vec![
+            bnode_row(&[("a", "x"), ("b", "y")]),
+            bnode_row(&[("a", "y"), ("b", "x")]),
+        ];
         let al = distinct_bnode_labels(&actual);
         let el = distinct_bnode_labels(&expected);
-        assert_ne!(al.len(), el.len());
+        assert_eq!(al.len(), el.len());
+        assert!(!bnode_isomorphic_multiset_match(
+            &actual, &expected, &al, &el
+        ));
+    }
+
+    /// A non-bnode value mismatch must still cause rejection even when the
+    /// blank-node shapes line up — the isomorphism search only permutes
+    /// bnode labels, it must not paper over other value differences.
+    #[test]
+    fn rejects_non_bnode_value_mismatch() {
+        let actual = vec![{
+            let mut row = bnode_row(&[("a", "b0")]);
+            row.insert("v".to_string(), SrxValue::PlainLiteral("1".to_string()));
+            row
+        }];
+        let expected = vec![{
+            let mut row = bnode_row(&[("a", "x")]);
+            row.insert("v".to_string(), SrxValue::PlainLiteral("2".to_string()));
+            row
+        }];
+        let al = distinct_bnode_labels(&actual);
+        let el = distinct_bnode_labels(&expected);
+        assert_eq!(al.len(), el.len());
+        assert!(!bnode_isomorphic_multiset_match(
+            &actual, &expected, &al, &el
+        ));
     }
 
     /// Cross-row consistency: matches the shape of W3C `bnode01` — row 1
@@ -1640,7 +1681,7 @@ fn w3c_sparql11_functions() {
         // base. Fixing this needs the effective base threaded from `Query`
         // down through `execute`/`eval_expression_value_inner`/
         // `eval_function_value` — plumbing, not a self-contained function
-        // fix. Tracked as a follow-up to #205.
+        // fix. Tracked in #346.
         "IRI()/URI()",
         // STRDT()/STRLANG() TypeErrors: per SPARQL 1.1 §17.4.3.5/6, both
         // functions must error when their first argument is anything other
@@ -1656,7 +1697,7 @@ fn w3c_sparql11_functions() {
         // would require *not* collapsing xsd:string at ingestion (a bigger,
         // riskier representation change with its own blast radius), so this
         // is left as a known representation-level gap rather than patched
-        // narrowly. Tracked as a follow-up to #205.
+        // narrowly. Tracked in #346.
         "STRDT() TypeErrors",
         "STRLANG() TypeErrors",
         // BNODE(str): the blank-node-isomorphism harness fix above cleared
@@ -1674,7 +1715,7 @@ fn w3c_sparql11_functions() {
         // `eval_function_value` currently take no mutable per-solution
         // state to hang such a cache off, so this is plumbing work similar
         // in kind to the IRI()/URI() base-IRI-threading gap above, not a
-        // self-contained builtin fix. Tracked as a follow-up to #205.
+        // self-contained builtin fix. Tracked in #346.
         "BNODE(str)",
     ];
     let failures: Vec<_> = entries
