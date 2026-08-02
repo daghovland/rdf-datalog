@@ -170,9 +170,105 @@ Alice gets `rdf:type foaf:Person` and `foaf:name "Alice"` but no `foaf:mbox` tri
 
 ---
 
+## wOTTR: templates as plain RDF
+
+[wOTTR](https://spec.ottr.xyz/wOTTR/0.4.5/) is the RDF/Turtle serialisation of OTTR: the same
+templates and instances as above, but expressed as ordinary triples in the `ottr:` vocabulary
+instead of the bespoke stOTTR text grammar. This means a template library can be published,
+loaded, and queried like any other Turtle data — no separate parser invocation needed to see
+what templates exist ([#246](https://github.com/daghovland/rdf-datalog/issues/246)).
+
+The stOTTR example from the top of this page, in wOTTR:
+
+```turtle
+@prefix ex:   <http://example.com/> .
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Person a ottr:Template ;
+    ottr:parameters (
+        [ ottr:type ottr:IRI ;    ottr:variable _:person ]
+        [ ottr:type xsd:string ;  ottr:variable _:name ]
+    ) ;
+    ottr:pattern
+        [ ottr:of ottr:Triple ; ottr:values ( _:person rdf:type foaf:Person ) ] ,
+        [ ottr:of ottr:Triple ; ottr:values ( _:person foaf:name _:name ) ] .
+
+[] ottr:of ex:Person ; ottr:values ( <http://example.com/alice> "Alice" ) .
+[] ottr:of ex:Person ; ottr:values ( <http://example.com/bob>   "Bob" ) .
+```
+
+A parameter's `ottr:variable` is a blank node; the *same* blank node reused inside a pattern
+instance's `ottr:values`/`ottr:arguments` is what marks that argument position as bound to the
+parameter — this is the whole trick that lets wOTTR encode variables in plain RDF. `ottr:none`
+is the individual used for a missing/suppressed argument value, and list-typed arguments (for
+`cross`/`zipMin` expansion, or `ottr:type (rdf:List ...)`/`(ottr:NEList ...)` parameters) are
+ordinary RDF lists (`rdf:first`/`rdf:rest`). Both the compact `ottr:values` (a flat list of
+argument terms) and canonical `ottr:arguments` (a list of `ottr:Argument` nodes, each with
+`ottr:value` and an optional `ottr:modifier ottr:listExpand`) encodings from the spec are
+supported.
+
+### Rust API
+
+```rust
+use dag_rdf::Datastore;
+use ottr::wottr::parse_wottr_str;
+
+let doc = parse_wottr_str(r#"
+    @prefix ex: <http://example.com/> .
+    @prefix ottr: <http://ns.ottr.xyz/0.4/> .
+
+    ex:IsThing a ottr:Template ;
+        ottr:parameters ( [ ottr:type ottr:IRI ; ottr:variable _:x ] ) ;
+        ottr:pattern
+            [ ottr:of ottr:Triple ;
+              ottr:values ( _:x <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ex:Thing ) ] .
+
+    [] ottr:of ex:IsThing ; ottr:values ( ex:Widget ) .
+"#).unwrap();
+
+let mut ds = Datastore::new(100);
+ottr::expand_documents(&[doc], &mut ds).unwrap();
+```
+
+`parse_wottr_str` parses Turtle into a fresh `Datastore` and hands it to
+`ottr::wottr::parse_wottr(&datastore)`, which reads templates/instances out of an
+already-populated `Datastore` — the same store you may already be loading other RDF data into.
+The result is the identical `ast::StottrDocument` that `parser::parse_stottr` builds from
+stOTTR text, so it composes with `expand_documents` exactly as above; a document list can even
+mix stOTTR- and wOTTR-sourced documents together.
+
+### Format detection in the CLI, kernel, and HTTP endpoint
+
+The `--ottr` CLI flag, the `%%ottr` Jupyter magic, and the `POST /{dataset}/ottr` HTTP endpoint
+(all described below) accept either format:
+
+- **By file extension** (`--ottr file.ttl` / `%%ottr file.ttl`): `.ttl`/`.turtle`/`.trig` is
+  parsed as wOTTR, anything else (including the conventional `.stottr`) as stOTTR — see
+  `ottr::load_ottr_file`.
+- **By `Content-Type`** (HTTP endpoint, per multipart part): `text/turtle`,
+  `application/x-turtle`, or `application/trig` is parsed as wOTTR, anything else as stOTTR.
+- **By trial parse** (inline `%%ottr` cell, which has neither a filename nor a `Content-Type`):
+  stOTTR is tried first, falling back to wOTTR Turtle on failure — see `ottr::parse_ottr_str`.
+  stOTTR's `[...] :: {...}` template syntax and bare `name(args)` instance calls are not valid
+  Turtle, so a genuine wOTTR document reliably fails the stOTTR attempt.
+
+### Scope
+
+Custom `ottr:BaseTemplate`s beyond the built-in `ottr:Triple`, the `ottr:zipMax` expander, and
+multi-level composed parameter types (`ottr:LUB`, `ottr:Bot`, chained wrappers) are not yet
+supported — unsupported constructs are skipped with a warning rather than erroring. See
+[`docs/plans/WOTTR_PLAN.md`](../plans/WOTTR_PLAN.md) for the full vocabulary-to-AST mapping and
+current scope.
+
+---
+
 ## Jupyter kernel: `%%ottr`
 
-In a [Dagalog Jupyter notebook](jupyter.md), use `%%ottr` to expand stOTTR templates inline.
+In a [Dagalog Jupyter notebook](jupyter.md), use `%%ottr` to expand OTTR templates inline —
+stOTTR text by default; wOTTR Turtle also works (auto-detected, see below).
 The expanded triples are added to the session datastore and persist across cells like any other load.
 
 ```stottr
@@ -191,10 +287,12 @@ ex:Person(<http://example.com/alice>, "Alice") .
 ex:Person(<http://example.com/bob>,   "Bob") .
 ```
 
-To load from a file on disk:
+To load from a file on disk (format dispatched by extension — `.ttl`/`.turtle`/`.trig` for
+wOTTR, anything else as stOTTR):
 
 ```text
 %%ottr path/to/templates.stottr
+%%ottr path/to/templates.ttl
 ```
 
 After either form, you can query the expanded triples immediately:
@@ -208,15 +306,17 @@ SELECT ?person ?name WHERE { ?person foaf:name ?name }
 
 ## HTTP endpoint
 
-`POST /{dataset}/ottr` expands stOTTR templates/instances directly into a named dataset on
+`POST /{dataset}/ottr` expands OTTR templates/instances directly into a named dataset on
 a running server (`dagalog --serve`) — mirroring the existing `/{dataset}/rml` endpoint.
 The body is `multipart/form-data` with one or more parts; each part is an independent (or
-partial) stOTTR document, and all parts are merged (templates pooled, instances
-concatenated) before expansion — so a template library and its instance data can be sent
-as separate parts in one request, or combined in a single part.
+partial) OTTR document — stOTTR text by default, or wOTTR if the part's `Content-Type` is
+`text/turtle`/`application/x-turtle`/`application/trig` — and all parts are merged (templates
+pooled, instances concatenated) before expansion — so a template library and its instance
+data can be sent as separate parts in one request, or combined in a single part, mixing
+formats freely.
 
 ```sh
-# One self-contained document
+# One self-contained stOTTR document
 curl -F "document=@templates_and_instances.stottr" \
      http://localhost:3030/mydataset/ottr
 
@@ -224,14 +324,19 @@ curl -F "document=@templates_and_instances.stottr" \
 curl -F "templates=@person_template.stottr" \
      -F "instances=@person_instances.stottr" \
      http://localhost:3030/mydataset/ottr
+
+# A wOTTR (Turtle) document — Content-Type selects the wOTTR parser
+curl -F "document=@templates.ttl;type=text/turtle" \
+     http://localhost:3030/mydataset/ottr
 ```
 
 Part *names* (`document`, `templates`, `instances` above) carry no meaning — every part is
-parsed independently and all resulting documents are pooled before expansion.
+parsed independently (by format, per its `Content-Type`) and all resulting documents are
+pooled before expansion.
 
 On success, responds `200 OK` with the number of triples inserted. The endpoint requires
 write permission (same guard as `/rml` and `/update`) and returns `400` for malformed
-stOTTR syntax or an undefined template reference, `404` if the dataset doesn't exist. See
+stOTTR/wOTTR syntax or an undefined template reference, `404` if the dataset doesn't exist. See
 [`docs/plans/OTTR_HTTP_ENDPOINT_PLAN.md`](../plans/OTTR_HTTP_ENDPOINT_PLAN.md) for the full
 design, including why a single-call multipart shape was chosen over a stateful
 upload-then-trigger flow.
@@ -241,8 +346,10 @@ upload-then-trigger flow.
 ## CLI
 
 The `dagalog` binary supports a repeatable `--ottr <FILE>` flag ([#247](https://github.com/daghovland/rdf-datalog/issues/247)).
-Each file is parsed independently and all resulting documents are pooled before expansion —
-so a template library and its instance data can be split across files, or combined in one:
+Each file is parsed independently — dispatched by extension between stOTTR text and wOTTR
+Turtle (`.ttl`/`.turtle`/`.trig`) — and all resulting documents are pooled before expansion,
+so a template library and its instance data can be split across files (in either format,
+mixed), or combined in one:
 
 ```sh
 # Templates and instances in separate files
@@ -251,6 +358,9 @@ dagalog --ottr person_template.stottr --ottr person_instances.stottr \
 
 # Or a single self-contained file
 dagalog --ottr combined.stottr --query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+
+# A wOTTR (Turtle) template file, dispatched by its .ttl extension
+dagalog --ottr templates.ttl --query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
 ```
 
 `--ottr` runs after `--data`/`--mapping` and before `--ontology`/`--rules`, so

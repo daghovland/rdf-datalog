@@ -21,10 +21,14 @@ Contact: hovlanddag@gmail.com
 //! --boundary--
 //! ```
 //!
-//! Each part is a self-contained (or partial) stOTTR document; all parsed
-//! documents are merged (templates pooled, instances concatenated) via
+//! Each part is a self-contained (or partial) OTTR document, either stOTTR
+//! text syntax (the default) or wOTTR (RDF/Turtle) — selected per part via
+//! its `Content-Type` (`text/turtle`, `application/x-turtle` or
+//! `application/trig` → wOTTR; anything else → stOTTR). All parsed documents
+//! are merged (templates pooled, instances concatenated) via
 //! `ottr::expand_documents` before expansion, so templates and instances may
-//! be split across separate parts. Part names carry no meaning.
+//! be split across separate parts, in either format. Part names carry no
+//! meaning. See [#246](https://github.com/daghovland/rdf-datalog/issues/246).
 //!
 //! See `docs/plans/OTTR_HTTP_ENDPOINT_PLAN.md` for the full design.
 //!
@@ -70,12 +74,22 @@ async fn parse_multipart_documents(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("multipart error: {e}")).into_response())?
     {
+        let is_turtle = matches!(
+            field.content_type(),
+            Some("text/turtle") | Some("application/x-turtle") | Some("application/trig")
+        );
         let text = field.text().await.map_err(|e| {
             (StatusCode::BAD_REQUEST, format!("multipart error: {e}")).into_response()
         })?;
-        let doc = ottr::parse_stottr(&text).map_err(|e| {
-            (StatusCode::BAD_REQUEST, format!("stOTTR parse error: {e}")).into_response()
-        })?;
+        let doc = if is_turtle {
+            ottr::wottr::parse_wottr_str(&text).map_err(|e| {
+                (StatusCode::BAD_REQUEST, format!("wOTTR parse error: {e}")).into_response()
+            })?
+        } else {
+            ottr::parse_stottr(&text).map_err(|e| {
+                (StatusCode::BAD_REQUEST, format!("stOTTR parse error: {e}")).into_response()
+            })?
+        };
         docs.push(doc);
     }
 

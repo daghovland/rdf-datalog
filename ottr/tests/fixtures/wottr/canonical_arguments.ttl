@@ -1,0 +1,14 @@
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix ex: <http://example.com/> .
+
+ex:Rel a ottr:Template ;
+    ottr:parameters ( [ ottr:variable _:s ] [ ottr:variable _:o ] ) ;
+    ottr:pattern
+        [ ottr:of ottr:Triple ;
+          ottr:values ( _:s ex:rel _:o ) ] .
+
+[] ottr:of ex:Rel ;
+   ottr:arguments (
+       [ ottr:value ex:A ]
+       [ ottr:value ex:B ]
+   ) .

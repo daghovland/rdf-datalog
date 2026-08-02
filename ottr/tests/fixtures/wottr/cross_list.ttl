@@ -1,0 +1,16 @@
+@prefix ottr: <http://ns.ottr.xyz/0.4/> .
+@prefix ex: <http://example.com/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+ex:HasToppings a ottr:Template ;
+    ottr:parameters (
+        [ ottr:type ottr:IRI ; ottr:variable _:s ]
+        [ ottr:type ( rdf:List ottr:IRI ) ; ottr:variable _:list ]
+    ) ;
+    ottr:pattern
+        [ ottr:of ottr:Triple ;
+          ottr:modifier ottr:cross ;
+          ottr:values ( _:s ex:hasTopping _:list ) ] .
+
+[] ottr:of ex:HasToppings ;
+   ottr:values ( ex:Pizza ( ex:Cheese ex:Ham ex:Olives ) ) .

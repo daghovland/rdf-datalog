@@ -1967,6 +1967,7 @@ dependencies = [
  "log",
  "nom",
  "thiserror 2.0.18",
+ "turtle",
 ]
 
 [[package]]
