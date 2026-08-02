@@ -24,7 +24,7 @@ Almost all implementation is done by LLM-based agents.
 - **Reasoning** — OWL 2 RL materialisation, plus custom Datalog rules with stratified negation ([guide](docs/user/reasoning.md))
 - **OWL parsing** — Turtle-encoded OWL ontologies and OWL 2 Manchester Syntax (`.omn`)
 - **SHACL** — SHACL Core validation via Datalog translation
-- **RML** — map CSV, JSON, JSONL, and XML to RDF ([guide](docs/user/rml-mapping.md))
+- **RML** — map CSV, JSON, JSONL, XML, and SQL (SQLite) to RDF ([guide](docs/user/rml-mapping.md))
 - **OTTR** — reusable, typed RDF templates (stOTTR), expandable in-process, over HTTP, or from Jupyter ([guide](docs/user/ottr-templates.md))
 - **HTTP server** — SPARQL 1.1 Protocol, Graph Store Protocol, multi-dataset (Fuseki-compatible) routing, VoID, ETag caching ([deployment](docs/user/deployment.md))
 - **Transactions** — `BEGIN`/`COMMIT`/`ROLLBACK` API for atomic multi-statement updates

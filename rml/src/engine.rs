@@ -15,6 +15,7 @@ use crate::sandbox::confine_path;
 use crate::sources::SourceRow;
 use crate::sources::csv::CsvSource;
 use crate::sources::json::JsonSource;
+use crate::sources::sql::SqlSource;
 use crate::sources::xml::XmlSource;
 use crate::template::{expand_template, is_valid_iri_scheme};
 
@@ -46,41 +47,58 @@ fn execute_plan(plan: &LogicalPlan, base_dir: &Path, ds: &mut Datastore) -> Resu
 }
 
 fn scan_rows(scan: &LogicalScan, base_dir: &Path) -> Result<Vec<Box<dyn SourceRow>>, RmlError> {
-    let crate::ast::LogicalSourceRef::File(rel_path) = &scan.source;
-    let rel_path = std::path::Path::new(rel_path);
-    // Reject absolute paths and '..' escapes via the sandbox.
-    let canonical_path = confine_path(base_dir, rel_path)?;
+    match &scan.source {
+        crate::ast::LogicalSourceRef::File(rel_path) => {
+            let rel_path = std::path::Path::new(rel_path);
+            // Reject absolute paths and '..' escapes via the sandbox.
+            let canonical_path = confine_path(base_dir, rel_path)?;
 
-    let rows = match scan.reference_formulation {
-        ReferenceFormulation::Csv => {
-            let source = CsvSource::new(canonical_path.clone());
+            let rows = match scan.reference_formulation {
+                ReferenceFormulation::Csv => {
+                    let source = CsvSource::new(canonical_path.clone());
+                    source
+                        .rows()
+                        .map(|r| {
+                            r.map(|raw| Box::new(crate::sources::CsvRow(raw)) as Box<dyn SourceRow>)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                }
+                ReferenceFormulation::JsonPath => {
+                    let mut source = JsonSource::new(canonical_path.clone());
+                    if let Some(iter) = &scan.iterator {
+                        source = source.with_iterator(iter.clone());
+                    }
+                    source
+                        .rows()
+                        .map(|r| r.map(|row| Box::new(row) as Box<dyn SourceRow>))
+                        .collect::<Result<Vec<_>, _>>()?
+                }
+                ReferenceFormulation::XPath => {
+                    let mut source = XmlSource::new(canonical_path.clone());
+                    if let Some(iter) = &scan.iterator {
+                        source = source.with_iterator(iter.clone());
+                    }
+                    source
+                        .rows()
+                        .map(|r| r.map(|row| Box::new(row) as Box<dyn SourceRow>))
+                        .collect::<Result<Vec<_>, _>>()?
+                }
+            };
+            Ok(rows)
+        }
+        crate::ast::LogicalSourceRef::Sql(sql_ref) => {
+            let crate::ast::SqlConnection::Sqlite(rel_path) = &sql_ref.connection;
+            // Reject absolute paths and '..' escapes via the sandbox, same as
+            // the File case above.
+            let canonical_path = confine_path(base_dir, rel_path)?;
+            let connection = crate::ast::SqlConnection::Sqlite(canonical_path);
+            let source = SqlSource::new(connection, sql_ref.query.clone());
             source
                 .rows()
                 .map(|r| r.map(|raw| Box::new(crate::sources::CsvRow(raw)) as Box<dyn SourceRow>))
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()
         }
-        ReferenceFormulation::JsonPath => {
-            let mut source = JsonSource::new(canonical_path.clone());
-            if let Some(iter) = &scan.iterator {
-                source = source.with_iterator(iter.clone());
-            }
-            source
-                .rows()
-                .map(|r| r.map(|row| Box::new(row) as Box<dyn SourceRow>))
-                .collect::<Result<Vec<_>, _>>()?
-        }
-        ReferenceFormulation::XPath => {
-            let mut source = XmlSource::new(canonical_path.clone());
-            if let Some(iter) = &scan.iterator {
-                source = source.with_iterator(iter.clone());
-            }
-            source
-                .rows()
-                .map(|r| r.map(|row| Box::new(row) as Box<dyn SourceRow>))
-                .collect::<Result<Vec<_>, _>>()?
-        }
-    };
-    Ok(rows)
+    }
 }
 
 /// Hash join: the right (parent) side is materialised and indexed by its

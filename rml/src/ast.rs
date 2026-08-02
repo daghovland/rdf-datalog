@@ -25,6 +25,38 @@ pub struct LogicalSource {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogicalSourceRef {
     File(PathBuf),
+    Sql(SqlSourceRef),
+}
+
+/// A SQL `LogicalSource`: which database to connect to and which query to
+/// run against it. See
+/// [`docs/plans/RML_SQL_PLAN.md`](../../docs/plans/RML_SQL_PLAN.md) and
+/// [#26](https://github.com/daghovland/rdf-datalog/issues/26).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SqlSourceRef {
+    pub connection: SqlConnection,
+    pub query: SqlQuery,
+}
+
+/// Which database backend/file a SQL `LogicalSource` connects to. Only
+/// SQLite is implemented so far (phase 1 of `RML_SQL_PLAN.md`); PostgreSQL
+/// is phase 5, not yet implemented.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlConnection {
+    /// `rml:source` holds a filesystem path to a SQLite database file,
+    /// resolved relative to the mapping's base_dir the same way
+    /// `LogicalSourceRef::File`'s path is.
+    Sqlite(PathBuf),
+}
+
+/// The query a SQL `LogicalSource` runs: either a whole-table scan
+/// (`rml:tableName`) or an arbitrary SELECT (`rml:sqlQuery`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlQuery {
+    /// `rml:tableName "people"` — whole-table scan, `SELECT * FROM people`.
+    Table(String),
+    /// `rml:sqlQuery "SELECT id, name FROM people WHERE active = 1"`
+    Query(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

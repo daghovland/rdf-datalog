@@ -64,6 +64,16 @@ pub enum RmlError {
     /// registry. See `docs/plans/RML_FNML_PLAN.md` and
     /// [#27](https://github.com/daghovland/rdf-datalog/issues/27).
     UnknownFunction(String),
+    /// A SQL `LogicalSource` error: connection failure, malformed SQL, or a
+    /// missing table. See `docs/plans/RML_SQL_PLAN.md` and
+    /// [#26](https://github.com/daghovland/rdf-datalog/issues/26).
+    Sql {
+        /// The table name or SQL query text that failed, for diagnostics
+        /// (not necessarily a filename — held as a plain string, unlike the
+        /// `Csv`/`Json`/`Xml` variants' `path_file_name`-truncated paths).
+        context: String,
+        source: rusqlite::Error,
+    },
 }
 
 impl fmt::Display for RmlError {
@@ -109,6 +119,9 @@ impl fmt::Display for RmlError {
             RmlError::UnknownFunction(iri) => {
                 write!(f, "unknown FNML function: {iri}")
             }
+            RmlError::Sql { context, source } => {
+                write!(f, "SQL error ({context}): {source}")
+            }
         }
     }
 }
@@ -119,6 +132,7 @@ impl std::error::Error for RmlError {
             RmlError::Io(e) => Some(e),
             RmlError::Csv { source, .. } => Some(source),
             RmlError::Json { source, .. } => Some(source),
+            RmlError::Sql { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -151,12 +165,20 @@ fn validate_mapping_sources(
     mapping: &ast::MappingDocument,
     base_dir: &Path,
 ) -> Result<(), RmlError> {
-    use crate::ast::LogicalSourceRef;
+    use crate::ast::{LogicalSourceRef, SqlConnection};
     use crate::sandbox::confine_path;
 
     for tm in &mapping.triples_maps {
-        let LogicalSourceRef::File(rel_path) = &tm.logical_source.source;
-        confine_path(base_dir, rel_path)?;
+        match &tm.logical_source.source {
+            LogicalSourceRef::File(rel_path) => {
+                confine_path(base_dir, rel_path)?;
+            }
+            LogicalSourceRef::Sql(sql_ref) => match &sql_ref.connection {
+                SqlConnection::Sqlite(rel_path) => {
+                    confine_path(base_dir, rel_path)?;
+                }
+            },
+        }
     }
     Ok(())
 }

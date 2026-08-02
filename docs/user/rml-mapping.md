@@ -324,11 +324,56 @@ namespaces (`http://semweb.mmlab.be/ns/ql#JSONPath`,
 `http://semweb.mmlab.be/ns/ql#XPath`) from older Dimou-lab tooling are
 accepted as aliases for `rml:JSONPath`/`rml:XPath`.
 
-**In scope:** CSV, JSON, JSONL, XML, template IRIs, reference literals,
-language/datatype annotations, named graphs, blank nodes, `rml:class`,
-`rml:iterator`, nested JSONPath/XPath, join conditions (`rml:JoinCondition`).
+**In scope:** CSV, JSON, JSONL, XML, SQL (SQLite), template IRIs, reference
+literals, language/datatype annotations, named graphs, blank nodes,
+`rml:class`, `rml:iterator`, nested JSONPath/XPath, join conditions
+(`rml:JoinCondition`), FunctionMap (`fnml:functionValue`).
 
-**Not yet implemented:** SQL/JDBC sources, FunctionMap (FNML).
+**Not yet implemented:** SQL join pushdown (SQL/SQL joins run through the
+ordinary in-memory hash join, not synthesized into the database — see
+[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md)), PostgreSQL and
+other SQL backends beyond SQLite.
+
+---
+
+## SQL sources
+
+A SQL `LogicalSource` reads rows from a SQLite database instead of a
+CSV/JSON/XML file. `rml:source` is a path to the `.sqlite` file (resolved
+the same sandboxed way file sources are); `rml:tableName` selects a whole
+table, or `rml:sqlQuery` runs an arbitrary `SELECT`:
+
+```turtle
+<http://example.com/PersonMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "people.sqlite" ;
+        rml:tableName "people"
+    ] ;
+    rml:subjectMap [
+        rml:template "http://example.com/Person/{id}"
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate foaf:name ;
+        rml:objectMap [ rml:reference "name" ]
+    ] .
+```
+
+Or with `rml:sqlQuery` for a filtered/projected result set:
+
+```turtle
+rml:logicalSource [
+    rml:source "people.sqlite" ;
+    rml:sqlQuery "SELECT id, name FROM people WHERE active = 1"
+] ;
+```
+
+Column values are exposed the same way CSV columns are: `rml:reference` and
+template placeholders (`{column_name}`) resolve against the row's columns.
+`NULL` columns are treated as absent (same as an empty/missing CSV cell).
+See [docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) for the design
+and [issue #26](https://github.com/daghovland/rdf-datalog/issues/26) for
+status.
 
 ---
 

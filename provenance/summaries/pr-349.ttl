@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Prospective summary for PR #349 (issue #26), written per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window" prospective
+# case: bl:state bl:Open (real state at authoring time, this PR has not
+# merged), endedAtTime = this session's own authoring wall-clock time (not a
+# guessed mergedAt), startedAtTime = this branch's first commit's real
+# authoredDate (`git log feat/26-rml-sql-jdbc --format=%aI` reverse-oldest).
+# ghissues:26 is referenced only as an object (prov:used), never typed
+# bl:Issue, per the guidelines doc's "referenced PR/issue stubs" section.
+
+ghpull:349 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rml: SQL/JDBC LogicalSource (SQLite, rusqlite) - phases 1-2" ;
+    bl:number 349 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:26 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr349 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:26 ;
+    prov:startedAtTime "2026-08-02T16:57:01Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-02T17:18:43Z"^^xsd:dateTime .
+
+session:pr349Summary a agp:TranscriptSummary ;
+    agp:summaryText "docs/plans/RML_SQL_PLAN.md already designed a two-tier SQL join-pushdown strategy, but its own opening note explicitly gated that design on separate user sign-off before any code was written -- that sign-off hadn't happened, so this PR implements only phases 1-2 (SqlSource reading SQLite via rusqlite, rml:tableName whole-table scans and rml:sqlQuery arbitrary SELECTs) and deliberately adds no JoinAlgorithm::SqlPushdown variant or choose_join_algorithm function, since nothing would execute them yet and an unused enum variant would misrepresent what's implemented. Instead, one end-to-end test proves the existing rml:joinCondition hash-join engine (RML_JOIN_PLAN.md) already composes with the new SQL source for free -- scan_rows is source-agnostic, so a SQL child joined against a SQL parent on the same SQLite file produces correct triples through the ordinary hash join, just without a synthesized pushdown query. The plan doc's pinned rusqlite version (0.31) was stale; cargo add resolved 0.40.1 instead. Three implementation details the plan didn't fully specify: SQLite's dynamically-typed columns are converted to RawRow's String values via an explicit ValueRef match (BLOB rejected, since RML has no binary term type); NULL columns are omitted from the row entirely rather than stored as empty strings, matching CsvRow::get_str's existing null/absent-is-equivalent convention; and table names (which can't be bound as query parameters) are identifier-quoted with doubled embedded quotes before interpolation into 'SELECT * FROM <name>', tested against an actual quote-containing table name to rule out SQL injection via the identifier position. Also added a read-only OpenFlags connection and ran the confined (sandbox.rs) path through both validate_mapping_sources and scan_rows, consistent with how CSV/JSON/XML sources are already sandboxed." ;
+    agp:reasoningFor ghpull:349 ;
+    prov:wasGeneratedBy session:pr349 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
