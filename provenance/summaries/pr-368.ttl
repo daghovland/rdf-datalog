@@ -1,0 +1,45 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after pushing PR #368's real
+# implementation commit, in the same orchestration session that reviewed
+# and pushed it (the sub-agent that authored the commits had been cut off
+# mid-task by an account-level API spend limit before it could push).
+#
+# - ghpull:368's bl:state is bl:Open, the real state at authoring time.
+# - startedAtTime/endedAtTime come from `git log abfdb72..fix/364-sparql-
+#   recursion-depth --format=%aI` in the worktree that held the committed-
+#   but-unpushed work: the red-phase test commit and the depth-guard
+#   implementation commit.
+
+ghpull:368 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: bound recursion depth in FILTER/group-graph-pattern parsing (fix stack-overflow DoS)" ;
+    bl:number 368 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:364 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr368 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:364 ;
+    prov:startedAtTime "2026-08-03T16:29:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T19:39:00Z"^^xsd:dateTime .
+
+session:pr368Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #364 flagged that sparql_parser (a hand-written nom recursive-descent parser with no built-in depth limiting) had exactly two genuinely recursive entry points -- parenthesized FILTER sub-expressions in parse_primary_expression, and nested `{ { { ... } } }` group graph patterns in parse_group_graph_pattern, which is also the shared re-entry point for OPTIONAL/GRAPH/MINUS/SERVICE/EXISTS/NOT EXISTS/subqueries -- so a deeply nested query text could overflow the native call stack and abort the whole process, not just the offending request. TDD red-phase tests were committed first (four depth/no-leak/still-works cases, ignored). Implementation added a thread-local depth counter behind an RAII guard (DepthGuard, incrementing on construction and decrementing on Drop so backtracking out of a failed `alt` branch never leaks the count) at both recursion points. The depth limit itself (MAX_PARSE_DEPTH=64) was set empirically rather than taken from the issue's suggested 128-256 range: an unoptimized debug build was observed overflowing the default thread stack around 120-140 levels of nesting for both recursive paths, since nom's generic combinators chain through several stack frames per nesting level -- 64 keeps roughly a 2x margin under that observed breaking point while staying well above any real query's nesting depth (15-20 levels). The work was actually completed by a sub-agent that was terminated mid-quality-gate by an account-level Claude API spend limit before it could push; this session found the finished commit sitting locally in the worktree, independently re-verified it (targeted crate build, the five regression tests, workspace-wide fmt/clippy), and pushed it to the existing PR branch rather than re-doing the implementation." ;
+    agp:reasoningFor ghpull:368 ;
+    agp:decisionPoint session:pr368DepthDecision ;
+    prov:wasGeneratedBy session:pr368 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr368DepthDecision a agp:Decision ;
+    agp:summaryText "Set MAX_PARSE_DEPTH to 64 rather than the 128-256 range suggested in issue #364, based on empirically observing a debug-build stack overflow around 120-140 nesting levels for both recursive entry points." ;
+    agp:alternative "Use a value from the issue's suggested 128-256 range directly -- rejected because it left too little margin under the debug-build overflow point actually measured, and the guard needs to stay safe across build profile and thread stack size, not just the profile it was tested on." .
