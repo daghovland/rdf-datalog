@@ -89,6 +89,7 @@ CLI flags take precedence over environment variables.
 | `DAGALOG_OIDC_WRITE_ROLE` | `--oidc-write-role` | `dagalog.Write` | Role name that grants write access |
 | `DAGALOG_OIDC_ADMIN_ROLE` | `--oidc-admin-role` | `dagalog.Admin` | Role name that grants admin access |
 | `DAGALOG_OIDC_BROWSER_CLIENT_ID` | `--oidc-browser-client-id` | *(none)* | App client ID for the MSAL.js sign-in button in the browser UI |
+| `DAGALOG_CORS_ALLOW_ORIGIN` | `--cors-allow-origin` | *(none)* | Origin(s) allowed to make cross-origin state-changing requests (comma-separated) |
 
 ---
 
@@ -109,6 +110,29 @@ The default. All endpoints are open. Suitable for local development and trusted 
 ```sh
 dagalog --serve --data data.ttl
 ```
+
+> **Warning — default is unauthenticated and network-reachable.** With no
+> `--api-key` and no OIDC configuration (the bare `docker run -p 3030:3030
+> ghcr.io/daghovland/dagalog` example above), **anyone who can reach the
+> port can read and write the store** — there is no login, no token, no
+> per-client restriction of any kind. Do not expose this configuration
+> beyond `localhost` or a network you fully trust (a private LAN, a
+> container network with no other untrusted tenants). If the instance is
+> reachable from anywhere a browser might also be — including via SSRF from
+> another app on the same host or network — set `--api-key` (Tier 1) or
+> configure OIDC (Tier 2) before deploying it.
+>
+> Cross-origin browser requests get a narrower default independent of the
+> auth tier (see [CORS](#cors) below): state-changing methods (`POST`,
+> `PUT`, `DELETE`) are not CORS-approved for any origin unless explicitly
+> allow-listed via `--cors-allow-origin`, so a malicious page a victim's
+> browser visits cannot blindly issue cross-origin writes even against an
+> unauthenticated instance. This is a mitigation for one specific attack
+> path (browser-borne cross-origin requests), not a substitute for
+> authentication — non-browser clients (curl, another server, a
+> same-origin script) are unaffected by CORS and can still read and write
+> freely when `AuthConfig::None` is in effect. See
+> [#362](https://github.com/daghovland/rdf-datalog/issues/362).
 
 ### API key (Tier 1)
 
@@ -279,6 +303,41 @@ let config = Config {
 };
 # let _ = &config;
 ```
+
+---
+
+## CORS
+
+The server always sends CORS headers, split by whether the method mutates state:
+
+- **Safe methods** (`GET`, `HEAD`) are approved for any origin. `allow_credentials`
+  is never set, so no cookies/session credentials can be leaked cross-origin — this
+  just lets a web UI hosted on a different origin query the endpoint.
+- **State-changing methods** (`POST`, `PUT`, `DELETE` — SPARQL Update, Graph Store
+  Protocol writes, admin API) are approved only for an origin present in an explicit
+  allow-list. **By default this list is empty**, so no cross-origin state-changing
+  request gets a CORS-approving preflight response, regardless of the auth tier in
+  effect (Tier 0/1/2). This is independent of authentication: it blocks one specific
+  attack path (a malicious page in a victim's browser issuing blind cross-origin
+  writes against a reachable instance), not a replacement for it — non-browser
+  clients are unaffected by CORS.
+
+To allow a specific origin (e.g. a web UI on a different domain) to issue
+cross-origin state-changing requests:
+
+```sh
+dagalog --serve --data data.ttl \
+  --cors-allow-origin "https://my-ui.example.com"
+```
+
+Repeat the flag or comma-separate multiple origins:
+
+```sh
+dagalog --serve --data data.ttl \
+  --cors-allow-origin "https://a.example.com,https://b.example.com"
+```
+
+See [#362](https://github.com/daghovland/rdf-datalog/issues/362).
 
 ---
 
