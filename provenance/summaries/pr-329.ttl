@@ -20,6 +20,13 @@
 # ghpull:329 asserted as bl:PullRequest/bl:WorkItem; ghissues:326 referenced
 # only as an object (bl:closesIssue, prov:used), not typed bl:Issue.
 #
+# Both agp:Decision entries are given named session:-scoped IRIs (matching
+# pr-300.ttl's and pr-348.ttl's convention) rather than blank nodes, so a
+# review dashboard query (provenance/queries/all_decision_points.sparql,
+# whose own header calls it exactly that) can cite and reload the same
+# identifier across runs -- a blank node label is unstable across parses
+# and gives a reviewer nothing linkable.
+#
 # Timestamps from `gh pr view 329 --json commits,mergedAt`: four commits
 # spanning 2026-07-31T21:18:39Z through 21:35:41Z (a 17-minute window),
 # mergedAt 2026-07-31T22:02:13Z the same evening -- one continuous session,
@@ -43,14 +50,14 @@ session:pr329 a agp:AgentSession ;
 session:pr329Summary a agp:TranscriptSummary ;
     agp:summaryText "First concrete slice of the agent-provenance epic #306: added backlog/ontology/agentprov-vocabulary.ttl defining the agp: namespace (agp:AgentSession, agp:TranscriptSummary, agp:Decision classes; agp:summaryText, agp:reasoningFor, agp:transcriptRef, agp:decisionPoint, agp:alternative, agp:parentSession properties), reusing PROV-O terms directly (prov:Entity, prov:Activity, prov:SoftwareAgent) rather than redeclaring them, matching the pattern bl: already used for doap:Project. Added matching SHACL shapes (agentprov-shapes.ttl) and tests/agentprov_ontology.rs validating both against this repo's own shacl crate, using a fictional PR #999 toy fixture rather than real transcript data. Deliberately scoped OUT of this PR: the real grounding example, the SPARQL query library, and the CLAUDE.md workflow step -- all of which need this vocabulary to exist first, and are exactly what later PRs (#331, #334, and this backfill itself) built on top of it." ;
     agp:reasoningFor ghpull:329 ;
-    agp:decisionPoint [
-        a agp:Decision ;
-        agp:summaryText "agp:summaryText was given no rdfs:domain, even though it's the only property shared by both agp:TranscriptSummary and agp:Decision. A single-class domain (e.g. agp:TranscriptSummary) would, under RDFS entailment, wrongly classify every agp:Decision as also being an agp:TranscriptSummary purely because it uses the same property. Verified empirically, both directions: reinstating the domain on a scratch copy and rerunning the reasoner over the toy fixture produced a plain agp:Decision individual as a false positive result for a SELECT ?x WHERE { ?x a agp:TranscriptSummary } query; removing it (as shipped) did not." ;
-        agp:alternative "Declaring rdfs:domain agp:TranscriptSummary on agp:summaryText, rejected because it entails every agp:Decision is also an agp:TranscriptSummary under RDFS semantics, confirmed as a real false-positive query result rather than a theoretical concern."
-    ] , [
-        a agp:Decision ;
-        agp:summaryText "Added agp:Decision owl:disjointWith agp:AgentSession, agp:TranscriptSummary explicitly, since Decision has no PROV-O superclass to inherit disjointness through the way AgentSession/TranscriptSummary do (via prov:Activity/prov:Entity, which this repo's own prov-o.ttl test fixture already declares disjoint). Given a known reasoner panic bug on file for under-tested ontology axioms in this same file family (#298), the full multi-type grounding fixture (sessions, summaries, decisions, PR stub, agents together) was run through apply_ontologies with the new disjointness axiom active to rule out a similar crash -- completed cleanly." ;
-        agp:alternative "Leaving Decision without an explicit disjointness axiom, rejected because it would silently omit inconsistency detection between Decision and the two PROV-O-derived classes that a symmetric design otherwise provides for free."
-    ] ;
+    agp:decisionPoint session:pr329NoDomainDecision, session:pr329DisjointnessDecision ;
     prov:wasGeneratedBy session:pr329 ;
     prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr329NoDomainDecision a agp:Decision ;
+    agp:summaryText "agp:summaryText was given no rdfs:domain, even though it's the only property shared by both agp:TranscriptSummary and agp:Decision. A single-class domain (e.g. agp:TranscriptSummary) would, under RDFS entailment, wrongly classify every agp:Decision as also being an agp:TranscriptSummary purely because it uses the same property. Verified empirically, both directions: reinstating the domain on a scratch copy and rerunning the reasoner over the toy fixture produced a plain agp:Decision individual as a false positive result for a SELECT ?x WHERE { ?x a agp:TranscriptSummary } query; removing it (as shipped) did not." ;
+    agp:alternative "Declaring rdfs:domain agp:TranscriptSummary on agp:summaryText, rejected because it entails every agp:Decision is also an agp:TranscriptSummary under RDFS semantics, confirmed as a real false-positive query result rather than a theoretical concern." .
+
+session:pr329DisjointnessDecision a agp:Decision ;
+    agp:summaryText "Added agp:Decision owl:disjointWith agp:AgentSession, agp:TranscriptSummary explicitly, since Decision has no PROV-O superclass to inherit disjointness through the way AgentSession/TranscriptSummary do (via prov:Activity/prov:Entity, which this repo's own prov-o.ttl test fixture already declares disjoint). Given a known reasoner panic bug on file for under-tested ontology axioms in this same file family (#298), the full multi-type grounding fixture (sessions, summaries, decisions, PR stub, agents together) was run through apply_ontologies with the new disjointness axiom active to rule out a similar crash -- completed cleanly." ;
+    agp:alternative "Leaving Decision without an explicit disjointness axiom, rejected because it would silently omit inconsistency detection between Decision and the two PROV-O-derived classes that a symmetric design otherwise provides for free." .
