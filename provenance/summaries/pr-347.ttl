@@ -1,0 +1,43 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Retrospective summary for PR #347 (closes issue #284), written for issue
+# #352's representative sample. Picked as a second, distinct new-feature
+# slot: a whole new `backlog` crate that ingests this repo's own live
+# GitHub state (issues/epics/PRs/labels/crate deps) into `bl:` vocabulary
+# quads -- structurally very different from the OWL-vocabulary-design work
+# in pr-329.ttl, and from every SHACL/reasoner fix in the other samples.
+#
+# ghpull:347 asserted as bl:PullRequest/bl:WorkItem; ghissues:284 referenced
+# only as an object (bl:closesIssue, prov:used), not typed bl:Issue.
+#
+# Timestamps from `gh pr view 347 --json commits,mergedAt`: single commit
+# (2026-08-02T10:09:54Z), mergedAt 2026-08-02T11:50:07Z the same morning --
+# one continuous session, startedAtTime is the (only) commit's authoredDate.
+
+ghpull:347 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog: GitHub API loader — issues/epics/PRs/labels into RDF" ;
+    bl:number 347 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:284 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr347 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:284 ;
+    prov:startedAtTime "2026-08-02T10:09:54Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-02T11:50:07Z"^^xsd:dateTime .
+
+session:pr347Summary a agp:TranscriptSummary ;
+    agp:summaryText "New backlog crate that fetches this repo's own issue/PR/label state via gh api shell-out and materializes it as bl: vocabulary quads, plus a checked-in Turtle snapshot generated from live data. Covers four areas from the parent issue: title/state/labels map directly onto rdfs:label, bl:Open/bl:Closed, and bl:Label resources (body text is read only to extract #N references, not persisted, since there's no bl:body property yet -- a known, already-documented v1 gap); native sub-issue relationships are derived from each issue's own parent_issue_url field rather than an N+1 fan-out call per parent to /sub_issues, with bl:Epic inferred for any issue with no parent and at least one child; PR-closes-issue links are distinguished from mere relatesToIssue via a closing-keyword regex over the PR body, cross-checked against the fetched issue/PR number map so a PR number can't be mistaken for the issue it references; and bl:Crate/bl:dependsOnCrate are read straight from workspace Cargo.toml path dependencies with no API call, while bl:touchesCrate is derived from each PR's changed-file paths. Testing uses recorded gh api fixtures (a trimmed real response set) through a GitHubSource test double, so the suite makes no live network calls; one #[ignore]d live smoke test exists for manual sanity checks. The generated snapshot is validated against this repo's own SHACL shapes crate, mirroring the pre-existing tests/backlog_ontology.rs pattern." ;
+    agp:reasoningFor ghpull:347 ;
+    prov:wasGeneratedBy session:pr347 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

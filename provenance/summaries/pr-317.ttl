@@ -1,0 +1,50 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Retrospective summary for PR #317 (closes issue #301), written for issue
+# #352 (a representative-sample backfill, sub-issue of the agent-provenance
+# epic #306 -- see the issue's own scope decision: a sample, not an
+# exhaustive backfill, which is split into follow-up #355). Picked as the
+# "architectural/reasoner change" variety slot: it turns a panicking
+# invariant violation into a typed, recoverable error threaded through two
+# crates and an HTTP layer, distinct from the SHACL field-level fixes that
+# dominate this repo's recent history.
+#
+# ghpull:317 asserted as bl:PullRequest/bl:WorkItem per
+# bl:RequiresWorkItemTypeShape; ghissues:301 referenced only as an object
+# (bl:closesIssue, prov:used), deliberately not typed bl:Issue, per
+# TRANSCRIPT_SUMMARY_GUIDELINES.md's explicit warning.
+#
+# Timestamps from `gh pr view 317 --json commits,mergedAt`: this PR's three
+# commits (2026-07-31T09:29:32Z, 09:42:54Z, 09:55:16Z) all landed within one
+# ~26-minute window the same morning it merged (mergedAt
+# 2026-07-31T12:42:59Z), so startedAtTime uses the first commit's
+# authoredDate -- a genuinely single, continuous session, not a multi-day
+# span requiring the "final commit only" rule.
+
+ghpull:317 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: reasoner returns Result instead of panicking on genuine Contradiction" ;
+    bl:number 317 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:301 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr317 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:301 ;
+    prov:startedAtTime "2026-07-31T09:29:32Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T12:42:59Z"^^xsd:dateTime .
+
+session:pr317Summary a agp:TranscriptSummary ;
+    agp:summaryText "The reasoner previously panicked whenever a RuleHead::Contradiction rule's body was satisfied -- a genuine logical contradiction in the materialised data, but one the process had no way to survive. Made DatalogProgram's materialisation methods, evaluate_rules, and IncrementalReasoner's insertion/deletion paths return Result<_, ReasoningError> instead, and added IncrementalReasoner::rebuild_from_base so a caller can recover a consistent closure after retracting whatever base fact caused the contradiction. sparql_endpoint now surfaces a contradiction from client-supplied data (INSERT DATA, transaction commit, Graph Store Protocol writes) as 409 Conflict -- the same status already used for owl:Nothing violations -- via a shared apply_reasoner_delta helper that rolls back and rebuilds on error rather than letting the connection drop. The fix's correctness was confirmed two ways: a genuinely reproduced pre-fix panic (via a shared-CARGO_TARGET_DIR stale-artifact rebuild that accidentally linked the new HTTP test against the unfixed datalog rlib, reproducing the exact panic message from #301) followed by the same test passing post-fix with a live server; and an existing should_panic test converted to assert Err(ReasoningError::Contradiction(_)) directly. Two follow-ups were explicitly scoped out rather than folded in: rebuild_from_base only re-derives facts within its own reasoner's rule strata, so a quad materialised by an unrelated evaluate_rules call elsewhere is invisible to it on rebuild (filed as #319); and GSP rollback re-adds previously-derived quads as plain base facts, losing their intensional flag (folded into #319 too, to keep this PR's diff limited to the panic-to-Result change)." ;
+    agp:reasoningFor ghpull:317 ;
+    prov:wasGeneratedBy session:pr317 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

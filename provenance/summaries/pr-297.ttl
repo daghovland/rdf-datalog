@@ -1,0 +1,62 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Retrospective summary for PR #297 (closes issue #278), written for issue
+# #352's representative sample. Picked as the "SHACL correctness fix with a
+# genuine decision point" slot -- distinct from the many SHACL PRs that are
+# single-pass field-metadata fixes with no real fork, this one was
+# explicitly redesigned mid-PR after direct review feedback moved the fix
+# from a runtime per-call guard to a static shapes-graph-only check, which
+# is exactly the kind of considered-and-rejected-alternative
+# agp:decisionPoint exists to record.
+#
+# ghpull:297 asserted as bl:PullRequest/bl:WorkItem; ghissues:278 referenced
+# only as an object (bl:closesIssue, prov:used), not typed bl:Issue.
+#
+# agp:Decision is given a named session:-scoped IRI (matching pr-300.ttl's
+# and pr-348.ttl's convention) rather than a blank node, so a review
+# dashboard query (provenance/queries/all_decision_points.sparql, whose own
+# header calls it exactly that) can cite and reload the same identifier
+# across runs -- a blank node label is unstable across parses and gives a
+# reviewer nothing linkable.
+#
+# Timestamps from `gh pr view 297 --json commits,mergedAt`: two commits
+# (2026-07-25T11:13:15Z, 2026-07-26T08:36:03Z) roughly a day apart --
+# genuinely spans two days (initial fix, then the review-driven redesign
+# the next day), mergedAt 2026-07-26T13:30:14Z. Per the guidelines'
+# multi-day-PR rule (as pr-300.ttl set precedent for), startedAtTime uses
+# the FINAL commit's authoredDate, since that second-day commit is the one
+# that closed the session that actually shipped -- the first day's commit
+# was superseded by the redesign, not incrementally built upon.
+
+ghpull:297 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): guard shape_conforms_for_node against recursive shape cycles" ;
+    bl:number 297 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:278 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr297 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:278 ;
+    prov:startedAtTime "2026-07-26T08:36:03Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-26T13:30:14Z"^^xsd:dateTime .
+
+session:pr297Summary a agp:TranscriptSummary ;
+    agp:summaryText "A cyclic shapes graph (e.g. two sh:not shapes referencing each other) could send shacl::validate into infinite recursion. The redesigned fix adds shacl::shapes::find_shape_reference_cycle, a one-time DFS with white/gray/black marking over the static shape-reference graph (sh:not/sh:and/sh:or/sh:xone/sh:node/sh:qualifiedValueShape edges), run once up front from every top-level shape before any data evaluation. If a cycle is found, validate returns Err with a diagnostic naming every shape in the cycle, rather than silently picking a runtime answer -- more spec-honest, since SHACL Core leaves recursive shape-reference semantics undefined. Three tests confirm the design: the original 2-shape cycle regression now asserts Err instead of a bogus conforms==true; a new 3-shape cycle (A to B to C to A) proves the detector walks the full reference graph, not just direct or 2-shape mutual self-reference; and an existing 20-level nested-but-acyclic chain still passes, confirming the static check doesn't misfire on legitimately deep non-cyclic shapes graphs." ;
+    agp:reasoningFor ghpull:297 ;
+    agp:decisionPoint session:pr297StaticCycleCheckDecision ;
+    prov:wasGeneratedBy session:pr297 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr297StaticCycleCheckDecision a agp:Decision ;
+    agp:summaryText "Redesigned per direct review feedback before merge: the original fix threaded a runtime visited: HashSet<(node, shape_id)> through every recursive shape_conforms_for_node/constraint_conforms call, which correctly terminated on a cyclic shapes graph but tied its bookkeeping cost to the size of the data being validated -- one HashSet insert/remove per recursive call, for every node checked, even though the cycle being guarded against is a fixed property of the shapes graph alone, unrelated to the data. The static, once-per-validation-run detector removes that per-call overhead entirely and lets shape_conforms_for_node/constraint_conforms revert to their original, pre-visited-set form." ;
+    agp:alternative "Keeping the runtime (node, shape_id) visited-set threaded through every recursive call, rejected because it pays a per-data-node bookkeeping cost for a property that is entirely static (fixed the moment the shapes graph is parsed), and because it answers the recursive-shape question at data-evaluation time rather than up front where a clearer diagnostic (naming the actual cyclic shapes) is possible." .
