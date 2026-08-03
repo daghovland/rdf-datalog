@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Prospective summary for PR #359 (issue #354), written per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window" prospective
+# case: bl:state bl:Open (real state at authoring time -- PR is open, marked
+# ready for review, CI green, but not yet merged by the repo owner),
+# endedAtTime = this session's own authoring wall-clock time (not a guessed
+# mergedAt), startedAtTime = this branch's first commit's real authoredDate
+# (`git log feat/354-rml-sql-pushdown --format=%aI`). ghissues:354 is
+# referenced only as an object (prov:used, bl:closesIssue), never typed
+# bl:Issue, per the guidelines doc's "referenced PR/issue stubs" section.
+
+ghpull:359 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rml: SQL join pushdown + PostgreSQL backend (#354)" ;
+    bl:number 359 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:354 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr359 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:354 ;
+    prov:startedAtTime "2026-08-03T05:30:14Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T07:24:34Z"^^xsd:dateTime .
+
+session:pr359Summary a agp:TranscriptSummary ;
+    agp:summaryText "RML_SQL_PLAN.md's own opening note had gated join-pushdown design on separate user sign-off, which #354 being labeled ready supplied; this PR implements the phases 3-5 that #349 deliberately deferred. translate::choose_join_algorithm is a pure function comparing both join sides' LogicalSourceRef -- SqlPushdown only when both are Sql on an equal SqlConnection, HashJoin otherwise -- so cross-connection SQL/SQL and SQL/CSV joins provably stay on the existing hash-join engine unchanged. Pushdown execution (engine.rs::execute_sql_pushdown_join) discovers each side's columns via a schema-only query (SQLite LIMIT 0 / Postgres Client::prepare, neither executes the query body), then synthesizes one SELECT with every column aliased child_<col>/parent_<col> to avoid same-named-column collisions, reusing the existing execute_join_row via two prefix-filtered SourceRow views into the single merged result row rather than adding new evaluation logic. A real correctness gap surfaced only via advisor review before implementation: SQLite's bare ON c.x = p.y would match empty-string join keys ('' = ''), while the hash-join tier's SourceRow::get_str treats '' as absent and never builds a key for it -- fixed with an explicit <> '' guard per join condition, proven by a test asserting both tiers agree on an empty-string join-key fixture. For Postgres (phase 5), SqlConnection::Postgres stores only the environment-variable NAME, never the resolved DSN, specifically so no credential reaches a #[derive(Debug)] dump or an error message; loader::resolve_sql_connection rejects any rml:source that looks like a literal connection string (a URI scheme, or libpq key=value credential fields) even before checking whether it would 'work', and the rejection error reports only the property name. No live PostgreSQL server exists in this repo's test fixtures (no hermetic embedded option comparable to SQLite's bundled/in-memory story), so only the DSN-classification/rejection logic is tested; the actual postgres::Client query path is implemented but unverified against a live server, documented as a known gap rather than silently untested." ;
+    agp:reasoningFor ghpull:359 ;
+    prov:wasGeneratedBy session:pr359 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
