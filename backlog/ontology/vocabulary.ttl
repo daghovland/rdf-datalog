@@ -157,6 +157,13 @@ bl:touchesCrate
     rdfs:label "touches crate" ;
     rdfs:comment "The crate(s) an issue or PR actually changed (or, for a still-open issue, is expected to change). Domain bl:WorkItem, not bl:Issue or bl:PullRequest specifically, since this is the main property genuinely shared by both -- a PR that already changed a crate, and an unresolved bug report that already knows which crate it affects before any fix exists." .
 
+bl:touchesFile
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:PullRequest ;
+    rdfs:range xsd:string ;
+    rdfs:label "touches file" ;
+    rdfs:comment "A repo-relative path of a file changed by this PR (repeatable) -- mirrors bl:Crate's own bl:path in shape (a plain string, not a resource: no per-file identifier scheme is being introduced, see AGENT_PROVENANCE_PLAN.md \"Granularity\" for why file-level identity stays this cheap). Domain bl:PullRequest specifically, not bl:WorkItem like bl:touchesCrate: unlike crate impact, there is no reliable GitHub-derivable \"expected files\" signal for a still-open issue, only a PR's actual diff. Populated by the loader (#284) from the SAME `gh api .../pulls/{n}/files` response it already fetches to compute bl:touchesCrate -- see docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md gap #1; no new API call. Enables the two-hop join agp:TranscriptSummary -> agp:reasoningFor -> bl:PullRequest -> bl:touchesFile that provenance/queries/related_to_file.sparql (a follow-up issue) will use." .
+
 bl:dependsOnCrate
     a owl:ObjectProperty ;
     rdfs:domain bl:Crate ;

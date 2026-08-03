@@ -272,6 +272,33 @@ fn touches_crate_derived_from_pr_changed_files() {
     );
 }
 
+#[test]
+fn touches_file_derived_from_pr_changed_files() {
+    let source = fixture_source();
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+    let pr276 = "https://github.com/daghovland/rdf-datalog/pull/276";
+    let pr276_id = lookup(&ds, pr276).expect("PR #276 must be interned");
+    let touches_file_pred = lookup(&ds, &format!("{BL}touchesFile"))
+        .expect("bl:touchesFile must be interned by the loader");
+    let files: Vec<String> = ds
+        .get_triples_with_subject_predicate(pr276_id, touches_file_pred)
+        .map(|t| ds.resources.get_graph_element(t.obj).to_string())
+        .collect();
+    assert!(
+        files.iter().any(|f| f.contains("shacl/src/evaluate.rs")),
+        "expected bl:touchesFile shacl/src/evaluate.rs on PR #276, got: {files:?}"
+    );
+    assert!(
+        files.iter().any(|f| f.contains("shacl/src/translate.rs")),
+        "expected bl:touchesFile shacl/src/translate.rs on PR #276, got: {files:?}"
+    );
+    assert_eq!(
+        files.len(),
+        2,
+        "expected exactly the two files fixture_source() records for PR #276, got: {files:?}"
+    );
+}
+
 /// The generated snapshot must conform to `backlog/ontology/shapes.ttl`,
 /// loaded through this repo's own `shacl` crate -- mirrors
 /// `tests/backlog_ontology.rs`'s existing pattern, catching structural

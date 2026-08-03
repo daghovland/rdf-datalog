@@ -282,6 +282,13 @@ pub fn load_issues(
                 let crate_id = iri(ds, &format!("{CRATE_NS}{local}"));
                 add_object(ds, subj, "touchesCrate", crate_id);
             }
+            // bl:touchesFile: the individual changed-file paths, from the
+            // SAME `files` response already fetched above for the
+            // bl:touchesCrate rollup -- no additional `gh api` call. See
+            // docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md gap #1.
+            for file in &files {
+                add_string(ds, subj, "touchesFile", file);
+            }
         }
     }
     Ok(())

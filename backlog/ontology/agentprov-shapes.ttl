@@ -75,6 +75,12 @@ agp:TranscriptSummaryRequiredFieldsShape
         sh:path agp:transcriptRef ;
         sh:maxCount 1 ;
         sh:message "agp:transcriptRef is optional but must not be repeated -- at most one per agp:TranscriptSummary." ;
+    ] ;
+    sh:property [
+        sh:path agp:abstractText ;
+        sh:maxCount 1 ;
+        sh:maxLength 160 ;
+        sh:message "agp:abstractText is optional (at most one per agp:TranscriptSummary) but when present must be commit-subject-line scale (<=160 chars) -- see docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md gap #2. No sh:minCount: existing summaries without it remain valid." ;
     ] .
 
 # Mirrors agp:TranscriptSummaryRequiredFieldsShape's summaryText bounds for

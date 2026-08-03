@@ -502,6 +502,53 @@ conform under the strengthened shapes (`tests/provenance_queries.rs`'s
 fixture (missing `agp:reasoningFor`, a 9-character `agp:summaryText`) fails
 (`malformed_summary_fails_shacl_validation`).
 
+## `agp:abstractText` reuses `dcterms:abstract`; `bl:touchesFile` does NOT reuse `prov:wasInfluencedBy`
+
+Repo owner review of PR #358 asked whether existing vocabulary could be
+reused for both new properties -- "it's important to me to relate to
+existing vocabulary when possible, this will help reuse of data." Checked
+both against their normative sources rather than assuming either would
+work:
+
+**`agp:abstractText rdfs:subPropertyOf dcterms:abstract`** -- done. Dublin
+Core's `dcterms:abstract` ("A summary of the resource") has no `rdfs:domain`
+and no `rdfs:range` constraint in the DCMI Metadata Terms spec -- DCMI
+properties are deliberately unconstrained this loosely, precisely so they
+can be reused as a super-property without entailing anything unwanted. Safe,
+implemented.
+
+**`bl:touchesFile rdfs:subPropertyOf prov:wasInfluencedBy`** -- investigated,
+NOT done, real type mismatch found (not just an imprecise fit). Checked the
+actual PROV-O ontology: `prov:wasInfluencedBy` is genuinely PROV's most
+generic relation (`used`, `wasGeneratedBy`, `wasAssociatedWith`,
+`wasAttributedTo`, etc. are all its `rdfs:subPropertyOf` it), but its
+`rdfs:domain`/`rdfs:range` are BOTH a union of `{prov:Activity, prov:Agent,
+prov:Entity}` -- i.e. it relates two proper RDF resources. `bl:touchesFile`
+is necessarily an `owl:DatatypeProperty` (its value is a file-path string
+literal, mirroring `bl:Crate`'s own `bl:path`, deliberately -- see
+`AGENT_PROVENANCE_PLAN.md` "Granularity" for why file identity stays this
+cheap, no per-file resource is minted). In OWL2, datatype properties and
+object properties form disjoint hierarchies: a datatype property cannot be
+a genuine `rdfs:subPropertyOf` an object property without a real modeling
+inconsistency, since range entailment would require a plain string literal
+to be typed `rdf:type prov:Entity` (or Activity/Agent) -- not expressible in
+RDF at all (a literal cannot be the subject of a type assertion the way a
+resource can). This is the same class of hazard `rdfs:subClassOf is not
+free` (above) already warns about for this ontology, just on the property
+side instead of the class side.
+
+Two real ways forward exist, not decided here (raised back to the repo
+owner rather than picked unilaterally, since it's a genuine design fork,
+not a bug fix): (a) leave `bl:touchesFile` as a plain string property with
+only a documentation-level cross-reference to `prov:wasInfluencedBy` (no
+formal axiom, cheap, no design change), or (b) mint file paths as real IRI
+resources (e.g. a repo-relative URI scheme) so `bl:touchesFile` becomes a
+proper `owl:ObjectProperty` that genuinely CAN be `rdfs:subPropertyOf
+prov:used`/`prov:wasInfluencedBy` -- a bigger change, touching the
+already-shipped `bl:path`-mirroring convention, but the more spec-correct
+reuse if file-level identity ever needs to carry more than a bare path
+string anyway.
+
 ## What's still open (deliberately, past this issue's scope)
 
 - `bl:Label` individuals carry only `rdfs:label` today, no color/description

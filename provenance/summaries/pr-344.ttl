@@ -49,6 +49,7 @@ session:pr344 a agp:AgentSession ;
 
 session:pr344Summary a agp:TranscriptSummary ;
     agp:summaryText "Issue #334 was originally framed as an automated ML/heuristic transcript-extraction pipeline, then reframed by the repo owner (2026-08-01 comment): trust the PR-finishing agent to hand-author its own transcript summary instead, and build the infrastructure that makes that trustworthy. Built four pieces: a concrete authoring spec (TRANSCRIPT_SUMMARY_GUIDELINES.md) grounded in the existing pr-300.ttl example; two new SHACL constraints on agentprov-shapes.ttl (sh:minLength/sh:maxLength on agp:summaryText to catch a degenerate one-liner or a raw transcript dump, and sh:class bl:WorkItem on agp:reasoningFor to catch a reference to something that isn't really a work item); a generalized tests/provenance_queries.rs that globs provenance/summaries/*.ttl instead of hardcoding one file, validating each file in its own datastore (not merged) so one file's malformed content can't hide behind another's stubs; and CLAUDE.md's new step 6b. A second, retrospective worked example (pr-328.ttl, distilling real PR #328) was added specifically to prove the glob-based loader actually generalizes past the one file it started with." ;
+    agp:abstractText "Reframed #334 from an ML pipeline to hand-authored summaries: wrote authoring guidelines, strengthened SHACL, and generalized the test glob." ;
     agp:reasoningFor ghpull:344 ;
     prov:wasGeneratedBy session:pr344 ;
     prov:wasAttributedTo session:claudeSonnet5 .

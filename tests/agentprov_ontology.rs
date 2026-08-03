@@ -213,6 +213,76 @@ fn summary_without_generating_session_is_a_violation() {
     );
 }
 
+/// An `agp:TranscriptSummary` with an `agp:abstractText` at or under the
+/// 160-char cap conforms.
+#[test]
+fn abstract_text_under_max_length_conforms() {
+    let mut data = load(&[BL_VOCAB, AGP_VOCAB]);
+    turtle::parse_turtle(
+        &mut data,
+        r#"
+        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix prov: <http://www.w3.org/ns/prov#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix ex: <http://example.com/ns#> .
+        ex:pr1002 a bl:PullRequest, bl:WorkItem ; rdfs:label "short-abstract PR" ;
+            bl:number 1002 ; bl:state bl:Open .
+        ex:agent a prov:SoftwareAgent .
+        ex:session a agp:AgentSession ; prov:wasAssociatedWith ex:agent .
+        ex:summaryWithAbstract a agp:TranscriptSummary ;
+            agp:summaryText "This summary has a short abstract alongside its full text." ;
+            agp:abstractText "Fix short abstract, well under the cap." ;
+            agp:reasoningFor ex:pr1002 ;
+            prov:wasAttributedTo ex:agent ;
+            prov:wasGeneratedBy ex:session .
+        "#
+        .as_bytes(),
+    )
+    .expect("scratch fixture should parse");
+    let shapes = load(&[AGP_SHAPES]);
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        report.conforms,
+        "an agp:abstractText at/under 160 chars must conform, got violations: {:#?}",
+        report.results
+    );
+}
+
+/// An `agp:TranscriptSummary` whose `agp:abstractText` exceeds the 160-char
+/// cap must violate `agp:TranscriptSummaryRequiredFieldsShape`.
+#[test]
+fn abstract_text_over_max_length_is_a_violation() {
+    let mut data = load(&[BL_VOCAB, AGP_VOCAB]);
+    let too_long = "x".repeat(161);
+    let ttl = format!(
+        r#"
+        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix prov: <http://www.w3.org/ns/prov#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix ex: <http://example.com/ns#> .
+        ex:pr1003 a bl:PullRequest, bl:WorkItem ; rdfs:label "long-abstract PR" ;
+            bl:number 1003 ; bl:state bl:Open .
+        ex:agent a prov:SoftwareAgent .
+        ex:session a agp:AgentSession ; prov:wasAssociatedWith ex:agent .
+        ex:summaryWithLongAbstract a agp:TranscriptSummary ;
+            agp:summaryText "This summary has an abstract that is too long for the cap." ;
+            agp:abstractText "{too_long}" ;
+            agp:reasoningFor ex:pr1003 ;
+            prov:wasAttributedTo ex:agent ;
+            prov:wasGeneratedBy ex:session .
+        "#
+    );
+    turtle::parse_turtle(&mut data, ttl.as_bytes()).expect("scratch fixture should parse");
+    let shapes = load(&[AGP_SHAPES]);
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        !report.conforms,
+        "an agp:abstractText over 160 chars must violate TranscriptSummaryRequiredFieldsShape"
+    );
+}
+
 /// An `agp:TranscriptSummary` whose `prov:wasGeneratedBy` points at
 /// something that is a `prov:Activity` but NOT typed `agp:AgentSession`
 /// must also violate `agp:SummaryGeneratedByShape` (the `sh:class` half --

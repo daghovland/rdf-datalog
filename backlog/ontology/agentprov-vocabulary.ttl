@@ -1,5 +1,6 @@
 @prefix agp: <https://dagalog.dev/ns/agentprov#> .
 @prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -68,6 +69,14 @@ agp:summaryText
     rdfs:range xsd:string ;
     rdfs:label "summary text" ;
     rdfs:comment "The distilled prose explaining the reasoning. Short (a paragraph or two), not a full transcript -- see the ontology header's privacy note. Used on BOTH agp:TranscriptSummary and agp:Decision (that decision point's own distilled reasoning) -- deliberately NO rdfs:domain here, since rdfs:domain is an entailment (X p Y ⊨ X a domain), not a hint: declaring a single-class domain would wrongly entail every agp:Decision is also an agp:TranscriptSummary the moment a reasoner runs (see backlog/ontology/MODELING_NOTES.md \"agp:summaryText has no rdfs:domain\" for the concrete failure this was caught against, and #298 for why this repo is already wary of unverified OWL axioms over this exact fixture)." .
+
+agp:abstractText
+    a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:abstract ;
+    rdfs:domain agp:TranscriptSummary ;
+    rdfs:range xsd:string ;
+    rdfs:label "abstract text" ;
+    rdfs:comment "OPTIONAL short (commit-subject-line scale, sh:maxLength 160 in agentprov-shapes.ttl) one-line distillation of agp:summaryText, for cheaply scanning many summaries before reading any full one -- see docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md gap #2. Not required: existing summaries predating this property remain valid without it (backward compatible), and a query can fall back to (a prefix of) agp:summaryText when no agp:abstractText is present. Domain agp:TranscriptSummary only, not shared with agp:Decision like agp:summaryText is -- a Decision's own summaryText is already short/focused enough that a further one-line abstract of it adds little. The 160-char cap is a starting number, not derived from measurement (unlike agp:summaryText's 30/4000 bounds, which were calibrated against real files) -- adjust it if real usage shows it's wrong, per the repo owner's own framing when this was proposed (\"trying to be agile here, adjust when need arises\"). rdfs:subPropertyOf dcterms:abstract (http://purl.org/dc/terms/abstract, 'A summary of the resource') per the repo owner's request to relate to existing vocabulary for reuse -- checked safe: dcterms:abstract has no rdfs:domain and no rdfs:range constraint in the DCMI Metadata Terms spec, so this subproperty relation entails nothing beyond what's already asserted here (no risk of an unwanted domain/range propagation, unlike the bl:touchesFile/prov:wasInfluencedBy case discussed in MODELING_NOTES.md)." .
 
 agp:reasoningFor
     a owl:ObjectProperty ;

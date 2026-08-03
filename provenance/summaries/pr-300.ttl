@@ -73,6 +73,7 @@ session:pr300QualifiedSplitDecision a agp:Decision ;
 
 session:pr300Summary a agp:TranscriptSummary ;
     agp:summaryText "shacl::collect_violations unconditionally set result_path, source_shape, source_constraint, and message to None on every ValidationResult, and report_to_turtle correspondingly never emitted sh:resultPath/sh:sourceShape/sh:sourceConstraintComponent/sh:resultMessage; sh:message on a shape was never even parsed. Added ParsedShape::message and PropConstraint::component_iri() (mapping each constraint variant to its W3C sh:sourceConstraintComponent IRI, verified against the normative https://www.w3.org/ns/shacl.ttl, not just spec prose), and threaded a new ViolMeta (severity, source shape, path, constraint-component IRI, message) through pre_compute_violations/shapes_to_rules/eval_all into collect_violations, mirroring the existing Severity-threading pattern from #263. Review then surfaced two further fixes, both landed on this same branch: sourceShape now resolves to the actual property shape rather than always falling back to the parent node shape, and sh:qualifiedMinCount/sh:qualifiedMaxCount are evaluated and reported as independent constraint components rather than one ambiguous check." ;
+    agp:abstractText "shacl::collect_violations never populated resultPath/sourceShape/sourceConstraintComponent/message; added ViolMeta threading to fix all four." ;
     agp:reasoningFor ghpull:300 ;
     agp:decisionPoint session:pr300SourceShapeDecision, session:pr300QualifiedSplitDecision ;
     prov:wasGeneratedBy session:pr300 ;
