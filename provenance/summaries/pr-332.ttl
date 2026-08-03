@@ -1,0 +1,48 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Retrospective summary for PR #332 (closes issue #319), written for issue
+# #352's representative sample. Picked as a second, closely-related
+# "architectural/reasoner" slot alongside pr-317.ttl: #319 was itself a
+# scoped-out follow-up filed while fixing #317 (rebuild_from_base only
+# replays a reasoner's own tracked rule strata), so this file shows a real
+# case of one PR's own documented follow-up becoming the next PR, which is
+# exactly the kind of cross-PR linkage the provenance/query-driven workflow
+# this epic serves is meant to make discoverable.
+#
+# ghpull:332 asserted as bl:PullRequest/bl:WorkItem; ghissues:319 referenced
+# only as an object (bl:closesIssue, prov:used), not typed bl:Issue, per
+# the guidelines' explicit warning.
+#
+# Timestamps from `gh pr view 332 --json commits,mergedAt`: two commits
+# (2026-08-01T04:51:45Z, 05:25:20Z) about 34 minutes apart, then mergedAt
+# 2026-08-01T10:54:37Z several hours later (review/CI wait, not renewed
+# work) -- treated as one continuous authoring session, so startedAtTime
+# uses the first commit's authoredDate.
+
+ghpull:332 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(reasoner): unify OWL2RL and .datalog rules into one tracked reasoner pass" ;
+    bl:number 332 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:319 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr332 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:319 ;
+    prov:startedAtTime "2026-08-01T04:51:45Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T10:54:37Z"^^xsd:dateTime .
+
+session:pr332Summary a agp:TranscriptSummary ;
+    agp:summaryText "In --serve mode, OWL2RL rule compilation was materialised eagerly through a separate, untracked datalog::evaluate_rules call, while directly-supplied .datalog-file rules went to a distinct IncrementalReasoner. Because a contradiction-triggered rebuild_from_base only replays rules the reasoner itself tracks, it silently dropped the untracked OWL-RL-derived quads on rebuild -- exactly the gap #317's own PR description had flagged and scoped out as this follow-up. The fix extracts collect_serve_rules(datastore, ontology_paths, rule_paths), the --serve-mode counterpart of the existing apply_ontologies + apply_rules pair, which merges OWL2RL-compiled rules and .datalog-file rules into one Vec<Rule> without materialising either, so main.rs's --serve branch can hand everything to a single IncrementalReasoner::new call sharing one tracked derived_from index. ABox assertions still apply eagerly as ground quads via a new compile_ontology_rules helper; only TBox-compiled rule evaluation is deferred to the shared reasoner. One-shot (non-serve) queries were left on their existing eager path since they never rebuild after a contradiction. A visible side effect: --serve --ontology --verbose no longer prints a \"Triples after OWL reasoning\" count, since that number isn't knowable until the reasoner actually runs inside serve_on_listener, later than before. The regression test (tests/serve_rules_unification.rs) calls collect_serve_rules directly and was verified to fail to even compile against the pre-fix commit, since the function didn't exist yet -- a genuine, not merely retrospective, red-then-green check on the CLI wiring itself." ;
+    agp:reasoningFor ghpull:332 ;
+    prov:wasGeneratedBy session:pr332 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
