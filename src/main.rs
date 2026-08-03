@@ -141,6 +141,20 @@ struct Cli {
     )]
     max_rml_upload_bytes: usize,
 
+    /// Origin(s) allowed to make cross-origin state-changing requests
+    /// (POST/PUT/DELETE — SPARQL Update, Graph Store Protocol writes, admin
+    /// API), repeatable or comma-separated. Safe/read-only cross-origin
+    /// requests (GET/HEAD) are always permitted regardless of this setting.
+    /// Default: none — no cross-origin state-changing request is
+    /// CORS-approved. See <https://github.com/daghovland/rdf-datalog/issues/362>.
+    #[arg(
+        long = "cors-allow-origin",
+        value_name = "ORIGIN",
+        value_delimiter = ',',
+        env = "DAGALOG_CORS_ALLOW_ORIGIN"
+    )]
+    cors_allow_origin: Vec<String>,
+
     // ── Tier 1: Static API key ───────────────────────────────────────────────
     /// Shared API key for Bearer token auth; omit to disable (Tier 1)
     #[arg(long = "api-key", value_name = "KEY", env = "DAGALOG_API_KEY")]
@@ -446,6 +460,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_rml_upload_bytes: cli.max_rml_upload_bytes,
             initial_rules: serve_rules,
             network_policy,
+            cors_allowed_origins: cli.cors_allow_origin.clone(),
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

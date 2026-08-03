@@ -30,12 +30,7 @@ const TRUSTED_ORIGIN: &str = "https://trusted-ui.example";
 
 /// Send a CORS preflight (`OPTIONS` with `Origin` + `Access-Control-Request-Method`)
 /// and return the `Access-Control-Allow-Origin` response header, if any.
-async fn preflight(
-    server: &TestServer,
-    url: &str,
-    origin: &str,
-    method: &str,
-) -> Option<String> {
+async fn preflight(server: &TestServer, url: &str, origin: &str, method: &str) -> Option<String> {
     let resp = server
         .client
         .request(reqwest::Method::OPTIONS, url)
@@ -52,7 +47,6 @@ async fn preflight(
 /// A cross-origin preflight for `PUT /{name}/data` (Graph Store Protocol write)
 /// must not be CORS-approved when no allow-list is configured.
 #[tokio::test]
-#[ignore = "not yet implemented, see https://github.com/daghovland/rdf-datalog/issues/362"]
 async fn cross_origin_preflight_rejected_for_gsp_put_by_default() {
     let server = TestServer::start_writable("").await;
     let url = server.dataset_data_default_url("ds");
@@ -66,7 +60,6 @@ async fn cross_origin_preflight_rejected_for_gsp_put_by_default() {
 /// A cross-origin preflight for `POST /{name}/update` (SPARQL Update) must not
 /// be CORS-approved when no allow-list is configured.
 #[tokio::test]
-#[ignore = "not yet implemented, see https://github.com/daghovland/rdf-datalog/issues/362"]
 async fn cross_origin_preflight_rejected_for_sparql_update_by_default() {
     let server = TestServer::start_writable("").await;
     let url = server.dataset_update_url("ds");
@@ -80,7 +73,6 @@ async fn cross_origin_preflight_rejected_for_sparql_update_by_default() {
 /// A cross-origin preflight for `DELETE /$/datasets/{name}` (admin API) must
 /// not be CORS-approved when no allow-list is configured.
 #[tokio::test]
-#[ignore = "not yet implemented, see https://github.com/daghovland/rdf-datalog/issues/362"]
 async fn cross_origin_preflight_rejected_for_admin_delete_by_default() {
     let server = TestServer::start_writable("").await;
     let url = server.admin_dataset_url("ds");
@@ -96,13 +88,10 @@ async fn cross_origin_preflight_rejected_for_admin_delete_by_default() {
 /// echoed back (required for the browser to accept a non-`*` response when
 /// credentials could later be added).
 #[tokio::test]
-#[ignore = "not yet implemented, see https://github.com/daghovland/rdf-datalog/issues/362"]
 async fn cross_origin_preflight_allowed_for_allowlisted_origin() {
-    let server = TestServer::start_writable_with_cors_allowed_origins(
-        "",
-        vec![TRUSTED_ORIGIN.to_string()],
-    )
-    .await;
+    let server =
+        TestServer::start_writable_with_cors_allowed_origins("", vec![TRUSTED_ORIGIN.to_string()])
+            .await;
     let url = server.dataset_update_url("ds");
     let allow_origin = preflight(&server, &url, TRUSTED_ORIGIN, "POST").await;
     assert_eq!(allow_origin.as_deref(), Some(TRUSTED_ORIGIN));
@@ -112,13 +101,10 @@ async fn cross_origin_preflight_allowed_for_allowlisted_origin() {
 /// allow-list is non-empty (i.e. this isn't a global bypass once any origin
 /// is configured).
 #[tokio::test]
-#[ignore = "not yet implemented, see https://github.com/daghovland/rdf-datalog/issues/362"]
 async fn cross_origin_preflight_rejected_for_non_allowlisted_origin() {
-    let server = TestServer::start_writable_with_cors_allowed_origins(
-        "",
-        vec![TRUSTED_ORIGIN.to_string()],
-    )
-    .await;
+    let server =
+        TestServer::start_writable_with_cors_allowed_origins("", vec![TRUSTED_ORIGIN.to_string()])
+            .await;
     let url = server.dataset_update_url("ds");
     let allow_origin = preflight(&server, &url, EVIL_ORIGIN, "POST").await;
     assert_eq!(allow_origin, None);
@@ -127,10 +113,16 @@ async fn cross_origin_preflight_rejected_for_non_allowlisted_origin() {
 /// Cross-origin `GET /sparql` (safe, read-only, no credentials sent) remains
 /// permissive by default — this preserves the legitimate use case of a web UI
 /// hosted on a different origin querying the endpoint.
+///
+/// The origin is mirrored back rather than a literal `*`, since safe-method
+/// approval is now decided per-request (predicate-based) alongside the
+/// state-changing-method restriction on the same `CorsLayer` — but this is
+/// equivalent in practice: `allow_credentials` is never set, so mirroring the
+/// origin carries the same (lack of) risk as a wildcard.
 #[tokio::test]
 async fn cross_origin_get_still_permissive_by_default() {
     let server = TestServer::start("").await;
     let url = server.sparql_url();
     let allow_origin = preflight(&server, &url, EVIL_ORIGIN, "GET").await;
-    assert_eq!(allow_origin.as_deref(), Some("*"));
+    assert_eq!(allow_origin.as_deref(), Some(EVIL_ORIGIN));
 }

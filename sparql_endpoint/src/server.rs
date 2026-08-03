@@ -10,10 +10,66 @@ use crate::AppState;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderValue, Method, header, request::Parts},
     middleware,
     routing::{get, post},
 };
-use tower_http::cors::{Any, CorsLayer};
+use std::sync::Arc;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+
+/// HTTP methods that never mutate server state.
+///
+/// Cross-origin requests using these methods are allowed from any origin by
+/// default (`Access-Control-Allow-Origin: *`): `allow_credentials` is never
+/// set on this server, so no cookies/session credentials can leak, and
+/// permitting cross-origin reads is a legitimate use case (a web UI hosted on
+/// a different origin querying the endpoint).
+fn is_safe_method(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+/// Build the `AllowOrigin` policy used for the server's single `CorsLayer`.
+///
+/// Splits behavior by the *intended* request method rather than the method of
+/// the request actually carrying the `Origin` header, because a CORS
+/// preflight is always an `OPTIONS` request — the method it's asking
+/// permission for is carried in `Access-Control-Request-Method`, not
+/// `parts.method`.
+///
+/// - Safe methods (`GET`/`HEAD`, or an `OPTIONS` preflight for one of them,
+///   or a bare `OPTIONS` request with no `Access-Control-Request-Method` at
+///   all) are approved for any origin.
+/// - Any other (state-changing) method is approved only when the request's
+///   `Origin` exactly matches one entry of `allowed_origins`. With the
+///   default empty list this means state-changing cross-origin requests get
+///   no CORS approval, so browsers refuse to send them — closing the gap
+///   described in
+///   <https://github.com/daghovland/rdf-datalog/issues/362> where an
+///   unauthenticated (`AuthConfig::None`, the documented default) instance
+///   combined with a blanket `allow_origin(Any)` let any web page a victim's
+///   browser visits issue blind cross-origin writes.
+fn build_allow_origin(allowed_origins: Vec<String>) -> AllowOrigin {
+    let allowed_origins = Arc::new(allowed_origins);
+    AllowOrigin::predicate(move |origin: &HeaderValue, parts: &Parts| {
+        let requested_method: Option<Method> = if parts.method == Method::OPTIONS {
+            parts
+                .headers
+                .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| Method::from_bytes(s.as_bytes()).ok())
+        } else {
+            Some(parts.method.clone())
+        };
+
+        match requested_method {
+            None => true,
+            Some(method) if is_safe_method(&method) => true,
+            Some(_) => origin
+                .to_str()
+                .is_ok_and(|origin| allowed_origins.iter().any(|allowed| allowed == origin)),
+        }
+    })
+}
 
 /// Build the axum router with all routes and CORS middleware.
 pub fn build_router(state: AppState) -> Router {
@@ -29,7 +85,9 @@ pub fn build_router(state: AppState) -> Router {
     let rdf_body_limit = DefaultBodyLimit::max(state.config.max_rdf_upload_bytes);
 
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(build_allow_origin(
+            state.config.cors_allowed_origins.clone(),
+        ))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
