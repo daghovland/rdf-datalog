@@ -210,6 +210,21 @@ pub struct Config {
     ///
     /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
     pub network_policy: NetworkPolicy,
+    /// Explicit origin allow-list for CORS on **state-changing** requests
+    /// (any method other than `GET`/`HEAD`), e.g. `POST /update`,
+    /// `PUT /{name}/data`, `DELETE /$/datasets/{name}`.
+    ///
+    /// Default: empty — no cross-origin state-changing request gets a
+    /// CORS-approving preflight response, so browsers refuse to send the
+    /// real request. Safe/read-only methods (`GET`, `HEAD`) remain permissive
+    /// (`Access-Control-Allow-Origin: *`) regardless of this setting, since
+    /// `allow_credentials` is never set and cross-origin reads are a
+    /// legitimate use case (a web UI hosted on a different origin).
+    ///
+    /// Configurable via `--cors-allow-origin` (repeatable) /
+    /// `DAGALOG_CORS_ALLOW_ORIGIN` (comma-separated).
+    /// See [#362](https://github.com/daghovland/rdf-datalog/issues/362).
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl Default for Config {
@@ -225,6 +240,7 @@ impl Default for Config {
             max_rdf_upload_bytes: 64 * 1024 * 1024,
             initial_rules: Vec::new(),
             network_policy: NetworkPolicy::Deny,
+            cors_allowed_origins: Vec::new(),
         }
     }
 }
