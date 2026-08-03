@@ -68,6 +68,88 @@ pub struct ParserContext {
     pub base: Option<String>,
 }
 
+// ── Recursion depth guard ─────────────────────────────────────────────────────
+//
+// This is a hand-written recursive-descent parser (nom 7 has no built-in
+// recursion-depth limiting), and it has exactly two genuinely recursive
+// entry points:
+// - `parse_primary_expression` recurses into `parse_expression` for a
+//   parenthesized sub-expression, e.g. `FILTER(((...)))`.
+// - `parse_group_graph_pattern` recurses into itself for nested
+//   `{ { { ... } } }` group graph patterns, and is also the shared re-entry
+//   point for `OPTIONAL`/`GRAPH`/`MINUS`/`SERVICE`/`EXISTS`/`NOT EXISTS`/
+//   subqueries.
+//
+// Left unbounded, a query crafted with enough nesting levels drives the
+// native call stack arbitrarily deep and can overflow it. A stack overflow
+// is not a catchable Rust panic — it aborts the whole process immediately,
+// which for `sparql_endpoint` (a single axum/tokio process) takes down
+// every other in-flight request too, not just the offending one. See
+// issue #364.
+//
+// `MAX_PARSE_DEPTH = 64` is comfortably above anything a real (even
+// generated/templated) query would use — hand-written boolean expressions
+// and nested OPTIONAL/GRAPH blocks rarely exceed a few dozen levels — while
+// still leaving enough native stack headroom that hitting the limit returns
+// a clean parse error well before the real stack limit is reached.
+//
+// This was picked empirically, not just from the "128-256" ballpark
+// suggested in issue #364: because nom's combinators are generic and each
+// parse level here chains through several layers (`parse_expression` ->
+// `parse_or_expression` -> ... -> `parse_primary_expression`, or
+// `parse_group_graph_pattern` <-> `parse_group_graph_pattern_contents`'s
+// large per-level match/loop body), an unoptimized (debug) build measurably
+// overflowed the *default* thread stack somewhere around 120-140 levels of
+// nesting for both the FILTER-paren and group-graph-pattern cases — well
+// below the 128-256 range that would be safe in an optimized release build
+// with a full-size main-thread stack. 64 keeps roughly a 2x margin under
+// that observed debug-build breaking point, so the guard stays safe
+// regardless of build profile or the stack size of the thread the parser
+// runs on (e.g. a constrained async-runtime worker thread).
+const MAX_PARSE_DEPTH: usize = 64;
+
+thread_local! {
+    static PARSE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII guard around one level of recursive-descent parsing: increments a
+/// thread-local depth counter on construction and decrements it on `Drop`
+/// (so backtracking out of a failed `alt` branch, or any other early
+/// return, always restores the counter — no leak across independent
+/// parses, see `depth_guard_does_not_leak_across_independent_parses` in
+/// `sparql_parser/tests/recursion_depth_tests.rs`).
+///
+/// Construct with [`DepthGuard::enter`], which itself returns a nom `Err`
+/// once the depth exceeds [`MAX_PARSE_DEPTH`], so callers can use `?`
+/// directly inside a parser function returning `IResult`.
+struct DepthGuard;
+
+impl DepthGuard {
+    fn enter(input: &str) -> Result<Self, nom::Err<nom::error::Error<&str>>> {
+        let depth = PARSE_DEPTH.with(|d| {
+            let v = d.get() + 1;
+            d.set(v);
+            v
+        });
+        if depth > MAX_PARSE_DEPTH {
+            // Undo our own increment before bailing so the counter doesn't
+            // leak past this failed attempt.
+            PARSE_DEPTH.with(|d| d.set(d.get() - 1));
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::TooLarge,
+            )));
+        }
+        Ok(DepthGuard)
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        PARSE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 // ── Whitespace + comment skipping ────────────────────────────────────────────
 
 /// Skip zero or more whitespace characters or SPARQL line comments (`# … \n`).
@@ -424,6 +506,11 @@ fn parse_group_graph_pattern<'a>(
     move |input| {
         let (input, _) = sp(input)?;
         let (input, _) = char('{')(input)?;
+        // Each `{` is one level of nesting for `{ { { ... } } }` groups (and
+        // this function is the shared re-entry point for OPTIONAL/GRAPH/
+        // MINUS/SERVICE/EXISTS/NOT EXISTS/subqueries too) — see the
+        // "Recursion depth guard" section above and issue #364.
+        let _depth_guard = DepthGuard::enter(input)?;
         let (input, _) = sp(input)?;
         let (input, components) = parse_group_graph_pattern_contents(ctx)(input)?;
         let (input, _) = sp(input)?;
@@ -1889,11 +1976,16 @@ fn parse_primary_expression<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {
     move |input| {
         alt((
-            // Parenthesised expression
+            // Parenthesised expression. This is the recursive re-entry point
+            // for `FILTER(((...)))`-style nesting — guarded against
+            // unbounded recursion depth, see issue #364.
             map(
                 delimited(
                     pair(char('('), sp),
-                    |i| parse_expression(ctx)(i),
+                    |i: &'a str| -> IResult<&'a str, Expression> {
+                        let _depth_guard = DepthGuard::enter(i)?;
+                        parse_expression(ctx)(i)
+                    },
                     pair(sp, char(')')),
                 ),
                 |e| e,

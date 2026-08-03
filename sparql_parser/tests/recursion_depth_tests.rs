@@ -45,7 +45,6 @@ fn nested_group_query(depth: usize) -> String {
 }
 
 #[test]
-#[ignore = "TDD red phase (#364): no depth guard implemented yet — this would stack-overflow and abort the test binary, not just fail. Unignore once the depth guard lands."]
 fn deeply_nested_filter_parens_returns_clean_error() {
     let sparql = nested_filter_query(2000);
     let mut c = ctx();
@@ -57,7 +56,6 @@ fn deeply_nested_filter_parens_returns_clean_error() {
 }
 
 #[test]
-#[ignore = "TDD red phase (#364): no depth guard implemented yet — this would stack-overflow and abort the test binary, not just fail. Unignore once the depth guard lands."]
 fn deeply_nested_group_graph_patterns_returns_clean_error() {
     let sparql = nested_group_query(2000);
     let mut c = ctx();
