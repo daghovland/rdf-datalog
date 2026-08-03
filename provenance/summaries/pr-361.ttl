@@ -1,0 +1,48 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary (docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# "Session window", prospective case): written right after opening PR #361,
+# in the same session that did the work, before the PR has merged.
+#
+# - ghpull:361's bl:state is bl:Open, the real state at authoring time.
+# - session:pr361's endedAtTime is the real wall-clock time this file was
+#   written, not a guessed mergedAt. startedAtTime is the branch's first
+#   commit's authoredDate (`git log main..fix/346-sparql-remaining-gaps
+#   --format=%aI --reverse`), which happens to equal the last commit's
+#   authoredDate too -- this was one continuous session.
+# - ghissues:346 (the issue this PR partially addresses) is referenced only
+#   as an object (bl:closesIssue), never typed bl:Issue, matching prior
+#   examples' convention.
+
+ghpull:361 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql: fix BNODE(str) memoization and IRI()/URI() base resolution (#346, partial)" ;
+    bl:number 361 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:346 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr361 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:346 ;
+    prov:startedAtTime "2026-08-03T05:48:32Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T07:17:59Z"^^xsd:dateTime .
+
+session:pr361Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #346 listed four independently-shaped remaining W3C SPARQL 1.1 functions-suite gaps and explicitly asked for triage rather than a fix-all. Investigation of execute.rs confirmed the issue's own framing: BNODE(str) needed per-solution memoization and IRI()/URI() needed evaluation-time base resolution, but eval_expression_value_inner/eval_function_value are called from roughly fifty sites with no per-solution mutable state to hang either fix off, and Query itself carries no base field. Rather than threading a new parameter through that whole call graph, both fixes use a thread-local plus an RAII save/restore guard (BaseGuard for CURRENT_BASE, BnodeMemoGuard for BNODE_MEMO), confining the change to sparql_parser and a couple of call sites that already had ParserContext in scope. Save-and-restore (not a bare clear) was chosen specifically because EXISTS/subquery evaluation can re-enter expression evaluation on the same thread while an outer guard is still alive; a bare clear would have silently corrupted an outer row's memo. The memo guard had to be installed at every place that builds one output row from a set of projection elements -- project_with_exprs_partial, eval_bind_expr, project_aggregate_row, and a duplicated inline aggregate-projection loop in execute_select_inner's subquery path -- a spot the first pass missed and a second advisor review caught. STRDT()/STRLANG() TypeErrors (gaps #3/#4) were deferred as originally scoped: fixing them needs turtle_parser to stop collapsing ^^xsd:string literals into plain literals, a representation change with unclear blast radius across everything that currently relies on the collapse, so a separate unlabeled follow-up (#360) was filed instead of bundling it in." ;
+    agp:reasoningFor ghpull:361 ;
+    agp:decisionPoint session:pr361BnodeScopeDecision ;
+    prov:wasGeneratedBy session:pr361 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr361BnodeScopeDecision a agp:Decision ;
+    agp:summaryText "Chose to scope BNODE(str) memoization via a thread-local RAII guard installed at every function that assembles one complete output solution row (project_with_exprs_partial, eval_bind_expr, project_aggregate_row, and the subquery aggregate path), rather than threading an explicit per-row cache parameter through the entire evaluator call graph." ;
+    agp:alternative "Add a &mut HashMap<String, GraphElement> parameter to eval_expression_value_inner/eval_function_value and every one of their ~50 callers -- rejected as disproportionate plumbing for two isolated builtins, and it would have widened the PR's blast radius well past sparql_parser." .

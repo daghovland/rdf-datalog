@@ -322,6 +322,83 @@ fn test_bnode_with_arg_returns_blank_node() {
     );
 }
 
+/// SPARQL 1.1 §17.4.2.7: two `BNODE(str)` calls with the *same* simple-
+/// literal argument, within one solution row, must return the *same* blank
+/// node. See #346.
+#[test]
+fn test_bnode_same_arg_same_row_returns_same_node() {
+    let ds = Datastore::new(64);
+    let (_, query) = parse_query(
+        r#"SELECT (BNODE("x") AS ?b1) (BNODE("x") AS ?b2) WHERE {}"#,
+        &mut ctx(),
+    )
+    .unwrap();
+    let rows = match execute(&query, &ds, NetworkPolicy::Deny).unwrap() {
+        QueryResult::Select(r) => r.rows,
+        _ => panic!("expected SELECT"),
+    };
+    assert_eq!(rows.len(), 1);
+    let b1 = rows[0].get("b1").cloned();
+    let b2 = rows[0].get("b2").cloned();
+    assert!(b1.is_some() && b1 == b2, "b1={b1:?} b2={b2:?}");
+}
+
+/// SPARQL 1.1 §17.4.2.7: `BNODE(str)` calls with *different* solution rows
+/// must return *different* blank nodes even when the argument string is the
+/// same in both rows (the "single query solution" scoping is per-row, not
+/// per-argument-value globally). Mirrors the shape of the W3C `bnode01`
+/// fixture but drives it through `GROUP BY`, exercising the aggregate-row
+/// projection path (`project_aggregate_row`) rather than the plain
+/// projection path `test_bnode_same_arg_same_row_returns_same_node` above
+/// already covers. See #346.
+#[test]
+fn test_bnode_same_arg_different_rows_returns_different_nodes() {
+    let mut ds = Datastore::new(64);
+    let p = ds.add_node_resource(RdfResource::Iri(IriReference(
+        "http://example.org/group".to_string(),
+    )));
+    for (i, group_val) in ["a", "b"].into_iter().enumerate() {
+        let s = ds.add_node_resource(RdfResource::Iri(IriReference(format!(
+            "http://example.org/s{i}"
+        ))));
+        let o = ds.add_literal_resource(RdfLiteral::LiteralString(group_val.to_string()));
+        ds.add_triple(Triple {
+            subject: s,
+            predicate: p,
+            obj: o,
+        });
+    }
+
+    let sparql = r#"
+        PREFIX : <http://example.org/>
+        SELECT ?g (BNODE("x") AS ?b1) (BNODE("x") AS ?b2)
+        WHERE { ?s :group ?g . }
+        GROUP BY ?g
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx()).unwrap();
+    let rows = match execute(&query, &ds, NetworkPolicy::Deny).unwrap() {
+        QueryResult::Select(r) => r.rows,
+        _ => panic!("expected SELECT"),
+    };
+    assert_eq!(rows.len(), 2, "expected one row per GROUP BY ?g value");
+
+    // Within each row, b1 and b2 (same arg, same row) must match.
+    for row in &rows {
+        let b1 = row.get("b1").cloned();
+        let b2 = row.get("b2").cloned();
+        assert!(b1.is_some() && b1 == b2, "row={row:?}");
+    }
+    // Across rows (different groups, same arg string "x"), the blank nodes
+    // must differ -- this is exactly the bug a missing per-row memo guard
+    // on the aggregate projection path would reintroduce.
+    let b1_row0 = rows[0].get("b1").cloned();
+    let b1_row1 = rows[1].get("b1").cloned();
+    assert_ne!(
+        b1_row0, b1_row1,
+        "BNODE(\"x\") must mint a fresh blank node per GROUP BY row, not share one across rows"
+    );
+}
+
 #[test]
 fn test_encode_for_uri() {
     let result = eval_function(r#"SELECT (ENCODE_FOR_URI("Los Angeles") AS ?result) WHERE {}"#);

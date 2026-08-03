@@ -35,7 +35,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dag_rdf::Datastore;
-use sparql_parser::{ParserContext, QueryResult, execute, parse_query};
+use sparql_parser::{ParserContext, QueryResult, execute_with_base, parse_query};
 use std::collections::HashMap;
 
 /// `GET /sparql?query=<url-encoded SPARQL>`
@@ -327,7 +327,16 @@ async fn run_transactional_query(
             return (StatusCode::BAD_REQUEST, format!("Parse error: {:?}", e)).into_response();
         }
     };
-    let result = match execute(&query, &view, state.network_policy.clone()) {
+    // Thread the effective base through so `IRI()`/`URI()` can resolve a
+    // runtime string argument at evaluation time too, not just IRIs written
+    // directly in query syntax (`ParserContext::base` handles those at parse
+    // time — #217). See #346.
+    let result = match execute_with_base(
+        &query,
+        &view,
+        state.network_policy.clone(),
+        ctx.base.as_deref(),
+    ) {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -546,7 +555,14 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
 
     let store = state.store.read().await;
     let etag = format!("\"{}\"", store.generation);
-    let result = match execute(&query, &store, state.network_policy.clone()) {
+    // See #346: thread the effective base through for evaluation-time
+    // `IRI()`/`URI()` resolution.
+    let result = match execute_with_base(
+        &query,
+        &store,
+        state.network_policy.clone(),
+        ctx.base.as_deref(),
+    ) {
         Ok(r) => r,
         Err(e) => {
             return (

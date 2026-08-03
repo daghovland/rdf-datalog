@@ -1668,21 +1668,17 @@ fn w3c_sparql11_functions() {
     // were fixed by teaching `compare_with_srx` blank-node-isomorphism
     // comparison (see `bnode_isomorphic_multiset_match` above) — those three
     // only ever failed on arbitrary blank-node label spelling, not on any
-    // actual query-evaluation defect. Four entries remain, for reasons that
-    // don't fit the "narrow builtin/harness bug" pattern the rest did — see
-    // the tracking comment on each for specifics:
+    // actual query-evaluation defect. `IRI()/URI()` and `BNODE(str)` are now
+    // fixed too: `IRI()`/`URI()` resolves a relative-IRI string argument
+    // against the query's effective base at *evaluation* time via a
+    // thread-local `CURRENT_BASE`/`BaseGuard` (installed by
+    // `execute_with_base`, distinct from `ParserContext::base`'s parse-time
+    // resolution of IRIs written directly in query syntax, #217), and
+    // `BNODE(str)` now memoizes per solution row via a thread-local
+    // `BNODE_MEMO`/`BnodeMemoGuard` cleared at each row boundary (SPARQL 1.1
+    // §17.4.2.7) — see `sparql_parser/src/execute.rs`. Two entries remain,
+    // both requiring the same bigger/riskier representation change:
     let skip: &[&str] = &[
-        // IRI()/URI() must resolve a relative-IRI string argument against
-        // the query's effective base IRI (`BASE <...>` or the caller-
-        // supplied default) at *evaluation* time. Relative-IRI resolution
-        // today only happens at parse time for IRIs written directly in
-        // query syntax (`ParserContext::base`, see #217); a string computed
-        // at runtime and passed through `IRI()`/`URI()` never sees that
-        // base. Fixing this needs the effective base threaded from `Query`
-        // down through `execute`/`eval_expression_value_inner`/
-        // `eval_function_value` — plumbing, not a self-contained function
-        // fix. Tracked in #346.
-        "IRI()/URI()",
         // STRDT()/STRLANG() TypeErrors: per SPARQL 1.1 §17.4.3.5/6, both
         // functions must error when their first argument is anything other
         // than a *simple* literal (no language tag, no datatype — not even
@@ -1695,28 +1691,13 @@ fn w3c_sparql11_functions() {
         // distinction the spec asks them to reject is already gone from the
         // in-memory representation. Making STRDT/STRLANG spec-correct here
         // would require *not* collapsing xsd:string at ingestion (a bigger,
-        // riskier representation change with its own blast radius), so this
+        // riskier representation change with its own blast radius across
+        // everything that currently relies on the collapsed form), so this
         // is left as a known representation-level gap rather than patched
-        // narrowly. Tracked in #346.
+        // narrowly. Tracked in #346; follow-up filed as #360 for the
+        // turtle-ingestion change specifically.
         "STRDT() TypeErrors",
         "STRLANG() TypeErrors",
-        // BNODE(str): the blank-node-isomorphism harness fix above cleared
-        // BNODE()/plus-1/plus-2, but BNODE(str) has a genuine remaining
-        // evaluator bug: `execute.rs`'s "BNODE" arm (~line 2370) discards
-        // its optional string argument entirely and always mints a fresh
-        // blank node. Per SPARQL 1.1 §17.4.2.7, calling BNODE(str) with the
-        // *same* simple-literal argument more than once within a *single*
-        // query solution must return the *same* blank node (fixture
-        // `bnode01`: rows where `?s1 == ?s2` expect `?b1 == ?b2`; rows where
-        // they differ expect `?b1 != ?b2`). Fixing this needs a
-        // per-solution memoization cache (arg string -> blank node id),
-        // scoped to one row of the outer solution-sequence evaluation and
-        // cleared between rows — `eval_expression_value_inner`/
-        // `eval_function_value` currently take no mutable per-solution
-        // state to hang such a cache off, so this is plumbing work similar
-        // in kind to the IRI()/URI() base-IRI-threading gap above, not a
-        // self-contained builtin fix. Tracked in #346.
-        "BNODE(str)",
     ];
     let failures: Vec<_> = entries
         .iter()
