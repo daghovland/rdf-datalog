@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Prospective summary for PR #358 (issue #350), written per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window" prospective
+# case: bl:state bl:Open (real state at authoring time, this PR has not
+# merged), endedAtTime = this session's own authoring wall-clock time (not a
+# guessed mergedAt), startedAtTime = this branch's first commit's real
+# authoredDate (`git log feat/350-provenance-schema --format=%aI --reverse`).
+# ghissues:350 is referenced only as an object (prov:used), never typed
+# bl:Issue, per the guidelines doc's "referenced PR/issue stubs" section.
+
+ghpull:358 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog/agentprov: bl:touchesFile + agp:abstractText vocabulary additions" ;
+    bl:number 358 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:350 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr358 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:350 ;
+    prov:startedAtTime "2026-08-03T05:30:13Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T05:37:02Z"^^xsd:dateTime .
+
+session:pr358Summary a agp:TranscriptSummary ;
+    agp:summaryText "First slice of docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md (gaps #1/#2): two small, mechanical vocabulary additions that were both mostly a matter of not throwing away data already in hand. bl:touchesFile (owl:DatatypeProperty, domain bl:PullRequest, range xsd:string) mirrors bl:Crate's own bl:path; the backlog loader (backlog/src/loader.rs) already fetches each PR's changed-files list via pr_changed_files() to compute bl:touchesCrate, then discarded the individual paths after the crate rollup -- the fix is a single new for-loop over the same `files` vec, no new gh api call. agp:abstractText (owl:DatatypeProperty, domain agp:TranscriptSummary, range xsd:string) got a sh:maxLength 160 SHACL constraint in agentprov-shapes.ttl, left at the repo owner's originally-proposed number per the plan doc's already-resolved decision (\"trying to be agile here, adjust when need arises\") rather than re-litigated. Both properties are optional/repeatable, matching bl:touchesCrate's own domain-widening precedent and the plan's explicit backward-compatibility requirement for the three pre-existing summary files. Retrofitted agp:abstractText onto all five existing provenance/summaries/*.ttl files (pr-300/328/344/348/349) as real grounding examples, each a one-line distillation kept comfortably under the 160-char cap. Checked for overlap with sibling in-flight work on agentprov-shapes.ttl (issue #352, provenance backfill) before finalizing -- origin/main had not diverged from this branch's base at push time, so no merge conflict to resolve." ;
+    agp:abstractText "Added bl:touchesFile and agp:abstractText vocabulary/shape properties; loader now keeps PR file paths it already fetched instead of discarding them." ;
+    agp:reasoningFor ghpull:358 ;
+    prov:wasGeneratedBy session:pr358 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
