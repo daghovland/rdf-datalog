@@ -1,0 +1,44 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Retrospective summary for PR #336 (closes issue #313), written for issue
+# #352's representative sample. Picked as the "test-infrastructure" variety
+# slot: it replaces a hand-written SHACL report comparator with RDF graph
+# canonicalization, mirroring an approach already proven in
+# tests/w3c_sparql11_suite.rs -- a different flavor of change than either
+# the reasoner-architecture PRs (#317, #332) or the many per-constraint
+# SHACL correctness fixes already in this repo's history.
+#
+# ghpull:336 asserted as bl:PullRequest/bl:WorkItem; ghissues:313 referenced
+# only as an object (bl:closesIssue, prov:used), not typed bl:Issue.
+#
+# Timestamps from `gh pr view 336 --json commits,mergedAt`: single commit
+# (2026-08-01T05:35:48Z), mergedAt 2026-08-01T08:15:51Z -- one continuous
+# session, startedAtTime is the (only) commit's authoredDate.
+
+ghpull:336 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: canonicalization-based comparator for w3c_shacl_suite" ;
+    bl:number 336 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:313 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr336 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:313 ;
+    prov:startedAtTime "2026-08-01T05:35:48Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T08:15:51Z"^^xsd:dateTime .
+
+session:pr336Summary a agp:TranscriptSummary ;
+    agp:summaryText "tests/w3c_shacl_suite.rs previously compared expected vs. actual ValidationReports with a hand-written field-by-field comparator (ExpectedResult, compare_report, results_match) that greedily matched a multiset of results and carried ad-hoc blank-node-skip flags to paper over blank-node identity mismatches. Replaced it with RDFC-1.0 graph canonicalization via rdf_canon::canonicalize_graph, the same mechanism tests/w3c_sparql11_suite.rs already relies on, routing both expected and actual reports through shacl::report_to_datastore first so the function's own known lossiness (typed/lang literals flattening to plain strings) applies symmetrically to both sides rather than causing spurious mismatches. This also surfaced and fixed a genuine bug in the evaluator itself: shacl::collect_violations was emitting a spec-undefined sh:value for MinCount/MaxCount/UniqueLang violations that no W3C fixture ever expects. The refactor let one skip-list entry (\"sh:nodeKind at property shape 001\") be dropped -- it was root-caused to the old comparator's non-backtracking greedy matcher, not a real evaluator gap, since canonicalization now shows both sides producing 27 identical results. A second, newly-surfaced and genuinely distinct gap (sh:resultPath for complex paths serialising as an opaque blank node with no defining triples, which can never isomorphism-match the real path-expression structure) affects 7 core/path fixtures and was deliberately NOT folded into this PR's fix -- filed as follow-up #335 instead, keeping this PR's diff limited to the comparator swap. Verification captured the exact failing-entry set with skip lists emptied both before and after, confirming no other pass/skip status silently changed." ;
+    agp:reasoningFor ghpull:336 ;
+    prov:wasGeneratedBy session:pr336 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
