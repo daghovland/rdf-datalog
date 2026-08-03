@@ -22,11 +22,87 @@ use ingress::{
     XSD_FLOAT, XSD_INTEGER, XSD_STRING,
 };
 use num_bigint::BigInt;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// A single bound solution: variable name → concrete graph element.
 pub type SolutionRow = HashMap<String, GraphElement>;
+
+thread_local! {
+    /// The query's effective base IRI (`BASE <...>` directive or caller-
+    /// supplied default), used by `IRI()`/`URI()` (SPARQL 1.1 §17.4.2.6) to
+    /// resolve a *runtime* string argument at evaluation time — as opposed to
+    /// `ParserContext::base` (see #217), which only resolves IRIs written
+    /// directly in query syntax at parse time. Threaded via a thread-local
+    /// rather than an extra parameter on all ~50 evaluator functions
+    /// (`eval_expression_value_inner`/`eval_function_value` and everything
+    /// that calls them transitively) — see #346.
+    static CURRENT_BASE: RefCell<Option<String>> = const { RefCell::new(None) };
+
+    /// Per-solution memoization cache for `BNODE(str)` (SPARQL 1.1 §17.4.2.7):
+    /// repeated calls with the *same* simple-literal argument string within a
+    /// single query solution must return the *same* blank node; different
+    /// solutions get different ones even with the same argument. Cleared (via
+    /// `BnodeMemoGuard`) at each solution-row boundary — see
+    /// `project_with_exprs_partial`/`eval_bind_expr`.
+    static BNODE_MEMO: RefCell<HashMap<String, GraphElement>> = RefCell::new(HashMap::new());
+}
+
+/// RAII guard installing `base` as the thread-local effective query base for
+/// the lifetime of the guard, restoring whatever was previously installed
+/// when dropped.
+///
+/// Save-and-restore rather than a bare set/clear: `EXISTS`/`NOT EXISTS` and
+/// subquery evaluation can recursively re-enter expression evaluation on the
+/// same thread while an outer [`execute_with_base`] call's guard is still
+/// alive, so a bare clear-on-drop would wipe the outer call's base out from
+/// under it.
+struct BaseGuard {
+    previous: Option<String>,
+}
+
+impl BaseGuard {
+    fn install(base: Option<&str>) -> Self {
+        let previous = CURRENT_BASE.with(|c| c.replace(base.map(|s| s.to_string())));
+        BaseGuard { previous }
+    }
+}
+
+impl Drop for BaseGuard {
+    fn drop(&mut self) {
+        CURRENT_BASE.with(|c| *c.borrow_mut() = self.previous.take());
+    }
+}
+
+fn current_base() -> Option<String> {
+    CURRENT_BASE.with(|c| c.borrow().clone())
+}
+
+/// RAII guard that installs a fresh, empty `BNODE(str)` memoization map for
+/// the lifetime of the guard (one solution row's worth of evaluation),
+/// restoring the previous map when dropped.
+///
+/// Save-and-restore (via `mem::take`) rather than a bare `clear()`, for the
+/// same re-entrancy reason as [`BaseGuard`]: a projection/BIND expression
+/// that contains an `EXISTS`/subquery can recursively evaluate another
+/// solution row's projection while the outer row's guard is still alive.
+struct BnodeMemoGuard {
+    previous: HashMap<String, GraphElement>,
+}
+
+impl BnodeMemoGuard {
+    fn install() -> Self {
+        let previous = BNODE_MEMO.with(|c| std::mem::take(&mut *c.borrow_mut()));
+        BnodeMemoGuard { previous }
+    }
+}
+
+impl Drop for BnodeMemoGuard {
+    fn drop(&mut self) {
+        BNODE_MEMO.with(|c| *c.borrow_mut() = std::mem::take(&mut self.previous));
+    }
+}
 
 /// The result of executing a SPARQL SELECT query.
 pub struct SelectResult {
@@ -55,11 +131,43 @@ pub enum QueryResult {
 
 /// Execute a parsed SPARQL query against `datastore`.
 ///
+/// Equivalent to [`execute_with_base`] with no effective base IRI — `IRI()`/
+/// `URI()` calls on a relative-IRI string argument are left unresolved
+/// (verbatim), matching `ParserContext`'s no-base convention (#217).
+///
 /// `network` controls how `SERVICE` federation clauses are handled:
 /// - [`NetworkPolicy::Deny`] — non-SILENT SERVICE returns an error (default, safe).
 /// - [`NetworkPolicy::Ignore`] — all SERVICE clauses return empty results silently.
 /// - [`NetworkPolicy::Allow`] — not yet implemented; returns a "not yet implemented" error.
 pub fn execute(
+    query: &Query,
+    datastore: &Datastore,
+    network: NetworkPolicy,
+) -> Result<QueryResult, String> {
+    execute_with_base(query, datastore, network, None)
+}
+
+/// Execute a parsed SPARQL query against `datastore`, with `base` installed
+/// as the query's effective base IRI for evaluation-time `IRI()`/`URI()`
+/// resolution (SPARQL 1.1 §17.4.2.6).
+///
+/// Callers that parsed with [`crate::ParserContext`] should pass
+/// `ctx.base.as_deref()` here so that a `BASE <...>` directive (or a
+/// caller-supplied default base) is honored not just for IRIs written
+/// directly in query syntax (parse-time, `ParserContext::base`, #217) but
+/// also for a string computed at runtime and passed through `IRI()`/`URI()`
+/// (evaluation-time, this function). See #346.
+pub fn execute_with_base(
+    query: &Query,
+    datastore: &Datastore,
+    network: NetworkPolicy,
+    base: Option<&str>,
+) -> Result<QueryResult, String> {
+    let _base_guard = BaseGuard::install(base);
+    execute_inner(query, datastore, network)
+}
+
+fn execute_inner(
     query: &Query,
     datastore: &Datastore,
     network: NetworkPolicy,
@@ -504,6 +612,13 @@ fn project_with_exprs_partial(
     projection: &[ProjectionElement],
     datastore: &Datastore,
 ) -> PartialSub {
+    // Every projection element for this one solution row is evaluated within
+    // a single call, so installing the `BNODE(str)` memo here gives it
+    // exactly the "one query solution" scope SPARQL 1.1 §17.4.2.7 requires:
+    // shared across the whole row (e.g. `(BNODE(?s1) AS ?b1) (BNODE(?s2) AS
+    // ?b2)` in the W3C `bnode01` fixture), cleared before the next row. See
+    // #346.
+    let _bnode_guard = BnodeMemoGuard::install();
     let mut row: PartialSub = HashMap::new();
     let mut extended: PartialSub = sub.clone();
     for elem in projection {
@@ -2181,11 +2296,23 @@ fn eval_function_value(
             Some(str_tag_to_element(result, tag))
         }
         // ── Term construction ─────────────────────────────────────────────────
+        // IRI()/URI() (SPARQL 1.1 §17.4.2.6) must resolve a relative-IRI
+        // string argument against the query's effective base IRI at
+        // *evaluation* time — not just parse time, which is all
+        // `ParserContext::base` (#217) covers for IRIs written directly in
+        // query syntax. `current_base()` reads the base installed by
+        // `execute_with_base` (via the thread-local `CURRENT_BASE`, see
+        // `BaseGuard`). `crate::resolve_iri` is the same RFC 3986 resolver
+        // `BASE`/`PREFIX` parsing uses; with no base in effect it returns the
+        // raw string unresolved (verbatim), matching that existing no-base
+        // convention rather than erroring. See #346.
         "IRI" | "URI" => {
             let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
             let iri_str = graph_element_to_string(&el)?;
+            let resolved =
+                crate::resolve_iri(current_base().as_deref(), &iri_str).unwrap_or(iri_str);
             Some(GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(
-                IriReference(iri_str),
+                IriReference(resolved),
             )))
         }
         // STRDT/STRLANG (SPARQL 1.1 §17.4.3.5/6, `fn:strdt`/`STRLANG`)
@@ -2367,16 +2494,42 @@ fn eval_function_value(
             }
         }
         // ── Blank nodes ───────────────────────────────────────────────────────
+        // BNODE() always mints a fresh blank node. BNODE(str) (SPARQL 1.1
+        // §17.4.2.7) must return the *same* blank node for repeated calls
+        // with the same simple-literal argument string within a single query
+        // solution, and a fresh one across solutions/no argument. The
+        // "within a single query solution" scoping is provided by
+        // `BNODE_MEMO` being cleared at each solution-row boundary
+        // (`BnodeMemoGuard`, installed in `project_with_exprs_partial`/
+        // `eval_bind_expr`) rather than being reasoned about here. Only a
+        // bare simple literal (no lang tag/datatype) counts as a valid
+        // memoization key — matching `STRDT`'s/`STRLANG`'s simple-literal
+        // check above — so e.g. `BNODE("1")` and `BNODE(1)` never collide.
+        // See #346.
         "BNODE" => {
-            // BNODE() or BNODE(str): produce a fresh anonymous blank node.
-            // The optional string argument (a label hint) is intentionally
-            // ignored; we always return a freshly minted ID.
             use std::sync::atomic::{AtomicU32, Ordering};
             static BNODE_COUNTER: AtomicU32 = AtomicU32::new(0);
+            let arg_key = match args.first() {
+                Some(arg) => {
+                    let el = eval_expression_value_inner(arg, sub, datastore)?;
+                    match el {
+                        GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s),
+                        _ => return None,
+                    }
+                }
+                None => None,
+            };
+            if let Some(key) = &arg_key {
+                if let Some(existing) = BNODE_MEMO.with(|c| c.borrow().get(key).cloned()) {
+                    return Some(existing);
+                }
+            }
             let id = BNODE_COUNTER.fetch_add(1, Ordering::Relaxed);
-            Some(GraphElement::NodeOrEdge(
-                dag_rdf::RdfResource::AnonymousBlankNode(id),
-            ))
+            let fresh = GraphElement::NodeOrEdge(dag_rdf::RdfResource::AnonymousBlankNode(id));
+            if let Some(key) = arg_key {
+                BNODE_MEMO.with(|c| c.borrow_mut().insert(key, fresh.clone()));
+            }
+            Some(fresh)
         }
         // ── String functions (continued) ──────────────────────────────────────
         "ENCODE_FOR_URI" => {
@@ -2912,6 +3065,9 @@ fn eval_bind_expr(
     sub: &PartialSub,
     datastore: &Datastore,
 ) -> Option<GraphElement> {
+    // Scope `BNODE(str)` memoization to this one BIND evaluation (one
+    // solution row) — see `project_with_exprs_partial` and #346.
+    let _bnode_guard = BnodeMemoGuard::install();
     eval_expression_value_inner(expr, sub, datastore)
 }
 
@@ -3470,6 +3626,10 @@ fn execute_select_inner(
                     .all(|expr| eval_having_expr(expr, g, datastore))
             })
             .map(|g| {
+                // One aggregate row is one query solution — see
+                // `project_aggregate_row`/`project_with_exprs_partial` for
+                // why `BNODE(str)` needs a fresh memo per row. #346.
+                let _bnode_guard = BnodeMemoGuard::install();
                 // Build a PartialSub from aggregate projections
                 let rep = g.first().cloned().unwrap_or_default();
                 let mut row = PartialSub::new();
@@ -4371,6 +4531,11 @@ fn project_aggregate_row(
     group: &[PartialSub],
     datastore: &Datastore,
 ) -> SolutionRow {
+    // Same "one query solution" scoping as `project_with_exprs_partial` — an
+    // aggregate row is itself one solution, so `BNODE(str)` calls across its
+    // projection elements should share a memo, and different group rows must
+    // not. See #346.
+    let _bnode_guard = BnodeMemoGuard::install();
     let rep = group.first().cloned().unwrap_or_default();
     let mut row = SolutionRow::new();
     for elem in projection {

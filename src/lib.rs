@@ -15,7 +15,7 @@ use dag_rdf::{Datastore, GraphElement, IriReference, RdfLiteral, RdfResource};
 use owl2rl2datalog::{assert_abox, owl2datalog};
 use rdf_owl_translator::rdf2owl;
 use sparql_parser::{
-    NetworkPolicy, ParserContext, QueryResult, SelectResult, execute, parse_query,
+    NetworkPolicy, ParserContext, QueryResult, SelectResult, execute_with_base, parse_query,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -399,7 +399,11 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
     };
     let (_, query) =
         parse_query(sparql, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;
-    match execute(&query, datastore, NetworkPolicy::Deny)? {
+    // Pass the effective base (a `BASE <...>` directive, if any) through so
+    // that `IRI()`/`URI()` can resolve a runtime string argument against it
+    // at evaluation time, not just IRIs written directly in query syntax
+    // (`ParserContext::base` handles those at parse time — #217). See #346.
+    match execute_with_base(&query, datastore, NetworkPolicy::Deny, ctx.base.as_deref())? {
         QueryResult::Select(r) => Ok(r),
         QueryResult::Ask(_) => {
             Err("ASK queries are not supported via run_sparql_query".to_string())

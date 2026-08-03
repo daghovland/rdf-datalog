@@ -24,8 +24,8 @@ mod component_ordering;
 pub mod execute;
 mod join_ordering;
 pub use execute::{
-    eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute, QueryResult,
-    ResolvedTriple, SelectResult, SolutionRow,
+    eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute,
+    execute_with_base, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
 };
 pub use ingress::NetworkPolicy;
 
