@@ -20,39 +20,9 @@ Contact: hovlanddag@gmail.com
 //! triples into a [`Datastore`], so the reasoner has ABox facts to work from.
 //! Tracked in [#159](https://github.com/daghovland/rdf-datalog/issues/159).
 
-use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
-use ingress::{IriReference, RDF_TYPE};
-use owl_ontology::{
-    Assertion, Axiom, ClassExpression, FullIri, Individual, ObjectPropertyExpression, Ontology,
-};
-
-/// Intern an `Individual` as a `GraphElementId`.
-///
-/// Named individuals become IRI nodes. Anonymous individuals are routed
-/// through [`dag_rdf::GraphElementManager::get_or_create_named_anon_resource`] keyed
-/// by a namespaced string derived from the parser-assigned id (rather than
-/// reusing that raw `u32` directly as the `AnonymousBlankNode` id). That
-/// method dedups by string key — so repeated references to the same
-/// anonymous individual within one ontology still intern to the same node —
-/// and on a cache miss allocates a fresh id from
-/// `GraphElementManager::anon_resource_count`, the single monotonic counter
-/// that also backs [`Datastore::new_anonymous_blank_node`] (used by
-/// Turtle/TriG/N-Triples/JSON-LD blank-node ingestion). Since both sources
-/// draw from that one counter, an anonymous individual's id can never
-/// numerically collide with an RDF-ingested blank node's id regardless of
-/// allocation order, fixing [#183](https://github.com/daghovland/rdf-datalog/issues/183).
-/// The `owl-anon-individual#` prefix guards against a string-key collision
-/// with a raw Turtle blank-node label happening to equal the bare id.
-fn intern_individual(datastore: &mut Datastore, individual: &Individual) -> GraphElementId {
-    match individual {
-        Individual::NamedIndividual(FullIri(iri)) => {
-            datastore.add_node_resource(RdfResource::Iri(iri.clone()))
-        }
-        Individual::AnonymousIndividual(id) => datastore
-            .resources
-            .get_or_create_named_anon_resource(format!("owl-anon-individual#{id}")),
-    }
-}
+use crate::owl_to_rdf::atomic_assertion_triple;
+use dag_rdf::Datastore;
+use owl_ontology::{Assertion, Axiom, Ontology};
 
 /// Materialise the ABox assertions of `ontology` as ground quads in
 /// `datastore`.
@@ -73,52 +43,25 @@ fn intern_individual(datastore: &mut Datastore, individual: &Individual) -> Grap
 /// ground-triple materialisation and are skipped.
 ///
 /// Returns the number of quads added to the datastore.
+///
+/// This is the ABox-only slice of the general OWL → RDF translation in
+/// [`crate::owl_to_rdf::owl2rdf`] ([#177](https://github.com/daghovland/rdf-datalog/issues/177)),
+/// which it shares its triple-emitting code with. Use `owl2rdf` when the
+/// ontology's TBox should become RDF too; `assert_abox` stays as the
+/// deliberately narrow entry point used by the OWL-RL pipeline, where TBox
+/// axioms reach the reasoner as datalog rules via [`crate::owl2datalog`]
+/// rather than as triples.
 pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> usize {
     let mut added = 0usize;
     for axiom in &ontology.axioms {
         let Axiom::AxiomAssertion(assertion) = axiom else {
             continue;
         };
+        if atomic_assertion_triple(datastore, assertion) {
+            added += 1;
+            continue;
+        }
         match assertion {
-            Assertion::ClassAssertion(_, ClassExpression::ClassName(FullIri(class_iri)), ind) => {
-                let subject = intern_individual(datastore, ind);
-                let predicate = datastore
-                    .add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_owned())));
-                let obj = datastore.add_node_resource(RdfResource::Iri(class_iri.clone()));
-                datastore.add_triple(Triple {
-                    subject,
-                    predicate,
-                    obj,
-                });
-                added += 1;
-            }
-            Assertion::ObjectPropertyAssertion(
-                _,
-                ObjectPropertyExpression::NamedObjectProperty(FullIri(prop_iri)),
-                source,
-                target,
-            ) => {
-                let subject = intern_individual(datastore, source);
-                let predicate = datastore.add_node_resource(RdfResource::Iri(prop_iri.clone()));
-                let obj = intern_individual(datastore, target);
-                datastore.add_triple(Triple {
-                    subject,
-                    predicate,
-                    obj,
-                });
-                added += 1;
-            }
-            Assertion::DataPropertyAssertion(_, FullIri(prop_iri), source, value) => {
-                let subject = intern_individual(datastore, source);
-                let predicate = datastore.add_node_resource(RdfResource::Iri(prop_iri.clone()));
-                let obj = datastore.add_resource(value.clone());
-                datastore.add_triple(Triple {
-                    subject,
-                    predicate,
-                    obj,
-                });
-                added += 1;
-            }
             Assertion::ClassAssertion(_, class_expr, _) => {
                 log::warn!(
                     "Skipping ClassAssertion with non-atomic class expression (no single ground \
@@ -145,8 +88,9 @@ pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dag_rdf::GraphElement;
-    use ingress::OntologyVersion;
+    use dag_rdf::{GraphElement, RdfResource};
+    use ingress::{IriReference, OntologyVersion, RDF_TYPE};
+    use owl_ontology::{ClassExpression, FullIri, Individual};
 
     /// Regression test for [#183](https://github.com/daghovland/rdf-datalog/issues/183):
     /// an anonymous individual materialised by `assert_abox` must never

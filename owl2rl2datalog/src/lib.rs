@@ -11,8 +11,10 @@ Contact: hovlanddag@gmail.com
 
 pub mod abox;
 pub mod equality;
+pub mod owl_to_rdf;
 
 pub use abox::assert_abox;
+pub use owl_to_rdf::{RdfTranslationReport, owl2rdf};
 
 use dag_rdf::query::get_default_graph_pattern;
 use dag_rdf::{GraphElementId, GraphElementManager, RdfResource, Term};

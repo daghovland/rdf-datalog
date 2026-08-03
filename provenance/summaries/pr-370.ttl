@@ -1,0 +1,47 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after PR #370 reached fully green CI in the
+# same orchestration session that dispatched the work (the sub-agent
+# opened the draft PR and ran the quality gate itself before being
+# interrupted by an account-level API spend limit; this session verified
+# the green CI, posted the follow-up analysis to #366, and filed the
+# deferred-scope issue #373 the PR's own body had promised but that
+# turned out not to exist yet).
+#
+# - ghpull:370's bl:state is bl:Open, the real state at authoring time.
+# - startedAtTime/endedAtTime come from `git log abfdb72..HEAD --format=%aI`
+#   for the single squashed implementation commit on this branch, plus the
+#   later CI-completion timestamp for endedAtTime.
+
+ghpull:370 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rdf: general OWL 2 -> RDF structural mapping, atomic axioms (#177)" ;
+    bl:number 370 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:177 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr370 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:177 ;
+    prov:startedAtTime "2026-08-03T16:33:52Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T16:39:20Z"^^xsd:dateTime .
+
+session:pr370Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #177 asked for a general OWL 2 -> RDF structural mapping (the W3C 'OWL 2 Mapping to RDF Graphs' spec), noting it would plausibly subsume issue #366's problem (owl2rl2datalog::abox::assert_abox silently drops non-atomic ABox assertions with only a log::warn!, and the returned triple count is discarded at every call site). This PR implements the first incremental slice, scoped to named/atomic entities only: declarations for all six entity kinds, binary SubClassOf/EquivalentClasses/DisjointClasses, the full set of object- and data-property axioms (domain/range/sub/equivalent/disjoint/inverse/characteristics), and ABox ground assertions -- with assert_abox's existing triple-emission logic absorbed into the new shared owl_to_rdf module so its public behavior stays byte-identical (same triples, same count, same warnings) rather than being replaced outright. The complex class-expression blank-node encoding (owl:unionOf/intersectionOf over rdf:List, owl:Restriction nodes, cardinalities), property chains, HasKey, DisjointUnion, DatatypeDefinition, n-ary disjointness, and annotations were explicitly deferred, deliberately additive: owl2datalog's direct reasoning path and assert_abox's call sites were left untouched, since wiring owl2rdf into the CLI/kernel load path would give OWL-RL conclusions two independent derivation routes and belonged in its own change. On #366 specifically, the PR only partially closes it: the 'only a log::warn!' half is fixed for the new path via a #[must_use] RdfTranslationReport{triples_added, skipped} return type with a test asserting complex-expression axioms land in skipped rather than vanishing, but the 'return value discarded at every call site' half still reproduces since assert_abox itself and its callers were left unchanged. Follow-up work after CI went green: posting that analysis as an actual comment on #366 (previously it existed only in this PR's body text), and filing #373 for the deferred blank-node/property-chain/HasKey/DisjointUnion scope, since a search confirmed the follow-up issue the PR body claimed to have filed did not actually exist." ;
+    agp:reasoningFor ghpull:370 ;
+    agp:decisionPoint session:pr370ScopeDecision ;
+    prov:wasGeneratedBy session:pr370 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr370ScopeDecision a agp:Decision ;
+    agp:summaryText "Scoped this PR to named/atomic OWL 2 axioms only, deferring all complex class-expression blank-node encoding (and everything downstream of it, including the remaining half of #366) to a separate follow-up issue rather than attempting the full W3C mapping in one pass." ;
+    agp:alternative "Implement the complete OWL 2 -> RDF mapping including blank-node structural encoding in this PR -- rejected as too large a single change; splitting let the atomic-axiom slice land and be reviewed independently of the substantially harder blank-node/list-encoding work." .
