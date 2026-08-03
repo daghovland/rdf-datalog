@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use ingress::{GraphElement, IriReference, RdfResource};
 
 use crate::RmlError;
-use crate::ast::{FunctionCall, MappingDocument, ObjectMap, TermMap, TermType, TriplesMap};
+use crate::ast::{
+    FunctionCall, LogicalSourceRef, MappingDocument, ObjectMap, TermMap, TermType, TriplesMap,
+};
 use crate::functions::resolve_builtin;
 use crate::plan::{
     FormatFunction, FunctionCallLogic, GenerationLogic, JoinAlgorithm, JoinCondition, LogicalJoin,
@@ -11,6 +13,23 @@ use crate::plan::{
 };
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+/// Choose between the two join tiers described in `RML_SQL_PLAN.md`'s
+/// "Efficient joins" section: a database-side `SqlPushdown` when both sides
+/// are SQL sources on the same connection, otherwise the source-agnostic
+/// Rust-side `HashJoin` (`RML_JOIN_PLAN.md`). Pure and independently
+/// testable — see [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+pub fn choose_join_algorithm(
+    child_source: &LogicalSourceRef,
+    parent_source: &LogicalSourceRef,
+) -> JoinAlgorithm {
+    match (child_source, parent_source) {
+        (LogicalSourceRef::Sql(c), LogicalSourceRef::Sql(p)) if c.connection == p.connection => {
+            JoinAlgorithm::SqlPushdown
+        }
+        _ => JoinAlgorithm::HashJoin,
+    }
+}
 
 pub fn translate(mapping: &MappingDocument) -> Result<Vec<LogicalPlan>, RmlError> {
     let parent_by_id: HashMap<&IriReference, &TriplesMap> =
@@ -125,11 +144,15 @@ fn translate_triples_map(
                             parent_tm.subject_map.term_type,
                             None,
                         )?;
+                        let algorithm = choose_join_algorithm(
+                            &tm.logical_source.source,
+                            &parent_tm.logical_source.source,
+                        );
                         let join = LogicalPlan::Join(LogicalJoin {
                             left: Box::new(make_scan(tm)),
                             right: Box::new(make_scan(parent_tm)),
                             conditions,
-                            algorithm: JoinAlgorithm::HashJoin,
+                            algorithm,
                         });
                         (join, join_obj_logic)
                     }

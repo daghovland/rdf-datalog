@@ -325,16 +325,20 @@ namespaces (`http://semweb.mmlab.be/ns/ql#JSONPath`,
 `http://semweb.mmlab.be/ns/ql#XPath`) from older Dimou-lab tooling are
 accepted as aliases for `rml:JSONPath`/`rml:XPath`.
 
-**In scope:** CSV, JSON, JSONL, XML, SQL (SQLite), template IRIs, reference
-literals, language/datatype annotations, named graphs, blank nodes,
+**In scope:** CSV, JSON, JSONL, XML, SQL (SQLite, PostgreSQL), template IRIs,
+reference literals, language/datatype annotations, named graphs, blank nodes,
 `rml:class`, `rml:iterator`, nested JSONPath/XPath, join conditions
 (`rml:JoinCondition`), FunctionMap (`fnml:functionValue`, completed
 separately under [#27](https://github.com/daghovland/rdf-datalog/issues/27)).
 
-**Not yet implemented:** SQL join pushdown (SQL/SQL joins run through the
-ordinary in-memory hash join, not synthesized into the database), PostgreSQL
-and other SQL backends beyond SQLite — see
-[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) and
+Same-connection SQL/SQL `rml:joinCondition` joins (both sides `rml:tableName`
+or `rml:sqlQuery` against the same database connection) run as a single
+database-side `JOIN` ("SQL pushdown") rather than the in-memory hash join;
+any other join (cross-connection SQL, or SQL joined with CSV/JSON/XML) still
+runs through the ordinary hash join, with identical results.
+
+**Not yet implemented:** MySQL and other SQL backends beyond SQLite/
+PostgreSQL — see [docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) and
 [#354](https://github.com/daghovland/rdf-datalog/issues/354).
 
 ---
@@ -374,7 +378,23 @@ rml:logicalSource [
 Column values are exposed the same way CSV columns are: `rml:reference` and
 template placeholders (`{column_name}`) resolve against the row's columns.
 `NULL` columns are treated as absent (same as an empty/missing CSV cell).
-See [docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) for the design
+
+For PostgreSQL, `rml:source` must be a `"${VAR}"` reference to an environment
+variable holding the connection DSN — never a literal connection string:
+
+```turtle
+rml:logicalSource [
+    rml:source "${DATABASE_URL}" ;
+    rml:tableName "people"
+] ;
+```
+
+`DATABASE_URL` (or whatever variable name is used) must be set in the process
+environment when the mapping runs; a literal DSN in `rml:source` (e.g.
+`postgres://user:pass@host/db`, or a libpq `key=value` string) is rejected at
+load time rather than silently accepted — mapping files are ordinary
+source-controlled text, so no credential may live in them. See
+[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) for the design
 and [issue #26](https://github.com/daghovland/rdf-datalog/issues/26) for
 status.
 

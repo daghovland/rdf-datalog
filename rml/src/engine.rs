@@ -5,17 +5,18 @@ use dag_rdf::{Datastore, GraphElementId, RdfLiteral, RdfResource, Triple};
 use ingress::{GraphElement, IriReference};
 
 use crate::RmlError;
-use crate::ast::{ReferenceFormulation, TermType};
+use crate::ast::{LogicalSourceRef, ReferenceFormulation, SqlConnection, TermType};
 use crate::functions;
 use crate::plan::{
-    FormatFunction, FunctionCallLogic, GenerationLogic, LogicalJoin, LogicalPlan,
+    FormatFunction, FunctionCallLogic, GenerationLogic, JoinAlgorithm, LogicalJoin, LogicalPlan,
     LogicalProjection, LogicalScan, OutputAttr, ParamSource, TermPattern,
 };
 use crate::sandbox::confine_path;
+use crate::sources::RawRow;
 use crate::sources::SourceRow;
 use crate::sources::csv::CsvSource;
 use crate::sources::json::JsonSource;
-use crate::sources::sql::SqlSource;
+use crate::sources::sql::{self, SqlSource};
 use crate::sources::xml::XmlSource;
 use crate::template::{expand_template, is_valid_iri_scheme};
 
@@ -87,11 +88,15 @@ fn scan_rows(scan: &LogicalScan, base_dir: &Path) -> Result<Vec<Box<dyn SourceRo
             Ok(rows)
         }
         crate::ast::LogicalSourceRef::Sql(sql_ref) => {
-            let crate::ast::SqlConnection::Sqlite(rel_path) = &sql_ref.connection;
-            // Reject absolute paths and '..' escapes via the sandbox, same as
-            // the File case above.
-            let canonical_path = confine_path(base_dir, rel_path)?;
-            let connection = crate::ast::SqlConnection::Sqlite(canonical_path);
+            let connection = match &sql_ref.connection {
+                SqlConnection::Sqlite(rel_path) => {
+                    // Reject absolute paths and '..' escapes via the sandbox,
+                    // same as the File case above.
+                    SqlConnection::Sqlite(confine_path(base_dir, rel_path)?)
+                }
+                // No filesystem path to confine — connects by env-var DSN.
+                SqlConnection::Postgres(var_name) => SqlConnection::Postgres(var_name.clone()),
+            };
             let source = SqlSource::new(connection, sql_ref.query.clone());
             source
                 .rows()
@@ -113,6 +118,10 @@ fn execute_join(
     base_dir: &Path,
     ds: &mut Datastore,
 ) -> Result<(), RmlError> {
+    if join.algorithm == JoinAlgorithm::SqlPushdown {
+        return execute_sql_pushdown_join(proj, join, base_dir, ds);
+    }
+
     let LogicalPlan::Scan(left_scan) = join.left.as_ref() else {
         return Ok(());
     };
@@ -141,6 +150,90 @@ fn execute_join(
         }
     }
     Ok(())
+}
+
+/// `RML_SQL_PLAN.md`'s tier-1 "Efficient joins": both sides are SQL sources
+/// on the same connection, so the join runs as one database-side query
+/// (`sources::sql::build_pushdown_query`) instead of two separate scans
+/// materialised and joined in Rust. See
+/// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+fn execute_sql_pushdown_join(
+    proj: &LogicalProjection,
+    join: &LogicalJoin,
+    base_dir: &Path,
+    ds: &mut Datastore,
+) -> Result<(), RmlError> {
+    let child_ref = sql_source_ref(&join.left)?;
+    let parent_ref = sql_source_ref(&join.right)?;
+
+    // choose_join_algorithm only selects SqlPushdown when both sides share
+    // one SqlConnection, so either side's connection opens the same
+    // database/server; the child's is used here arbitrarily.
+    let mut conn = sql::SqlConn::open_for_join(&child_ref.connection, base_dir)?;
+
+    let child_base = sql::base_query_sql(&child_ref.query);
+    let parent_base = sql::base_query_sql(&parent_ref.query);
+    let child_cols = conn.discover_columns(&child_base)?;
+    let parent_cols = conn.discover_columns(&parent_base)?;
+
+    let pushdown_sql = sql::build_pushdown_query(
+        &child_base,
+        &parent_base,
+        &child_cols,
+        &parent_cols,
+        &join.conditions,
+    );
+    let rows = conn.run_query(&pushdown_sql, crate::MAX_SOURCE_ROWS)?;
+
+    for row in &rows {
+        let child_view = PushdownRow {
+            row,
+            prefix: "child_",
+        };
+        let parent_view = PushdownRow {
+            row,
+            prefix: "parent_",
+        };
+        execute_join_row(proj, &child_view, &parent_view, ds)?;
+    }
+    Ok(())
+}
+
+/// Extract the `SqlSourceRef` from a join side's `LogicalScan`, or a
+/// descriptive error if `translate.rs`'s `choose_join_algorithm` invariant
+/// (both sides SQL on the same connection, whenever `algorithm ==
+/// SqlPushdown`) has somehow been violated.
+fn sql_source_ref(plan: &LogicalPlan) -> Result<&crate::ast::SqlSourceRef, RmlError> {
+    let LogicalPlan::Scan(scan) = plan else {
+        return Err(RmlError::MappingParse(
+            "SqlPushdown join requires both sides to be LogicalScan nodes".to_string(),
+        ));
+    };
+    match &scan.source {
+        LogicalSourceRef::Sql(sql_ref) => Ok(sql_ref),
+        LogicalSourceRef::File(_) => Err(RmlError::MappingParse(
+            "SqlPushdown join requires both sides to be SQL sources".to_string(),
+        )),
+    }
+}
+
+/// A read-only view into one flat pushdown-join row, restricted to columns
+/// carrying the given `child_`/`parent_` prefix — lets the existing
+/// `execute_join_row` (which expects two logically separate rows) evaluate
+/// child-side and parent-side attributes correctly against the single
+/// merged `RawRow` a pushdown query returns, without touching its logic at
+/// all.
+struct PushdownRow<'a> {
+    row: &'a RawRow,
+    prefix: &'static str,
+}
+
+impl SourceRow for PushdownRow<'_> {
+    fn get_str(&self, reference: &str) -> Option<String> {
+        let key = format!("{}{reference}", self.prefix);
+        let v = self.row.get(&key)?;
+        if v.is_empty() { None } else { Some(v.clone()) }
+    }
 }
 
 #[derive(Clone, Copy)]
