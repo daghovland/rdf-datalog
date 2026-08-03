@@ -4,11 +4,12 @@ use ingress::{GraphElement, IriReference, RdfResource};
 use rml::ast::JoinConditionRef;
 use rml::ast::{
     LogicalSource, LogicalSourceRef, MappingDocument, ObjectMap, PredicateObjectMap,
-    ReferenceFormulation, SubjectMap, TermMap, TermType, TriplesMap,
+    ReferenceFormulation, SqlConnection, SqlQuery, SqlSourceRef, SubjectMap, TermMap, TermType,
+    TriplesMap,
 };
 use rml::optimizer::constant_fold;
-use rml::plan::{GenerationLogic, LogicalPlan, OutputAttr, TermPattern};
-use rml::translate::translate;
+use rml::plan::{GenerationLogic, JoinAlgorithm, LogicalPlan, OutputAttr, TermPattern};
+use rml::translate::{choose_join_algorithm, translate};
 
 fn simple_triples_map(source_file: &str, subject_template: &str) -> TriplesMap {
     TriplesMap {
@@ -382,4 +383,141 @@ fn translate_multi_column_join_condition_preserves_all_conditions() {
     let plans = translate(&doc).unwrap();
     let join = find_join(&plans);
     assert_eq!(join.conditions.len(), 2);
+}
+
+// ── choose_join_algorithm (RML_SQL_PLAN.md "Efficient joins", tier 1/2 — see #354) ──
+
+fn sql_source(db_path: &str, table: &str) -> LogicalSourceRef {
+    LogicalSourceRef::Sql(SqlSourceRef {
+        connection: SqlConnection::Sqlite(db_path.into()),
+        query: SqlQuery::Table(table.to_string()),
+    })
+}
+
+#[test]
+fn choose_join_algorithm_same_connection_sql_sql_is_pushdown() {
+    let child = sql_source("school.sqlite", "student");
+    let parent = sql_source("school.sqlite", "sport");
+    assert_eq!(
+        choose_join_algorithm(&child, &parent),
+        JoinAlgorithm::SqlPushdown
+    );
+}
+
+#[test]
+fn choose_join_algorithm_different_connection_sql_sql_is_hash_join() {
+    let child = sql_source("students.sqlite", "student");
+    let parent = sql_source("sports.sqlite", "sport");
+    assert_eq!(
+        choose_join_algorithm(&child, &parent),
+        JoinAlgorithm::HashJoin
+    );
+}
+
+#[test]
+fn choose_join_algorithm_sql_csv_is_hash_join() {
+    let child = sql_source("school.sqlite", "student");
+    let parent = LogicalSourceRef::File(PathBuf::from("sport.csv"));
+    assert_eq!(
+        choose_join_algorithm(&child, &parent),
+        JoinAlgorithm::HashJoin
+    );
+}
+
+#[test]
+fn choose_join_algorithm_csv_csv_is_hash_join() {
+    let child = LogicalSourceRef::File(PathBuf::from("student.csv"));
+    let parent = LogicalSourceRef::File(PathBuf::from("sport.csv"));
+    assert_eq!(
+        choose_join_algorithm(&child, &parent),
+        JoinAlgorithm::HashJoin
+    );
+}
+
+fn sql_triples_map(id: &str, db_path: &str, table: &str, subject_template: &str) -> TriplesMap {
+    let mut tm = simple_triples_map("unused.csv", subject_template);
+    tm.id = IriReference(id.to_string());
+    tm.logical_source.source = sql_source(db_path, table);
+    tm
+}
+
+#[test]
+fn translate_same_connection_sql_join_uses_sql_pushdown_algorithm() {
+    let mut child = sql_triples_map(
+        "http://example.com/TM",
+        "school.sqlite",
+        "student",
+        "http://example.com/student/{ID}",
+    );
+    child.predicate_object_maps.push(PredicateObjectMap {
+        predicate_maps: vec![(
+            TermMap::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                "http://example.com/practises".to_string(),
+            )))),
+            TermType::Iri,
+        )],
+        object_maps: vec![ObjectMap {
+            term_map: TermMap::Reference(String::new()),
+            term_type: TermType::Iri,
+            language: None,
+            datatype: None,
+            parent_triples_map: Some(IriReference("http://example.com/SportMap".to_string())),
+            join_conditions: vec![JoinConditionRef {
+                child: "Sport".to_string(),
+                parent: "ID".to_string(),
+            }],
+        }],
+        graph_maps: vec![],
+    });
+    let parent = sql_triples_map(
+        "http://example.com/SportMap",
+        "school.sqlite",
+        "sport",
+        "http://example.com/sport/{ID}",
+    );
+    let doc = MappingDocument {
+        triples_maps: vec![child, parent],
+    };
+    let plans = translate(&doc).unwrap();
+    let join = find_join(&plans);
+    assert_eq!(join.algorithm, JoinAlgorithm::SqlPushdown);
+}
+
+#[test]
+fn translate_sql_csv_join_stays_hash_join() {
+    let mut child = sql_triples_map(
+        "http://example.com/TM",
+        "school.sqlite",
+        "student",
+        "http://example.com/student/{ID}",
+    );
+    child.predicate_object_maps.push(PredicateObjectMap {
+        predicate_maps: vec![(
+            TermMap::Constant(GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                "http://example.com/practises".to_string(),
+            )))),
+            TermType::Iri,
+        )],
+        object_maps: vec![ObjectMap {
+            term_map: TermMap::Reference(String::new()),
+            term_type: TermType::Iri,
+            language: None,
+            datatype: None,
+            parent_triples_map: Some(IriReference("http://example.com/SportMap".to_string())),
+            join_conditions: vec![JoinConditionRef {
+                child: "Sport".to_string(),
+                parent: "ID".to_string(),
+            }],
+        }],
+        graph_maps: vec![],
+    });
+    // Parent is a CSV source, not SQL on the same connection — must stay on
+    // the source-agnostic hash join (RML_JOIN_PLAN.md).
+    let parent = sport_parent_triples_map();
+    let doc = MappingDocument {
+        triples_maps: vec![child, parent],
+    };
+    let plans = translate(&doc).unwrap();
+    let join = find_join(&plans);
+    assert_eq!(join.algorithm, JoinAlgorithm::HashJoin);
 }

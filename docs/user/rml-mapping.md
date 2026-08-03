@@ -331,10 +331,14 @@ literals, language/datatype annotations, named graphs, blank nodes,
 (`rml:JoinCondition`), FunctionMap (`fnml:functionValue`, completed
 separately under [#27](https://github.com/daghovland/rdf-datalog/issues/27)).
 
-**Not yet implemented:** SQL join pushdown (SQL/SQL joins run through the
-ordinary in-memory hash join, not synthesized into the database), PostgreSQL
-and other SQL backends beyond SQLite — see
-[docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) and
+Same-connection SQL/SQL `rml:joinCondition` joins (both sides `rml:tableName`
+or `rml:sqlQuery` against the same SQLite file) run as a single database-side
+`JOIN` ("SQL pushdown") rather than the in-memory hash join; any other join
+(cross-connection SQL, or SQL joined with CSV/JSON/XML) still runs through
+the ordinary hash join, with identical results.
+
+**Not yet implemented:** PostgreSQL and other SQL backends beyond SQLite —
+see [docs/plans/RML_SQL_PLAN.md](../plans/RML_SQL_PLAN.md) and
 [#354](https://github.com/daghovland/rdf-datalog/issues/354).
 
 ---

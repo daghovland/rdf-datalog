@@ -43,7 +43,15 @@ pub struct JoinCondition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JoinAlgorithm {
+    /// Rust-side hash join (`RML_JOIN_PLAN.md`): materialise the parent side,
+    /// index by join key, stream the child side, probe. Used whenever the
+    /// two sides aren't both SQL sources on the same connection.
     HashJoin,
+    /// Synthesize one SQL query and let the database perform the join,
+    /// used only when both sides are `LogicalSourceRef::Sql` on the same
+    /// `SqlConnection` (`RML_SQL_PLAN.md`'s "Efficient joins" / tier 1). See
+    /// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+    SqlPushdown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

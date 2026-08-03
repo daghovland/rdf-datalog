@@ -5,19 +5,18 @@
 >
 > **Implementation status**: phases 1–2 (`SqlSource` via `rusqlite`,
 > `rml:tableName` whole-table scan and `rml:sqlQuery` arbitrary SELECT) are
-> implemented (PR #349, closing #26). **Join tiers and PostgreSQL (phases
-> 3–5, "Efficient joins" below) are deliberately deferred to
-> [#354](https://github.com/daghovland/rdf-datalog/issues/354)** — this
-> doc's own opening note gated that work on separate user sign-off before
-> any code was written, and that sign-off hasn't happened yet. What #349
-> *does* prove:
-> once `scan_rows` (in `engine.rs`) handles `LogicalSourceRef::Sql`, the
-> existing hash-join engine (`RML_JOIN_PLAN.md`) already composes with SQL
-> sources for free — a SQL child / SQL parent join produces correct triples
-> through the ordinary hash join, just without pushdown. No
-> `JoinAlgorithm::SqlPushdown` variant or `choose_join_algorithm` function is
-> added here, since nothing would execute it yet and an unused enum variant
-> would misrepresent what's implemented.
+> implemented (PR #349, closing #26). Phases 3–4 (join tiers, "Efficient
+> joins" below) are implemented in
+> [#354](https://github.com/daghovland/rdf-datalog/issues/354):
+> `translate::choose_join_algorithm` picks `JoinAlgorithm::SqlPushdown`
+> whenever both sides of an `rml:joinCondition` are `LogicalSourceRef::Sql`
+> on the same `SqlConnection`, and `HashJoin` otherwise (any other
+> combination, including cross-connection SQL/SQL); `engine.rs`'s
+> `execute_sql_pushdown_join` synthesizes one column-prefixed SQL query
+> (`sources::sql::build_pushdown_query`) and streams it through a single
+> connection, while everything else still runs through
+> `RML_JOIN_PLAN.md`'s existing hash join. Phase 5 (PostgreSQL) is tracked
+> separately — see the note at that phase below.
 >
 > One correction to this doc's dependency pin: `rusqlite = "0.31"` was stale
 > at implementation time; `cargo add rusqlite --features bundled` resolved
