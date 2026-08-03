@@ -15,8 +15,20 @@
 > `execute_sql_pushdown_join` synthesizes one column-prefixed SQL query
 > (`sources::sql::build_pushdown_query`) and streams it through a single
 > connection, while everything else still runs through
-> `RML_JOIN_PLAN.md`'s existing hash join. Phase 5 (PostgreSQL) is tracked
-> separately — see the note at that phase below.
+> `RML_JOIN_PLAN.md`'s existing hash join. Phase 5 (PostgreSQL) is also
+> implemented in #354: `SqlConnection::Postgres(String)` holds only an
+> **environment variable name** (never the resolved DSN — see its doc
+> comment in `ast.rs`), resolved and validated at mapping-load time by
+> `loader::resolve_sql_connection`; a literal connection string/DSN in
+> `rml:source` (a URI scheme like `postgres://`, or libpq `key=value`
+> credential fields) is rejected outright with `RmlError::InsecureSqlSource`,
+> which reports only the property name, never the value. No live PostgreSQL
+> server is used in this crate's test suite — there is no hermetic embedded
+> option comparable to SQLite's bundled/in-memory story, so only the
+> DSN-resolution/rejection logic (which needs no connection) is tested;
+> `sources::sql::SqlConn`/`SqlSource`'s actual PostgreSQL query paths are
+> exercised by code review and by the SQLite paths sharing the same
+> code shape, not by an automated test against a live server.
 >
 > One correction to this doc's dependency pin: `rusqlite = "0.31"` was stale
 > at implementation time; `cargo add rusqlite --features bundled` resolved

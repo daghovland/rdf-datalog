@@ -45,12 +45,151 @@ impl SqlSource {
     }
 
     fn collect_rows(&self) -> Result<Vec<RawRow>, RmlError> {
-        let SqlConnection::Sqlite(db_path) = &self.connection;
-        let conn = open_readonly(db_path)?;
         let sql = base_query_sql(&self.query);
         let row_limit = self.row_limit.unwrap_or(crate::MAX_SOURCE_ROWS);
-        run_query(&conn, &sql, row_limit)
+        match &self.connection {
+            SqlConnection::Sqlite(db_path) => {
+                let conn = open_readonly(db_path)?;
+                run_query(&conn, &sql, row_limit)
+            }
+            SqlConnection::Postgres(var_name) => {
+                let mut client = connect_postgres(var_name)?;
+                run_query_postgres(&mut client, &sql, row_limit)
+            }
+        }
     }
+}
+
+/// One open connection to either backend, abstracting over the differing
+/// rusqlite/postgres APIs enough for join-pushdown's shared operations:
+/// column-introspection and running a SELECT to completion. See
+/// `engine.rs::execute_sql_pushdown_join`. Phase 5 —
+/// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+pub enum SqlConn {
+    Sqlite(Connection),
+    Postgres(postgres::Client),
+}
+
+impl SqlConn {
+    /// Open the connection a `SqlPushdown` join needs. `Sqlite` resolves and
+    /// sandbox-confines its relative path against `base_dir` first —
+    /// pushdown bypasses `engine.rs::scan_rows`'s per-side confinement
+    /// entirely, so this does it once here instead. `Postgres` has no path
+    /// to confine; it just connects.
+    pub fn open_for_join(
+        connection: &SqlConnection,
+        base_dir: &std::path::Path,
+    ) -> Result<Self, RmlError> {
+        match connection {
+            SqlConnection::Sqlite(rel_path) => {
+                let path = crate::sandbox::confine_path(base_dir, rel_path)?;
+                Ok(SqlConn::Sqlite(open_readonly(&path)?))
+            }
+            SqlConnection::Postgres(var_name) => Ok(SqlConn::Postgres(connect_postgres(var_name)?)),
+        }
+    }
+
+    pub fn discover_columns(&mut self, base_sql: &str) -> Result<Vec<String>, RmlError> {
+        match self {
+            SqlConn::Sqlite(conn) => discover_columns(conn, base_sql),
+            SqlConn::Postgres(client) => discover_columns_postgres(client, base_sql),
+        }
+    }
+
+    pub fn run_query(&mut self, sql: &str, row_limit: usize) -> Result<Vec<RawRow>, RmlError> {
+        match self {
+            SqlConn::Sqlite(conn) => run_query(conn, sql, row_limit),
+            SqlConn::Postgres(client) => run_query_postgres(client, sql, row_limit),
+        }
+    }
+}
+
+/// Connect to PostgreSQL, re-reading `var_name` from the process environment
+/// (never storing the resolved DSN anywhere — see
+/// `ast::SqlConnection::Postgres`'s doc comment). The loader already
+/// validated at mapping-load time that `var_name` is set
+/// (`loader::resolve_sql_connection`), but re-checks here rather than
+/// trusting that nothing changed between load and execution.
+fn connect_postgres(var_name: &str) -> Result<postgres::Client, RmlError> {
+    let dsn = std::env::var(var_name).map_err(|_| RmlError::MissingEnvVar(var_name.to_string()))?;
+    postgres::Client::connect(&dsn, postgres::NoTls).map_err(|e| RmlError::Postgres {
+        context: format!("${{{var_name}}}"),
+        source: e,
+    })
+}
+
+/// Column names a base query yields, via `Client::prepare` (which parses
+/// and plans but does not execute) rather than SQLite's `LIMIT 0` trick —
+/// `postgres::Statement` exposes column metadata directly from the prepared
+/// statement.
+fn discover_columns_postgres(
+    client: &mut postgres::Client,
+    base_sql: &str,
+) -> Result<Vec<String>, RmlError> {
+    let sql = format!("SELECT * FROM ({base_sql}) AS t");
+    let stmt = client.prepare(&sql).map_err(|e| RmlError::Postgres {
+        context: sql.clone(),
+        source: e,
+    })?;
+    Ok(stmt
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect())
+}
+
+/// Run `sql` against an open PostgreSQL client, mapping every row into a
+/// `RawRow` the same way `run_query` does for SQLite.
+fn run_query_postgres(
+    client: &mut postgres::Client,
+    sql: &str,
+    row_limit: usize,
+) -> Result<Vec<RawRow>, RmlError> {
+    let rows = client.query(sql, &[]).map_err(|e| RmlError::Postgres {
+        context: sql.to_string(),
+        source: e,
+    })?;
+    if rows.len() > row_limit {
+        return Err(RmlError::SourceTooLarge {
+            limit: row_limit as u64,
+            actual: rows.len() as u64,
+        });
+    }
+    let mut result = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut raw = RawRow::new();
+        for (idx, col) in row.columns().iter().enumerate() {
+            if let Some(lexical) = postgres_value_to_string(row, idx) {
+                raw.insert(col.name().to_string(), lexical);
+            }
+        }
+        result.push(raw);
+    }
+    Ok(result)
+}
+
+/// Render a PostgreSQL value as its string lexical form, or `None` for
+/// `NULL` — same "no value" convention `sql_value_to_string` uses for
+/// SQLite. Tries the common scalar types in turn (`postgres::Row::try_get`
+/// fails cleanly on a type mismatch rather than panicking, unlike `get`).
+fn postgres_value_to_string(row: &postgres::Row, idx: usize) -> Option<String> {
+    if let Ok(v) = row.try_get::<_, Option<String>>(idx) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<_, Option<i64>>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    if let Ok(v) = row.try_get::<_, Option<i32>>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    if let Ok(v) = row.try_get::<_, Option<f64>>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    if let Ok(v) = row.try_get::<_, Option<bool>>(idx) {
+        return v.map(|b| b.to_string());
+    }
+    log::warn!("Postgres source: unsupported column type at index {idx}, value skipped");
+    None
 }
 
 /// Open a read-only connection to a SQLite database file. Shared by plain

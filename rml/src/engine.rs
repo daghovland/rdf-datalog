@@ -88,11 +88,15 @@ fn scan_rows(scan: &LogicalScan, base_dir: &Path) -> Result<Vec<Box<dyn SourceRo
             Ok(rows)
         }
         crate::ast::LogicalSourceRef::Sql(sql_ref) => {
-            let crate::ast::SqlConnection::Sqlite(rel_path) = &sql_ref.connection;
-            // Reject absolute paths and '..' escapes via the sandbox, same as
-            // the File case above.
-            let canonical_path = confine_path(base_dir, rel_path)?;
-            let connection = crate::ast::SqlConnection::Sqlite(canonical_path);
+            let connection = match &sql_ref.connection {
+                SqlConnection::Sqlite(rel_path) => {
+                    // Reject absolute paths and '..' escapes via the sandbox,
+                    // same as the File case above.
+                    SqlConnection::Sqlite(confine_path(base_dir, rel_path)?)
+                }
+                // No filesystem path to confine — connects by env-var DSN.
+                SqlConnection::Postgres(var_name) => SqlConnection::Postgres(var_name.clone()),
+            };
             let source = SqlSource::new(connection, sql_ref.query.clone());
             source
                 .rows()
@@ -162,14 +166,15 @@ fn execute_sql_pushdown_join(
     let child_ref = sql_source_ref(&join.left)?;
     let parent_ref = sql_source_ref(&join.right)?;
 
-    let SqlConnection::Sqlite(rel_path) = &child_ref.connection;
-    let db_path = confine_path(base_dir, rel_path)?;
-    let conn = sql::open_readonly(&db_path)?;
+    // choose_join_algorithm only selects SqlPushdown when both sides share
+    // one SqlConnection, so either side's connection opens the same
+    // database/server; the child's is used here arbitrarily.
+    let mut conn = sql::SqlConn::open_for_join(&child_ref.connection, base_dir)?;
 
     let child_base = sql::base_query_sql(&child_ref.query);
     let parent_base = sql::base_query_sql(&parent_ref.query);
-    let child_cols = sql::discover_columns(&conn, &child_base)?;
-    let parent_cols = sql::discover_columns(&conn, &parent_base)?;
+    let child_cols = conn.discover_columns(&child_base)?;
+    let parent_cols = conn.discover_columns(&parent_base)?;
 
     let pushdown_sql = sql::build_pushdown_query(
         &child_base,
@@ -178,7 +183,7 @@ fn execute_sql_pushdown_join(
         &parent_cols,
         &join.conditions,
     );
-    let rows = sql::run_query(&conn, &pushdown_sql, crate::MAX_SOURCE_ROWS)?;
+    let rows = conn.run_query(&pushdown_sql, crate::MAX_SOURCE_ROWS)?;
 
     for row in &rows {
         let child_view = PushdownRow {

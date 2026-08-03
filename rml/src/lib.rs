@@ -74,6 +74,32 @@ pub enum RmlError {
         context: String,
         source: rusqlite::Error,
     },
+    /// A PostgreSQL `LogicalSource` error: connection failure or malformed
+    /// SQL. Kept as an additive variant alongside `Sql` (rather than boxing
+    /// `Sql`'s `source` to a generic error) so existing callers matching on
+    /// `RmlError::Sql { source: rusqlite::Error, .. }` are unaffected. See
+    /// `docs/plans/RML_SQL_PLAN.md`'s phase 5 and
+    /// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+    Postgres {
+        context: String,
+        source: postgres::Error,
+    },
+    /// A SQL `LogicalSource`'s `rml:source` was `"${VAR}"` but `VAR` isn't
+    /// set in the process environment. Named for the variable, never the
+    /// (absent) value — see `docs/plans/RML_SQL_PLAN.md`'s "Credentials".
+    MissingEnvVar(String),
+    /// A SQL `LogicalSource`'s `rml:source` looked like a literal database
+    /// connection string/DSN (containing a URI scheme like `postgres://`, or
+    /// libpq `key=value` credential fields) rather than either a plain
+    /// SQLite file path or a `"${VAR}"` environment-variable reference.
+    /// Rejected outright — no literal credential is ever accepted from a
+    /// mapping file. The property name is reported, never the value, so the
+    /// credential itself never reaches an error message or log line. See
+    /// `docs/plans/RML_SQL_PLAN.md`'s "Credentials" section and
+    /// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
+    InsecureSqlSource {
+        property: String,
+    },
 }
 
 impl fmt::Display for RmlError {
@@ -122,6 +148,22 @@ impl fmt::Display for RmlError {
             RmlError::Sql { context, source } => {
                 write!(f, "SQL error ({context}): {source}")
             }
+            RmlError::Postgres { context, source } => {
+                write!(f, "PostgreSQL error ({context}): {source}")
+            }
+            RmlError::MissingEnvVar(var) => {
+                write!(
+                    f,
+                    "environment variable '{var}' is not set (required by rml:source)"
+                )
+            }
+            RmlError::InsecureSqlSource { property } => {
+                write!(
+                    f,
+                    "rejected {property}: literal database connection strings/credentials are \
+                     not accepted — use \"${{VAR}}\" to reference an environment variable instead"
+                )
+            }
         }
     }
 }
@@ -133,6 +175,7 @@ impl std::error::Error for RmlError {
             RmlError::Csv { source, .. } => Some(source),
             RmlError::Json { source, .. } => Some(source),
             RmlError::Sql { source, .. } => Some(source),
+            RmlError::Postgres { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -177,6 +220,10 @@ fn validate_mapping_sources(
                 SqlConnection::Sqlite(rel_path) => {
                     confine_path(base_dir, rel_path)?;
                 }
+                // No filesystem path to sandbox-confine — the loader has
+                // already validated the env var reference at load time
+                // (`loader::resolve_sql_connection`).
+                SqlConnection::Postgres(_) => {}
             },
         }
     }

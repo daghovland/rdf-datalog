@@ -187,6 +187,58 @@ fn extract_join_conditions(ds: &Datastore, om_id: GraphElementId) -> Vec<JoinCon
         .collect()
 }
 
+/// Resolve a SQL `LogicalSource`'s `rml:source` string into a `SqlConnection`.
+///
+/// - `"${VAR}"` (exactly one env-var reference, nothing else) → `Postgres`,
+///   after confirming `VAR` is actually set in the process environment
+///   (`RmlError::MissingEnvVar` if not). Only the variable *name* is stored
+///   in the AST — see `ast::SqlConnection::Postgres`'s doc comment for why.
+/// - Anything that looks like a literal connection string/DSN (a URI scheme
+///   like `postgres://`, or libpq `key=value` credential fields such as
+///   `password=`) → rejected with `RmlError::InsecureSqlSource`, regardless
+///   of whether it would otherwise "work" as a SQLite path. No literal
+///   credential is ever accepted from a mapping file — see
+///   `docs/plans/RML_SQL_PLAN.md`'s "Credentials" section.
+/// - Everything else → `Sqlite`, a filesystem path (unchanged from phases
+///   1–2's behaviour), resolved relative to `base_dir` later by
+///   `confine_path`.
+fn resolve_sql_connection(source_str: &str) -> Result<SqlConnection, RmlError> {
+    if let Some(var_name) = env_var_reference(source_str) {
+        if std::env::var(var_name).is_err() {
+            return Err(RmlError::MissingEnvVar(var_name.to_string()));
+        }
+        return Ok(SqlConnection::Postgres(var_name.to_string()));
+    }
+    if looks_like_connection_string(source_str) {
+        return Err(RmlError::InsecureSqlSource {
+            property: "rml:source".to_string(),
+        });
+    }
+    Ok(SqlConnection::Sqlite(source_str.into()))
+}
+
+/// Parse `"${VAR_NAME}"` (the whole string, nothing before or after) and
+/// return `VAR_NAME`, or `None` if `s` doesn't have exactly this shape.
+fn env_var_reference(s: &str) -> Option<&str> {
+    let inner = s.strip_prefix("${")?.strip_suffix('}')?;
+    let mut chars = inner.chars();
+    let first_ok = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    (first_ok && rest_ok).then_some(inner)
+}
+
+/// Heuristic rejection of literal database connection strings/DSNs: a URI
+/// scheme (`postgres://`, `postgresql://`, `mysql://`, ...) or libpq-style
+/// `key=value` credential fields (`password=`, or the `host=`/`dbname=`
+/// pair together). Deliberately over-inclusive rather than under-inclusive
+/// — a SQLite path is never going to contain `://` or `password=`, so this
+/// can't reject a legitimate SQLite `rml:source`.
+fn looks_like_connection_string(s: &str) -> bool {
+    s.contains("://") || s.contains("password=") || (s.contains("host=") && s.contains("dbname="))
+}
+
 fn extract_logical_source(
     ds: &Datastore,
     tm_id: GraphElementId,
@@ -225,11 +277,14 @@ fn extract_logical_source(
         .map(|s| s.to_string());
 
     // A SQL LogicalSource is discriminated by the presence of rml:tableName
-    // or rml:sqlQuery — rml:source is then a path to a SQLite database file
-    // rather than a CSV/JSON/XML file. See docs/plans/RML_SQL_PLAN.md and
-    // https://github.com/daghovland/rdf-datalog/issues/26. Only SQLite is
-    // implemented (phase 1); reference_formulation stays Csv either way,
-    // since SQL rows are column-keyed exactly like CSV rows.
+    // or rml:sqlQuery — rml:source is then either a path to a SQLite
+    // database file, or a "${VAR}" environment-variable reference to a
+    // PostgreSQL DSN (see resolve_sql_connection). See
+    // docs/plans/RML_SQL_PLAN.md and
+    // https://github.com/daghovland/rdf-datalog/issues/26 /
+    // https://github.com/daghovland/rdf-datalog/issues/354.
+    // reference_formulation stays Csv either way, since SQL rows are
+    // column-keyed exactly like CSV rows.
     let table_name = first_obj(ds, ls_id, &rml("tableName"))
         .and_then(|id| get_literal_string(ds, id))
         .map(|s| s.to_string());
@@ -239,11 +294,11 @@ fn extract_logical_source(
 
     let source = match (table_name, sql_query) {
         (Some(table), _) => LogicalSourceRef::Sql(SqlSourceRef {
-            connection: SqlConnection::Sqlite(source_str.into()),
+            connection: resolve_sql_connection(source_str)?,
             query: SqlQuery::Table(table),
         }),
         (None, Some(query)) => LogicalSourceRef::Sql(SqlSourceRef {
-            connection: SqlConnection::Sqlite(source_str.into()),
+            connection: resolve_sql_connection(source_str)?,
             query: SqlQuery::Query(query),
         }),
         (None, None) => LogicalSourceRef::File(source_str.into()),
@@ -395,4 +450,44 @@ fn extract_mapping(ds: &Datastore) -> Result<MappingDocument, RmlError> {
     }
 
     Ok(MappingDocument { triples_maps })
+}
+
+#[cfg(test)]
+mod sql_connection_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn env_var_reference_parses_var_name() {
+        assert_eq!(env_var_reference("${DATABASE_URL}"), Some("DATABASE_URL"));
+        assert_eq!(env_var_reference("${_x1}"), Some("_x1"));
+    }
+
+    #[test]
+    fn env_var_reference_rejects_non_var_shapes() {
+        assert_eq!(env_var_reference("students.sqlite"), None);
+        assert_eq!(env_var_reference("${1BAD}"), None); // can't start with a digit
+        assert_eq!(env_var_reference("prefix${VAR}"), None); // must be the whole string
+        assert_eq!(env_var_reference("${VAR}suffix"), None);
+        assert_eq!(env_var_reference("${}"), None);
+    }
+
+    #[test]
+    fn looks_like_connection_string_flags_uri_schemes() {
+        assert!(looks_like_connection_string("postgres://user:pass@host/db"));
+        assert!(looks_like_connection_string("postgresql://host/db"));
+        assert!(looks_like_connection_string("mysql://host/db"));
+    }
+
+    #[test]
+    fn looks_like_connection_string_flags_libpq_keyword_form() {
+        assert!(looks_like_connection_string(
+            "host=localhost dbname=db password=secret"
+        ));
+    }
+
+    #[test]
+    fn looks_like_connection_string_accepts_plain_sqlite_paths() {
+        assert!(!looks_like_connection_string("students.sqlite"));
+        assert!(!looks_like_connection_string("data/students.sqlite"));
+    }
 }

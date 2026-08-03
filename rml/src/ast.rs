@@ -38,15 +38,26 @@ pub struct SqlSourceRef {
     pub query: SqlQuery,
 }
 
-/// Which database backend/file a SQL `LogicalSource` connects to. Only
-/// SQLite is implemented so far (phase 1 of `RML_SQL_PLAN.md`); PostgreSQL
-/// is phase 5, not yet implemented.
+/// Which database backend/file a SQL `LogicalSource` connects to.
+/// See `RML_SQL_PLAN.md`'s phase 5 and
+/// [#354](https://github.com/daghovland/rdf-datalog/issues/354).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlConnection {
     /// `rml:source` holds a filesystem path to a SQLite database file,
     /// resolved relative to the mapping's base_dir the same way
     /// `LogicalSourceRef::File`'s path is.
     Sqlite(PathBuf),
+    /// `rml:source` was an env-var reference (`"${VAR}"`) whose value is a
+    /// PostgreSQL DSN. This variant holds only the **environment variable
+    /// name**, never the resolved DSN — the DSN (and any credentials in it)
+    /// is re-read from the process environment at connection time
+    /// (`sources::sql::connect_postgres`), so it never appears in a
+    /// `#[derive(Debug)]` dump of the AST/plan or in an error message. The
+    /// loader (`loader.rs::resolve_sql_connection`) still validates at
+    /// mapping-load time that the variable is set, erroring immediately if
+    /// not, and rejects literal connection strings/credentials outright —
+    /// see `docs/plans/RML_SQL_PLAN.md`'s "Credentials" section.
+    Postgres(String),
 }
 
 /// The query a SQL `LogicalSource` runs: either a whole-table scan
