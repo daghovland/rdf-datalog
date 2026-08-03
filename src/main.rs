@@ -141,6 +141,16 @@ struct Cli {
     )]
     max_rml_upload_bytes: usize,
 
+    /// Maximum wall-clock time (in seconds) any single HTTP request may
+    /// occupy a connection before the server responds 408 and frees it
+    #[arg(
+        long = "request-timeout",
+        value_name = "SECS",
+        default_value_t = 30,
+        env = "DAGALOG_REQUEST_TIMEOUT"
+    )]
+    request_timeout: u64,
+
     // ── Tier 1: Static API key ───────────────────────────────────────────────
     /// Shared API key for Bearer token auth; omit to disable (Tier 1)
     #[arg(long = "api-key", value_name = "KEY", env = "DAGALOG_API_KEY")]
@@ -444,6 +454,7 @@ fn run(cli: Cli) -> Result<(), String> {
             data_dir,
             max_rdf_upload_bytes: cli.max_rdf_upload_bytes,
             max_rml_upload_bytes: cli.max_rml_upload_bytes,
+            request_timeout_secs: cli.request_timeout,
             initial_rules: serve_rules,
             network_policy,
         };

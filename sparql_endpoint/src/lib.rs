@@ -191,6 +191,23 @@ pub struct Config {
     /// Configurable via `--max-rdf-upload-bytes` / `DAGALOG_MAX_RDF_UPLOAD_BYTES`.
     /// See [#274](https://github.com/daghovland/rdf-datalog/issues/274).
     pub max_rdf_upload_bytes: usize,
+    /// Maximum wall-clock time (in seconds) any single HTTP request may
+    /// occupy a connection before the server responds `408 Request Timeout`
+    /// and frees the connection.
+    ///
+    /// This bounds *connection occupancy*, not server-side work: when it
+    /// fires, the client gets a 408 and the connection is released, but the
+    /// handler future (parse / lock / mutation) keeps running to completion
+    /// in the background. It exists to stop a stalled or adversarially slow
+    /// client from holding a connection (and, transitively, a request slot)
+    /// open indefinitely.
+    ///
+    /// Distinct from `max_query_timeout_secs`, which is presently unused —
+    /// see [#372](https://github.com/daghovland/rdf-datalog/issues/372).
+    ///
+    /// Configurable via `--request-timeout` / `DAGALOG_REQUEST_TIMEOUT`.
+    /// See [#367](https://github.com/daghovland/rdf-datalog/issues/367).
+    pub request_timeout_secs: u64,
     /// Datalog rules for incremental reasoning.
     ///
     /// When non-empty, an [`IncrementalReasoner`] is created from these rules
@@ -223,6 +240,7 @@ impl Default for Config {
             data_dir: None,
             max_rml_upload_bytes: 64 * 1024 * 1024,
             max_rdf_upload_bytes: 64 * 1024 * 1024,
+            request_timeout_secs: 30,
             initial_rules: Vec::new(),
             network_policy: NetworkPolicy::Deny,
         }
