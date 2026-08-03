@@ -371,6 +371,11 @@ Open <http://localhost:3030> for the interactive UI. A `docker-compose.yml` is a
 included (`docker compose up`). See [deployment](docs/user/deployment.md) for building the
 image locally, environment-variable configuration, and read-only mode.
 
+> **Warning:** the bare `docker run` above starts with no authentication (Tier 0, below)
+> — do not expose it beyond `localhost` or a fully trusted network. See
+> [deployment §No authentication](docs/user/deployment.md#no-authentication-tier-0) and
+> [deployment §CORS](docs/user/deployment.md#cors).
+
 ---
 
 ## Authentication

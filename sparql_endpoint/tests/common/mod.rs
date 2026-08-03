@@ -169,6 +169,46 @@ impl TestServer {
         }
     }
 
+    /// Start a writable server with an explicit CORS allow-list for
+    /// state-changing methods (see `Config::cors_allowed_origins`).
+    pub async fn start_writable_with_cors_allowed_origins(
+        turtle: &str,
+        cors_allowed_origins: Vec<String>,
+    ) -> Self {
+        let mut ds = Datastore::new(1024);
+        if !turtle.is_empty() {
+            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
+                .expect("test fixture turtle must parse");
+        }
+        let store = Arc::new(RwLock::new(ds));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only: false,
+            max_query_timeout_secs: 10,
+            auth: AuthConfig::None,
+            data_dir: None,
+            cors_allowed_origins,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
+    }
+
     /// Start a writable server pre-loaded with TriG data.
     ///
     /// Use this when test fixtures need named graphs. TriG extends Turtle with
