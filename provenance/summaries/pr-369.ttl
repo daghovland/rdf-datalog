@@ -1,0 +1,44 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after pushing PR #369's real
+# implementation commit, in the same orchestration session that reviewed
+# and pushed it (the sub-agent that authored the commit had been paused,
+# with the finished work sitting uncommitted in its worktree).
+#
+# - ghpull:369's bl:state is bl:Open, the real state at authoring time.
+# - startedAtTime/endedAtTime come from `git log abfdb72..HEAD --format=%aI`
+#   in the worktree that held the work: the plan+ignored-tests commit and
+#   the implementation commit.
+
+ghpull:369 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: restrict default CORS for state-changing methods" ;
+    bl:number 369 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:362 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr369 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:362 ;
+    prov:startedAtTime "2026-08-03T16:32:02Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T19:45:00Z"^^xsd:dateTime .
+
+session:pr369Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #362 identified that the server's single global CorsLayer used allow_origin(Any) across every method, which combined with the documented default of no authentication (AuthConfig::None, the bare `docker run` example) let any web page a victim's browser visits fire blind cross-origin writes (POST /update, PUT /{name}/data, DELETE admin routes) against a reachable instance -- no credential needed, preflight succeeds. The fix splits the CORS policy by the method the request is actually asking permission for: GET/HEAD (and an OPTIONS preflight naming one of them, or a bare OPTIONS with no Access-Control-Request-Method) stay approved for any origin, since allow_credentials is never set on this server so no cookies/session state can leak and cross-origin reads are a legitimate use case; every other (state-changing) method is approved only for an origin present in a new --cors-allow-origin allow-list, empty by default. The predicate has to inspect Access-Control-Request-Method rather than the request's own method, because a CORS preflight is always an OPTIONS request -- the method it's asking permission for travels in a separate header. Both README.md and deployment.md got explicit warnings pointing at the Tier-0 no-auth default and explaining that this CORS restriction is a mitigation for one specific attack path (browser-borne cross-origin requests), not a substitute for authentication, since non-browser clients are unaffected by CORS entirely. The work was completed by a sub-agent that had gotten as far as writing and locally verifying the implementation before being interrupted; this session found it sitting uncommitted in the worktree, hit what looked like a real compile error (E0560, Config missing the new field) that turned out to be the documented shared-CARGO_TARGET_DIR fingerprint-collision hazard rather than a real bug (a touch + rebuild compiled clean), then re-ran the full test suite, fmt, and clippy before committing and pushing." ;
+    agp:reasoningFor ghpull:369 ;
+    agp:decisionPoint session:pr369MethodDecision ;
+    prov:wasGeneratedBy session:pr369 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr369MethodDecision a agp:Decision ;
+    agp:summaryText "Determined the CORS-relevant method from Access-Control-Request-Method during an OPTIONS preflight, rather than from the preflight request's own (always-OPTIONS) method." ;
+    agp:alternative "Gate solely on the literal request method reaching the predicate -- rejected because every CORS preflight arrives as OPTIONS regardless of what it's asking permission for, so that approach would have misclassified every state-changing preflight as safe." .
