@@ -33,7 +33,7 @@ Almost all implementation is done by LLM-based agents.
 - **Auth** — static API key or OIDC JWT (Azure Entra ID, Google, Keycloak, Auth0) ([deployment](docs/user/deployment.md))
 - **Web UI** — query editor, resource browser, class hierarchy, graph visualisation, visual query builder
 
-Not yet supported: SHACL-AF (SPARQL-based constraints), RML SQL/JDBC sources.
+Not yet supported: SHACL-AF (SPARQL-based constraints), RML SQL sources beyond SQLite (PostgreSQL/JDBC, [#354](https://github.com/daghovland/rdf-datalog/issues/354)).
 
 > Every code example in this file is also an integration test in
 > [`tests/readme_examples.rs`](tests/readme_examples.rs).

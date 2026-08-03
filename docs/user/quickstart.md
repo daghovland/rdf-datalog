@@ -61,7 +61,8 @@ RDF uses angle-bracket URIs for everything; `@prefix` lets you abbreviate them.
 
 ```sh
 dagalog --data people.ttl \
-        --query "SELECT ?name WHERE { ?x rdfs:label ?name }"
+        --query "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                 SELECT ?name WHERE { ?x rdfs:label ?name }"
 ```
 
 Expected output:
