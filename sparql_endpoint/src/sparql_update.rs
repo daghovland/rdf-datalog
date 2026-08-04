@@ -1522,11 +1522,11 @@ fn is_blocked_ip(ip: std::net::IpAddr, allow_loopback: bool) -> bool {
 /// or an error string describing the rejection reason.
 ///
 /// Uses [`url::Url::socket_addrs`] rather than manually formatting
-/// `"{host}:{port}"` and calling `to_socket_addrs`: the manual form breaks for
-/// IPv6 literal hosts (`http://[fd00::1]/` — `to_socket_addrs` requires the
-/// brackets to be part of a `SocketAddr`-shaped string, which the naive
-/// `format!` does not produce), silently turning a should-be-blocked address
-/// into a DNS-resolution error instead of an SSRF rejection.
+/// `"{host}:{port}"` and calling `to_socket_addrs`: `Url::host_str` already
+/// includes the brackets for an IPv6 literal host (e.g. `"[fd00::1]"`), so the
+/// manual form happens to produce a parseable `SocketAddr` string too — but
+/// `socket_addrs` is the API designed for this and avoids relying on that
+/// implementation detail of `host_str`'s output format.
 fn ssrf_preflight(url: &str, allow_loopback: bool) -> Result<Vec<std::net::SocketAddr>, String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
     match parsed.scheme() {
@@ -1747,12 +1747,12 @@ mod tests {
         );
     }
 
-    /// Issue #365 gap 2/3 combined: an IPv6 literal host in bracket notation
-    /// must be resolved and validated correctly. The pre-fix implementation
-    /// built `format!("{host}:{port}")` from `Url::host_str()`, which drops
-    /// the brackets `to_socket_addrs` requires for an IPv6 literal — so a
-    /// unique-local IPv6 URL would previously fail with a DNS-resolution
-    /// error rather than the intended SSRF rejection message.
+    /// Issue #365 gap 2, exercised via the URL-level `ssrf_preflight` API
+    /// (not just `is_blocked_ip` directly): a bracketed IPv6 literal host
+    /// must resolve and be validated against the expanded IPv6 blocklist,
+    /// confirming the `Url::socket_addrs`-based resolution path (which
+    /// `ssrf_preflight` now uses) carries IPv6 literal addresses through to
+    /// `is_blocked_ip` correctly.
     #[test]
     fn test_ssrf_preflight_handles_ipv6_literal_url() {
         let result = ssrf_preflight("http://[fc00::1]/data.ttl", false);

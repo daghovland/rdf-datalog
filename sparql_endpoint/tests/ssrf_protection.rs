@@ -8,16 +8,20 @@ Contact: hovlanddag@gmail.com
 
 //! Integration tests for SSRF hardening on `SPARQL LOAD`.
 //!
-//! Tests verify that the three SSRF protection layers are active:
+//! Tests verify that the SSRF protection layers are active:
 //!
-//! 1. Private/reserved IP blocking (pre-connection DNS preflight)
-//! 2. Cross-host redirect blocking
-//! 3. 64 MiB response body cap
+//! 1. Private/reserved IP blocking, including loopback by default
+//!    (pre-connection DNS preflight)
+//! 2. DNS-rebinding TOCTOU closure (the actual connection is pinned to the
+//!    addresses the preflight validated)
+//! 3. Cross-host redirect blocking
+//! 4. 64 MiB response body cap
 //!
 //! All tests use `#[tokio::test(flavor = "multi_thread")]` because the LOAD
 //! implementation uses `tokio::task::block_in_place` internally.
 //!
-//! Related: <https://github.com/daghovland/rdf-datalog/issues/135>
+//! Related: <https://github.com/daghovland/rdf-datalog/issues/135>,
+//! <https://github.com/daghovland/rdf-datalog/issues/365>
 
 mod common;
 

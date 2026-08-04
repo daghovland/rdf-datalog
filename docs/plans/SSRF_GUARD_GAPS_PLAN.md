@@ -31,9 +31,12 @@ Related: [#365](https://github.com/daghovland/rdf-datalog/issues/365) (this issu
   allowed for wiremock, i.e. `127.0.0.1`/`::1`, decided per address family).
 - `ssrf_preflight(url, allow_loopback) -> Result<Vec<SocketAddr>, String>`: switch
   from manual `format!("{host}:{port}").to_socket_addrs()` to
-  `parsed.socket_addrs(|| parsed.port_or_known_default())` (handles IPv6 bracket
-  literals correctly — the manual format string cannot). Returns the *validated*
-  resolved addresses instead of `()`, so the caller can pin them.
+  `parsed.socket_addrs(|| parsed.port_or_known_default())` — the API designed for
+  this resolution step, rather than relying on `Url::host_str()` happening to
+  already include brackets for IPv6 literal hosts (which is why the manual form
+  actually still parses today; `socket_addrs()` is the more robust choice, not a
+  bugfix in itself). Returns the *validated* resolved addresses instead of `()`,
+  so the caller can pin them.
 - `fetch_rdf`: after preflight, build the `reqwest::blocking::ClientBuilder` with
   `.resolve_to_addrs(host, &validated_addrs)`. This pins the connection to exactly
   the addresses validated by preflight — reqwest/hyper will not perform a second,
@@ -57,7 +60,7 @@ since the fix is entirely reachable from private functions in-crate:
 - `test_is_blocked_ipv6_mapped_metadata` — `::ffff:169.254.169.254` → blocked.
 - `test_is_blocked_ipv6_mapped_loopback_respects_allow_loopback` — `::ffff:127.0.0.1` blocked when `allow_loopback=false`, not blocked when `true`.
 - `test_ssrf_preflight_blocks_loopback_v4_by_default` — URL-level, `allow_loopback=false`.
-- `test_ssrf_preflight_handles_ipv6_literal_url` — `http://[fd00::1]/` must be rejected with the "blocked" message, not a DNS-resolution error (covers the `socket_addrs()` fix directly, since the old `format!` + `to_socket_addrs` path mishandles bracketed IPv6 literals).
+- `test_ssrf_preflight_handles_ipv6_literal_url` — `http://[fd00::1]/` must be rejected with the "blocked" message, confirming the bracketed-IPv6-literal host is carried through `ssrf_preflight`'s resolution to `is_blocked_ip`'s expanded IPv6 checks correctly (the actual pre-fix gap here is gap 2 — the missing unique-local/link-local checks — not the resolution mechanism itself).
 - `test_fetch_rdf_pins_resolved_address_closes_toctou` — spins up a real wiremock
   server on loopback (`allow_loopback=true`), calls a resolver-injectable variant
   of `fetch_rdf` with a stub resolver that asserts it is invoked exactly once,
@@ -93,6 +96,13 @@ their original reason.
 
 ## Out of scope
 
-`jsonld_parser/src/lib.rs`'s external `@context` fetch mirrors some of this SSRF
-logic but has its own gate; not touched here — a follow-up issue will be filed
-(unlabeled, per the `ready`-label workflow) if the same gaps apply there.
+`jsonld_parser/src/lib.rs`'s external `@context` handling has its own
+`NetworkPolicy::Allow`/`AllowList` gate (an allow-list prefix check mirroring
+`sparql_endpoint::fetch_rdf`'s), but checked: it only ever calls into a
+pluggable [`DocumentLoader`](jsonld_parser/src/loader.rs) trait, and the only
+implementation wired into production (`sparql_endpoint/src/graph_store.rs`) is
+`StaticDocumentLoader` — an in-memory map, not a real HTTP fetch. There is
+currently no live HTTP-fetching `DocumentLoader` in the codebase for this
+path (tracked as future work under [#82](https://github.com/daghovland/rdf-datalog/issues/82)),
+so the three SSRF gaps this issue fixes don't yet have an analogue there to
+fix. Worth re-checking once #82 adds a real HTTP loader.
