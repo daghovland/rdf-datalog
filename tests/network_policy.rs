@@ -149,6 +149,8 @@ fn jsonld_ignore_external_context_succeeds_with_empty() {
 fn run_load(store: &mut Datastore, sparql: &str, network: NetworkPolicy) -> Result<(), String> {
     let ops = parse_update(sparql).map_err(|e| format!("parse error: {e:?}"))?;
     let (prepared, _log) = prepare_update(store, ops)?;
+    // `allow_loopback = false`: these tests don't depend on reaching a real
+    // loopback-bound server (see #365), so the production default applies.
     apply_prepared_update(store, prepared, None, network)
         .map(|_| ())
         .map_err(|e| e.to_string())

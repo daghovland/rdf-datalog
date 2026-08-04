@@ -26,7 +26,8 @@ use crate::{
     },
     service_desc::service_description_turtle,
     sparql_update::{
-        PreparedOp, apply_prepared_update, parse_update, prepare_update, translate_to_main_ids,
+        PreparedOp, apply_prepared_update_with_options, parse_update, prepare_update,
+        translate_to_main_ids,
     },
 };
 use axum::{
@@ -209,14 +210,21 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
     }
     let result = if let Some(ref reasoner_arc) = state.reasoner {
         let mut reasoner = reasoner_arc.lock().await;
-        apply_prepared_update(
+        apply_prepared_update_with_options(
             &mut store,
             prepared,
             Some(&mut *reasoner),
             state.network_policy.clone(),
+            state.allow_loopback_for_ssrf_tests,
         )
     } else {
-        apply_prepared_update(&mut store, prepared, None, state.network_policy.clone())
+        apply_prepared_update_with_options(
+            &mut store,
+            prepared,
+            None,
+            state.network_policy.clone(),
+            state.allow_loopback_for_ssrf_tests,
+        )
     };
     let (net_inserts, net_deletes) = match result {
         Ok(delta) => delta,

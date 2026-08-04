@@ -472,6 +472,9 @@ fn run(cli: Cli) -> Result<(), String> {
             initial_rules: serve_rules,
             network_policy,
             cors_allowed_origins: cli.cors_allow_origin.clone(),
+            // No CLI flag exposes this: it's a test-only SSRF escape hatch.
+            // See `Config::allow_loopback_for_ssrf_tests` and issue #365.
+            allow_loopback_for_ssrf_tests: false,
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()
