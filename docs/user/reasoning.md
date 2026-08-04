@@ -159,6 +159,28 @@ rule fires.
 
 ---
 
+## Known limitation: complex ABox assertions in Manchester Syntax
+
+Manchester Syntax (`.omn`) `Individual:` frames (`Types:`/`Facts:`) are parsed into
+OWL `Assertion` axioms and then materialised as ground RDF triples so the reasoner
+can see them. Only assertions that correspond to exactly one ground triple are
+materialised today:
+
+- `ClassAssertion` over a *named* class (`Types: Dog`)
+- `ObjectPropertyAssertion`/`DataPropertyAssertion` over a *named* property
+
+An assertion over a **complex** class or property expression — e.g.
+`Types: Dog or Cat` (a union) — has no single-ground-triple encoding and is
+**skipped**. This is now surfaced rather than silently dropped: `apply_ontologies`'s
+`ReasoningStats.abox_skipped` and the `dagalog-kernel` `%%manchester` cell's status
+message both report a non-zero, human-readable count when this happens
+([#366](https://github.com/daghovland/rdf-datalog/issues/366)). Actually giving such
+expressions an RDF encoding (the W3C structural mapping's blank-node
+`owl:Restriction`/`rdf:List` machinery) is a separate, larger piece of work tracked in
+[#373](https://github.com/daghovland/rdf-datalog/issues/373).
+
+---
+
 ## See also
 
 - [Formats](formats.md) — loading the ontology/data files reasoning operates on

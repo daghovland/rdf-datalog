@@ -20,7 +20,7 @@ Contact: hovlanddag@gmail.com
 //! triples into a [`Datastore`], so the reasoner has ABox facts to work from.
 //! Tracked in [#159](https://github.com/daghovland/rdf-datalog/issues/159).
 
-use crate::owl_to_rdf::atomic_assertion_triple;
+use crate::owl_to_rdf::{RdfTranslationReport, atomic_assertion_triple};
 use dag_rdf::Datastore;
 use owl_ontology::{Assertion, Axiom, Ontology};
 
@@ -42,47 +42,55 @@ use owl_ontology::{Assertion, Axiom, Ontology};
 /// and the negative-assertion variants are likewise out of scope for OWL-RL
 /// ground-triple materialisation and are skipped.
 ///
-/// Returns the number of quads added to the datastore.
+/// Returns a report of how many quads were added, and a human-readable
+/// description of every assertion that was *not* materialisable as a single
+/// ground triple ([`RdfTranslationReport::skipped`]) — see
+/// [#366](https://github.com/daghovland/rdf-datalog/issues/366). Callers
+/// must not silently discard this: a non-empty `skipped` means ABox data was
+/// dropped, not just logged.
 ///
 /// This is the ABox-only slice of the general OWL → RDF translation in
 /// [`crate::owl_to_rdf::owl2rdf`] ([#177](https://github.com/daghovland/rdf-datalog/issues/177)),
-/// which it shares its triple-emitting code with. Use `owl2rdf` when the
+/// which it shares its triple-emitting code with — including the
+/// `RdfTranslationReport` return type itself. Use `owl2rdf` when the
 /// ontology's TBox should become RDF too; `assert_abox` stays as the
 /// deliberately narrow entry point used by the OWL-RL pipeline, where TBox
 /// axioms reach the reasoner as datalog rules via [`crate::owl2datalog`]
 /// rather than as triples.
-pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> usize {
-    let mut added = 0usize;
+pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> RdfTranslationReport {
+    let mut report = RdfTranslationReport::default();
     for axiom in &ontology.axioms {
         let Axiom::AxiomAssertion(assertion) = axiom else {
             continue;
         };
         if atomic_assertion_triple(datastore, assertion) {
-            added += 1;
+            report.triples_added += 1;
             continue;
         }
-        match assertion {
+        let message = match assertion {
             Assertion::ClassAssertion(_, class_expr, _) => {
-                log::warn!(
+                format!(
                     "Skipping ClassAssertion with non-atomic class expression (no single ground \
                      triple): {class_expr:?}"
-                );
+                )
             }
             Assertion::ObjectPropertyAssertion(_, prop_expr, _, _) => {
-                log::warn!(
+                format!(
                     "Skipping ObjectPropertyAssertion with non-atomic property expression (no \
                      single ground triple): {prop_expr:?}"
-                );
+                )
             }
             other => {
-                log::warn!(
+                format!(
                     "Skipping ABox assertion not materialisable as a single ground triple: \
                      {other:?}"
-                );
+                )
             }
-        }
+        };
+        log::warn!("{message}");
+        report.skipped.push(message);
     }
-    added
+    report
 }
 
 #[cfg(test)]
@@ -132,8 +140,16 @@ mod tests {
             ))],
         );
 
-        let added = assert_abox(&mut ds, &ontology);
-        assert_eq!(added, 1, "the ClassAssertion must materialise one triple");
+        let report = assert_abox(&mut ds, &ontology);
+        assert_eq!(
+            report.triples_added, 1,
+            "the ClassAssertion must materialise one triple"
+        );
+        assert!(
+            report.skipped.is_empty(),
+            "nothing should be skipped: {:?}",
+            report.skipped
+        );
 
         // Find the subject of the materialised `?s rdf:type :Thing` triple —
         // that's the GraphElementId the anonymous individual was interned to.
@@ -159,6 +175,46 @@ mod tests {
             anon_individual_id, rdf_blank_node_id,
             "an anonymous individual materialised by assert_abox must not collide with an \
              unrelated RDF-ingested blank node in the same Datastore"
+        );
+    }
+
+    /// Regression test for [#366](https://github.com/daghovland/rdf-datalog/issues/366):
+    /// a `ClassAssertion` over a non-atomic class expression (here,
+    /// `ObjectUnionOf`) has no single-ground-triple encoding and must be
+    /// surfaced via `report.skipped`, not just a `log::warn!` line that a
+    /// caller has no way to observe without configuring logging.
+    #[test]
+    fn assert_abox_reports_skipped_non_atomic_class_assertion() {
+        let mut ds = Datastore::new(100);
+        let dog_iri = IriReference("http://example.org/Dog".to_string());
+        let cat_iri = IriReference("http://example.org/Cat".to_string());
+        let ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![Axiom::AxiomAssertion(Assertion::ClassAssertion(
+                vec![],
+                ClassExpression::ObjectUnionOf(vec![
+                    ClassExpression::ClassName(FullIri(dog_iri)),
+                    ClassExpression::ClassName(FullIri(cat_iri)),
+                ]),
+                Individual::NamedIndividual(FullIri(IriReference(
+                    "http://example.org/fido".to_string(),
+                ))),
+            ))],
+        );
+
+        let report = assert_abox(&mut ds, &ontology);
+
+        assert_eq!(
+            report.triples_added, 0,
+            "a non-atomic ClassAssertion must not materialise a triple"
+        );
+        assert_eq!(
+            report.skipped.len(),
+            1,
+            "the skip must be surfaced in the report, not just logged: {:?}",
+            report.skipped
         );
     }
 }

@@ -79,9 +79,9 @@ Individual: fido
     let mut ds = Datastore::new(1_000);
 
     // ABox fact materialised from the parsed Manchester `Individual:` frame.
-    let added = assert_abox(&mut ds, &ontology);
+    let report = assert_abox(&mut ds, &ontology);
     assert_eq!(
-        added, 1,
+        report.triples_added, 1,
         "one ClassAssertion (fido a Dog) must be materialised"
     );
     assert!(has_triple(&ds, "fido", RDF_TYPE, "Dog"));
@@ -133,9 +133,9 @@ Individual: alice
 
     // Materialise the ABox: 1 ClassAssertion + 1 ObjectPropertyAssertion +
     // 1 DataPropertyAssertion = 3 ground triples.
-    let added = assert_abox(&mut ds, &ontology);
+    let report = assert_abox(&mut ds, &ontology);
     assert_eq!(
-        added, 3,
+        report.triples_added, 3,
         "fido a Dog, fido hasOwner alice, fido hasName \"Rex\" must all be materialised"
     );
 

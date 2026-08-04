@@ -418,6 +418,23 @@ fn run(cli: Cli) -> Result<(), String> {
                     stats.triples_after.saturating_sub(stats.triples_before)
                 );
             }
+            // Surface skipped (non-atomic) ABox assertions unconditionally —
+            // this is data loss, not routine progress info, so it isn't
+            // gated behind --verbose. See
+            // [#366](https://github.com/daghovland/rdf-datalog/issues/366).
+            if !stats.abox_skipped.is_empty() {
+                eprintln!(
+                    "warning: {} ABox assertion{} skipped (not materialisable as a single \
+                     ground triple; see issue #373): {}",
+                    stats.abox_skipped.len(),
+                    if stats.abox_skipped.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                    stats.abox_skipped.join("; ")
+                );
+            }
         }
 
         if !cli.rules.is_empty() {

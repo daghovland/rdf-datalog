@@ -22,7 +22,8 @@ pub fn execute_manchester_file(ds: &mut Datastore, path: &Path) -> Result<String
         .map_err(|e| format!("Manchester Syntax parse error: {e}"))?;
 
     let before = ds.named_graphs.quad_count;
-    let abox_added = owl2rl2datalog::assert_abox(ds, &ontology);
+    let abox_report = owl2rl2datalog::assert_abox(ds, &ontology);
+    let abox_added = abox_report.triples_added;
     let axiom_count = ontology.axioms.len();
 
     let rules = owl2rl2datalog::owl2datalog(&mut ds.resources, &ontology);
@@ -30,7 +31,7 @@ pub fn execute_manchester_file(ds: &mut Datastore, path: &Path) -> Result<String
     datalog::evaluate_rules(rules, ds).map_err(|e| e.to_string())?;
 
     let total_added = ds.named_graphs.quad_count - before;
-    Ok(format!(
+    let mut status = format!(
         "Loaded {} axiom{} ({} ABox triple{} asserted), applied {} rule{}, \
          {} triple{} added in total.",
         axiom_count,
@@ -41,7 +42,26 @@ pub fn execute_manchester_file(ds: &mut Datastore, path: &Path) -> Result<String
         if rule_count == 1 { "" } else { "s" },
         total_added,
         if total_added == 1 { "" } else { "s" },
-    ))
+    );
+    // Surface skipped (non-atomic) ABox assertions instead of silently
+    // dropping them — see
+    // [#366](https://github.com/daghovland/rdf-datalog/issues/366). The
+    // underlying gap (no RDF encoding for complex class/property expressions)
+    // is tracked separately in
+    // [#373](https://github.com/daghovland/rdf-datalog/issues/373).
+    if !abox_report.skipped.is_empty() {
+        status.push_str(&format!(
+            " WARNING: {} ABox assertion{} skipped (not materialisable as a single ground \
+             triple; see issue #373).",
+            abox_report.skipped.len(),
+            if abox_report.skipped.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+        ));
+    }
+    Ok(status)
 }
 
 #[cfg(test)]
@@ -97,6 +117,41 @@ Individual: fido
             !ds.quads_matching(None, Some(fido), Some(rdf_type), Some(animal))
                 .is_empty(),
             "fido should be inferred as an Animal"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Regression test for [#366](https://github.com/daghovland/rdf-datalog/issues/366):
+    /// a `Types:` assertion with a non-atomic class expression (`Dog or Cat`,
+    /// an `ObjectUnionOf`) has no single-ground-triple RDF encoding and must
+    /// be surfaced in the cell's returned status message, not just dropped
+    /// with a `log::warn!` the notebook user never sees.
+    const COMPLEX_ABOX_OMN: &str = r#"
+Prefix: : <http://example.org/>
+Ontology:
+Class: Animal
+Class: Dog
+    SubClassOf: Animal
+Class: Cat
+Individual: fido
+    Types: Dog or Cat
+"#;
+
+    #[test]
+    fn test_manchester_file_reports_skipped_abox_assertion() {
+        let tmp = std::env::temp_dir().join(format!(
+            "dagalog_kernel_manchester_skip_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_fixture(&tmp, COMPLEX_ABOX_OMN);
+
+        let mut ds = Datastore::new(1_000);
+        let msg = execute_manchester_file(&mut ds, &path).expect("should load the ontology");
+        assert!(
+            msg.to_lowercase().contains("skip"),
+            "status should mention the skipped ABox assertion: {msg}"
         );
 
         std::fs::remove_dir_all(&tmp).ok();

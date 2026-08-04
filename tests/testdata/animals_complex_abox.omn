@@ -1,0 +1,8 @@
+Prefix: : <http://example.org/>
+Ontology:
+Class: Animal
+Class: Dog
+    SubClassOf: Animal
+Class: Cat
+Individual: fido
+    Types: Dog or Cat

@@ -307,6 +307,25 @@ fn apply_ontologies_omn_materialises_abox_and_reasons() {
     );
 }
 
+/// Regression test for [#366](https://github.com/daghovland/rdf-datalog/issues/366):
+/// a `.omn` ABox assertion with a non-atomic class expression (`Dog or Cat`)
+/// has no single-ground-triple RDF encoding and must be surfaced as a
+/// non-zero, observable count on `ReasoningStats` — not just a `log::warn!`
+/// line inside `assert_abox` that this caller (`apply_ontologies`) has no way
+/// to see.
+#[test]
+fn apply_ontologies_reports_skipped_abox_assertions() {
+    let mut ds = Datastore::new(1_000);
+    let stats = apply_ontologies(&mut ds, &[testdata("animals_complex_abox.omn")])
+        .expect("apply_ontologies should succeed even when some ABox assertions are skipped");
+
+    assert!(
+        !stats.abox_skipped.is_empty(),
+        "the non-atomic ClassAssertion (fido a Dog or Cat) must be reported as skipped, \
+         not silently dropped"
+    );
+}
+
 // ── Output formats ────────────────────────────────────────────────────────────
 
 #[test]
