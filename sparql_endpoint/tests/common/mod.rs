@@ -223,10 +223,40 @@ impl TestServer {
     /// Tests using this method must run with a multi-thread Tokio runtime
     /// (`#[tokio::test(flavor = "multi_thread")]`) because `block_in_place`
     /// is used internally when fetching remote content.
+    ///
+    /// Sets `Config::allow_loopback_for_ssrf_tests: true` — every existing
+    /// caller of this helper exercises `LOAD` against a wiremock server bound
+    /// to `127.0.0.1`, i.e. is testing something other than the loopback SSRF
+    /// block itself (cross-host redirects, body-size caps, allow-list prefix
+    /// matching, etc.). Tests that specifically need loopback to be blocked
+    /// (the default, production behavior) must use
+    /// [`Self::start_writable_with_network_policy_strict`] instead.
+    /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
     #[allow(dead_code)]
     pub async fn start_writable_with_network_policy(
         turtle: &str,
         network_policy: NetworkPolicy,
+    ) -> Self {
+        Self::start_writable_with_network_policy_inner(turtle, network_policy, true).await
+    }
+
+    /// Same as [`Self::start_writable_with_network_policy`], but *without*
+    /// the test-only loopback bypass — `Config::allow_loopback_for_ssrf_tests`
+    /// stays at its production default (`false`). Use this for tests that
+    /// specifically assert loopback addresses are blocked by default.
+    /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
+    #[allow(dead_code)]
+    pub async fn start_writable_with_network_policy_strict(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+    ) -> Self {
+        Self::start_writable_with_network_policy_inner(turtle, network_policy, false).await
+    }
+
+    async fn start_writable_with_network_policy_inner(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+        allow_loopback_for_ssrf_tests: bool,
     ) -> Self {
         let mut ds = Datastore::new(1024);
         if !turtle.is_empty() {
@@ -247,6 +277,7 @@ impl TestServer {
             auth: AuthConfig::None,
             data_dir: None,
             network_policy,
+            allow_loopback_for_ssrf_tests,
             ..Default::default()
         };
         let handle = tokio::spawn(async move {

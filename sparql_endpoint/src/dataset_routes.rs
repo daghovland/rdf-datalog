@@ -43,6 +43,7 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         // See: https://github.com/daghovland/rdf-datalog/issues/110
         reasoner: None,
         network_policy: state.network_policy.clone(),
+        allow_loopback_for_ssrf_tests: state.allow_loopback_for_ssrf_tests,
         // Transactions are server-wide; per-dataset transactions are not yet supported.
         // See: https://github.com/daghovland/rdf-datalog/issues/125
         transactions: state.transactions.clone(),
@@ -244,11 +245,12 @@ pub async fn dataset_update_post(
     // Per-dataset incremental reasoning is not yet supported; see issue #110.
     // Constraint checking (owl:Nothing) is also skipped here since dataset
     // stores have no reasoner.  See query.rs for the main-store implementation.
-    match sparql_update::apply_prepared_update(
+    match sparql_update::apply_prepared_update_with_options(
         &mut store,
         prepared,
         None,
         state.network_policy.clone(),
+        state.allow_loopback_for_ssrf_tests,
     ) {
         Ok((net_inserts, net_deletes)) => {
             // Check for owl:Nothing violations.  The dataset AppState always has

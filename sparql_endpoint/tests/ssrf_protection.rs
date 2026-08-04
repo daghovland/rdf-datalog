@@ -8,16 +8,20 @@ Contact: hovlanddag@gmail.com
 
 //! Integration tests for SSRF hardening on `SPARQL LOAD`.
 //!
-//! Tests verify that the three SSRF protection layers are active:
+//! Tests verify that the SSRF protection layers are active:
 //!
-//! 1. Private/reserved IP blocking (pre-connection DNS preflight)
-//! 2. Cross-host redirect blocking
-//! 3. 64 MiB response body cap
+//! 1. Private/reserved IP blocking, including loopback by default
+//!    (pre-connection DNS preflight)
+//! 2. DNS-rebinding TOCTOU closure (the actual connection is pinned to the
+//!    addresses the preflight validated)
+//! 3. Cross-host redirect blocking
+//! 4. 64 MiB response body cap
 //!
 //! All tests use `#[tokio::test(flavor = "multi_thread")]` because the LOAD
 //! implementation uses `tokio::task::block_in_place` internally.
 //!
-//! Related: <https://github.com/daghovland/rdf-datalog/issues/135>
+//! Related: <https://github.com/daghovland/rdf-datalog/issues/135>,
+//! <https://github.com/daghovland/rdf-datalog/issues/365>
 
 mod common;
 
@@ -49,6 +53,40 @@ async fn sparql_ask(server: &common::TestServer, ask: &str) -> bool {
     assert_eq!(resp.status(), 200, "ASK query returned non-200");
     let body: serde_json::Value = resp.json().await.expect("ASK response must be JSON");
     body["boolean"] == true
+}
+
+/// `LOAD` of a URL bound to IPv4 loopback must be blocked by default — i.e.
+/// with the production `Config` (no test-only `allow_loopback_for_ssrf_tests`
+/// bypass), even under `NetworkPolicy::Allow`. This exercises the full
+/// `Config` → `AppState` → `apply_prepared_update_with_options` threading, not
+/// just the `is_blocked_ip`/`ssrf_preflight` unit tests in `sparql_update.rs`.
+///
+/// Related: <https://github.com/daghovland/rdf-datalog/issues/365>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_blocks_loopback_by_default() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/loopback.ttl"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "<http://example.org/s> <http://example.org/p> <http://example.org/o> .\n",
+                )
+                .insert_header("content-type", "text/turtle"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let url = format!("{}/loopback.ttl", mock_server.uri());
+    let server =
+        common::TestServer::start_writable_with_network_policy_strict("", NetworkPolicy::Allow)
+            .await;
+
+    let status = sparql_update(&server, &format!("LOAD <{url}>")).await;
+    assert_eq!(
+        status, 500,
+        "LOAD of a loopback-bound URL must be blocked by default (issue #365)"
+    );
 }
 
 /// `LOAD <http://10.0.0.1/data.ttl>` must be blocked by the SSRF preflight

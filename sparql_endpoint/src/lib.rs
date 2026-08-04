@@ -242,6 +242,21 @@ pub struct Config {
     /// `DAGALOG_CORS_ALLOW_ORIGIN` (comma-separated).
     /// See [#362](https://github.com/daghovland/rdf-datalog/issues/362).
     pub cors_allowed_origins: Vec<String>,
+    /// **Test-only** escape hatch for the `LOAD` SSRF preflight: when `true`,
+    /// IPv4/IPv6 loopback addresses (`127.0.0.0/8`, `::1`) are exempted from
+    /// the SSRF block that otherwise applies whenever `network_policy` is
+    /// `Allow`/`AllowList`.
+    ///
+    /// Default: `false` — loopback is blocked like every other
+    /// private/reserved range (see
+    /// [#365](https://github.com/daghovland/rdf-datalog/issues/365)).
+    /// Deliberately **not** exposed via any CLI flag or environment variable:
+    /// the only intended caller is the wiremock-based test harness in
+    /// `sparql_endpoint/tests/common/mod.rs`, which needs `LOAD` to be able to
+    /// reach a mock HTTP server bound to `127.0.0.1`. A real deployment must
+    /// never set this — loopback-bound services (admin UIs, metadata
+    /// sidecars, etc.) are exactly what SSRF protection exists to block.
+    pub allow_loopback_for_ssrf_tests: bool,
 }
 
 impl Default for Config {
@@ -259,6 +274,7 @@ impl Default for Config {
             initial_rules: Vec::new(),
             network_policy: NetworkPolicy::Deny,
             cors_allowed_origins: Vec::new(),
+            allow_loopback_for_ssrf_tests: false,
         }
     }
 }
@@ -292,6 +308,9 @@ pub struct AppState {
     ///
     /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
     pub network_policy: NetworkPolicy,
+    /// See [`Config::allow_loopback_for_ssrf_tests`]. Copied from `config` at
+    /// startup so handlers don't need to reach into `config` for it.
+    pub allow_loopback_for_ssrf_tests: bool,
     /// Open transaction registry for the proprietary BEGIN / COMMIT / ROLLBACK API.
     ///
     /// Related: [#125](https://github.com/daghovland/rdf-datalog/issues/125)
@@ -355,6 +374,7 @@ pub async fn serve_on_listener(
     };
 
     let network_policy = config.network_policy.clone();
+    let allow_loopback_for_ssrf_tests = config.allow_loopback_for_ssrf_tests;
     let registry = DatasetRegistry::new_with_default(store.clone());
     let state = AppState {
         store,
@@ -365,6 +385,7 @@ pub async fn serve_on_listener(
         vqs_cache: Arc::new(RwLock::new(None)),
         reasoner,
         network_policy,
+        allow_loopback_for_ssrf_tests,
         transactions: Arc::new(Mutex::new(TransactionRegistry::new())),
     };
     let app = server::build_router(state);

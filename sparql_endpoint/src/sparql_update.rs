@@ -850,6 +850,23 @@ pub fn apply_prepared_update(
     reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
 ) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), UpdateError> {
+    apply_prepared_update_with_options(store, ops, reasoner, network, false)
+}
+
+/// Same as [`apply_prepared_update`], with an additional `allow_loopback` knob
+/// for `LOAD`'s SSRF preflight (an escape hatch for loopback addresses,
+/// intended for test code only — see the module's SSRF helpers).
+///
+/// `allow_loopback` must only be `true` from test code that needs `LOAD` to
+/// reach a wiremock server bound to `127.0.0.1`/`::1`. Every production call
+/// path goes through [`apply_prepared_update`], which always passes `false`.
+pub fn apply_prepared_update_with_options(
+    store: &mut Datastore,
+    ops: Vec<PreparedOp>,
+    reasoner: Option<&mut IncrementalReasoner>,
+    network: NetworkPolicy,
+    allow_loopback: bool,
+) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), UpdateError> {
     // Pending delta: buffered across all INSERT DATA / DELETE DATA /
     // PatternUpdate ops.  Nothing touches the live store for these
     // operations until all ops succeed, ensuring that a later failure
@@ -980,7 +997,8 @@ pub fn apply_prepared_update(
                     // clients are trusted to prevent Server-Side Request Forgery (SSRF).
                     // AllowList further restricts fetches to URLs that start with one of
                     // the configured prefixes; SSRF hardening still applies on top.
-                    let fetch_result = maybe_block_in_place(|| fetch_rdf(&source, &network));
+                    let fetch_result =
+                        maybe_block_in_place(|| fetch_rdf(&source, &network, allow_loopback));
                     match fetch_result {
                         Err(e) => {
                             if !silent {
@@ -1193,24 +1211,50 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 ///
 /// # SSRF Hardening
 ///
-/// This function applies three layers of SSRF protection (issue #135):
+/// This function applies four layers of SSRF protection (issues #135, #365):
 ///
 /// 1. **`ssrf_preflight`**: Resolves the hostname and rejects requests that
 ///    would reach private/link-local/reserved IP ranges or use a non-HTTP scheme.
-/// 2. **Cross-host redirect blocking**: The HTTP client refuses to follow
+/// 2. **DNS-rebinding pinning**: The addresses validated by `ssrf_preflight` are
+///    pinned into the HTTP client via `resolve_to_addrs`, so the actual connection
+///    reuses that single resolution instead of letting `reqwest` re-resolve the
+///    hostname independently at connect time. Without this, an attacker
+///    controlling DNS for the target hostname could return a safe address to the
+///    preflight and a private one to the real connect (TOCTOU).
+/// 3. **Cross-host redirect blocking**: The HTTP client refuses to follow
 ///    redirects that change the target host (e.g. open redirects to internal
 ///    services).
-/// 3. **64 MiB response cap**: Aborts reading after `MAX_BODY_BYTES` to prevent
+/// 4. **64 MiB response cap**: Aborts reading after `MAX_BODY_BYTES` to prevent
 ///    memory exhaustion from streaming or oversized responses.
 ///
-/// IPv4 loopback (127.0.0.0/8) is intentionally **not** blocked so that
-/// wiremock integration tests bound to 127.0.0.1 continue to work.
-/// See: <https://github.com/daghovland/rdf-datalog/issues/135>
+/// `allow_loopback` must only be `true` from test code — see
+/// [`is_blocked_ip`]'s doc comment. Production callers always pass `false`.
 ///
 /// Only call this function when `NetworkPolicy::Allow` or
 /// `NetworkPolicy::AllowList` is active — and only enable those policies in
 /// environments where all SPARQL clients are trusted.
-fn fetch_rdf(url: &str, policy: &NetworkPolicy) -> Result<(Vec<u8>, String), String> {
+fn fetch_rdf(
+    url: &str,
+    policy: &NetworkPolicy,
+    allow_loopback: bool,
+) -> Result<(Vec<u8>, String), String> {
+    fetch_rdf_with_resolver(url, policy, allow_loopback, ssrf_preflight)
+}
+
+/// Same as [`fetch_rdf`], but with the preflight resolution step factored out
+/// so tests can inject a stub and assert it is invoked exactly once — the
+/// property that closes the DNS-rebinding TOCTOU window (see [`fetch_rdf`]'s
+/// doc comment). Production code always goes through [`fetch_rdf`], which
+/// wires in the real `ssrf_preflight`.
+fn fetch_rdf_with_resolver<F>(
+    url: &str,
+    policy: &NetworkPolicy,
+    allow_loopback: bool,
+    resolve: F,
+) -> Result<(Vec<u8>, String), String>
+where
+    F: FnOnce(&str, bool) -> Result<Vec<std::net::SocketAddr>, String>,
+{
     // 0. AllowList prefix check: reject URLs not matching any configured prefix.
     //    This runs before the SSRF preflight so the error is unambiguous.
     if let NetworkPolicy::AllowList(prefixes) = policy
@@ -1222,11 +1266,22 @@ fn fetch_rdf(url: &str, policy: &NetworkPolicy) -> Result<(Vec<u8>, String), Str
     }
 
     // 1. SSRF preflight: block private/reserved IPs and unsupported schemes.
-    ssrf_preflight(url)?;
+    //    The returned addresses are the *only* ones the actual connection is
+    //    permitted to use (see step 2 below) — this is the single DNS
+    //    resolution for this request.
+    let validated_addrs = resolve(url, allow_loopback)?;
 
-    // 2. Build client with cross-host redirect blocking.
+    let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("LOAD <{url}>: missing host"))?;
+
+    // 2. Build client with cross-host redirect blocking, pinning the target
+    //    host to the addresses validated in step 1 so the actual connection
+    //    cannot be redirected to a different IP via a second DNS lookup.
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .resolve_to_addrs(host, &validated_addrs)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             let same_host = attempt
                 .previous()
@@ -1410,21 +1465,46 @@ fn parse_turtle_content(content: &str) -> Result<Datastore, String> {
 /// - Link-local / cloud metadata (`Ipv4Addr::is_link_local`): 169.254/16
 /// - Unspecified (`Ipv4Addr::is_unspecified`): 0.0.0.0
 /// - IPv6 loopback (`Ipv6Addr::is_loopback`): ::1
+/// - IPv6 unique-local (`Ipv6Addr::is_unique_local`): fc00::/7
+/// - IPv6 link-local (`Ipv6Addr::is_unicast_link_local`): fe80::/10
+/// - IPv6 unspecified (`Ipv6Addr::is_unspecified`): ::
+/// - IPv4-mapped/-compatible IPv6 addresses (`::ffff:a.b.c.d`, `::a.b.c.d`):
+///   unwrapped via `Ipv6Addr::to_ipv4` and re-checked against the IPv4 rules
+///   above, so e.g. `::ffff:169.254.169.254` is blocked exactly like
+///   `169.254.169.254` would be.
 ///
-/// **Not** blocked:
-/// - IPv4 loopback (127.0.0.0/8) — intentionally left open so that wiremock
-///   integration tests bound to 127.0.0.1 continue to work.
-///   See: <https://github.com/daghovland/rdf-datalog/issues/135>
-fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
+/// `allow_loopback` controls whether IPv4 loopback (127.0.0.0/8) and IPv6
+/// loopback (`::1`) are exempted from blocking.
+///
+/// # Security
+///
+/// `allow_loopback` must only ever be `true` in test code. It exists solely
+/// so wiremock-based integration tests (which bind mock HTTP servers to
+/// `127.0.0.1`) can exercise `NetworkPolicy::Allow`/`AllowList` without also
+/// standing up a real (non-loopback) listener. Production deployments must
+/// always pass `false` here — loopback-bound services (e.g. a database admin
+/// UI, a cloud-metadata proxy sidecar) are exactly the kind of target SSRF
+/// protection exists to block.
+/// See: <https://github.com/daghovland/rdf-datalog/issues/365>,
+/// <https://github.com/daghovland/rdf-datalog/issues/135>
+fn is_blocked_ip(ip: std::net::IpAddr, allow_loopback: bool) -> bool {
     use std::net::IpAddr;
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_private() || v4.is_link_local() || v4.is_unspecified()
-            // IPv4 loopback (127.0.0.0/8) is intentionally NOT blocked here.
-            // wiremock integration tests bind to 127.0.0.1, and blocking it
-            // would break those tests. See: https://github.com/daghovland/rdf-datalog/issues/135
+            v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || (!allow_loopback && v4.is_loopback())
         }
-        IpAddr::V6(v6) => v6.is_loopback(),
+        IpAddr::V6(v6) => {
+            (!allow_loopback && v6.is_loopback())
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+                || v6.is_unspecified()
+                || v6
+                    .to_ipv4()
+                    .is_some_and(|v4| is_blocked_ip(IpAddr::V4(v4), allow_loopback))
+        }
     }
 }
 
@@ -1436,10 +1516,18 @@ fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
 /// 3. Hostname must resolve to at least one IP address, none of which may be
 ///    in a blocked range (see [`is_blocked_ip`]).
 ///
-/// Returns `Ok(())` when all checks pass, or an error string describing the
-/// rejection reason.
-fn ssrf_preflight(url: &str) -> Result<(), String> {
-    use std::net::ToSocketAddrs;
+/// Returns the resolved, validated addresses on success (the caller pins the
+/// actual connection to exactly these addresses, closing the DNS-rebinding
+/// TOCTOU window between this check and the real request — see [`fetch_rdf`]),
+/// or an error string describing the rejection reason.
+///
+/// Uses [`url::Url::socket_addrs`] rather than manually formatting
+/// `"{host}:{port}"` and calling `to_socket_addrs`: `Url::host_str` already
+/// includes the brackets for an IPv6 literal host (e.g. `"[fd00::1]"`), so the
+/// manual form happens to produce a parseable `SocketAddr` string too — but
+/// `socket_addrs` is the API designed for this and avoids relying on that
+/// implementation detail of `host_str`'s output format.
+fn ssrf_preflight(url: &str, allow_loopback: bool) -> Result<Vec<std::net::SocketAddr>, String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
@@ -1449,22 +1537,18 @@ fn ssrf_preflight(url: &str) -> Result<(), String> {
             ));
         }
     }
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| format!("LOAD <{url}>: missing host"))?;
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let addrs = format!("{host}:{port}")
-        .to_socket_addrs()
+    let addrs = parsed
+        .socket_addrs(|| None)
         .map_err(|e| format!("LOAD <{url}>: DNS resolution failed: {e}"))?;
-    for addr in addrs {
-        if is_blocked_ip(addr.ip()) {
+    for addr in &addrs {
+        if is_blocked_ip(addr.ip(), allow_loopback) {
             return Err(format!(
                 "LOAD <{url}>: blocked — resolves to private/reserved IP {}",
                 addr.ip()
             ));
         }
     }
-    Ok(())
+    Ok(addrs)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1479,21 +1563,30 @@ mod tests {
     fn test_is_blocked_private_10() {
         use std::net::IpAddr;
         let ip: IpAddr = "10.0.0.1".parse().unwrap();
-        assert!(is_blocked_ip(ip), "10.0.0.1 must be blocked (RFC 1918)");
+        assert!(
+            is_blocked_ip(ip, false),
+            "10.0.0.1 must be blocked (RFC 1918)"
+        );
     }
 
     #[test]
     fn test_is_blocked_private_172() {
         use std::net::IpAddr;
         let ip: IpAddr = "172.16.0.1".parse().unwrap();
-        assert!(is_blocked_ip(ip), "172.16.0.1 must be blocked (RFC 1918)");
+        assert!(
+            is_blocked_ip(ip, false),
+            "172.16.0.1 must be blocked (RFC 1918)"
+        );
     }
 
     #[test]
     fn test_is_blocked_private_192168() {
         use std::net::IpAddr;
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
-        assert!(is_blocked_ip(ip), "192.168.1.1 must be blocked (RFC 1918)");
+        assert!(
+            is_blocked_ip(ip, false),
+            "192.168.1.1 must be blocked (RFC 1918)"
+        );
     }
 
     #[test]
@@ -1501,7 +1594,7 @@ mod tests {
         use std::net::IpAddr;
         let ip: IpAddr = "169.254.169.254".parse().unwrap();
         assert!(
-            is_blocked_ip(ip),
+            is_blocked_ip(ip, false),
             "169.254.169.254 must be blocked (link-local / AWS metadata)"
         );
     }
@@ -1510,16 +1603,9 @@ mod tests {
     fn test_is_blocked_ipv6_loopback() {
         use std::net::IpAddr;
         let ip: IpAddr = "::1".parse().unwrap();
-        assert!(is_blocked_ip(ip), "::1 must be blocked (IPv6 loopback)");
-    }
-
-    #[test]
-    fn test_is_not_blocked_loopback_v4() {
-        use std::net::IpAddr;
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
         assert!(
-            !is_blocked_ip(ip),
-            "127.0.0.1 must NOT be blocked (design decision: wiremock uses it)"
+            is_blocked_ip(ip, false),
+            "::1 must be blocked (IPv6 loopback) when allow_loopback is false"
         );
     }
 
@@ -1528,8 +1614,97 @@ mod tests {
         use std::net::IpAddr;
         let ip: IpAddr = "93.184.216.34".parse().unwrap();
         assert!(
-            !is_blocked_ip(ip),
+            !is_blocked_ip(ip, false),
             "93.184.216.34 (example.com) must NOT be blocked"
+        );
+    }
+
+    /// Issue #365 gap 1: IPv4 loopback was unconditionally NOT blocked, even
+    /// in production (`allow_loopback = false`). It must now be blocked by
+    /// default, just like every other loopback/private range.
+    #[test]
+    fn test_is_blocked_loopback_v4_by_default() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip, false),
+            "127.0.0.1 must be blocked by default (issue #365)"
+        );
+    }
+
+    /// The test-only escape hatch: `allow_loopback = true` still exempts IPv4
+    /// loopback, so wiremock-based tests keep working.
+    #[test]
+    fn test_is_not_blocked_loopback_v4_when_allowed() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(
+            !is_blocked_ip(ip, true),
+            "127.0.0.1 must NOT be blocked when allow_loopback=true (test escape hatch)"
+        );
+    }
+
+    /// The test-only escape hatch also exempts IPv6 loopback (`::1`).
+    #[test]
+    fn test_is_not_blocked_ipv6_loopback_when_allowed() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(
+            !is_blocked_ip(ip, true),
+            "::1 must NOT be blocked when allow_loopback=true (test escape hatch)"
+        );
+    }
+
+    /// Issue #365 gap 2: IPv6 unique-local addresses (fc00::/7, the IPv6
+    /// analogue of RFC 1918) were not blocked at all.
+    #[test]
+    fn test_is_blocked_ipv6_unique_local() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "fc00::1".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip, false),
+            "fc00::1 must be blocked (IPv6 unique-local, RFC 4193)"
+        );
+    }
+
+    /// Issue #365 gap 2: IPv6 link-local addresses (fe80::/10) were not
+    /// blocked at all.
+    #[test]
+    fn test_is_blocked_ipv6_link_local() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "fe80::1".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip, false),
+            "fe80::1 must be blocked (IPv6 link-local)"
+        );
+    }
+
+    /// Issue #365 gap 2: an IPv4-mapped IPv6 address pointing at the AWS/GCP
+    /// cloud-metadata range must be blocked exactly like the plain IPv4 form.
+    #[test]
+    fn test_is_blocked_ipv6_mapped_metadata() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "::ffff:169.254.169.254".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip, false),
+            "::ffff:169.254.169.254 must be blocked (IPv4-mapped cloud metadata)"
+        );
+    }
+
+    /// An IPv4-mapped loopback address must respect `allow_loopback` exactly
+    /// like the plain IPv4 form does — this exercises the unmap-then-recurse
+    /// path in `is_blocked_ip` rather than just the native IPv6 checks.
+    #[test]
+    fn test_is_blocked_ipv6_mapped_loopback_respects_allow_loopback() {
+        use std::net::IpAddr;
+        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(
+            is_blocked_ip(ip, false),
+            "::ffff:127.0.0.1 must be blocked by default"
+        );
+        assert!(
+            !is_blocked_ip(ip, true),
+            "::ffff:127.0.0.1 must NOT be blocked when allow_loopback=true"
         );
     }
 
@@ -1537,7 +1712,7 @@ mod tests {
 
     #[test]
     fn test_ssrf_preflight_blocks_unsupported_scheme() {
-        let result = ssrf_preflight("ftp://example.org/data.ttl");
+        let result = ssrf_preflight("ftp://example.org/data.ttl", false);
         assert!(result.is_err(), "ftp:// must be rejected");
         let msg = result.unwrap_err();
         assert!(
@@ -1548,16 +1723,112 @@ mod tests {
 
     #[test]
     fn test_ssrf_preflight_blocks_private_ip() {
-        let result = ssrf_preflight("http://10.0.0.1/data.ttl");
+        let result = ssrf_preflight("http://10.0.0.1/data.ttl", false);
         assert!(result.is_err(), "10.0.0.1 must be rejected by preflight");
     }
 
     #[test]
     fn test_ssrf_preflight_blocks_link_local_ip() {
-        let result = ssrf_preflight("http://169.254.169.254/");
+        let result = ssrf_preflight("http://169.254.169.254/", false);
         assert!(
             result.is_err(),
             "169.254.169.254 must be rejected by preflight"
+        );
+    }
+
+    /// Issue #365 gap 1, at the URL/preflight level (not just `is_blocked_ip`):
+    /// loopback must be blocked by default.
+    #[test]
+    fn test_ssrf_preflight_blocks_loopback_v4_by_default() {
+        let result = ssrf_preflight("http://127.0.0.1/data.ttl", false);
+        assert!(
+            result.is_err(),
+            "127.0.0.1 must be rejected by preflight by default"
+        );
+    }
+
+    /// Issue #365 gap 2, exercised via the URL-level `ssrf_preflight` API
+    /// (not just `is_blocked_ip` directly): a bracketed IPv6 literal host
+    /// must resolve and be validated against the expanded IPv6 blocklist,
+    /// confirming the `Url::socket_addrs`-based resolution path (which
+    /// `ssrf_preflight` now uses) carries IPv6 literal addresses through to
+    /// `is_blocked_ip` correctly.
+    #[test]
+    fn test_ssrf_preflight_handles_ipv6_literal_url() {
+        let result = ssrf_preflight("http://[fc00::1]/data.ttl", false);
+        let err = result.expect_err("fc00::1 must be rejected by preflight");
+        assert!(
+            err.contains("blocked"),
+            "must be rejected as blocked (SSRF), not a DNS-resolution error: {err}"
+        );
+    }
+
+    /// Issue #365 gap 3 (DNS-rebinding TOCTOU): closes the window between
+    /// `ssrf_preflight`'s resolution and the actual connection by pinning the
+    /// connection to the addresses `ssrf_preflight` already validated
+    /// (`resolve_to_addrs`), instead of letting `reqwest` re-resolve the
+    /// hostname independently at connect time.
+    ///
+    /// This is proven *structurally*, not by observing a call count: the URL
+    /// uses a hostname in the `.invalid` TLD (RFC 2606 — guaranteed to never
+    /// resolve via real DNS). A resolver seam is injected in place of the
+    /// real `ssrf_preflight` so the "preflight" step can hand back the test
+    /// listener's real loopback address without touching real DNS at all. If
+    /// `fetch_rdf`'s connection step performed its own, independent
+    /// resolution of `no-such-host.invalid` (the pre-fix behavior), that
+    /// resolution would fail — `.invalid` never resolves — and the fetch
+    /// would error out. Instead, the fetch must succeed, which is only
+    /// possible if the connection reused the address pinned from the single
+    /// preflight resolution, exactly like a real rebinding attacker's second,
+    /// independently-resolved (and differently-answered) DNS lookup would be
+    /// bypassed.
+    #[test]
+    fn test_fetch_rdf_pins_resolved_address_closes_toctou() {
+        // A raw TCP listener standing in for "the real service" that the
+        // pinned address must reach — reachable only via the address handed
+        // back by the injected resolver below, never via real DNS.
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind test listener");
+        let addr = listener.local_addr().expect("local_addr");
+        let body = "hello";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/turtle\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let server_thread = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        let resolve_call_count = std::cell::Cell::new(0usize);
+        // `.invalid` (RFC 2606) is guaranteed to never resolve via real DNS,
+        // so any *actual* resolution of this hostname is proof of a second,
+        // independent lookup that the fix must not perform.
+        let url = format!("http://no-such-host.invalid:{}/data.ttl", addr.port());
+        let result = fetch_rdf_with_resolver(&url, &NetworkPolicy::Allow, true, |_u, _allow_lb| {
+            resolve_call_count.set(resolve_call_count.get() + 1);
+            // Stand in for a preflight resolution that validated this
+            // hostname against `addr` — the real service's loopback address —
+            // without going through real DNS.
+            Ok(vec![addr])
+        });
+
+        server_thread.join().expect("test server thread panicked");
+
+        let (bytes, _content_type) = result.expect(
+            "fetch must succeed by reusing the pinned address; a real second DNS lookup of \
+             a `.invalid` hostname would fail and this would error out instead",
+        );
+        assert_eq!(bytes, body.as_bytes(), "fetched body must match");
+        assert_eq!(
+            resolve_call_count.get(),
+            1,
+            "the resolver seam must be invoked exactly once per fetch"
         );
     }
 
@@ -1643,7 +1914,7 @@ mod tests {
             "https://example.org/".to_string(),
             "https://data.gov/".to_string(),
         ]);
-        let err = fetch_rdf("https://evil.example.com/data.ttl", &policy)
+        let err = fetch_rdf("https://evil.example.com/data.ttl", &policy, false)
             .expect_err("should be rejected by allowlist");
         assert!(
             err.contains("not in the configured allow-list"),
@@ -1652,15 +1923,17 @@ mod tests {
     }
 
     /// `fetch_rdf` with `AllowList` proceeds past the prefix check for matching URLs
-    /// (i.e. the allowlist gate does not fire; failure is from network, not the gate).
+    /// (i.e. the allowlist gate does not fire; failure is from a later layer, not
+    /// the gate — since `allow_loopback` is `false` here, that later layer is now
+    /// the SSRF preflight's loopback block rather than the network itself).
     #[test]
     fn test_allowlist_prefix_match_reaches_network() {
         // Use an obviously unreachable URL so the test stays offline, but the
         // prefix does match — we want to confirm the AllowList check passes and
-        // the error comes from the network layer (ssrf_preflight or HTTP), not from
+        // the error comes from a later layer (ssrf_preflight or HTTP), not from
         // the allowlist logic.
         let policy = NetworkPolicy::AllowList(vec!["http://127.0.0.1".to_string()]);
-        let result = fetch_rdf("http://127.0.0.1:1/data.ttl", &policy);
+        let result = fetch_rdf("http://127.0.0.1:1/data.ttl", &policy, false);
         // The AllowList gate must NOT produce an "allow-list" error.
         if let Err(ref e) = result {
             assert!(
@@ -1668,8 +1941,9 @@ mod tests {
                 "AllowList should not fire for matching URL; got: {e}"
             );
         }
-        // (The call may succeed or fail depending on whether port 1 is reachable;
-        // what matters is that the allowlist gate did not block it.)
+        // (The call may succeed or fail depending on whether port 1 is reachable
+        // or loopback is blocked; what matters is that the allowlist gate did
+        // not block it.)
     }
 
     /// Unit test for `parse_network_policy` CLI parsing of `allow:<prefixes>`.
