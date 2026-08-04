@@ -73,6 +73,14 @@ pub struct ReasoningStats {
     pub rule_count: usize,
     pub triples_before: usize,
     pub triples_after: usize,
+    /// Descriptions of ABox assertions that could not be materialised as a
+    /// single ground triple (non-atomic class/property expressions) and were
+    /// therefore skipped rather than reasoned over. Empty in the common case.
+    /// Surfacing this (instead of only a `log::warn!`) is
+    /// [#366](https://github.com/daghovland/rdf-datalog/issues/366); actually
+    /// encoding such expressions as RDF is the separate, larger
+    /// [#373](https://github.com/daghovland/rdf-datalog/issues/373).
+    pub abox_skipped: Vec<String>,
 }
 
 // ── Data loading ──────────────────────────────────────────────────────────────
@@ -105,7 +113,27 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "omn" {
         let ontology = parse_manchester_file(path)?;
-        assert_abox(datastore, &ontology);
+        let report = assert_abox(datastore, &ontology);
+        // `load_file`'s signature is depended on by ~50 call sites across the
+        // repo, so widening its return type to carry a skip report is out of
+        // proportion to this fix. Print directly instead: this is
+        // unconditional (not gated behind a verbose flag) because it flags
+        // actual data loss, and unlike `log::warn!` (already emitted inside
+        // `assert_abox`) it's observable by any caller capturing stderr
+        // without configuring logging. See
+        // [#366](https://github.com/daghovland/rdf-datalog/issues/366);
+        // actually encoding the skipped constructs as RDF is the separate,
+        // larger [#373](https://github.com/daghovland/rdf-datalog/issues/373).
+        if !report.skipped.is_empty() {
+            eprintln!(
+                "warning: {} ABox assertion{} in {} skipped (not materialisable as a single \
+                 ground triple; see issue #373): {}",
+                report.skipped.len(),
+                if report.skipped.len() == 1 { "" } else { "s" },
+                path.display(),
+                report.skipped.join("; ")
+            );
+        }
         return Ok(());
     }
     let file = File::open(path).map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
@@ -173,6 +201,7 @@ pub fn apply_ontologies(
         rule_count,
         triples_before,
         triples_after,
+        abox_skipped: compilation.abox_skipped,
     })
 }
 
@@ -186,6 +215,13 @@ pub struct OntologyCompilation {
     /// Datalog rules compiled from the ontologies' TBox axioms via
     /// [`owl2datalog`]. Not yet evaluated against the datastore.
     pub rules: Vec<datalog::Rule>,
+    /// Descriptions of ABox assertions skipped by [`owl2rl2datalog::assert_abox`]
+    /// across every `.omn` source path (non-atomic class/property
+    /// expressions that don't correspond to a single ground triple). Empty in
+    /// the common case. See
+    /// [#366](https://github.com/daghovland/rdf-datalog/issues/366) and
+    /// [#373](https://github.com/daghovland/rdf-datalog/issues/373).
+    pub abox_skipped: Vec<String>,
 }
 
 /// Load ontology files and compile their TBox axioms to Datalog rules,
@@ -216,12 +252,14 @@ pub fn compile_ontology_rules(
 ) -> Result<OntologyCompilation, String> {
     let mut manchester_axiom_count = 0usize;
     let mut all_rules = Vec::new();
+    let mut abox_skipped = Vec::new();
 
     for path in paths {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext == "omn" {
             let ontology = parse_manchester_file(path)?;
-            assert_abox(datastore, &ontology);
+            let report = assert_abox(datastore, &ontology);
+            abox_skipped.extend(report.skipped);
             manchester_axiom_count += ontology.axioms.len();
             all_rules.extend(owl2datalog(&mut datastore.resources, &ontology));
         } else {
@@ -238,6 +276,7 @@ pub fn compile_ontology_rules(
     Ok(OntologyCompilation {
         axiom_count,
         rules: all_rules,
+        abox_skipped,
     })
 }
 
