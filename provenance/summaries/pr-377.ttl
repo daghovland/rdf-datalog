@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening PR #377 in the same
+# session that made the change.
+
+ghpull:377 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "cargo-audit: ignore RUSTSEC-2026-0235 (rkyv 0.7, inactive optional feature)" ;
+    bl:number 377 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:375 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr377 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:375 ;
+    prov:startedAtTime "2026-08-04T10:43:17Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-04T10:43:17Z"^^xsd:dateTime .
+
+session:pr377Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #375 was filed after PRs #374 and #376 both showed CI's Security Audit job failing on RUSTSEC-2026-0235 (an insufficient-archive-validation bug in rkyv 0.7, out-of-bounds reads on untrusted archives), unrelated to either PR's own diff. Cargo.lock pins rkyv 0.7.46 as an optional dependency of rust_decimal (transitive via ingress), so the question was whether it's actually compiled into any workspace binary or just a lockfile artifact. Checked directly: `cargo tree -p rust_decimal -e features` shows no rkyv edge in rust_decimal's activated feature set, and `cargo tree -i rkyv` (reverse-dependency query, which only reports the actually-resolved build graph for the current target) resolves to an empty graph entirely. This confirms cargo-audit is flagging Cargo.lock's per-package dependency list (which records a crate's full potential dependency set across all features/targets for reproducibility) rather than what's actually linked in -- no rkyv deserialization code is reachable in this codebase at all, on trusted or untrusted input. Considered upgrading rust_decimal to see if a newer release drops the rkyv optional dependency, but rejected: nothing in this workspace activates that feature regardless of rust_decimal's version, so a version bump wouldn't change the audit's false-positive trigger (Cargo.lock would still list rkyv as a possible dependency). The fix instead adds RUSTSEC-2026-0235 to .cargo/audit.toml's ignore list, following the exact pattern the pre-existing RUSTSEC-2023-0071 entry already established (short comment explaining why the advisory doesn't apply, link back to the tracking issue), with an explicit re-check trigger noted in the plan doc in case a future dependency change does activate the feature." ;
+    agp:reasoningFor ghpull:377 ;
+    prov:wasGeneratedBy session:pr377 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
