@@ -1,0 +1,43 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary — written under CLAUDE.md step 6b, right after opening
+# PR #376, in the same session that did the work. `endedAtTime` below is this
+# session's own authoring time, not a guessed mergedAt (see
+# TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window", prospective case).
+
+ghpull:376 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: close SSRF loopback/IPv6/DNS-rebinding gaps in LOAD" ;
+    bl:number 376 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:365 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr376 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:365 ;
+    prov:startedAtTime "2026-08-04T09:51:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-04T09:53:14Z"^^xsd:dateTime .
+
+session:pr376Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #365 asked to close three SSRF gaps in SPARQL LOAD's ssrf_preflight/is_blocked_ip guard, active once an operator opts into NetworkPolicy::Allow: unconditional IPv4-loopback allowance left in production code for wiremock's benefit, an IPv6 blocklist that only checked is_loopback (missing unique-local, link-local, and IPv4-mapped ranges), and a DNS-rebinding TOCTOU between ssrf_preflight's resolution and the real connect's independent one. Read the current implementation and the existing wiremock test suite first, since the issue text was from an earlier read-only audit and not verified fresh. Confirmed via a scratch program that Ipv6Addr::is_unique_local/is_unicast_link_local/to_ipv4 are stable in this toolchain, so no unstable features were needed. The fix threads an explicit allow_loopback bool through is_blocked_ip/ssrf_preflight/fetch_rdf (always false in production), switches ssrf_preflight to Url::socket_addrs (the old format!+to_socket_addrs mishandled bracketed IPv6 literals), and pins fetch_rdf's actual connection to the addresses ssrf_preflight already validated via reqwest's resolve_to_addrs, closing the TOCTOU window structurally. The loopback bypass is exposed only as Config::allow_loopback_for_ssrf_tests (no CLI flag), set solely by the wiremock test harness." ;
+    agp:reasoningFor ghpull:376 ;
+    agp:decisionPoint session:pr376ThreadingDecision, session:pr376RebindingTestDecision ;
+    prov:wasGeneratedBy session:pr376 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr376ThreadingDecision a agp:Decision ;
+    agp:summaryText "Chose to thread allow_loopback as an explicit bool parameter through is_blocked_ip/ssrf_preflight/fetch_rdf, and as a new Config::allow_loopback_for_ssrf_tests field (no CLI flag) copied into AppState, with apply_prepared_update kept as a thin 4-arg wrapper around a new apply_prepared_update_with_options that carries the flag. This keeps every existing production call site's signature unchanged." ;
+    agp:alternative "Rejected #[cfg(test)]-gating the bypass: the wiremock tests live in sparql_endpoint/tests/*.rs, a separate integration-test crate that links the library as an ordinary (non-cfg(test)) dependency, so a #[cfg(test)] flag inside the lib would never be visible there. Rejected a process-wide env-var or AtomicBool escape hatch too: it would be reachable by any consumer of the library, not just the test harness, whereas a Config field with no CLI/env wiring can only be set by code that constructs Config directly (the test helper)." .
+
+session:pr376RebindingTestDecision a agp:Decision ;
+    agp:summaryText "The DNS-rebinding TOCTOU-closure test (test_fetch_rdf_pins_resolved_address_closes_toctou) proves the fix structurally: it injects a resolver-seam closure standing in for ssrf_preflight, returning a real loopback listener's address for a URL whose hostname is in the .invalid TLD (RFC 2606, guaranteed to never resolve via real DNS). If fetch_rdf's connection step performed its own independent resolution of that hostname (the pre-fix behavior), it would fail outright; success proves the connection reused the single pinned resolution instead." ;
+    agp:alternative "Rejected trying to simulate an actual flip-flopping DNS server (real rebinding) in-process — there is no portable, non-flaky way to make a real hostname resolve to two different answers across two lookups without controlling a DNS server or /etc/hosts, and doing so would make the test either flaky or platform-dependent. Also rejected asserting only a manual call-counter on the injected closure without the .invalid hostname trick: counting how many times a test's own stub is invoked doesn't prove anything about reqwest's independent internal resolver, which is the actual second-resolution risk the fix closes." .
