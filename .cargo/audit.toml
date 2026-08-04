@@ -6,4 +6,16 @@ ignore = [
     # Production JWT verification uses jsonwebtoken with the aws_lc_rs backend,
     # which does not use the rsa crate. No patch is available upstream yet.
     "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0235: insufficient archive validation in rkyv 0.7 can cause
+    # out-of-bounds reads when deserializing untrusted archives containing
+    # Rc/Arc. rkyv is an optional dependency of rust_decimal (pulled in
+    # transitively via ingress) but its feature is never activated by this
+    # workspace: `cargo tree -p rust_decimal -e features` shows no rkyv edge,
+    # and `cargo tree -i rkyv` resolves to an empty graph for this target —
+    # it appears in Cargo.lock only because cargo-audit scans the lockfile's
+    # full per-package dependency list, not the actually-activated feature
+    # graph. No rkyv deserialization code is reachable, let alone reachable
+    # on untrusted input. Re-check if any future dependency activates
+    # rust_decimal's rkyv feature. See #375.
+    "RUSTSEC-2026-0235",
 ]
