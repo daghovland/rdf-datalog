@@ -86,20 +86,11 @@ pub async fn upload_turtle(
         return (StatusCode::BAD_REQUEST, format!("Turtle parse error: {e}")).into_response();
     }
 
-    let mut store = state.store.write().await;
-
-    // Resolve (and, if necessary, intern) the target graph id. Named graphs
-    // are created on first upload — this is a convenience endpoint, so we
-    // don't require the graph to pre-exist (unlike the GSP PUT/POST 404
-    // behavior for indirect graph identification).
-    let target_graph_id: GraphElementId = match &graph_iri {
-        None => DEFAULT_GRAPH_ELEMENT_ID,
-        Some(iri) => {
-            let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
-            store.add_resource(elem)
-        }
-    };
-
+    // Append to the persistence changelog *before* taking the datastore write
+    // lock (issue #367). This only reads `tmp`/`graph_iri`, so it doesn't
+    // need the store lock at all, and it does awaited disk I/O (a redb
+    // write) — doing it while holding the write lock would needlessly widen
+    // the window during which every other reader and writer blocks.
     if let Some(ref changelog) = state.changelog {
         let entries: Vec<_> = tmp
             .named_graphs
@@ -120,6 +111,20 @@ pub async fn upload_turtle(
                 .into_response();
         }
     }
+
+    let mut store = state.store.write().await;
+
+    // Resolve (and, if necessary, intern) the target graph id. Named graphs
+    // are created on first upload — this is a convenience endpoint, so we
+    // don't require the graph to pre-exist (unlike the GSP PUT/POST 404
+    // behavior for indirect graph identification).
+    let target_graph_id: GraphElementId = match &graph_iri {
+        None => DEFAULT_GRAPH_ELEMENT_ID,
+        Some(iri) => {
+            let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.clone())));
+            store.add_resource(elem)
+        }
+    };
 
     // Copy parsed triples from tmp into the real store's target graph.
     let quads: Vec<_> = tmp

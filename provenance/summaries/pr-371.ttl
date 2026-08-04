@@ -1,0 +1,45 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after pushing PR #371's real
+# implementation commit, in the same orchestration session that reviewed
+# and pushed it (the sub-agent that authored the commit had been
+# terminated mid-task by an account-level API spend limit, with the
+# finished work sitting uncommitted in its worktree).
+#
+# - ghpull:371's bl:state is bl:Open, the real state at authoring time.
+# - startedAtTime/endedAtTime come from `git log abfdb72..HEAD --format=%aI`
+#   in the worktree that held the work: the plan-doc commit and the
+#   implementation commit.
+
+ghpull:371 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: add request timeout, hoist changelog append out of upload write lock" ;
+    bl:number 371 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:367 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr371 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:367 ;
+    prov:startedAtTime "2026-08-03T16:34:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T19:50:00Z"^^xsd:dateTime .
+
+session:pr371Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #367 raised two related availability concerns: the router had no request-level timeout or concurrency cap, and Turtle upload held the datastore write lock across the entire parse of up to a 64 MiB body. Investigation during planning found the second half's framing was already stale -- the parse-before-lock structure had existed since PR #249 -- so the real remaining bug was narrower: the persistence-changelog append (an awaited redb disk write) ran inside the write lock even though it only reads the already-parsed tmp store, needlessly widening the window during which every other reader and writer blocked on a large upload. The fix hoists that changelog append above the lock acquisition. Separately, a TimeoutLayer (--request-timeout, default 30s) was added to bound how long any single request may occupy a connection before returning 408 and freeing it; this is connection-occupancy bounding, not server-side work cancellation -- the handler future keeps running to completion in the background once the timeout fires, since tower_http's TimeoutLayer wraps an Infallible service and can't cancel work already in flight. The distinction between this new request_timeout_secs and the pre-existing but dead max_query_timeout_secs field was called out explicitly in both fields' doc comments, with the dead field's cleanup filed as follow-up issue #372 rather than folded into this change. The work was completed by a sub-agent that reported finishing the implementation and starting a background test run just before being cut off by an account-level Claude API spend limit; this session found the finished commit uncommitted in the worktree, rebuilt and independently re-ran the new request-timeout and concurrent-upload tests plus the full workspace suite, fixed one fmt-only nit, then committed and pushed." ;
+    agp:reasoningFor ghpull:371 ;
+    agp:decisionPoint session:pr371LockScopeDecision ;
+    prov:wasGeneratedBy session:pr371 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr371LockScopeDecision a agp:Decision ;
+    agp:summaryText "Narrowed #367's upload-lock fix to hoisting only the changelog's redb append above the write lock, after finding the parse-itself-under-lock framing in the original issue was already stale (fixed since PR #249)." ;
+    agp:alternative "Restructure upload_turtle's locking more broadly to match the issue's original description -- rejected once investigation showed the described problem (locking across the parse) no longer existed; re-scoping to the actual remaining gap (the changelog write) avoided churn on code that was already correct." .

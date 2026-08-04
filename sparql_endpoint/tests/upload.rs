@@ -152,3 +152,97 @@ async fn upload_with_empty_graph_param_targets_default_graph() {
     let body = default_resp.text().await.unwrap();
     assert!(body.contains("Alice"), "default graph body: {body}");
 }
+
+/// Two concurrent uploads to two different named graphs must both succeed
+/// and each land its own triples in its own graph, with no cross-talk or
+/// lost writes.
+///
+/// This is a correctness regression test for the persistence-changelog
+/// append being hoisted above `state.store.write().await` in
+/// `upload_turtle` (issue #367): the changelog append does awaited disk I/O
+/// (a redb write), and previously ran while holding the datastore write
+/// lock. Concurrent uploads must still each be fully and correctly applied
+/// regardless of how that lock is scoped.
+#[tokio::test]
+async fn concurrent_uploads_to_different_named_graphs_both_land_correctly() {
+    let server = common::TestServer::start_writable("").await;
+
+    const GRAPH_A: &str = "http://example.org/upload-target-a";
+    const GRAPH_B: &str = "http://example.org/upload-target-b";
+    const TURTLE_A: &str = r#"
+        @prefix ex: <http://example.org/> .
+        ex:alice ex:name "Alice" .
+    "#;
+    const TURTLE_B: &str = r#"
+        @prefix ex: <http://example.org/> .
+        ex:bob ex:name "Bob" .
+    "#;
+
+    let url_a = format!(
+        "{}/upload?graph={}",
+        server.base_url,
+        urlencoding::encode(GRAPH_A)
+    );
+    let url_b = format!(
+        "{}/upload?graph={}",
+        server.base_url,
+        urlencoding::encode(GRAPH_B)
+    );
+    let client_a = server.client.clone();
+    let client_b = server.client.clone();
+
+    let handle_a = tokio::spawn(async move {
+        client_a
+            .post(url_a)
+            .header("content-type", "text/turtle")
+            .body(TURTLE_A)
+            .send()
+            .await
+            .expect("upload A request failed")
+    });
+    let handle_b = tokio::spawn(async move {
+        client_b
+            .post(url_b)
+            .header("content-type", "text/turtle")
+            .body(TURTLE_B)
+            .send()
+            .await
+            .expect("upload B request failed")
+    });
+
+    let (resp_a, resp_b) = tokio::join!(handle_a, handle_b);
+    let resp_a = resp_a.expect("upload A task panicked");
+    let resp_b = resp_b.expect("upload B task panicked");
+    assert_eq!(resp_a.status(), 200, "upload A must succeed");
+    assert_eq!(resp_b.status(), 200, "upload B must succeed");
+
+    let body_a = server
+        .client
+        .get(server.gsp_named_graph_url(GRAPH_A))
+        .send()
+        .await
+        .expect("request failed")
+        .text()
+        .await
+        .unwrap();
+    assert!(body_a.contains("Alice"), "graph A body: {body_a}");
+    assert!(
+        !body_a.contains("Bob"),
+        "graph A must not contain graph B's data: {body_a}"
+    );
+
+    let body_b = server
+        .client
+        .get(server.gsp_named_graph_url(GRAPH_B))
+        .send()
+        .await
+        .expect("request failed")
+        .text()
+        .await
+        .unwrap();
+    assert!(body_b.contains("Bob"), "graph B body: {body_b}");
+    assert!(
+        !body_b.contains("Alice"),
+        "graph B must not contain graph A's data: {body_b}"
+    );
+}

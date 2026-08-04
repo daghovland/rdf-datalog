@@ -127,6 +127,48 @@ impl TestServer {
         }
     }
 
+    /// Start a writable server pre-loaded with Turtle data, with a custom
+    /// `request_timeout_secs` override (see `Config::request_timeout_secs`).
+    ///
+    /// Use this to test the request-level `TimeoutLayer` at a short, fast-to-
+    /// exceed duration instead of the 30s production default.
+    pub async fn start_writable_with_request_timeout(
+        turtle: &str,
+        request_timeout_secs: u64,
+    ) -> Self {
+        let mut ds = Datastore::new(1024);
+        if !turtle.is_empty() {
+            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
+                .expect("test fixture turtle must parse");
+        }
+        let store = Arc::new(RwLock::new(ds));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only: false,
+            auth: AuthConfig::None,
+            data_dir: None,
+            request_timeout_secs,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
+    }
+
     /// Start a writable server with an explicit CORS allow-list for
     /// state-changing methods (see `Config::cors_allowed_origins`).
     pub async fn start_writable_with_cors_allowed_origins(

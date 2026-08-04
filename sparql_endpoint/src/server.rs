@@ -10,12 +10,14 @@ use crate::AppState;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, Method, header, request::Parts},
+    http::{HeaderValue, Method, StatusCode, header, request::Parts},
     middleware,
     routing::{get, post},
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 
 /// HTTP methods that never mutate server state.
 ///
@@ -83,6 +85,18 @@ pub fn build_router(state: AppState) -> Router {
     // DefaultBodyLimit for realistic datasets. Override it for these routes;
     // every other route keeps 2 MB. See #274.
     let rdf_body_limit = DefaultBodyLimit::max(state.config.max_rdf_upload_bytes);
+
+    // Request-level timeout (#367): bounds how long any single request may
+    // occupy a connection. `TimeoutLayer` is response-preserving (it wraps
+    // an Infallible service and stays Infallible), returning a plain 408
+    // response rather than propagating an error — so no `HandleErrorLayer`
+    // is needed. Note this only bounds *connection occupancy*: when it
+    // fires, the client gets 408 and the connection is freed, but the
+    // handler future keeps running to completion in the background.
+    let timeout = TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        Duration::from_secs(state.config.request_timeout_secs),
+    );
 
     let cors = CorsLayer::new()
         .allow_origin(build_allow_origin(
@@ -226,5 +240,6 @@ pub fn build_router(state: AppState) -> Router {
             crate::auth::auth_middleware,
         ))
         .with_state(state)
+        .layer(timeout)
         .layer(cors)
 }
