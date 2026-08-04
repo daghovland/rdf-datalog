@@ -1,0 +1,48 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening PR #374 in the same
+# orchestration session that dispatched the implementing sub-agent. The
+# sub-agent did the actual planning/coding/testing in the worktree but kept
+# parking itself mid-task waiting on its own background cargo builds
+# (reporting "waiting for X" rather than committing); this session verified
+# its finished, uncommitted work directly (fmt/clippy/full test suite),
+# fixed one formatting nit, then committed, pushed, and opened the PR itself
+# rather than continuing to wait on the sub-agent's polling loop.
+#
+# startedAtTime/endedAtTime both equal the single commit's timestamp on this
+# branch, since the sub-agent's own incremental work was never separately
+# committed — only the final squashed commit this session made reached git
+# history.
+
+ghpull:374 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rl2datalog: surface assert_abox's skip signal instead of only log::warn!" ;
+    bl:number 374 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:366 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr374 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:366 ;
+    prov:startedAtTime "2026-08-04T09:31:30Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-04T09:31:30Z"^^xsd:dateTime .
+
+session:pr374Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #366 identified that owl2rl2datalog::abox::assert_abox silently dropped non-atomic ClassAssertion/ObjectPropertyAssertion ABox axioms via only a log::warn!, with its usize triple-count return value discarded at every call site (src/lib.rs's load_file and compile_ontology_rules, dagalog-kernel's execute_manchester_file), leaving an HTTP-served or notebook user with zero signal that part of their asserted data silently vanished. PR #370 (issue #177, already merged) had already solved half this problem but only for a separate, not-yet-wired-in owl2rdf path via a new #[must_use] RdfTranslationReport{triples_added, skipped} type -- assert_abox itself, the function #366 was actually about, was untouched by that PR. This PR closes that gap directly: assert_abox's return type changed from a bare usize to the same RdfTranslationReport type owl2rdf already established (no new type needed, since atomic_assertion_triple is already shared between the two functions), and all three call sites were updated to actually surface a non-empty skip list instead of discarding it -- eprintln! for the CLI paths (chosen over widening load_file's own signature, which has roughly fifty call sites across the repo and would have been disproportionate to this fix) and an appended warning in the returned status string for the notebook kernel cell. Deliberately left out of scope: actually giving complex class/property expressions an RDF encoding (the root reason assertions get skipped at all) is separate, larger work already tracked in issue #373 filed during the #177 PR's own follow-up." ;
+    agp:reasoningFor ghpull:374 ;
+    agp:decisionPoint session:pr374ScopeDecision ;
+    prov:wasGeneratedBy session:pr374 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr374ScopeDecision a agp:Decision ;
+    agp:summaryText "Kept load_file's own function signature unchanged, printing the skip warning directly via eprintln! inside its .omn branch, rather than widening load_file's return type to carry a skip report through to its callers." ;
+    agp:alternative "Thread the skip report through load_file's return type the same way compile_ontology_rules/ReasoningStats does -- rejected because load_file has roughly fifty call sites across the workspace, so widening its signature for this one narrow case was out of proportion; printing directly still makes the data loss visible to any caller capturing stderr, without requiring every one of those call sites to be touched." .
