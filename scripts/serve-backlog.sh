@@ -61,4 +61,4 @@ for f in "${DATA_FILES[@]}"; do
 done
 
 exec cargo run --manifest-path "$REPO_ROOT/Cargo.toml" -q --bin dagalog -- \
-  "${DATA_ARGS[@]}" --serve --read-only "${EXTRA_ARGS[@]}"
+  "${DATA_ARGS[@]}" --serve --read-only "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

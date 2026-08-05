@@ -159,26 +159,39 @@ fn cross_file_join_pr_and_provenance_works() {
         }
     "#;
     let result = run_sparql_query(&ds, query).expect("cross-file join query should run");
-    assert_eq!(
-        result.rows.len(),
-        1,
-        "expected exactly one row joining bl:touchesCrate (snapshot.ttl) with \
-         agp:reasoningFor/agp:summaryText (pr-300.ttl) for ghpull:300, got: {:#?}",
+    // Not an exact row count: how many crates ghpull:300's bl:touchesCrate
+    // lists is a property of the regenerable snapshot.ttl (the loader's own
+    // crate-mapping heuristics), not of the cross-file join this test
+    // exists to prove. Asserting non-empty plus a content check (matching
+    // tests/provenance_queries.rs's own >= lower bound + content-check
+    // pattern) proves the same thing without coupling to loader internals.
+    assert!(
+        !result.rows.is_empty(),
+        "expected at least one row joining bl:touchesCrate (snapshot.ttl) with \
+         agp:reasoningFor/agp:summaryText (pr-300.ttl) for ghpull:300, got none"
+    );
+    assert!(
         result
             .rows
             .iter()
-            .map(|row| (display(row, "crate"), display(row, "summaryText")))
+            .any(|row| display(row, "crate") == "<https://dagalog.dev/ns/backlog/crate#shacl>"),
+        "expected ghpull:300's bl:touchesCrate (from snapshot.ttl) to include the shacl crate, got: {:#?}",
+        result
+            .rows
+            .iter()
+            .map(|row| display(row, "crate"))
             .collect::<Vec<_>>()
     );
-    let row = &result.rows[0];
-    assert_eq!(
-        display(row, "crate"),
-        "<https://dagalog.dev/ns/backlog/crate#shacl>",
-        "expected ghpull:300's bl:touchesCrate (from snapshot.ttl) to be the shacl crate"
-    );
-    let summary_text = display(row, "summaryText");
     assert!(
-        summary_text.contains("ValidationResult"),
-        "expected pr-300.ttl's agp:summaryText content, got: {summary_text}"
+        result
+            .rows
+            .iter()
+            .any(|row| display(row, "summaryText").contains("ValidationResult")),
+        "expected pr-300.ttl's agp:summaryText content among the joined rows, got: {:#?}",
+        result
+            .rows
+            .iter()
+            .map(|row| display(row, "summaryText"))
+            .collect::<Vec<_>>()
     );
 }
