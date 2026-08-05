@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Transcript summary for PR #391 (issue #387), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps are real, taken
+# from `git log main..HEAD` on branch fix-387-jsonld-blank-node-id.
+
+ghpull:391 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix: JSON-LD blank node @id values stored as URI resources (#387)" ;
+    bl:number 391 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:387 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr391 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:387 ;
+    prov:startedAtTime "2026-08-05T15:46:34+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-05T15:46:34+02:00"^^xsd:dateTime .
+
+session:pr391Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #387 reported that JSON-LD @id values written as blank node identifiers (\"_:b0\", per JSON-LD 1.1 §3.4) were being interned as literal IRI resources (<_:b0>) instead of real blank nodes, breaking N-Quads round-tripping and causing strict N-Triples parsers to reject the malformed URI scheme on SPARQL CONSTRUCT output. Investigation of jsonld_parser/src/lib.rs found the bug was not localized to one function: every site that turns an @id string into a graph element (subject creation in process_node, @type: @id coercion, pure @id references, nested-node resolution, and @reverse subject resolution) independently ran the string straight through IRI expansion/resolution with no check for the \"_:\" prefix. A single string check would have missed several of these call sites, so a shared is_blank_node_id/intern_blank_node pair was introduced and applied at each site, reusing GraphElementManager::get_or_create_named_anon_resource (the same mechanism the Turtle parser already uses for blank node labels) so a given label resolves to the same node across the whole parse." ;
+    agp:decisionPoint session:pr391Decision ;
+    agp:reasoningFor ghpull:391 ;
+    prov:wasGeneratedBy session:pr391 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr391Decision a agp:Decision ;
+    agp:summaryText "The second regression test initially combined an outer node with an explicit @id and a nested @graph array referencing a blank node defined inside that @graph. It failed even after the fix, tracing back to correct pre-existing behaviour: per JSON-LD semantics, @graph nested inside a node that has its own @id names a *named graph*, not the default graph, so the wasGeneratedBy triple and the blank node's rdf:type triple ended up in different graphs and the default-graph SPARQL query legitimately found nothing." ;
+    agp:alternative "Considered changing @graph/named-graph handling to make the test pass, but that would have been an unrelated and incorrect behaviour change. Instead the test was rewritten to use a top-level JSON array of two sibling node objects (matching the bug report's own multi-subject structure), which puts both triples in the default graph and correctly isolates the blank-node-identity fix under test." .
