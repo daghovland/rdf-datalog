@@ -1,0 +1,33 @@
+# "I'm about to touch this crate -- has anyone reasoned about it before?"
+# -- the same idea as related_to_file.sparql, one hop shallower via
+# bl:touchesCrate instead of bl:touchesFile, for a coarser scan when the
+# exact file isn't known yet.
+#
+# bl:touchesCrate's range is bl:Crate (an object property, unlike
+# bl:touchesFile's plain xsd:string), so the VALUES line binds a resource.
+# Its domain is bl:WorkItem (broader than bl:PullRequest -- also covers
+# bl:Issue), but this query still matches only bl:PullRequest, mirroring
+# related_to_file.sparql: only a *finished, reasoned-about* PR has an
+# agp:TranscriptSummary at all, so restricting to PRs here doesn't drop any
+# real answer, it just keeps both queries' "what's relevant" semantics
+# consistent -- see docs/plans/RELATED_TO_QUERIES_PLAN.md.
+#
+# Parameterized via the VALUES line below -- edit ?crate to a different
+# bl:Crate resource to ask about a different one. Shipped pointing at
+# crate:shacl, the crate PR #300 (see ../summaries/pr-300.ttl and
+# backlog/examples/snapshot.ttl) actually touched.
+
+PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX crate: <https://dagalog.dev/ns/backlog/crate#>
+
+SELECT ?summary ?pr ?text WHERE {
+  VALUES ?crate { crate:shacl }
+  ?summary a agp:TranscriptSummary ;
+    agp:reasoningFor ?pr ;
+    agp:summaryText ?summaryText .
+  ?pr a bl:PullRequest ;
+    bl:touchesCrate ?crate .
+  OPTIONAL { ?summary agp:abstractText ?abstractText }
+  BIND(COALESCE(?abstractText, ?summaryText) AS ?text)
+}

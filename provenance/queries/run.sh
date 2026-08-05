@@ -44,6 +44,11 @@ QUERY_FILE="$SCRIPT_DIR/$QUERY_NAME.sparql"
 DATA_ARGS=(
   --data "$REPO_ROOT/backlog/ontology/vocabulary.ttl"
   --data "$REPO_ROOT/backlog/ontology/agentprov-vocabulary.ttl"
+  # related_to_file/related_to_crate (#351) need the backlog snapshot's
+  # bl:touchesFile/bl:touchesCrate facts, which live outside provenance/
+  # entirely -- harmless extra data for the other queries, which don't
+  # reference bl:PullRequest facts beyond the IRI itself.
+  --data "$REPO_ROOT/backlog/examples/snapshot.ttl"
 )
 for f in "$DATA_DIR"/*.ttl; do
   DATA_ARGS+=(--data "$f")
