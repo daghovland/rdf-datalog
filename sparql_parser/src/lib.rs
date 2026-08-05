@@ -1574,11 +1574,23 @@ fn parse_prefixed_name<'a>(
             )));
         }
 
-        let base = ctx
-            .prefixes
-            .get(prefix)
-            .cloned()
-            .unwrap_or_else(|| prefix.to_string() + ":");
+        // An undeclared prefix is not a soft/permissive case: at this point
+        // the input has already matched the full `prefix:local` shape (and
+        // isn't one of the reserved keyword-prefixes rejected above), so
+        // there is no other plausible interpretation for `alt()` to fall
+        // back on. Silently treating the bare prefix string as if it were
+        // part of a literal IRI (the old behavior) produces a syntactically
+        // valid but semantically nonsense IRI that can never match real
+        // data — queries using it "succeed" with an empty result instead of
+        // reporting the mistake. Fail hard with `Err::Failure` so `alt()`
+        // doesn't paper over this with a different, more confusing parse
+        // failure elsewhere. See issue #389.
+        let Some(base) = ctx.prefixes.get(prefix).cloned() else {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        };
         Ok((after_local, IriReference(base + &local)))
     }
 }
