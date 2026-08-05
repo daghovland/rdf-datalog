@@ -42,6 +42,15 @@ Contact: hovlanddag@gmail.com
 //!   `reasoning_for_pr.sparql` is the one exception: it's parameterized to
 //!   PR #300 specifically, so it still returns exactly one row regardless
 //!   of how many other summary files are loaded alongside it.
+//!
+//! `related_to_file`/`related_to_crate` (#351) are the two exceptions to
+//! "just glob `provenance/summaries/*.ttl`": their join needs
+//! `bl:touchesFile`/`bl:touchesCrate` facts that live in
+//! `backlog/examples/snapshot.ttl`, not under `provenance/`, so their
+//! loader (`load_all_summaries_and_snapshot`, below) additionally loads
+//! that file (matching `provenance/queries/run.sh`'s own default data,
+//! which does the same for the same reason -- see that script and
+//! `docs/plans/RELATED_TO_QUERIES_PLAN.md`).
 
 use dag_rdf::{Datastore, GraphElement};
 use dagalog::{graph_element_display, load_file, run_sparql_query};
@@ -134,6 +143,50 @@ fn load_all_summaries() -> Datastore {
     load(&refs)
 }
 
+const BL_SNAPSHOT: &str = "backlog/examples/snapshot.ttl";
+
+/// `related_to_file`/`related_to_crate` (#351) need `bl:touchesFile`/
+/// `bl:touchesCrate` facts, which live in the backlog snapshot, not in any
+/// `provenance/summaries/*.ttl` file -- the real cross-dataset join being
+/// proven is that a summary's `agp:reasoningFor` IRI (from `provenance/`)
+/// and the snapshot's own `bl:touchesCrate`/`bl:touchesFile` subject (from
+/// `backlog/`) are the SAME `ghpull:<N>` resource. `backlog/examples/snapshot.ttl`
+/// already has real `bl:touchesCrate` data for PR #300
+/// (`ghpull:300 bl:touchesCrate crate:shacl`, matching `../summaries/pr-300.ttl`'s
+/// real worked example), so this loads it alongside the summaries rather
+/// than fabricating a standalone fixture.
+fn load_all_summaries_and_snapshot() -> Datastore {
+    let mut paths = vec![repo_path(BL_VOCAB), repo_path(AGP_VOCAB)];
+    paths.extend(all_summary_files());
+    let mut refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    let snapshot = repo_path(BL_SNAPSHOT);
+    refs.push(&snapshot);
+    load(&refs)
+}
+
+/// `backlog/examples/snapshot.ttl` predates PR #358's `bl:touchesFile`
+/// loader change and hasn't been regenerated from a live `gh api` call
+/// since (see `docs/plans/RELATED_TO_QUERIES_PLAN.md`), so it has no
+/// `bl:touchesFile` facts yet. This adds one small inlined fact grounded in
+/// PR #300's REAL diff (`shacl/src/evaluate.rs`, checked via
+/// `gh pr view 300 --json files`) on top of the merged snapshot+summaries
+/// dataset, so `related_to_file.sparql`'s join can be exercised against
+/// real content without hand-editing the generated snapshot file.
+fn load_all_summaries_snapshot_and_touched_file() -> Datastore {
+    let mut ds = load_all_summaries_and_snapshot();
+    turtle::parse_turtle(
+        &mut ds,
+        r#"
+        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+        ghpull:300 bl:touchesFile "shacl/src/evaluate.rs" .
+        "#
+        .as_bytes(),
+    )
+    .expect("inlined bl:touchesFile fact should parse as Turtle");
+    ds
+}
+
 /// Every query file must at least parse and run without error against the
 /// full merged corpus of summary files. Never ignored, so a syntax
 /// regression is caught by CI.
@@ -146,6 +199,14 @@ fn all_queries_run_without_error() {
         "sessions_for_issue",
         "all_decision_points",
     ] {
+        run_sparql_query(&ds, &query_file(name))
+            .unwrap_or_else(|e| panic!("queries/{name}.sparql must run without error: {e}"));
+    }
+    // related_to_file/related_to_crate (#351) need the backlog snapshot's
+    // bl:touchesFile/bl:touchesCrate facts too -- see
+    // load_all_summaries_and_snapshot's own doc comment.
+    let ds = load_all_summaries_and_snapshot();
+    for name in ["related_to_file", "related_to_crate"] {
         run_sparql_query(&ds, &query_file(name))
             .unwrap_or_else(|e| panic!("queries/{name}.sparql must run without error: {e}"));
     }
@@ -223,6 +284,90 @@ fn all_decision_points_finds_pr_300_decisions() {
             .iter()
             .map(|r| display(r, "summaryText"))
             .collect::<Vec<_>>()
+    );
+}
+
+/// PR #300's real GitHub URL, used to key result rows by `?pr` rather than
+/// by matching prose in `?text` -- keying by IRI is exact and doesn't risk
+/// a false match (or a false miss) if some future summary's `summaryText`
+/// happens to also mention "sourceShape"/"ValidationResult", or if
+/// `pr-300.ttl` no longer has `agp:abstractText`.
+const PR_300: &str = "https://github.com/daghovland/rdf-datalog/pull/300";
+
+fn find_row_by_pr<'a>(
+    rows: &'a [std::collections::HashMap<String, GraphElement>],
+    pr: &str,
+) -> Option<&'a std::collections::HashMap<String, GraphElement>> {
+    rows.iter().find(|r| display(r, "pr") == format!("<{pr}>"))
+}
+
+/// "I'm about to touch this crate, has anyone reasoned about it before?"
+/// -- `related_to_crate.sparql` (parameterized to `crate:shacl` in the
+/// shipped file) must find PR #300's summary via the real
+/// `bl:touchesCrate` fact already in `backlog/examples/snapshot.ttl`
+/// (`ghpull:300 bl:touchesCrate crate:shacl`) joined against
+/// `pr-300.ttl`'s `agp:reasoningFor ghpull:300` -- the real cross-dataset
+/// join #351 exists to prove.
+#[test]
+fn related_to_crate_finds_pr_300() {
+    let ds = load_all_summaries_and_snapshot();
+    let result = run_sparql_query(&ds, &query_file("related_to_crate")).unwrap();
+    assert!(
+        !result.rows.is_empty(),
+        "expected at least one summary whose PR touched crate:shacl"
+    );
+    assert!(
+        find_row_by_pr(&result.rows, PR_300).is_some(),
+        "expected a row for PR #300 among the results for crate:shacl, got PRs: {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| display(r, "pr"))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Same join as above, one level shallower via `bl:touchesFile` instead of
+/// `bl:touchesCrate` -- exercised against the merged dataset PLUS the one
+/// inlined `bl:touchesFile` fact (see
+/// `load_all_summaries_snapshot_and_touched_file`'s doc comment for why
+/// it's inlined rather than read off the generated snapshot as-is).
+#[test]
+fn related_to_file_finds_pr_300() {
+    let ds = load_all_summaries_snapshot_and_touched_file();
+    let result = run_sparql_query(&ds, &query_file("related_to_file")).unwrap();
+    assert!(
+        !result.rows.is_empty(),
+        "expected at least one summary whose PR touched shacl/src/evaluate.rs"
+    );
+    assert!(
+        find_row_by_pr(&result.rows, PR_300).is_some(),
+        "expected a row for PR #300 among the results for shacl/src/evaluate.rs, got PRs: {:?}",
+        result
+            .rows
+            .iter()
+            .map(|r| display(r, "pr"))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `agp:abstractText` is optional (#358): a summary that has one must
+/// project it (not the longer `agp:summaryText`) via the `COALESCE` in
+/// `related_to_crate.sparql`/`related_to_file.sparql`. `pr-300.ttl` has
+/// both, so the `?text` column here must be the short abstract, not the
+/// full summary. Selects the row by `?pr` (PR #300's real IRI) rather than
+/// by matching `?text` prose, so this stays a genuine independent check of
+/// the COALESCE preference rather than begging the question.
+#[test]
+fn related_to_crate_prefers_abstract_text_when_present() {
+    let ds = load_all_summaries_and_snapshot();
+    let result = run_sparql_query(&ds, &query_file("related_to_crate")).unwrap();
+    let pr_300_row = find_row_by_pr(&result.rows, PR_300).expect("expected a row for PR #300");
+    let text = display(pr_300_row, "text");
+    assert!(
+        text.len() <= 160,
+        "expected the short agp:abstractText (<=160 chars) to be preferred over the longer agp:summaryText, got ({} chars): {text}",
+        text.len()
     );
 }
 
