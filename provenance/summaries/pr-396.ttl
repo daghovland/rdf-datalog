@@ -7,10 +7,11 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix session: <https://dagalog.dev/ns/agentprov/session#> .
 
-# PROSPECTIVE summary, written right after opening PR #396 in the same
-# session that did the work (the sub-agent itself committed, pushed, and
-# opened the PR; this file's placeholder text was filled in during the
-# orchestrating session's independent verification pass).
+# PROSPECTIVE summary, self-authored per CLAUDE.md step 6b / issue #334:
+# written by the same agent, in the same session, that implemented #351 and
+# opened PR #396 -- not a separate reviewing pass. Scaffolded via
+# scripts/new-provenance-summary.sh, then hand-edited to replace the
+# summaryText/decisionPoint placeholders with the real reasoning.
 
 ghpull:396 a bl:PullRequest, bl:WorkItem ;
     rdfs:label "provenance: related_to_file / related_to_crate SPARQL queries" ;
@@ -25,7 +26,7 @@ session:pr396 a agp:AgentSession ;
     prov:wasAssociatedWith session:claudeSonnet5 ;
     prov:used ghissues:351 ;
     prov:startedAtTime "2026-08-05T19:47:10Z"^^xsd:dateTime ;
-    prov:endedAtTime "2026-08-05T19:47:22Z"^^xsd:dateTime .
+    prov:endedAtTime "2026-08-05T19:50:55Z"^^xsd:dateTime .
 
 session:pr396Summary a agp:TranscriptSummary ;
     agp:abstractText "Added related_to_file/related_to_crate queries joining provenance summaries to backlog PR facts; found the generated snapshot is stale." ;
