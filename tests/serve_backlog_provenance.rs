@@ -93,13 +93,9 @@ fn display(row: &std::collections::HashMap<String, GraphElement>, var: &str) -> 
 /// includes both vocab files, the backlog snapshot, and at least one
 /// provenance summary -- the exact combination #356 asks for.
 #[test]
-#[ignore = "red until scripts/serve-backlog.sh exists (#356)"]
 fn script_resolves_expected_data_files() {
     let files = script_data_args();
-    let joined: Vec<String> = files
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
+    let joined: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
     let has_fragment = |fragment: &str| joined.iter().any(|p| p.contains(fragment));
 
     assert!(
@@ -125,7 +121,6 @@ fn script_resolves_expected_data_files() {
 /// Loading exactly the file list the script resolves must produce a sane
 /// combined triple count -- i.e. neither side got dropped.
 #[test]
-#[ignore = "red until scripts/serve-backlog.sh exists (#356)"]
 fn combined_dataset_loads_from_script_data_args() {
     let files = script_data_args();
     let ds = load(&files);
@@ -146,7 +141,6 @@ fn combined_dataset_loads_from_script_data_args() {
 /// same real PR (#300) must return a row -- impossible unless both files
 /// are loaded into the same `Datastore`.
 #[test]
-#[ignore = "red until scripts/serve-backlog.sh exists (#356)"]
 fn cross_file_join_pr_and_provenance_works() {
     let files = script_data_args();
     let ds = load(&files);
@@ -166,16 +160,17 @@ fn cross_file_join_pr_and_provenance_works() {
     "#;
     let result = run_sparql_query(&ds, query).expect("cross-file join query should run");
     assert_eq!(
-        result.len(),
+        result.rows.len(),
         1,
         "expected exactly one row joining bl:touchesCrate (snapshot.ttl) with \
          agp:reasoningFor/agp:summaryText (pr-300.ttl) for ghpull:300, got: {:#?}",
         result
+            .rows
             .iter()
             .map(|row| (display(row, "crate"), display(row, "summaryText")))
             .collect::<Vec<_>>()
     );
-    let row = &result[0];
+    let row = &result.rows[0];
     assert_eq!(
         display(row, "crate"),
         "<https://dagalog.dev/ns/backlog/crate#shacl>",
