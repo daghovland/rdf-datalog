@@ -442,6 +442,67 @@ fn parse_nested_node_objects() {
     );
 }
 
+/// Regression test for #387: an explicit `"@id": "_:b0"` must be parsed as a
+/// blank node, not as a URI resource `<_:b0>`. See
+/// <https://github.com/daghovland/rdf-datalog/issues/387>.
+#[test]
+fn parse_explicit_blank_node_id_as_subject() {
+    let ds = parse_str(
+        r#"{
+            "@id": "_:b0",
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#type": {
+                "@id": "http://www.w3.org/ns/prov#Activity"
+            }
+        }"#,
+    );
+    // Must not be stored as an IRI resource with the literal "_:b0" as its IRI.
+    assert!(
+        !has_iri(&ds, "_:b0"),
+        "blank node @id must not be interned as an IRI resource"
+    );
+    // A real blank node with a type triple must exist.
+    let matches = query_count(
+        &ds,
+        r#"SELECT ?s WHERE {
+            ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/prov#Activity>
+        }"#,
+    );
+    assert_eq!(matches, 1);
+}
+
+/// Regression test for #387: a reference to a blank node via `"@id": "_:b0"`
+/// as an object value must resolve to the same blank node, not to a
+/// URI resource.
+#[test]
+fn parse_explicit_blank_node_id_as_object_reference() {
+    let ds = parse_str(
+        r#"[
+            {
+                "@id": "http://example.org/record/r1",
+                "http://www.w3.org/ns/prov#wasGeneratedBy": { "@id": "_:b0" }
+            },
+            {
+                "@id": "_:b0",
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type": {
+                    "@id": "http://www.w3.org/ns/prov#Activity"
+                }
+            }
+        ]"#,
+    );
+    assert!(!has_iri(&ds, "_:b0"));
+    let matches = query_count(
+        &ds,
+        r#"SELECT ?a WHERE {
+            <http://example.org/record/r1> <http://www.w3.org/ns/prov#wasGeneratedBy> ?a .
+            ?a <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/prov#Activity>
+        }"#,
+    );
+    assert_eq!(
+        matches, 1,
+        "wasGeneratedBy blank node reference must resolve to the same blank node as defined in @graph"
+    );
+}
+
 // ── Inline parsing ─────────────────────────────────────────────────────────────
 
 /// Parse JSON-LD supplied as an inline string (bytes), without a file on disk.

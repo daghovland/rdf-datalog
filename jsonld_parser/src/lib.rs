@@ -560,6 +560,7 @@ fn process_node(
     // the default graph (items stored with graph=None).
     let has_explicit_id = id_str.is_some();
     let subject = match id_str {
+        Some(iri) if is_blank_node_id(iri) => intern_blank_node(ds, iri),
         Some(iri) => {
             let expanded = ctx
                 .expand_term(iri)
@@ -934,10 +935,14 @@ fn add_value_to_graph(
         Value::String(s) => {
             let obj = match type_coercion {
                 TypeCoercion::Id => {
-                    let expanded = ctx
-                        .expand_term(s)
-                        .unwrap_or_else(|| resolve_iri(s, ctx.base.as_deref()));
-                    ds.add_node_resource(RdfResource::Iri(IriReference(expanded)))
+                    if is_blank_node_id(s) {
+                        intern_blank_node(ds, s)
+                    } else {
+                        let expanded = ctx
+                            .expand_term(s)
+                            .unwrap_or_else(|| resolve_iri(s, ctx.base.as_deref()));
+                        ds.add_node_resource(RdfResource::Iri(IriReference(expanded)))
+                    }
                 }
                 TypeCoercion::Json => ds.add_literal_resource(RdfLiteral::TypedLiteral {
                     literal: serde_json::to_string(val).unwrap_or(s.clone()),
@@ -1004,12 +1009,16 @@ fn add_value_to_graph(
             let is_value_object = map.contains_key(value_key);
             if let Some(Value::String(iri)) = map.get("@id") {
                 // Node reference or nested node.
-                let expanded = ctx
-                    .expand_term(iri)
-                    .unwrap_or_else(|| resolve_iri(iri, ctx.base.as_deref()));
                 let obj = if map.len() == 1 {
                     // Pure @id reference.
-                    intern_iri(ds, &expanded)
+                    if is_blank_node_id(iri) {
+                        intern_blank_node(ds, iri)
+                    } else {
+                        let expanded = ctx
+                            .expand_term(iri)
+                            .unwrap_or_else(|| resolve_iri(iri, ctx.base.as_deref()));
+                        intern_iri(ds, &expanded)
+                    }
                 } else {
                     // Nested node — process it and use its subject id.
                     process_node_value(ds, ctx, graph, val)?
@@ -1072,6 +1081,7 @@ fn process_node_value(
             };
             process_node(ds, map, &inner_ctx, graph)
         }
+        Value::String(s) if is_blank_node_id(s) => Ok(intern_blank_node(ds, s)),
         Value::String(s) => {
             let expanded = ctx.expand_term(s).unwrap_or(s.clone());
             Ok(intern_iri(ds, &expanded))
@@ -1089,12 +1099,14 @@ fn value_to_id(
 ) -> Result<GraphElementId, JsonLdError> {
     match val {
         Value::Object(map) => match map.get("@id") {
+            Some(Value::String(iri)) if is_blank_node_id(iri) => Ok(intern_blank_node(ds, iri)),
             Some(Value::String(iri)) => {
                 let expanded = ctx.expand_term(iri).unwrap_or(iri.clone());
                 Ok(intern_iri(ds, &expanded))
             }
             _ => Ok(ds.new_anonymous_blank_node()),
         },
+        Value::String(s) if is_blank_node_id(s) => Ok(intern_blank_node(ds, s)),
         Value::String(s) => {
             let expanded = ctx.expand_term(s).unwrap_or(s.clone());
             Ok(intern_iri(ds, &expanded))
@@ -1107,6 +1119,22 @@ fn value_to_id(
 
 fn intern_iri(ds: &mut Datastore, iri: &str) -> GraphElementId {
     ds.add_node_resource(RdfResource::Iri(IriReference(iri.to_owned())))
+}
+
+/// Per JSON-LD 1.1 §3.4 (Node Identifiers), an `@id` value beginning with
+/// `_:` denotes a blank node identifier rather than an IRI.
+/// See <https://github.com/daghovland/rdf-datalog/issues/387>.
+fn is_blank_node_id(s: &str) -> bool {
+    s.starts_with("_:")
+}
+
+/// Resolve a JSON-LD blank node identifier (e.g. `"_:b0"`) to a stable
+/// blank node graph element, reusing the same node for repeated references
+/// to the same label within this parse.
+fn intern_blank_node(ds: &mut Datastore, id: &str) -> GraphElementId {
+    let label = id.strip_prefix("_:").unwrap_or(id);
+    ds.resources
+        .get_or_create_named_anon_resource(label.to_owned())
 }
 
 fn add_to_graph(
