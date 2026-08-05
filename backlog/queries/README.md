@@ -29,9 +29,10 @@ files once it does.
   raw label is the one signal guaranteed present.
 - **`epics_with_no_subissues`** — epics with zero children: either
   freshly created (legitimate — see `../ontology/vocabulary.ttl`'s `bl:Epic`
-  comment) or possibly stalled, this query alone can't distinguish the two
-  (no timestamp property exists yet to check "how long" — see "Not
-  implemented" below).
+  comment) or possibly stalled; this query alone still can't distinguish the
+  two (it doesn't itself compare against `bl:createdAt`/`bl:updatedAt` — see
+  "Not implemented" below for the "how long" query those properties now
+  make possible but that isn't written yet).
 - **`epics_all_children_closed_but_open`** — epics where every existing
   child is closed but the epic itself is still open: usually just needs a
   final close-out pass.
@@ -48,11 +49,11 @@ files once it does.
 All six are exercised against the real example fixtures (not just parsed)
 by `tests/backlog_queries.rs` at the repo root.
 
-## Not implemented (no property to query against yet)
+## Not implemented (no query written yet)
 
-- **"Issues open longer than N days with no activity"** — there is no
-  `createdAt`/`updatedAt`/last-activity timestamp property in the ontology
-  today (out of the "deliberately minimal v1" scope from #282). Revisit once
-  #284 (the loader) needs to capture timestamps for some other reason, or
-  file a follow-up against `../ontology/vocabulary.ttl` if this view is
-  wanted badly enough to justify adding one now.
+- **"Issues open longer than N days with no activity"** — `bl:createdAt`/
+  `bl:updatedAt`/`bl:closedAt` now exist on every `bl:WorkItem`
+  ([#379](https://github.com/daghovland/rdf-datalog/issues/379)), so this is
+  now expressible as a plain `FILTER` against `bl:updatedAt` — just not
+  written as a named query yet. File a follow-up issue if this view is
+  wanted.

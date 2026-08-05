@@ -98,6 +98,27 @@ bl:number
     rdfs:label "number" ;
     rdfs:comment "The GitHub issue/PR number, for human-readable display — the IRI (the real GitHub URL) is already the actual identifier, this is not needed for identity." .
 
+bl:createdAt
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:WorkItem ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "created at" ;
+    rdfs:comment "GitHub's `created_at` timestamp for this issue/PR (ISO-8601, as returned by the Issues API). See #379." .
+
+bl:updatedAt
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:WorkItem ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "updated at" ;
+    rdfs:comment "GitHub's `updated_at` timestamp for this issue/PR (ISO-8601, as returned by the Issues API) -- last time any field on the item changed, not specifically its body/comments. See #379." .
+
+bl:closedAt
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:WorkItem ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "closed at" ;
+    rdfs:comment "GitHub's `closed_at` timestamp (ISO-8601), present only for items GitHub's API itself reports a close time for -- absent (not asserted) for an open item, so no sh:minCount is added for this property anywhere, matching how other optional bl:WorkItem/bl:PullRequest properties (e.g. bl:touchesFile) are modeled in this vocabulary. See #379." .
+
 # NOTE: no bl:title property -- an issue/PR's title is given by rdfs:label
 # directly (RDFS's own "human-readable name for the subject"), not a
 # bespoke property. Reused deliberately: this vocabulary already uses

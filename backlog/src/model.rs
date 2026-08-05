@@ -37,6 +37,15 @@ pub struct RawIssue {
     pub body: Option<String>,
     /// `"open"` or `"closed"`.
     pub state: String,
+    /// ISO-8601 timestamp, always present. Mapped to `bl:createdAt`.
+    pub created_at: String,
+    /// ISO-8601 timestamp, always present (GitHub bumps it on any field
+    /// change, not just body/comment edits). Mapped to `bl:updatedAt`.
+    pub updated_at: String,
+    /// ISO-8601 timestamp, or `null`/absent while the issue/PR is still
+    /// open. Mapped to `bl:closedAt` when present -- see #379.
+    #[serde(default)]
+    pub closed_at: Option<String>,
     #[serde(default)]
     pub labels: Vec<RawLabel>,
     /// `https://api.github.com/repos/{owner}/{repo}/issues/{number}` of the

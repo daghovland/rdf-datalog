@@ -137,6 +137,29 @@ fn add_string(ds: &mut Datastore, subject: GraphElementId, predicate_local: &str
     });
 }
 
+/// Emits a `bl:createdAt`/`bl:updatedAt`/`bl:closedAt`-style triple from a
+/// GitHub API ISO-8601 timestamp string (e.g. `"2026-06-01T10:00:00Z"`).
+/// Silently skips (with a `log::warn!`) a value that fails to parse --
+/// should never happen against a real GitHub response, but a fixture typo
+/// shouldn't panic the whole loader. See #379.
+fn add_datetime(ds: &mut Datastore, subject: GraphElementId, predicate_local: &str, value: &str) {
+    match chrono::DateTime::parse_from_rfc3339(value) {
+        Ok(dt) => {
+            let p = iri(ds, &bl(predicate_local));
+            let o = ds
+                .add_literal_resource(RdfLiteral::DateTimeLiteral(dt.with_timezone(&chrono::Utc)));
+            ds.add_triple(dag_rdf::Triple {
+                subject,
+                predicate: p,
+                obj: o,
+            });
+        }
+        Err(e) => {
+            log::warn!("bl:{predicate_local}: failed to parse timestamp {value:?}: {e}");
+        }
+    }
+}
+
 /// Ensures a `bl:Label` resource exists for `raw_name`, minting it in the
 /// snapshot (with `rdfs:label`) if it isn't one of the vocabulary's own
 /// named individuals (`bl:Bug`/`bl:Enhancement`/`bl:Ready`).
@@ -214,6 +237,12 @@ pub fn load_issues(
         let state_local = if issue.is_open() { "Open" } else { "Closed" };
         let state_id = iri(ds, &bl(state_local));
         add_object(ds, subj, "state", state_id);
+
+        add_datetime(ds, subj, "createdAt", &issue.created_at);
+        add_datetime(ds, subj, "updatedAt", &issue.updated_at);
+        if let Some(closed_at) = &issue.closed_at {
+            add_datetime(ds, subj, "closedAt", closed_at);
+        }
 
         add_type(ds, subj, "WorkItem");
         if issue.is_pull_request() {

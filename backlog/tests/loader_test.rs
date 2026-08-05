@@ -299,6 +299,64 @@ fn touches_file_derived_from_pr_changed_files() {
     );
 }
 
+/// `bl:createdAt`/`bl:updatedAt` on every issue/PR, and `bl:closedAt` iff
+/// the fixture item has a non-null `closed_at`. See #379.
+#[test]
+fn timestamps_are_emitted() {
+    let source = fixture_source();
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    let issue_284 = "https://github.com/daghovland/rdf-datalog/issues/284";
+    let id = lookup(&ds, issue_284).expect("issue #284 must be interned");
+    let created_pred = lookup(&ds, &format!("{BL}createdAt")).expect("bl:createdAt interned");
+    let updated_pred = lookup(&ds, &format!("{BL}updatedAt")).expect("bl:updatedAt interned");
+
+    let created: Vec<_> = ds
+        .get_triples_with_subject_predicate(id, created_pred)
+        .map(|t| ds.resources.get_graph_element(t.obj).to_string())
+        .collect();
+    assert_eq!(created.len(), 1, "expected exactly one bl:createdAt");
+    assert!(
+        created[0].contains("2026-06-02"),
+        "expected #284's fixture created_at, got: {created:?}"
+    );
+
+    let updated: Vec<_> = ds
+        .get_triples_with_subject_predicate(id, updated_pred)
+        .map(|t| ds.resources.get_graph_element(t.obj).to_string())
+        .collect();
+    assert_eq!(updated.len(), 1, "expected exactly one bl:updatedAt");
+    assert!(
+        updated[0].contains("2026-06-16"),
+        "expected #284's fixture updated_at, got: {updated:?}"
+    );
+
+    // #284 is still open in the fixture -> no bl:closedAt at all.
+    let closed_pred = lookup(&ds, &format!("{BL}closedAt"));
+    if let Some(closed_pred) = closed_pred {
+        assert_eq!(
+            ds.get_triples_with_subject_predicate(id, closed_pred)
+                .count(),
+            0,
+            "an open issue must not get bl:closedAt"
+        );
+    }
+
+    // #283 is closed in the fixture -> bl:closedAt present with the right value.
+    let issue_283 = "https://github.com/daghovland/rdf-datalog/issues/283";
+    let id_283 = lookup(&ds, issue_283).expect("issue #283 must be interned");
+    let closed_pred = lookup(&ds, &format!("{BL}closedAt")).expect("bl:closedAt interned");
+    let closed: Vec<_> = ds
+        .get_triples_with_subject_predicate(id_283, closed_pred)
+        .map(|t| ds.resources.get_graph_element(t.obj).to_string())
+        .collect();
+    assert_eq!(closed.len(), 1, "expected exactly one bl:closedAt for #283");
+    assert!(
+        closed[0].contains("2026-06-10"),
+        "expected #283's fixture closed_at, got: {closed:?}"
+    );
+}
+
 /// The generated snapshot must conform to `backlog/ontology/shapes.ttl`,
 /// loaded through this repo's own `shacl` crate -- mirrors
 /// `tests/backlog_ontology.rs`'s existing pattern, catching structural
