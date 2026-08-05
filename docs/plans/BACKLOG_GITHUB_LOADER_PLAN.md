@@ -95,6 +95,8 @@ that does live `gh api` calls (not exercised by the test suite).
 | `bl:hasLabel bl:Ready` | also assert `bl:status bl:Ready` (only for `bl:Issue`, never `bl:PullRequest` — `bl:status`'s domain) — per vocabulary's explicit instruction to derive, not double-assert, since `bl:Ready` is intentionally both a `bl:Label` and a `bl:WorkflowStatus` |
 | PR's changed file paths (call 3) | `bl:touchesCrate` on that PR, one triple per distinct crate directory touched |
 | Cargo.toml `[dependencies]` path entries | `bl:dependsOnCrate` |
+| `created_at` / `updated_at` (always present) | `bl:createdAt` / `bl:updatedAt` (`xsd:dateTime`) — see [#379](https://github.com/daghovland/rdf-datalog/issues/379) |
+| `closed_at` (present iff GitHub reports a close time, else `null`) | `bl:closedAt` (`xsd:dateTime`), omitted entirely when `null` — see [#379](https://github.com/daghovland/rdf-datalog/issues/379) |
 
 ### Deliberately out of scope for this loader (documented, not silently dropped)
 

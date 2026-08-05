@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after this session verified and completed
+# the sub-agent's work (the sub-agent committed/pushed/opened the PR itself,
+# but left the snapshot regeneration step explicitly pending in the PR
+# body's checklist; this session ran it and pushed the follow-up commit).
+
+ghpull:394 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog: add bl:createdAt/updatedAt/closedAt timestamps to vocabulary + loader" ;
+    bl:number 394 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:379 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr394 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:379 ;
+    prov:startedAtTime "2026-08-05T19:40:54Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-05T19:52:00Z"^^xsd:dateTime .
+
+session:pr394Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #379 identified that bl: had no timestamp properties on bl:WorkItem at all, even though GitHub's Issues API (the loader's own data source) exposes created_at/updated_at/closed_at for every issue and PR -- a gap already called out in backlog/queries/README.md as blocking any time-ordered view (activity feed, recently-updated, staleness). Added bl:createdAt/bl:updatedAt/bl:closedAt (domain bl:WorkItem, range xsd:dateTime) to the vocabulary, with bl:closedAt left optional (no sh:minCount) matching how other optional properties like bl:touchesFile are already modeled. RawIssue (backlog/src/model.rs) now deserializes the three fields, which were already present in the gh api JSON payload the loader fetches but simply never read; load_issues emits the triples via a new add_datetime helper that parses RFC-3339 timestamps into native RdfLiteral::DateTimeLiteral values, logging (not panicking) on a parse failure since a fixture typo shouldn't crash the whole loader. The fixture NDJSON and loader_test.rs were updated with a new timestamps_are_emitted test. Once the loader change was green, backlog/examples/snapshot.ttl was regenerated via backlog-regenerate against live GitHub state -- this session ran that step directly (gh CLI authenticated, live API access confirmed working) after finding the sub-agent had correctly flagged it as pending in the PR's own checklist rather than skipping it silently. The regeneration also happened to bring the snapshot current through PR #394 itself, since it had gone stale (last regenerated 2026-08-02, topping out around issue #341/PR #345) -- a freshness gap surfaced independently while planning epic #378 and now tracked separately in #380." ;
+    agp:reasoningFor ghpull:394 ;
+    prov:wasGeneratedBy session:pr394 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
