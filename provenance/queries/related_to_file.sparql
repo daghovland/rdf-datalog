@@ -1,0 +1,29 @@
+# "I'm about to touch this file -- has anyone reasoned about it before?"
+# -- two-hop join agp:TranscriptSummary -> agp:reasoningFor -> bl:PullRequest
+# -> bl:touchesFile, printing agp:abstractText (falling back to
+# agp:summaryText when no abstract exists yet, via OPTIONAL + COALESCE) plus
+# the PR IRI itself.
+#
+# bl:touchesFile's range is xsd:string (a repo-relative path -- see
+# backlog/ontology/vocabulary.ttl), so the VALUES line binds a plain string
+# literal, not a resource: this is string equality against the path, not a
+# join through an IRI.
+#
+# Parameterized via the VALUES line below -- edit ?file to a different
+# repo-relative path to ask about a different one. Shipped pointing at
+# "shacl/src/evaluate.rs", a real file changed by PR #300 (see
+# ../summaries/pr-300.ttl and backlog/examples/snapshot.ttl).
+
+PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX bl: <https://dagalog.dev/ns/backlog#>
+
+SELECT ?summary ?pr ?text WHERE {
+  VALUES ?file { "shacl/src/evaluate.rs" }
+  ?summary a agp:TranscriptSummary ;
+    agp:reasoningFor ?pr ;
+    agp:summaryText ?summaryText .
+  ?pr a bl:PullRequest ;
+    bl:touchesFile ?file .
+  OPTIONAL { ?summary agp:abstractText ?abstractText }
+  BIND(COALESCE(?abstractText, ?summaryText) AS ?text)
+}
