@@ -1,0 +1,40 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Distills the reasoning behind PR #393
+# (https://github.com/daghovland/rdf-datalog/pull/393), which closed issue
+# #356 ("Serve combined backlog+provenance dataset via
+# sparql_endpoint --serve"). Timestamps below are real (from
+# `git log main..HEAD` on branch feat/356-serve-backlog-provenance).
+
+ghpull:393 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Serve combined backlog+provenance dataset via sparql_endpoint --serve" ;
+    bl:number 393 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:356 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr393 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:356 ;
+    prov:startedAtTime "2026-08-05T19:38:12Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-05T19:44:50Z"^^xsd:dateTime .
+
+session:pr393Summary a agp:TranscriptSummary ;
+    agp:summaryText "#356 asked to stand up sparql_endpoint --serve against a combined backlog+provenance dataset. Investigation of src/main.rs first, before writing anything: Cli.data is already Vec<PathBuf> (repeatable --data), and main() loads every --data file into one Datastore BEFORE branching on cli.serve -- so --serve --data a.ttl --data b.ttl already served the union with zero code change needed. Confirmed the cross-file join actually has real data on both sides by grepping: ghpull:300 is asserted as bl:PullRequest/bl:WorkItem with bl:touchesCrate in backlog/examples/snapshot.ttl, and separately described by an agp:TranscriptSummary via agp:reasoningFor in provenance/summaries/pr-300.ttl, using the identical real-GitHub-URL IRI scheme in both files. Built scripts/serve-backlog.sh (dagalog --serve --read-only, wired to both ontology vocab files, the snapshot, and a glob of provenance/summaries/*.ttl) and tests/serve_backlog_provenance.rs proving the combination end-to-end: the script's own --print-data-args dry-run output is what the test loads (not a second, hand-copied file list, to prevent script/test drift), and a SPARQL query joining bl:touchesCrate against agp:reasoningFor/summaryText for ghpull:300 returns exactly one row -- impossible unless both files are in the same Datastore. Manually verified over real HTTP too: ran the script, curled /sparql with that same join query, got the expected shacl crate + pr-300 summary text back before shutting the smoke-test server down." ;
+    agp:decisionPoint session:pr393HttpTestDecision ;
+    agp:reasoningFor ghpull:393 ;
+    prov:wasGeneratedBy session:pr393 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr393HttpTestDecision a agp:Decision ;
+    agp:summaryText "The committed test (tests/serve_backlog_provenance.rs) proves the data combination in-process (dagalog::load_file + run_sparql_query against the file list scripts/serve-backlog.sh --print-data-args resolves), not by binding a TCP listener and driving sparql_endpoint::serve_on_listener over HTTP with reqwest. What #356 actually risks is the data combination itself (do both files' IRIs align, does the cross-file join resolve) -- the HTTP transport layer already has exhaustive coverage under sparql_endpoint/tests/ (see sparql_endpoint/tests/common/mod.rs's TestServer harness), so a second HTTP harness in the root crate would add reqwest/tokio-feature surface without testing anything new. The real HTTP path was still verified manually once (scripts/serve-backlog.sh + curl against /sparql) before calling the work done, but that check wasn't worth encoding as a committed test given the existing coverage." ;
+    agp:alternative "Add a reqwest-based TestServer-style harness to the root crate's own tests/, spinning up sparql_endpoint::serve_on_listener on a loopback port and driving the join query over real HTTP -- rejected as duplicate coverage of what sparql_endpoint/tests/ already exhaustively tests, at the cost of a new reqwest dev-dependency and wider tokio feature flags on the root package." .
