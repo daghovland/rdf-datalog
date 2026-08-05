@@ -1,0 +1,41 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening PR #396 in the same
+# session that did the work (the sub-agent itself committed, pushed, and
+# opened the PR; this file's placeholder text was filled in during the
+# orchestrating session's independent verification pass).
+
+ghpull:396 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "provenance: related_to_file / related_to_crate SPARQL queries" ;
+    bl:number 396 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:351 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr396 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:351 ;
+    prov:startedAtTime "2026-08-05T19:47:10Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-05T19:47:22Z"^^xsd:dateTime .
+
+session:pr396Summary a agp:TranscriptSummary ;
+    agp:abstractText "Added related_to_file/related_to_crate queries joining provenance summaries to backlog PR facts; found the generated snapshot is stale." ;
+    agp:summaryText "Issue #351 asked for two canned queries answering 'I'm about to touch this file/crate, has anyone reasoned about it before' -- a two-hop join from agp:TranscriptSummary through agp:reasoningFor to bl:PullRequest, then to bl:touchesFile or bl:touchesCrate, with a fallback from the short agp:abstractText to the longer agp:summaryText when no abstract exists. COALESCE was already implemented in sparql_parser (returns the first bound argument of its arguments), so OPTIONAL + BIND(COALESCE(...)) was the natural fit over hand-rolling the same behavior with nested IF/BOUND. The harder-than-expected part was testing the cross-dataset join for real: backlog/examples/snapshot.ttl (the source of bl:touchesFile/bl:touchesCrate) predates PR #358's loader change that started populating bl:touchesFile, so it has real bl:touchesCrate data for PR #300 (matching provenance/summaries/pr-300.ttl's existing worked example) but zero bl:touchesFile triples. Regenerating the snapshot properly needs a live gh api call per PR (backlog/src/bin/regenerate.rs, explicitly out of scope for this issue), so related_to_crate's test runs against the real snapshot as-is, while related_to_file's test supplements it with one small inlined Turtle fact -- ghpull:300 bl:touchesFile \"shacl/src/evaluate.rs\" -- grounded in PR #300's actual diff (checked via gh pr view 300 --json files) rather than fabricated. Filed #395 (unlabeled, awaiting review) so the gap doesn't get silently forgotten. A review pass before finalizing also caught that the first draft of the three new tests matched result rows by scanning ?text for prose substrings like \"sourceShape\"/\"ValidationResult\" -- fragile, since a future summary could coincidentally contain the same words and either produce a false match or make the abstract-vs-summary-length assertion fail for the wrong reason. Reworked all three to key rows by the ?pr binding (PR #300's real GitHub IRI) instead, an exact match that doesn't degrade as the corpus grows." ;
+    agp:reasoningFor ghpull:396 ;
+    prov:wasGeneratedBy session:pr396 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr396Summary agp:decisionPoint session:pr396Decision .
+
+session:pr396Decision a agp:Decision ;
+    agp:summaryText "Restricted both related_to_file and related_to_crate to matching only bl:PullRequest (not the broader bl:WorkItem that bl:touchesCrate's rdfs:domain actually allows), since only a finished PR ever has an agp:TranscriptSummary to begin with -- an open bl:Issue's own expected-crate impact isn't reasoned-about yet by definition, so this restriction keeps both queries' 'what's relevant' semantics consistent without losing any real answer." ;
+    agp:alternative "Considered letting related_to_crate match any bl:WorkItem (issues too), which would technically type-check against bl:touchesCrate's rdfs:domain, but rejected it: it would return bl:Issue subjects with no agp:TranscriptSummary in the join at all, so the extra domain breadth adds nothing the PR-only version doesn't already answer -- it only widens the query's apparent scope without widening its real coverage." .
