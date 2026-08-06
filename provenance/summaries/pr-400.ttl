@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening the PR, in the same
+# session that did the work (CLAUDE.md step 6b). Deliberately no
+# bl:closesIssue: this PR fixes only the first, most contained cluster of
+# #363 (the try_get_bool_literal panics), and #363 explicitly stays open
+# to track the remaining clusters (stratifier.rs, datalog.rs, eli2rl.rs,
+# rdf_owl_translator's other panic sites, rml/src/translate.rs) as separate
+# follow-up PRs -- so #363 is referenced via prov:used (context this session
+# worked from) rather than asserted as closed by this PR.
+
+ghpull:400 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "dag_rdf/rdf_owl_translator: stop panicking on legal xsd:boolean lexical forms (#363)" ;
+    bl:number 400 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr400 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:363 ;
+    prov:startedAtTime "2026-08-06T07:47:22Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T07:48:15Z"^^xsd:dateTime .
+
+session:pr400Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #363 (a security-review audit) catalogued several panic!-on-malformed-input sites across the codebase; this PR takes only the first, most contained cluster: two independent copies of try_get_bool_literal (dag_rdf::ingress and rdf_owl_translator::ingress) that panicked on any xsd:boolean literal whose lexical form wasn't the exact string 'true' or 'false'. Read both call sites before touching anything: the only real caller, class_expression_parser.rs's owl:hasSelf restriction parser, already treats a None return as recoverable -- it log::warns and falls back to owl:Thing -- so the minimal fix was to widen the match to accept XSD's other legal boolean lexical forms ('1'/'0') and turn the panic arm into None, reusing that existing fallback instead of threading a new Result/error type through two crates and their one caller. Followed the repo's TDD workflow literally: wrote unit tests for both copies first (true/false regression, 1/0 acceptance, invalid-form-returns-None, non-boolean-literal-returns-None), ran them to confirm they failed with the actual panic (not just a wrong assertion), then implemented. Added one integration test in rdf_owl_translator/tests/translation_tests.rs constructing a small Turtle ontology with owl:hasSelf \"1\"^^xsd:boolean and asserting the parsed axiom is a genuine ObjectHasSelf restriction rather than the owl:Thing fallback -- this is the test that actually proves the fix reaches the real caller end-to-end, not just the unit-level function. Deliberately left #363 open and did not use a closesIssue/Closes-# keyword: the issue catalogues five other independent panic clusters (stratifier.rs cycle detection, datalog.rs unsafe-rule checks, eli2rl.rs unimplemented OWL 2 RL constructs, rdf_owl_translator's remaining panic sites, rml/src/translate.rs dangling parent references) that are out of scope for this PR and better reviewed as separate, smaller changes." ;
+    agp:reasoningFor ghpull:400 ;
+    prov:wasGeneratedBy session:pr400 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

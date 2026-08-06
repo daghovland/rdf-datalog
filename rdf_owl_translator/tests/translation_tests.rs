@@ -10,7 +10,7 @@ Contact: hovlanddag@gmail.com
 //! Mirrors DagSemTools `TestApiOntology.cs`.
 
 use dag_rdf::Datastore;
-use owl_ontology::Axiom;
+use owl_ontology::{Axiom, ClassAxiom, ClassExpression};
 use rdf_owl_translator::rdf2owl;
 use std::fs::File;
 use std::io::BufReader;
@@ -82,5 +82,34 @@ fn translate_some_values_from_inverse() {
     assert!(
         !axioms.is_empty(),
         "Expected axioms from someValuesFromInverse.ttl"
+    );
+}
+
+/// Regression test for #363: `owl:hasSelf "1"^^xsd:boolean` (the XSD-legal
+/// but non-canonical lexical form for `true`) must be accepted by
+/// `try_get_bool_literal` and resolve to `ObjectHasSelf`, not silently fall
+/// back to `owl:Thing` (which is what happens when the value can't be
+/// parsed as boolean) and must not panic the process.
+#[test]
+fn translate_has_self_numeric_lexical_form() {
+    let axioms = parse_and_translate("tests/data/hasSelfNumericLexicalForm.ttl");
+    assert!(
+        !axioms.is_empty(),
+        "Expected axioms from hasSelfNumericLexicalForm.ttl"
+    );
+    let has_self_restriction = axioms.iter().any(|ax| {
+        matches!(
+            ax,
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                _,
+                _,
+                ClassExpression::ObjectHasSelf(_)
+            ))
+        )
+    });
+    assert!(
+        has_self_restriction,
+        "Expected an ObjectHasSelf restriction from owl:hasSelf \"1\"^^xsd:boolean, got: {:?}",
+        axioms
     );
 }
