@@ -31,6 +31,11 @@ pub enum ReasoningError {
     /// A `RuleHead::Contradiction` rule fired. The `String` describes the
     /// triggering rule (its `Display` output).
     Contradiction(String),
+    /// A negative dependency edge sits on a cycle, so the program cannot be
+    /// stratified. The `String` describes a rule on the offending cycle
+    /// (its `Display` output). Previously this crashed the whole process via
+    /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    NotStratifiable(String),
 }
 
 impl fmt::Display for ReasoningError {
@@ -38,6 +43,13 @@ impl fmt::Display for ReasoningError {
         match self {
             ReasoningError::Contradiction(rule) => {
                 write!(f, "Contradiction during reasoning: {rule}")
+            }
+            ReasoningError::NotStratifiable(rule) => {
+                write!(
+                    f,
+                    "Datalog program has a cycle with negation — not stratifiable! \
+                     Cycle includes rule: {rule}"
+                )
             }
         }
     }
@@ -352,7 +364,7 @@ impl DatalogProgram {
 /// may contain a partially-materialised closure in that case.
 pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) -> Result<(), ReasoningError> {
     let stratifier = RulePartitioner::new(rules);
-    let stratification = stratifier.order_rules();
+    let stratification = stratifier.order_rules()?;
     for partition in stratification {
         let mut program = DatalogProgram::new(partition);
         program.materialise_seminaive(datastore)?;

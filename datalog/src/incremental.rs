@@ -52,7 +52,7 @@ impl IncrementalReasoner {
     /// store and should discard/reset it rather than reuse a half-built reasoner.
     pub fn new(rules: Vec<Rule>, base: &mut Datastore) -> Result<Self, ReasoningError> {
         let stratifier = RulePartitioner::new(rules);
-        let strata = stratifier.order_rules();
+        let strata = stratifier.order_rules()?;
         let mut programs: Vec<DatalogProgram> =
             strata.into_iter().map(DatalogProgram::new).collect();
         for program in &mut programs {
@@ -796,6 +796,7 @@ mod tests {
         match result {
             Err(ReasoningError::Contradiction(_)) => {}
             Ok(_) => panic!("expected a Contradiction error, got Ok"),
+            Err(other) => panic!("expected a Contradiction error, got {other:?}"),
         }
     }
 
@@ -863,6 +864,7 @@ mod tests {
         match result {
             Err(ReasoningError::Contradiction(_)) => {}
             Ok(_) => panic!("expected a Contradiction error, got Ok"),
+            Err(other) => panic!("expected a Contradiction error, got {other:?}"),
         }
 
         // Recover: retract the offending insert and rebuild the closure.
@@ -1001,6 +1003,7 @@ mod tests {
         match result {
             Err(ReasoningError::Contradiction(_)) => {}
             Ok(_) => panic!("expected a Contradiction error, got Ok"),
+            Err(other) => panic!("expected a Contradiction error, got {other:?}"),
         }
 
         // Recover: retract the offending insert, then rebuild.

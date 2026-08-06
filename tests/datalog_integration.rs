@@ -363,7 +363,7 @@ ex:c a ex:person .
 
     // Verify stratification: the unrelated rule (negates IDB) must be in a later stratum.
     let partitioner = datalog::RulePartitioner::new(rules.clone());
-    let strata = partitioner.order_rules();
+    let strata = partitioner.order_rules().unwrap();
     assert!(
         strata.len() >= 2,
         "should produce ≥2 strata (ancestor strata then unrelated stratum), got {}",
@@ -411,6 +411,39 @@ ex:c a ex:person .
         )),
         "a IS an ancestor of c via b (recursive rule) → must NOT be unrelated; got: {:?}",
         pairs
+    );
+}
+
+/// A mutual-negation cycle (`A(x) :- NOT B(x).` / `B(x) :- NOT A(x).`) is not
+/// stratifiable. `datalog::evaluate_rules` — the real entry point a `.datalog`
+/// file load goes through, e.g. for `--rules`/`--serve` — must return
+/// `Err(ReasoningError::NotStratifiable)` cleanly instead of panicking and
+/// crashing the whole process. See
+/// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+#[test]
+fn mutual_negation_cycle_returns_err_not_panic() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:a[?x] :- NOT ex:b[?x] .
+ex:b[?x] :- NOT ex:a[?x] .
+"#;
+    let data = r#"
+@prefix ex: <http://example.org/> .
+ex:foo a ex:Thing .
+"#;
+    let mut ds = Datastore::new(1_000);
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+
+    let result = datalog::evaluate_rules(rules, &mut ds);
+
+    assert!(
+        matches!(
+            result,
+            Err(datalog::reasoner::ReasoningError::NotStratifiable(_))
+        ),
+        "mutual-negation cycle should return Err(NotStratifiable), not panic; got {:?}",
+        result
     );
 }
 
@@ -1131,10 +1164,12 @@ ex:c ex:parent  ex:b .
 }
 
 /// A program where a depends negatively on b and b depends negatively on a
-/// forms a negative cycle and cannot be stratified. The engine must panic.
+/// forms a negative cycle and cannot be stratified. The engine used to
+/// `panic!` on this (crashing the whole `--serve` process); it now returns
+/// `Err(ReasoningError::NotStratifiable)` instead — see
+/// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
 #[test]
-#[should_panic(expected = "not stratifiable")]
-fn non_stratifiable_negative_cycle_panics() {
+fn non_stratifiable_negative_cycle_returns_err() {
     let src = r#"
 prefix ex: <http://example.org/>
 ex:a[?x] :- ex:person[?x], NOT ex:b[?x] .
@@ -1144,7 +1179,15 @@ ex:b[?x] :- ex:person[?x], NOT ex:a[?x] .
     let data = "@prefix ex: <http://example.org/> . ex:alice a ex:person .";
     turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
-    datalog::evaluate_rules(rules, &mut ds).unwrap();
+    let result = datalog::evaluate_rules(rules, &mut ds);
+    assert!(
+        matches!(
+            result,
+            Err(datalog::reasoner::ReasoningError::NotStratifiable(_))
+        ),
+        "non-stratifiable negative cycle should return Err(NotStratifiable), not panic; got {:?}",
+        result
+    );
 }
 
 // ── RDF literal args in rule atoms (#388) ─────────────────────────────────────
