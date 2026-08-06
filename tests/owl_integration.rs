@@ -313,7 +313,7 @@ fn duplicate_rules_are_deduplicated() {
 
     // The stratifier deduplicates: unique(rules) should be 1
     let partitioner = datalog::stratifier::RulePartitioner::new(rules);
-    let ordered = partitioner.order_rules();
+    let ordered = partitioner.order_rules().unwrap();
     let total_unique: usize = ordered.iter().map(|stratum| stratum.len()).sum();
     assert_eq!(
         total_unique, 1,

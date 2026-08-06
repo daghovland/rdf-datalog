@@ -13,6 +13,7 @@ Contact: hovlanddag@gmail.com
 //! Based on chapters on negation in Abiteboul, Hull, Vianu: "Foundations of
 //! Databases" (1995) and the rule-level variant from Motik et al.
 
+use crate::reasoner::ReasoningError;
 use crate::types::{Rule, RuleAtom, RuleHead};
 use crate::unification::{PatternEdge, depending_rules};
 use std::collections::{HashMap, VecDeque};
@@ -174,7 +175,11 @@ impl RulePartitioner {
 
     /// Find a cycle through rules that still have predecessors and return
     /// those indices so the caller can break the cycle (for cyclic-but-positive rules).
-    fn find_cycle(&self) -> Option<Vec<usize>> {
+    ///
+    /// Returns `Err(ReasoningError::NotStratifiable)` if a negative dependency
+    /// edge is found on a cycle — see
+    /// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    fn find_cycle(&self) -> Result<Option<Vec<usize>>, ReasoningError> {
         let candidates: Vec<usize> = (0..self.rules.len())
             .filter(|&i| !self.ordered[i].output && self.ordered[i].num_predecessors > 0)
             .collect();
@@ -184,16 +189,24 @@ impl RulePartitioner {
             let mut visited = vec![false; self.rules.len()];
             let _stack = [start];
             let mut path = Vec::new();
-            if self.dfs_cycle(start, &mut visited, &mut path) {
-                return Some(path);
+            if self.dfs_cycle(start, &mut visited, &mut path)? {
+                return Ok(Some(path));
             }
         }
-        None
+        Ok(None)
     }
 
-    fn dfs_cycle(&self, idx: usize, visited: &mut Vec<bool>, path: &mut Vec<usize>) -> bool {
+    /// Returns `Err(ReasoningError::NotStratifiable)` instead of panicking
+    /// when a negative dependency edge is found on a cycle — see
+    /// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    fn dfs_cycle(
+        &self,
+        idx: usize,
+        visited: &mut Vec<bool>,
+        path: &mut Vec<usize>,
+    ) -> Result<bool, ReasoningError> {
         if visited[idx] {
-            return path.contains(&idx);
+            return Ok(path.contains(&idx));
         }
         visited[idx] = true;
         path.push(idx);
@@ -203,24 +216,28 @@ impl RulePartitioner {
                 && !self.ordered[dep_idx].output
             {
                 if matches!(edge, PatternEdge::NegativePatternEdge(_)) {
-                    log::error!(
+                    let message = format!(
                         "Datalog program has a cycle with negation — not stratifiable! \
                          Cycle includes rule: {}",
                         self.rules[idx]
                     );
-                    panic!("Datalog program has a cycle with negation and is not stratifiable!");
+                    log::error!("{message}");
+                    return Err(ReasoningError::NotStratifiable(format!(
+                        "{}",
+                        self.rules[idx]
+                    )));
                 }
-                if self.dfs_cycle(dep_idx, visited, path) {
-                    return true;
+                if self.dfs_cycle(dep_idx, visited, path)? {
+                    return Ok(true);
                 }
             }
         }
         path.pop();
-        false
+        Ok(false)
     }
 
-    fn handle_cycle(&mut self) {
-        if let Some(cycle) = self.find_cycle() {
+    fn handle_cycle(&mut self) -> Result<(), ReasoningError> {
+        if let Some(cycle) = self.find_cycle()? {
             for idx in cycle {
                 if !self.ordered[idx].output {
                     self.ordered[idx].output = true;
@@ -228,24 +245,29 @@ impl RulePartitioner {
                 }
             }
         }
+        Ok(())
     }
 
     /// Return the stratified sequence of rule partitions. Each partition must
     /// be fully materialised before the next one can start.
-    pub fn order_rules(mut self) -> Vec<Vec<Rule>> {
+    ///
+    /// Returns `Err(ReasoningError::NotStratifiable)` if the program has a
+    /// dependency cycle through a negative edge, instead of panicking — see
+    /// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    pub fn order_rules(mut self) -> Result<Vec<Vec<Rule>>, ReasoningError> {
         // Pure-positive programs need no stratification — one stratum is always correct.
         if self.pure_positive {
-            return if self.rules.is_empty() {
+            return Ok(if self.rules.is_empty() {
                 vec![]
             } else {
                 vec![self.rules]
-            };
+            });
         }
 
         let mut stratification = Vec::new();
 
         if self.ready_queue.is_empty() {
-            self.handle_cycle();
+            self.handle_cycle()?;
         }
 
         while !self.ready_queue.is_empty() {
@@ -253,10 +275,93 @@ impl RulePartitioner {
             stratification.push(partition);
             self.reset_stratification();
             if self.ready_queue.is_empty() && !self.topological_sort_finished() {
-                self.handle_cycle();
+                self.handle_cycle()?;
             }
         }
 
-        stratification
+        Ok(stratification)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, QuadPattern, Term};
+
+    const G: u32 = DEFAULT_GRAPH_ELEMENT_ID;
+    // Distinct fixed resource ids standing in for the predicates `a`/`b`.
+    const PRED_A: u32 = 100;
+    const PRED_B: u32 = 101;
+
+    fn pattern(predicate_id: u32) -> QuadPattern {
+        QuadPattern {
+            graph: Term::Resource(G),
+            subject: Term::Variable("x".to_string()),
+            predicate: Term::Resource(predicate_id),
+            object: Term::Resource(G),
+        }
+    }
+
+    /// `A(x) :- NOT B(x).` / `B(x) :- NOT A(x).` — a mutual-negation cycle.
+    /// This must not be stratifiable: whichever rule fires first flips the
+    /// other's negated premise.
+    #[test]
+    fn order_rules_returns_err_on_negation_cycle() {
+        let rule_a = Rule {
+            head: RuleHead::NormalHead(pattern(PRED_A)),
+            body: vec![RuleAtom::NotPattern(pattern(PRED_B))],
+        };
+        let rule_b = Rule {
+            head: RuleHead::NormalHead(pattern(PRED_B)),
+            body: vec![RuleAtom::NotPattern(pattern(PRED_A))],
+        };
+
+        let partitioner = RulePartitioner::new(vec![rule_a, rule_b]);
+        let result = partitioner.order_rules();
+
+        assert!(
+            matches!(
+                result,
+                Err(crate::reasoner::ReasoningError::NotStratifiable(_))
+            ),
+            "mutual-negation cycle must return Err(NotStratifiable), got {:?}",
+            result
+        );
+    }
+
+    /// `A(x) :- B(x).` / `C(x) :- NOT A(x).` — negation is used, but there is
+    /// no cycle through it (A only depends positively on B; C negates A from
+    /// a strictly later stratum). Must still succeed.
+    #[test]
+    fn order_rules_still_succeeds_on_stratifiable_program() {
+        const PRED_C: u32 = 102;
+        let rule_a = Rule {
+            head: RuleHead::NormalHead(pattern(PRED_A)),
+            body: vec![RuleAtom::PositivePattern(pattern(PRED_B))],
+        };
+        let rule_c = Rule {
+            head: RuleHead::NormalHead(pattern(PRED_C)),
+            body: vec![RuleAtom::NotPattern(pattern(PRED_A))],
+        };
+
+        let partitioner = RulePartitioner::new(vec![rule_a.clone(), rule_c.clone()]);
+        let strata = partitioner
+            .order_rules()
+            .expect("stratifiable program should not error");
+
+        assert_eq!(
+            strata.len(),
+            2,
+            "expected 2 strata (A's stratum, then C's), got {}",
+            strata.len()
+        );
+        assert!(
+            strata[0].contains(&rule_a),
+            "first stratum should contain rule A"
+        );
+        assert!(
+            strata.last().unwrap().contains(&rule_c),
+            "last stratum should contain rule C"
+        );
     }
 }

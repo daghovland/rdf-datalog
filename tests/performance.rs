@@ -230,7 +230,7 @@ fn gene_ontology_memory_profile() {
     // Phase 4: stratification
     let t3 = Instant::now();
     let stratifier = RulePartitioner::new(rules);
-    let stratification = stratifier.order_rules();
+    let stratification = stratifier.order_rules().unwrap();
     let strata_count = stratification.len();
     let rss4 = rss_mb();
     report("Stratification", t3.elapsed().as_millis());
@@ -728,7 +728,7 @@ fn gene_ontology_materialise_progress() {
     let rule_count = rules.len();
 
     let stratifier = RulePartitioner::new(rules);
-    let stratification = stratifier.order_rules();
+    let stratification = stratifier.order_rules().unwrap();
 
     let mut programs: Vec<DatalogProgram> = stratification
         .into_iter()
