@@ -21,5 +21,5 @@ use owl_ontology::ClassAxiom;
 /// Translate an OWL 2 class axiom into datalog rules via the ELI pathway.
 /// Returns `None` if the axiom is not ELI-expressible.
 pub fn owl2datalog(resources: &mut GraphElementManager, axiom: &ClassAxiom) -> Option<Vec<Rule>> {
-    eli_axiom_extractor(axiom).map(|formulas| generate_tbox_rl(resources, formulas))
+    eli_axiom_extractor(axiom).and_then(|formulas| generate_tbox_rl(resources, formulas))
 }

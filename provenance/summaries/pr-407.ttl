@@ -1,0 +1,43 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after this session verified and completed the
+# sub-agent's work: the sub-agent implemented the fix and tests, then got
+# interrupted (spend limit) while waiting on its own background
+# `cargo test --workspace` run, leaving everything uncommitted in the
+# worktree. This session independently re-verified: found the worktree's
+# branch point predated PR #400 (merged in the meantime), which meant the
+# shared CARGO_TARGET_DIR served a stale test binary referencing a test
+# fixture file (added by #400) that didn't exist on disk in this worktree,
+# producing a spurious failure unrelated to this PR's actual change --
+# resolved by rebasing cleanly onto current main (this PR only touches the
+# eli crate, so no conflicts) rather than debugging a phantom bug. Re-ran
+# fmt/clippy/full workspace test on top of the rebase, all green, before
+# committing, pushing, opening the PR, and writing this summary. Deliberately
+# no bl:closesIssue: #363 stays open for the remaining clusters.
+
+ghpull:407 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "eli: skip (not panic) on unimplemented property-chain/inverse constructs (#363)" ;
+    bl:number 407 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr407 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:363 ;
+    prov:startedAtTime "2026-08-06T16:00:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T17:03:28Z"^^xsd:dateTime .
+
+session:pr407Summary a agp:TranscriptSummary ;
+    agp:summaryText "Third cluster from issue #363's panic-catalogue: eli/src/eli2rl.rs's get_obj_prop_pattern and get_obj_value_pattern panicked on legal-but-unimplemented OWL 2 constructs -- object property chains inside an existential (owl:someValuesFrom) or inside owl:hasValue, and inverse properties inside owl:hasValue -- crashing the whole --serve process when a legitimate (if uncommon) ontology using these constructs was loaded. Investigation before writing anything found eli::owl2datalog already returns Option<Vec<Rule>> for the pre-existing 'axiom is not ELI-expressible' case, and its one caller, owl2rl2datalog::owl2datalog, already treats a None as 'this axiom contributes zero rules' via .unwrap_or_default() rather than an error -- so the natural, minimal-diff fix was to treat 'legal syntax not yet implemented' identically: thread Option through the whole translation call chain (get_obj_prop_pattern -> get_obj_value_pattern -> translate_eli -> the normalized-rule builder functions -> generate_axiom_rl -> generate_tbox_rl -> owl2datalog, changing owl2datalog's outer .map to .and_then to flatten the now-nested Option), logging a warning and skipping just the affected axiom instead of panicking. This kept the fix scoped entirely to the eli crate -- no changes needed in owl2rl2datalog or the main crate, since the skip signal already propagated correctly once eli::owl2datalog could return None for this new reason too. Verification independently caught an unrelated-looking but explainable failure: the worktree's branch point (bc4dfdd) predated PR #400's merge, so rdf_owl_translator/tests/data/hasSelfNumericLexicalForm.ttl (added by #400) didn't exist on disk here, yet the shared CARGO_TARGET_DIR served a test binary that referenced it -- a stale-artifact false failure, not a real regression from this PR's change (this PR touches only eli/, not rdf_owl_translator). Resolved by rebasing cleanly onto current main (no conflicts, since the two PRs touch disjoint crates) rather than chasing a phantom bug, then re-ran the full fmt/clippy/cargo test --workspace gate on top of the rebase: all green, zero regressions." ;
+    agp:reasoningFor ghpull:407 ;
+    prov:wasGeneratedBy session:pr407 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
