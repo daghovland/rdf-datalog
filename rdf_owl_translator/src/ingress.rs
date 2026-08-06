@@ -249,9 +249,9 @@ pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
             RdfLiteral::BooleanLiteral(b) => Some(*b),
             RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_BOOLEAN => {
                 match literal.as_str() {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    other => panic!("Invalid xsd:boolean value: {}", other),
+                    "true" | "1" => Some(true),
+                    "false" | "0" => Some(false),
+                    _ => None,
                 }
             }
             _ => None,
@@ -305,4 +305,45 @@ pub fn topological_sort(
         panic!("Cycle detected in OWL class expression dependency graph");
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn typed_bool_literal(lexical: &str) -> GraphElement {
+        GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+            type_iri: IriReference(XSD_BOOLEAN.to_string()),
+            literal: lexical.to_string(),
+        })
+    }
+
+    #[test]
+    fn try_get_bool_literal_accepts_true_false() {
+        assert_eq!(
+            try_get_bool_literal(&typed_bool_literal("true")),
+            Some(true)
+        );
+        assert_eq!(
+            try_get_bool_literal(&typed_bool_literal("false")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn try_get_bool_literal_accepts_xsd_lexical_1_and_0() {
+        assert_eq!(try_get_bool_literal(&typed_bool_literal("1")), Some(true));
+        assert_eq!(try_get_bool_literal(&typed_bool_literal("0")), Some(false));
+    }
+
+    #[test]
+    fn try_get_bool_literal_returns_none_for_invalid_lexical_form() {
+        assert_eq!(try_get_bool_literal(&typed_bool_literal("yes")), None);
+    }
+
+    #[test]
+    fn try_get_bool_literal_returns_none_for_non_boolean_literal() {
+        let gel = GraphElement::GraphLiteral(RdfLiteral::LiteralString("hello".to_string()));
+        assert_eq!(try_get_bool_literal(&gel), None);
+    }
 }

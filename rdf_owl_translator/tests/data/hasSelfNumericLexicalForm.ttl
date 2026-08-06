@@ -1,0 +1,15 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix : <http://example.org/> .
+
+# owl:hasSelf with the XSD-legal-but-non-canonical lexical form "1" (rather
+# than "true"). Regression coverage for #363: try_get_bool_literal must not
+# panic on this and must resolve the restriction to ObjectHasSelf, not fall
+# back to owl:Thing.
+:Narcissist rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :likes ;
+    owl:hasSelf "1"^^xsd:boolean
+] .
