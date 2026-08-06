@@ -1146,3 +1146,143 @@ ex:b[?x] :- ex:person[?x], NOT ex:a[?x] .
     let rules = datalog_parser::parse(src, &mut ds).unwrap();
     datalog::evaluate_rules(rules, &mut ds).unwrap();
 }
+
+// ── RDF literal args in rule atoms (#388) ─────────────────────────────────────
+//
+// Issue: https://github.com/daghovland/rdf-datalog/issues/388 — a quoted
+// string literal (with optional @lang/^^datatype suffix) in rule-atom
+// argument position used to be a hard parse error. These tests reproduce the
+// issue's exact repro shape (a literal in `rdfs:label[?internal, "P4712"]`)
+// in both the 3-arg bracket-triple form and the predicate-first form, in
+// both a rule body and a rule head, plus a full parse+reason+query
+// end-to-end test proving the literal actually participates in matching
+// (not just that parsing succeeds).
+
+#[test]
+fn parse_literal_in_bracket_triple_body() {
+    // [?internal, rdfs:label, "P4712"] as a body atom (3-arg bracket form).
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:match[?internal] :- [?internal, rdfs:label, "P4712"] .
+"#;
+    let mut ds = ds();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+    assert_eq!(rules[0].body.len(), 1);
+    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0]
+        && let dag_rdf::Term::Resource(id) = &pat.object
+    {
+        let el = ds.resources.get_graph_element(*id);
+        assert!(
+            matches!(el, GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) if s == "P4712"),
+            "body object should be the literal \"P4712\", got {:?}",
+            el
+        );
+    } else {
+        panic!("expected PositivePattern with a Resource object");
+    }
+}
+
+#[test]
+fn parse_literal_in_predicate_first_body() {
+    // rdfs:label[?internal, "P4712"] as a body atom (predicate-first 2-arg form).
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:match[?internal] :- rdfs:label[?internal, "P4712"] .
+"#;
+    let mut ds = ds();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+    assert_eq!(rules[0].body.len(), 1);
+    if let RuleAtom::PositivePattern(ref pat) = rules[0].body[0]
+        && let dag_rdf::Term::Resource(id) = &pat.object
+    {
+        let el = ds.resources.get_graph_element(*id);
+        assert!(
+            matches!(el, GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) if s == "P4712"),
+            "body object should be the literal \"P4712\", got {:?}",
+            el
+        );
+    } else {
+        panic!("expected PositivePattern with a Resource object");
+    }
+}
+
+#[test]
+fn parse_literal_in_rule_head() {
+    // A literal in head *object* position: ex:hasLabel[?x, "constant"].
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:hasLabel[?x, "constant"] :- ex:thing[?x] .
+"#;
+    let mut ds = ds();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+    if let RuleHead::NormalHead(ref pat) = rules[0].head
+        && let dag_rdf::Term::Resource(id) = &pat.object
+    {
+        let el = ds.resources.get_graph_element(*id);
+        assert!(
+            matches!(el, GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) if s == "constant"),
+            "head object should be the literal \"constant\", got {:?}",
+            el
+        );
+    } else {
+        panic!("expected NormalHead with a Resource object");
+    }
+}
+
+/// End-to-end: parse a rule shaped like the issue's exact repro — a literal
+/// match chained through a shared variable with two more body atoms — load
+/// data with several `rdfs:label`-tagged nodes, evaluate, and query. Only
+/// the node whose label matches the literal constant should be derived.
+#[test]
+fn parsed_literal_rule_end_to_end() {
+    let ttl = r#"
+@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:internal1 rdfs:label "P4712" .
+ex:internal1 ex:connectedTo ex:nodeA .
+ex:nodeA a ex:PipingOrEquipment .
+
+ex:internal2 rdfs:label "OTHER" .
+ex:internal2 ex:connectedTo ex:nodeB .
+ex:nodeB a ex:PipingOrEquipment .
+"#;
+    let mut ds = Datastore::new(10_000);
+    turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+
+    let src = r#"
+prefix ex: <http://example.org/>
+prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+ex:connectedEquipment[?node] :-
+    rdfs:label[?internal, "P4712"],
+    ex:connectedTo[?internal, ?node],
+    ex:PipingOrEquipment[?node] .
+"#;
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+    assert_eq!(rules.len(), 1, "should parse 1 rule");
+
+    datalog::evaluate_rules(rules, &mut ds).unwrap();
+
+    let sparql =
+        "PREFIX ex: <http://example.org/> SELECT ?x WHERE { ?x a ex:connectedEquipment . }";
+    let result = run_sparql_query(&ds, sparql).unwrap();
+    let matches: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|r| r.get("x"))
+        .map(graph_element_display)
+        .collect();
+
+    assert!(
+        matches.contains(&"<http://example.org/nodeA>".to_string()),
+        "nodeA (via internal1, label P4712) should be derived; got: {:?}",
+        matches
+    );
+    assert!(
+        !matches.contains(&"<http://example.org/nodeB>".to_string()),
+        "nodeB (via internal2, label OTHER) should NOT be derived; got: {:?}",
+        matches
+    );
+}
