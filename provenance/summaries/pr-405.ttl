@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after this session verified and completed the
+# sub-agent's work: the sub-agent implemented the fix, tests, and quality
+# gate, then got interrupted (spend limit) while waiting on its own
+# background `cargo test --workspace` run, leaving everything uncommitted in
+# the worktree. This session independently re-verified with a forced rebuild
+# (touch + fmt/clippy/full workspace test, all green, zero regressions)
+# before committing, pushing, opening the PR, and writing this summary.
+# Deliberately no bl:closesIssue: #363 stays open for the remaining clusters.
+
+ghpull:405 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: return Err instead of panicking on non-stratifiable negation cycles (#363)" ;
+    bl:number 405 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr405 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:363 ;
+    prov:startedAtTime "2026-08-06T16:00:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T16:59:31Z"^^xsd:dateTime .
+
+session:pr405Summary a agp:TranscriptSummary ;
+    agp:summaryText "Second cluster from issue #363's panic-on-malformed-input catalogue: RulePartitioner::dfs_cycle (datalog/src/stratifier.rs) panicked with a 'not stratifiable!' message whenever a negative dependency edge sat on a cycle, instead of returning an error -- crashing the whole --serve process at rule-load time on a mutually-negating .datalog file (e.g. A(x) :- NOT B(x). / B(x) :- NOT A(x).). Rather than inventing a new error type, this fix extends datalog::reasoner::ReasoningError, which issue #301 had already introduced for exactly this class of problem (a prior panic on genuine logical contradiction, converted to Err(ReasoningError::Contradiction)) -- both of order_rules's two production callers (evaluate_rules and IncrementalReasoner::new) already returned Result<_, ReasoningError> and already propagated other ReasoningError variants via ?, so adding a NotStratifiable(String) variant and threading Result through order_rules's private helper chain (find_cycle, handle_cycle, dfs_cycle) meant the two call sites only needed a one-character change each (order_rules() -> order_rules()?). Test call sites in tests/datalog_integration.rs, tests/owl_integration.rs and tests/performance.rs that call order_rules() directly were updated to .unwrap() -- correct there since those all build known-stratifiable rule sets, so no behavioral change, just a type-signature follow-through. Verification: unit tests for both the negation-cycle case (now Err, previously panicked) and a stratifiable negation-using program (still Ok with correct strata, regression check), plus an integration test through datalog::evaluate_rules -- the real top-level entry point a rules-file load goes through -- proving the error surfaces cleanly rather than aborting the process. Full cargo fmt/clippy/test --workspace re-run independently after finding the work uncommitted in the worktree (the implementing sub-agent had finished the code and was waiting on its own background test run when it was interrupted); all green, zero regressions across the whole workspace." ;
+    agp:reasoningFor ghpull:405 ;
+    prov:wasGeneratedBy session:pr405 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
