@@ -330,6 +330,29 @@ fn translate_object_map_with_parent_triples_map_yields_join_plan() {
     );
 }
 
+#[test]
+fn translate_dangling_parent_triples_map_returns_mapping_parse_error() {
+    // rml:parentTriplesMap references a TriplesMap id that is not present
+    // anywhere in the mapping document — malformed-but-parseable input that
+    // must surface as a Result::Err, not crash the process. See
+    // https://github.com/daghovland/rdf-datalog/issues/363.
+    let tm = triples_map_with_join(
+        "http://example.com/NoSuchTriplesMap",
+        vec![JoinConditionRef {
+            child: "Sport".to_string(),
+            parent: "ID".to_string(),
+        }],
+    );
+    let doc = MappingDocument {
+        triples_maps: vec![tm],
+    };
+    let err = translate(&doc).expect_err("dangling parentTriplesMap must not panic");
+    assert!(
+        matches!(err, rml::RmlError::MappingParse(_)),
+        "expected RmlError::MappingParse, got {err:?}"
+    );
+}
+
 fn find_join(plans: &[LogicalPlan]) -> &rml::plan::LogicalJoin {
     plans
         .iter()

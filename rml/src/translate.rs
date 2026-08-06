@@ -128,9 +128,11 @@ fn translate_triples_map(
             for obj_map in &pom.object_maps {
                 let (input, obj_logic) = match &obj_map.parent_triples_map {
                     Some(parent_id) => {
-                        let parent_tm = parent_by_id.get(parent_id).unwrap_or_else(|| {
-                            panic!("unknown rml:parentTriplesMap {parent_id:?}")
-                        });
+                        let parent_tm = parent_by_id.get(parent_id).ok_or_else(|| {
+                            RmlError::MappingParse(format!(
+                                "unknown rml:parentTriplesMap {parent_id:?}"
+                            ))
+                        })?;
                         let conditions: Vec<JoinCondition> = obj_map
                             .join_conditions
                             .iter()
