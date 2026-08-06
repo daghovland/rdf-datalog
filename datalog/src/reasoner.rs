@@ -20,12 +20,14 @@ use std::fmt;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-/// Error produced while materialising a Datalog program.
+/// Error produced while building or materialising a Datalog program.
 ///
-/// Currently the only variant: a genuine, correctly-derived logical
-/// contradiction (a rule whose head is [`RuleHead::Contradiction`] had its
-/// body satisfied). Previously this crashed the whole process via `panic!`;
-/// see [#301](https://github.com/daghovland/rdf-datalog/issues/301).
+/// Covers: a genuine, correctly-derived logical contradiction (a rule whose
+/// head is [`RuleHead::Contradiction`] had its body satisfied, see
+/// [#301](https://github.com/daghovland/rdf-datalog/issues/301)); a program
+/// that cannot be stratified; and a rule that is unsafe (head variable not
+/// bound in its body). All previously crashed the whole process via
+/// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReasoningError {
     /// A `RuleHead::Contradiction` rule fired. The `String` describes the
@@ -36,6 +38,11 @@ pub enum ReasoningError {
     /// (its `Display` output). Previously this crashed the whole process via
     /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
     NotStratifiable(String),
+    /// A rule's head references a variable not bound by any body atom. The
+    /// `String` describes the unsafe variables and the offending rule (its
+    /// `Display` output). Previously this crashed the whole process via
+    /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    UnsafeRule(String),
 }
 
 impl fmt::Display for ReasoningError {
@@ -50,6 +57,9 @@ impl fmt::Display for ReasoningError {
                     "Datalog program has a cycle with negation — not stratifiable! \
                      Cycle includes rule: {rule}"
                 )
+            }
+            ReasoningError::UnsafeRule(msg) => {
+                write!(f, "Unsafe Datalog rule: {msg}")
             }
         }
     }
@@ -75,9 +85,14 @@ pub struct DatalogProgram {
 }
 
 impl DatalogProgram {
-    pub fn new(rules: Vec<Rule>) -> Self {
+    /// Builds a `DatalogProgram` from `rules`.
+    ///
+    /// Returns `Err(ReasoningError::UnsafeRule)` if any rule's head
+    /// references a variable not bound in its body, instead of panicking —
+    /// see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    pub fn new(rules: Vec<Rule>) -> Result<Self, ReasoningError> {
         for r in &rules {
-            is_safe_rule(r); // panics on unsafe rule
+            is_safe_rule(r)?;
         }
         // Single-pass build: one entry per body atom, using the canonical (exact)
         // wildcard pattern.  Sub-wildcard expansion happens on the FACT side in
@@ -97,16 +112,21 @@ impl DatalogProgram {
                 }
             }
         }
-        DatalogProgram {
+        Ok(DatalogProgram {
             rules,
             rule_map,
             derived_from: DerivedFromIndex::new(),
             materialise_calls: 0,
-        }
+        })
     }
 
-    pub fn add_rule(&mut self, rule: Rule) {
-        is_safe_rule(&rule);
+    /// Adds a single `rule` to this program.
+    ///
+    /// Returns `Err(ReasoningError::UnsafeRule)` if `rule`'s head
+    /// references a variable not bound in its body, instead of panicking —
+    /// see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    pub fn add_rule(&mut self, rule: Rule) -> Result<(), ReasoningError> {
+        is_safe_rule(&rule)?;
         let rule_id = self.rules.len(); // will be the new index after push
         for atom in &rule.body {
             if let RuleAtom::PositivePattern(p) = atom {
@@ -119,6 +139,7 @@ impl DatalogProgram {
             }
         }
         self.rules.push(rule);
+        Ok(())
     }
 
     fn get_rules_for_fact(&self, fact: &dag_rdf::Quad) -> Vec<crate::types::PartialRuleMatch> {
@@ -366,7 +387,7 @@ pub fn evaluate_rules(rules: Vec<Rule>, datastore: &mut Datastore) -> Result<(),
     let stratifier = RulePartitioner::new(rules);
     let stratification = stratifier.order_rules()?;
     for partition in stratification {
-        let mut program = DatalogProgram::new(partition);
+        let mut program = DatalogProgram::new(partition)?;
         program.materialise_seminaive(datastore)?;
     }
     Ok(())
@@ -452,7 +473,7 @@ mod tests {
             ],
         };
 
-        let mut program = DatalogProgram::new(vec![rule]);
+        let mut program = DatalogProgram::new(vec![rule]).unwrap();
         program.materialise_seminaive(&mut ds).unwrap();
 
         // The derived quad (a, p, c) should exist
@@ -523,7 +544,7 @@ mod tests {
         ds.named_graphs.add_quad(fact_ab);
 
         // No rules → program does nothing, index stays empty.
-        let mut program = DatalogProgram::new(vec![]);
+        let mut program = DatalogProgram::new(vec![]).unwrap();
         program.materialise_seminaive(&mut ds).unwrap();
 
         assert!(
@@ -575,7 +596,7 @@ mod tests {
             ],
         };
 
-        let mut program = DatalogProgram::new(vec![rule]);
+        let mut program = DatalogProgram::new(vec![rule]).unwrap();
         program.materialise_seminaive(&mut ds).unwrap();
 
         let derived_ac = Quad {
@@ -679,7 +700,7 @@ mod tests {
             })],
         };
 
-        let mut program = DatalogProgram::new(vec![rule_transit, rule_alias]);
+        let mut program = DatalogProgram::new(vec![rule_transit, rule_alias]).unwrap();
         program.materialise_seminaive(&mut ds).unwrap();
 
         let derived_ac = Quad {
@@ -725,7 +746,7 @@ mod tests {
             })],
         };
 
-        let mut program = DatalogProgram::new(vec![contradiction_rule]);
+        let mut program = DatalogProgram::new(vec![contradiction_rule]).unwrap();
         let result = program.materialise_seminaive(&mut ds);
 
         assert!(
@@ -763,5 +784,70 @@ mod tests {
             matches!(result, Err(ReasoningError::Contradiction(_))),
             "expected a Contradiction error, got {result:?}"
         );
+    }
+
+    /// `is_safe_rule` must return `Err(ReasoningError::UnsafeRule)` — not
+    /// panic — for a rule whose head references a variable not bound in its
+    /// body. See [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    #[test]
+    fn test_is_safe_rule_rejects_unbound_head_variable() {
+        let (_ds, g, _a, p, _b, _c) = setup_abpc_store();
+
+        // Head uses ?y, which never appears in the body.
+        let unsafe_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("x".to_string()),
+            })],
+        };
+
+        let result = crate::datalog::is_safe_rule(&unsafe_rule);
+        assert!(
+            matches!(result, Err(ReasoningError::UnsafeRule(_))),
+            "expected an UnsafeRule error, got {result:?}"
+        );
+
+        // DatalogProgram::new must propagate the same error rather than panic.
+        let result = DatalogProgram::new(vec![unsafe_rule]);
+        match &result {
+            Err(ReasoningError::UnsafeRule(_)) => {}
+            Ok(_) => panic!("expected DatalogProgram::new to return an UnsafeRule error, got Ok"),
+            Err(other) => {
+                panic!("expected DatalogProgram::new to return an UnsafeRule error, got {other:?}")
+            }
+        }
+    }
+
+    /// Regression: a normal safe rule (every head variable bound in the
+    /// body) still returns `Ok(())`/builds successfully.
+    #[test]
+    fn test_is_safe_rule_accepts_safe_rule() {
+        let (_ds, g, _a, p, _b, _c) = setup_abpc_store();
+
+        let safe_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        assert_eq!(crate::datalog::is_safe_rule(&safe_rule), Ok(()));
+        assert!(DatalogProgram::new(vec![safe_rule]).is_ok());
     }
 }

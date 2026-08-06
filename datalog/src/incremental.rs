@@ -53,8 +53,10 @@ impl IncrementalReasoner {
     pub fn new(rules: Vec<Rule>, base: &mut Datastore) -> Result<Self, ReasoningError> {
         let stratifier = RulePartitioner::new(rules);
         let strata = stratifier.order_rules()?;
-        let mut programs: Vec<DatalogProgram> =
-            strata.into_iter().map(DatalogProgram::new).collect();
+        let mut programs: Vec<DatalogProgram> = strata
+            .into_iter()
+            .map(DatalogProgram::new)
+            .collect::<Result<Vec<_>, _>>()?;
         for program in &mut programs {
             program.materialise_seminaive(base)?;
         }
