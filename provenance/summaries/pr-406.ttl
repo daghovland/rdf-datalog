@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening the PR, in the same
+# session that did the work (CLAUDE.md step 6b). This PR fixes only the
+# rml/src/translate.rs cluster of #363's panic!()-on-malformed-input sites
+# (rml:parentTriplesMap referencing a nonexistent TriplesMap id); #363
+# catalogues several independent clusters across other crates (some already
+# merged, e.g. PR #400 for xsd:boolean lexical forms) and stays open, so it
+# is referenced via prov:used rather than bl:closesIssue. Timestamps below
+# are real (from `git log main..HEAD` on branch fix/363-rml-dangling-parent).
+
+ghpull:406 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rml: return RmlError instead of panicking on dangling parentTriplesMap (#363)" ;
+    bl:number 406 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr406 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:363 ;
+    prov:startedAtTime "2026-08-06T17:03:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T17:03:36Z"^^xsd:dateTime .
+
+session:pr406Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #363 catalogues panic!()-on-malformed-input sites across several crates; this PR takes the rml crate's cluster: translate_triples_map in rml/src/translate.rs panicked (panic!(\"unknown rml:parentTriplesMap {parent_id:?}\")) via a HashMap::get().unwrap_or_else() when an object map's rml:parentTriplesMap referenced a TriplesMap id absent from the mapping document -- a malformed-but-syntactically-valid .rml.ttl file that would crash the whole --serve process. A pre-existing plan doc (docs/plans/RML_DANGLING_PARENT_363_PLAN.md, copied from main into this worktree per its own instructions) had already scoped the fix as trivial: translate_triples_map already returns Result<(), RmlError> and already uses ? throughout for every other fallible step in the same function, and RmlError already has a MappingParse(String) variant used elsewhere in the crate (loader.rs, engine.rs) for exactly this class of structural mapping-document problem. No design alternatives were weighed -- reusing an existing, precedented error variant via .ok_or_else(...)? was strictly better than introducing a new RmlError variant or threading a different error type, and matched the function's existing style. Followed the repo's TDD workflow: found rml/tests/plan_tests.rs already had a fixture pair (triples_map_with_join/sport_parent_triples_map) built for the valid-parent-join case, reused it verbatim with a dangling parent id and only the child TriplesMap in the mapping document, ran the new test first to confirm it genuinely panicked (not just failed an assertion), then made the minimal source change and reran to confirm both the new test and all 19 pre-existing plan_tests (including the valid-join regression tests) pass. Full workspace cargo fmt/clippy/test (including doctests) all passed cleanly." ;
+    agp:reasoningFor ghpull:406 ;
+    prov:wasGeneratedBy session:pr406 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
