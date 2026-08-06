@@ -62,9 +62,15 @@ impl From<String> for UpdateError {
 pub enum UpdateOp {
     InsertData {
         content: String,
+        /// Prefixes in scope at this point in the request (from `PREFIX`
+        /// declarations in the request's own prologue). See
+        /// [#392](https://github.com/daghovland/rdf-datalog/issues/392).
+        prefixes: HashMap<String, String>,
     },
     DeleteData {
         content: String,
+        /// Prefixes in scope at this point in the request; see `InsertData`.
+        prefixes: HashMap<String, String>,
     },
     ClearDefault,
     ClearNamed,
@@ -91,6 +97,8 @@ pub enum UpdateOp {
     InsertWhere {
         template: String,
         pattern: String,
+        /// Prefixes in scope at this point in the request; see `InsertData`.
+        prefixes: HashMap<String, String>,
     },
     /// `DELETE { template } WHERE { pattern }`.
     ///
@@ -98,6 +106,8 @@ pub enum UpdateOp {
     DeleteWhere {
         template: String,
         pattern: String,
+        /// Prefixes in scope at this point in the request; see `InsertData`.
+        prefixes: HashMap<String, String>,
     },
     /// `DELETE { delete_template } INSERT { insert_template } WHERE { pattern }`.
     ///
@@ -106,6 +116,8 @@ pub enum UpdateOp {
         delete_template: String,
         insert_template: String,
         pattern: String,
+        /// Prefixes in scope at this point in the request; see `InsertData`.
+        prefixes: HashMap<String, String>,
     },
 }
 
@@ -121,21 +133,38 @@ fn skip_ws(s: &str) -> &str {
     s
 }
 
-/// Skip SPARQL Update prologue declarations (BASE and PREFIX) that may appear
-/// before the first operation or between `;`-separated operations.
-fn skip_prologue(s: &str) -> &str {
+/// Parse SPARQL Update prologue declarations (`BASE` and `PREFIX`) that may
+/// appear before the first operation or between `;`-separated operations.
+///
+/// Returns the captured `(prefix_name, iri)` pairs — in declaration order, so
+/// a later declaration of the same name in the same call shadows an earlier
+/// one when folded into a running map by the caller — alongside the
+/// remaining, unconsumed text. `BASE` declarations are recognised (so they
+/// don't trip the "expected ';'" catch-all in `parse_update`) but not
+/// otherwise acted upon; see [#392](https://github.com/daghovland/rdf-datalog/issues/392),
+/// which is scoped to `PREFIX` resolution.
+fn skip_prologue(s: &str) -> (Vec<(String, String)>, &str) {
     let mut rest = skip_ws(s);
+    let mut prefixes = Vec::new();
     loop {
         if let Some(r) = kw(rest, "PREFIX") {
-            // Skip: PREFIX prefix: <iri>
+            // PREFIX prefix: <iri>
             let r = skip_ws(r);
-            if let Some(gt) = r.find('>') {
-                rest = skip_ws(&r[gt + 1..]);
+            let colon = match r.find(':') {
+                Some(i) => i,
+                None => break,
+            };
+            let name = r[..colon].trim().to_string();
+            let after_colon = skip_ws(&r[colon + 1..]);
+            if let Some((iri, after_iri)) = take_iri(after_colon) {
+                prefixes.push((name, iri));
+                rest = skip_ws(after_iri);
             } else {
                 break;
             }
         } else if let Some(r) = kw(rest, "BASE") {
-            // Skip: BASE <iri>
+            // BASE <iri> — recognised but not otherwise acted upon (out of
+            // scope for #392).
             let r = skip_ws(r);
             if let Some(gt) = r.find('>') {
                 rest = skip_ws(&r[gt + 1..]);
@@ -146,7 +175,7 @@ fn skip_prologue(s: &str) -> &str {
             break;
         }
     }
-    rest
+    (prefixes, rest)
 }
 
 /// Parse a graph reference: either `<iri>` or a prefixed name (`prefix:local`).
@@ -346,7 +375,10 @@ fn take_braced(s: &str) -> Option<(String, &str)> {
     Some((s[..end].to_string(), &s[end + 1..]))
 }
 
-fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
+fn parse_one<'a>(
+    s: &'a str,
+    prefixes: &HashMap<String, String>,
+) -> Result<(UpdateOp, &'a str), String> {
     let s = skip_ws(s);
     if s.is_empty() {
         return Err("empty input".to_string());
@@ -384,12 +416,25 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
             if content_has_variable(&content) {
                 return Err("variables are not allowed in INSERT DATA".to_string());
             }
-            return Ok((UpdateOp::InsertData { content }, rest));
+            return Ok((
+                UpdateOp::InsertData {
+                    content,
+                    prefixes: prefixes.clone(),
+                },
+                rest,
+            ));
         }
         let (template, rest) = take_braced(rest).ok_or("expected { } after INSERT")?;
         let rest = kw(rest, "WHERE").ok_or("expected WHERE after INSERT { ... }")?;
         let (pattern, rest) = take_braced(rest).ok_or("expected { } after WHERE")?;
-        return Ok((UpdateOp::InsertWhere { template, pattern }, rest));
+        return Ok((
+            UpdateOp::InsertWhere {
+                template,
+                pattern,
+                prefixes: prefixes.clone(),
+            },
+            rest,
+        ));
     }
 
     // DELETE DATA { ... }  |  DELETE WHERE { pattern }  (short form)
@@ -404,7 +449,13 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
             if content_has_bnode_label(&content) {
                 return Err("blank nodes are not allowed in DELETE DATA".to_string());
             }
-            return Ok((UpdateOp::DeleteData { content }, rest));
+            return Ok((
+                UpdateOp::DeleteData {
+                    content,
+                    prefixes: prefixes.clone(),
+                },
+                rest,
+            ));
         }
         // DELETE WHERE { ... } — short form with no explicit template
         if let Some(where_rest) = kw(rest, "WHERE") {
@@ -417,6 +468,7 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
                 UpdateOp::DeleteWhere {
                     template: pattern.clone(),
                     pattern,
+                    prefixes: prefixes.clone(),
                 },
                 rest,
             ));
@@ -435,6 +487,7 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
                     delete_template,
                     insert_template,
                     pattern,
+                    prefixes: prefixes.clone(),
                 },
                 rest,
             ));
@@ -445,6 +498,7 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
             UpdateOp::DeleteWhere {
                 template: delete_template,
                 pattern,
+                prefixes: prefixes.clone(),
             },
             rest,
         ));
@@ -487,14 +541,17 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
                 delete_template: d,
                 insert_template: i,
                 pattern,
+                prefixes: prefixes.clone(),
             },
             (Some(d), None) => UpdateOp::DeleteWhere {
                 template: d,
                 pattern,
+                prefixes: prefixes.clone(),
             },
             (None, Some(i)) => UpdateOp::InsertWhere {
                 template: i,
                 pattern,
+                prefixes: prefixes.clone(),
             },
             (None, None) => {
                 return Err("expected DELETE or INSERT clause after WITH <iri>".to_string());
@@ -557,18 +614,29 @@ fn parse_one(s: &str) -> Result<(UpdateOp, &str), String> {
 
 pub fn parse_update(input: &str) -> Result<Vec<UpdateOp>, String> {
     let mut ops = Vec::new();
+    // Prefixes declared in the request's prologue apply to the whole request
+    // (SPARQL 1.1 Update, §29 grammar's `Prologue` production may recur
+    // before each `;`-separated operation, but declarations remain in scope
+    // for the rest of the request — a later declaration of the same name
+    // shadows an earlier one for subsequent operations). Accumulate across
+    // the whole call rather than resetting between operations.
+    // See [#392](https://github.com/daghovland/rdf-datalog/issues/392).
+    let mut prefixes: HashMap<String, String> = HashMap::new();
     // Skip optional prologue (PREFIX / BASE declarations) before first operation.
-    let mut rest = skip_prologue(input);
+    let (decls, mut rest) = skip_prologue(input);
+    prefixes.extend(decls);
     loop {
         if rest.is_empty() {
             break;
         }
-        let (op, tail) = parse_one(rest)?;
+        let (op, tail) = parse_one(rest, &prefixes)?;
         ops.push(op);
         rest = skip_ws(tail);
         if let Some(tail) = rest.strip_prefix(';') {
             // After `;`, skip any prologue before the next operation (or trailing `;`).
-            rest = skip_prologue(tail);
+            let (decls, tail) = skip_prologue(tail);
+            prefixes.extend(decls);
+            rest = tail;
             if rest.is_empty() {
                 break;
             }
@@ -616,6 +684,11 @@ pub enum PreparedOp {
         delete_template: Option<String>,
         insert_template: Option<String>,
         pattern: String,
+        /// Prefixes declared in the request's own `PREFIX` prologue, seeded
+        /// into the synthetic `SELECT * WHERE { ... }` used to evaluate the
+        /// pattern and templates. See
+        /// [#392](https://github.com/daghovland/rdf-datalog/issues/392).
+        prefixes: HashMap<String, String>,
     },
     /// `LOAD [SILENT] <url> [INTO GRAPH <graph>]` — remote fetch required.
     ///
@@ -645,8 +718,8 @@ pub fn prepare_update(
 
     for op in ops {
         match op {
-            UpdateOp::InsertData { content } => {
-                let tmp = parse_turtle_content(&content)?;
+            UpdateOp::InsertData { content, prefixes } => {
+                let tmp = parse_turtle_content(&content, &prefixes)?;
                 for q in tmp
                     .named_graphs
                     .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
@@ -661,8 +734,8 @@ pub fn prepare_update(
                 }
                 prepared.push(PreparedOp::InsertData(tmp));
             }
-            UpdateOp::DeleteData { content } => {
-                let tmp = parse_turtle_content(&content)?;
+            UpdateOp::DeleteData { content, prefixes } => {
+                let tmp = parse_turtle_content(&content, &prefixes)?;
                 for q in tmp
                     .named_graphs
                     .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
@@ -732,32 +805,44 @@ pub fn prepare_update(
                     silent,
                 });
             }
-            UpdateOp::InsertWhere { template, pattern } => {
+            UpdateOp::InsertWhere {
+                template,
+                pattern,
+                prefixes,
+            } => {
                 // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: None,
                     insert_template: Some(template),
                     pattern,
+                    prefixes,
                 });
             }
-            UpdateOp::DeleteWhere { template, pattern } => {
+            UpdateOp::DeleteWhere {
+                template,
+                pattern,
+                prefixes,
+            } => {
                 // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: Some(template),
                     insert_template: None,
                     pattern,
+                    prefixes,
                 });
             }
             UpdateOp::DeleteInsertWhere {
                 delete_template,
                 insert_template,
                 pattern,
+                prefixes,
             } => {
                 // Not yet logged for persistence.
                 prepared.push(PreparedOp::PatternUpdate {
                     delete_template: Some(delete_template),
                     insert_template: Some(insert_template),
                     pattern,
+                    prefixes,
                 });
             }
         }
@@ -928,6 +1013,7 @@ pub fn apply_prepared_update_with_options(
                 delete_template,
                 insert_template,
                 pattern,
+                prefixes,
             } => {
                 // Build a view of the store with the pending delta applied so
                 // that the WHERE clause sees inserts/deletes from earlier ops
@@ -941,19 +1027,19 @@ pub fn apply_prepared_update_with_options(
                 }
 
                 // Evaluate WHERE against the view to get solution bindings.
-                let rows = eval_where_pattern(&view, &pattern)?;
+                let rows = eval_where_pattern(&view, &pattern, &prefixes)?;
 
                 // Materialise DELETE and INSERT templates from the bindings.
                 let to_delete = match delete_template.as_deref() {
                     Some(template) => {
-                        let triples = parse_template(template)?;
+                        let triples = parse_template(template, &prefixes)?;
                         materialise_template(&triples, &rows)
                     }
                     None => Vec::new(),
                 };
                 let to_insert = match insert_template.as_deref() {
                     Some(template) => {
-                        let triples = parse_template(template)?;
+                        let triples = parse_template(template, &prefixes)?;
                         materialise_template(&triples, &rows)
                     }
                     None => Vec::new(),
@@ -1080,10 +1166,20 @@ pub fn apply_prepared_update_with_options(
 
 /// Parse `pattern` as the WHERE clause of a `SELECT * WHERE { pattern }`
 /// query and execute it against `store`, returning the solution rows.
-fn eval_where_pattern(store: &Datastore, pattern: &str) -> Result<Vec<SolutionRow>, String> {
+///
+/// `prefixes` seeds the parser's [`ParserContext`] so that prefixed names
+/// declared in the update request's own `PREFIX` prologue resolve here too
+/// (see [#392](https://github.com/daghovland/rdf-datalog/issues/392)) —
+/// without it, every prefixed name in the pattern would fail to resolve,
+/// since the synthetic query text itself carries no `PREFIX` declarations.
+fn eval_where_pattern(
+    store: &Datastore,
+    pattern: &str,
+    prefixes: &HashMap<String, String>,
+) -> Result<Vec<SolutionRow>, String> {
     let query_text = format!("SELECT * WHERE {{ {pattern} }}");
     let mut ctx = ParserContext {
-        prefixes: HashMap::new(),
+        prefixes: prefixes.clone(),
         base: None,
     };
     let (_, query) = parse_query(&query_text, &mut ctx)
@@ -1101,10 +1197,16 @@ fn eval_where_pattern(store: &Datastore, pattern: &str) -> Result<Vec<SolutionRo
 
 /// Parse a DELETE/INSERT template as a bare Basic Graph Pattern and return
 /// its triple patterns, by wrapping it the same way as a WHERE clause.
-fn parse_template(template: &str) -> Result<Vec<TriplePattern>, String> {
+///
+/// `prefixes` seeds the parser's [`ParserContext`]; see
+/// [`eval_where_pattern`]'s doc comment.
+fn parse_template(
+    template: &str,
+    prefixes: &HashMap<String, String>,
+) -> Result<Vec<TriplePattern>, String> {
     let query_text = format!("SELECT * WHERE {{ {template} }}");
     let mut ctx = ParserContext {
-        prefixes: HashMap::new(),
+        prefixes: prefixes.clone(),
         base: None,
     };
     let (_, query) =
@@ -1448,9 +1550,26 @@ fn ensure_trailing_dot(content: &str) -> String {
     }
 }
 
-fn parse_turtle_content(content: &str) -> Result<Datastore, String> {
+/// Parse `content` (the body of an `INSERT DATA`/`DELETE DATA` block) as
+/// Turtle, seeded with `prefixes` captured from the update request's own
+/// `PREFIX` prologue.
+///
+/// `turtle::parse_turtle` only understands Turtle's own `@prefix p: <iri> .`
+/// directive syntax (trailing dot), not SPARQL's `PREFIX p: <iri>` (no dot),
+/// and has no API to pre-seed a prefix map — so each declared prefix is
+/// synthesized as an `@prefix` line and prepended to the content before
+/// parsing. See [#392](https://github.com/daghovland/rdf-datalog/issues/392).
+fn parse_turtle_content(
+    content: &str,
+    prefixes: &HashMap<String, String>,
+) -> Result<Datastore, String> {
     let mut tmp = Datastore::new(64);
-    let body = ensure_trailing_dot(content);
+    let mut body = String::new();
+    for (name, iri) in prefixes {
+        use std::fmt::Write as _;
+        let _ = writeln!(body, "@prefix {name}: <{iri}> .");
+    }
+    body.push_str(&ensure_trailing_dot(content));
     turtle::parse_turtle(&mut tmp, body.as_bytes())
         .map(|_| tmp)
         .map_err(|e| format!("parse error: {e}"))
@@ -1841,6 +1960,74 @@ mod tests {
                 .unwrap();
         assert_eq!(ops.len(), 1);
         assert!(matches!(ops[0], UpdateOp::InsertData { .. }));
+    }
+
+    // ── #392: prologue PREFIX capture ─────────────────────────────────────────
+
+    #[test]
+    fn skip_prologue_captures_declared_prefix() {
+        let (decls, rest) = skip_prologue("PREFIX ex: <http://example.com/ns/> INSERT DATA { }");
+        assert_eq!(
+            decls,
+            vec![("ex".to_string(), "http://example.com/ns/".to_string())]
+        );
+        assert_eq!(rest, "INSERT DATA { }");
+    }
+
+    #[test]
+    fn skip_prologue_captures_multiple_prefixes_and_base() {
+        let (decls, rest) = skip_prologue(
+            "BASE <http://example.com/> PREFIX a: <http://a.example/> PREFIX b: <http://b.example/> INSERT DATA { }",
+        );
+        assert_eq!(
+            decls,
+            vec![
+                ("a".to_string(), "http://a.example/".to_string()),
+                ("b".to_string(), "http://b.example/".to_string()),
+            ]
+        );
+        assert_eq!(rest, "INSERT DATA { }");
+    }
+
+    #[test]
+    fn parse_update_attaches_prefix_to_insert_data() {
+        let ops = parse_update(
+            r#"PREFIX ex: <http://example.com/ns/> INSERT DATA { <urn:x> a ex:Thing . }"#,
+        )
+        .unwrap();
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            UpdateOp::InsertData { prefixes, .. } => {
+                assert_eq!(
+                    prefixes.get("ex").map(String::as_str),
+                    Some("http://example.com/ns/")
+                );
+            }
+            other => panic!("expected InsertData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_update_carries_prefix_forward_across_ops() {
+        let ops = parse_update(
+            r#"PREFIX ex: <http://example.com/ns/>
+               INSERT DATA { <urn:a> a ex:Thing . } ;
+               INSERT DATA { <urn:b> a ex:Thing . }"#,
+        )
+        .unwrap();
+        assert_eq!(ops.len(), 2);
+        for op in &ops {
+            match op {
+                UpdateOp::InsertData { prefixes, .. } => {
+                    assert_eq!(
+                        prefixes.get("ex").map(String::as_str),
+                        Some("http://example.com/ns/"),
+                        "ex: prefix from the first op's prologue must carry forward"
+                    );
+                }
+                other => panic!("expected InsertData, got {other:?}"),
+            }
+        }
     }
 
     #[test]
