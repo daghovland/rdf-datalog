@@ -1796,6 +1796,31 @@ pub fn parse_filter_expression(
     }
 }
 
+/// Parse an RDF literal constant from `input`: a quoted string (any of the
+/// four SPARQL string-literal quote forms) with an optional `@lang` tag or
+/// `^^datatype` suffix, a numeric literal, or a boolean literal (`true`/
+/// `false`). Returns `(bytes_consumed, literal)`.
+///
+/// Used by `datalog_parser` to parse RDF literal constants in Datalog
+/// rule-atom argument position (see issue #388), reusing this crate's
+/// existing literal grammar rather than duplicating the quote-escaping/
+/// lang-tag/datatype-suffix logic. The `ctx` carries prefix mappings for
+/// prefixed-name datatype IRIs (e.g. `^^xsd:integer`).
+pub fn parse_rdf_literal_term(
+    input: &str,
+    ctx: &ParserContext,
+) -> Result<(usize, RdfLiteral), String> {
+    let result = nom::branch::alt((
+        parse_string_literal(ctx),
+        parse_numeric_literal,
+        parse_boolean_literal,
+    ))(input);
+    match result {
+        Ok((rest, lit)) => Ok((input.len() - rest.len(), lit)),
+        Err(e) => Err(format!("{e:?}")),
+    }
+}
+
 fn parse_expression<'a>(
     ctx: &'a ParserContext,
 ) -> impl Fn(&'a str) -> IResult<&'a str, Expression> + 'a {

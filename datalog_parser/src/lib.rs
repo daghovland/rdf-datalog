@@ -50,7 +50,9 @@ Contact: hovlanddag@gmail.com
 //!
 //! `rdf:`, `rdfs:`, `xsd:`, and `owl:` are pre-declared.
 
-use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, IriReference, QuadPattern, RdfResource, Term};
+use dag_rdf::{
+    DEFAULT_GRAPH_ELEMENT_ID, Datastore, IriReference, QuadPattern, RdfLiteral, RdfResource, Term,
+};
 use datalog::types::{Rule, RuleAtom, RuleHead};
 use nom::{
     IResult,
@@ -70,6 +72,14 @@ const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 enum ParsedTerm {
     Variable(String),
     Iri(String),
+    /// An RDF literal constant (quoted string, optionally `@lang`- or
+    /// `^^datatype`-tagged) in term position. See issue #388. Boxed:
+    /// `RdfLiteral` carries large variants (`BigInt`, etc.), and this enum
+    /// sits inside `ParsedQuadPattern`'s four term fields, which in turn
+    /// sits inside `ParsedRuleHead::NormalHead` alongside a zero-size
+    /// `Contradiction` variant — clippy's `large_enum_variant` flags the
+    /// resulting size gap without the indirection.
+    Literal(Box<RdfLiteral>),
 }
 
 #[derive(Debug, Clone)]
@@ -377,6 +387,17 @@ fn parse_term<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, Parse
     if let Ok(r) = parse_numeric_id_term(input) {
         return Ok(r);
     }
+    // RDF literal constant (quoted string, optionally @lang/^^datatype
+    // tagged): see issue #388. Tried before parse_iri since a literal always
+    // starts with `"`, `'`, `+`/`-`/a digit, or `true`/`false`, none of which
+    // can start a bare/prefixed IRI term in this grammar.
+    if let Ok((rest, lit)) = {
+        let sparql_ctx = ctx.to_sparql_context();
+        sparql_parser::parse_rdf_literal_term(input, &sparql_ctx)
+            .map(|(consumed, lit)| (&input[consumed..], lit))
+    } {
+        return Ok((rest, ParsedTerm::Literal(Box::new(lit))));
+    }
     let (rest, iri) = parse_iri(input, ctx)?;
     Ok((rest, ParsedTerm::Iri(iri)))
 }
@@ -634,6 +655,7 @@ fn intern_term(term: ParsedTerm, ds: &mut Datastore) -> Result<Term, String> {
         ParsedTerm::Iri(iri) => {
             Term::Resource(ds.add_node_resource(RdfResource::Iri(IriReference(iri))))
         }
+        ParsedTerm::Literal(lit) => Term::Resource(ds.add_literal_resource(*lit)),
     })
 }
 
@@ -722,6 +744,54 @@ mod tests {
         // ':- ' should NOT be parsed as a prefixed IRI
         let ctx = ParserContext::default();
         assert!(parse_term(":- something", &ctx).is_err());
+    }
+
+    // ── Literal term tests (#388) ─────────────────────────────────────────────
+
+    #[test]
+    fn plain_string_literal_term() {
+        let ctx = ParserContext::default();
+        let (rest, t) = parse_term(r#""P4712" rest"#, &ctx).unwrap();
+        assert_eq!(rest, " rest");
+        assert!(
+            matches!(&t, ParsedTerm::Literal(lit) if matches!(lit.as_ref(), RdfLiteral::LiteralString(s) if s == "P4712")),
+            "expected LiteralString(\"P4712\"), got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn lang_tagged_literal_term() {
+        let ctx = ParserContext::default();
+        let (_, t) = parse_term(r#""hello"@en"#, &ctx).unwrap();
+        assert!(
+            matches!(&t, ParsedTerm::Literal(lit) if matches!(lit.as_ref(), RdfLiteral::LangLiteral { lang, literal }
+                if lang == "en" && literal == "hello")),
+            "expected LangLiteral(hello@en), got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn typed_literal_term() {
+        let ctx = ctx_with("xsd", "http://www.w3.org/2001/XMLSchema#");
+        let (_, t) = parse_term(r#""42"^^xsd:integer"#, &ctx).unwrap();
+        assert!(
+            matches!(&t, ParsedTerm::Literal(lit) if matches!(lit.as_ref(), RdfLiteral::TypedLiteral { type_iri, literal }
+                if literal == "42" && type_iri.0 == "http://www.w3.org/2001/XMLSchema#integer")),
+            "expected TypedLiteral(42^^xsd:integer), got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn numeric_id_term_unaffected_by_literal_parsing() {
+        // Regression guard: `_123` must still parse via parse_numeric_id_term,
+        // not be swallowed by the new literal-term branch.
+        let ctx = ParserContext::default();
+        let (rest, t) = parse_term("_123 rest", &ctx).unwrap();
+        assert_eq!(rest, " rest");
+        assert!(matches!(t, ParsedTerm::Iri(s) if s == "urn:x-dag-id:123"));
     }
 
     // ── Atom tests ────────────────────────────────────────────────────────────

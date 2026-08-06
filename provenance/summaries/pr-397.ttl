@@ -1,0 +1,45 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after this session verified and completed
+# the sub-agent's work: the sub-agent implemented the fix, tests, and full
+# quality gate before parking itself waiting on a background build
+# notification. This session independently re-verified (forced rebuild per
+# the shared-CARGO_TARGET_DIR stale-binary hazard), found and fixed one real
+# clippy failure the sub-agent's own local run hadn't yet surfaced
+# (large_enum_variant, from the new literal variant enlarging a sibling
+# enum), then committed, pushed, and updated the PR body (the sub-agent had
+# already opened the PR early per workflow, but its body still described the
+# plan-only state).
+
+ghpull:397 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog_parser: allow RDF literal args in rule atoms" ;
+    bl:number 397 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:388 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr397 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:388 ;
+    prov:startedAtTime "2026-08-05T20:27:57Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T05:55:58Z"^^xsd:dateTime .
+
+session:pr397Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #388 (reported by an external evaluator, equinor/Dexpi2Imf, migrating real RDFox-dialect .datalog rule files) found that Datalog rule atoms only accepted variables, the `a` sugar, and IRIs as terms -- a literal like \"P4712\" in atom position was a hard parse error, forcing a more verbose FILTER-based workaround. Investigation before writing anything found ParsedTerm (datalog_parser::lib) had only Variable/Iri variants and parse_term never attempted a literal parse at all, but that sparql_parser already had a complete, battle-tested literal grammar (string/lang-tag/datatype-suffix/numeric/boolean) via parse_string_literal and friends -- reusing it directly, via one new small public function (parse_rdf_literal_term), avoided duplicating quote-escaping and suffix-parsing logic in a second crate. Checked parse_numeric_id_term (an existing, differently-named function that turns bare `_123`-style tokens into anonymous-individual IRIs, not RDF literals at all) to make sure the new literal branch, tried after it in parse_term, couldn't shadow or conflict with it -- confirmed via a dedicated regression test. Checked whether the datalog engine layer needed any change at all: since every quad-pattern argument becomes an interned GraphElementId regardless of whether the underlying GraphElement is an IRI or a literal (the same interning path ordinary Turtle-ingested data already uses via add_literal_resource), the gap turned out to be parser-only, confirmed by wiring ParsedTerm::Literal straight into the existing intern_term match arm with no changes to datalog::types or the reasoner. Verification independently caught one thing the sub-agent's own local run had not yet surfaced: cargo clippy failed on large_enum_variant, since the new literal payload (RdfLiteral has large variants like BigInt) enlarged ParsedQuadPattern enough to trip the lint against ParsedRuleHead::Contradiction, a zero-size sibling variant reached through the same enum nesting -- fixed by boxing the literal (ParsedTerm::Literal(Box<RdfLiteral>)), the minimal-diff option compared to boxing the whole ParsedQuadPattern inside NormalHead as clippy's own suggestion proposed, since only three call sites needed updating for a boxed literal versus every ParsedQuadPattern consumer for a boxed pattern." ;
+    agp:reasoningFor ghpull:397 ;
+    agp:decisionPoint session:pr397BoxingDecision ;
+    prov:wasGeneratedBy session:pr397 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr397BoxingDecision a agp:Decision ;
+    agp:summaryText "Boxed the RdfLiteral payload inside ParsedTerm::Literal (ParsedTerm::Literal(Box<RdfLiteral>)) to resolve clippy's large_enum_variant lint, rather than boxing the whole ParsedQuadPattern inside ParsedRuleHead::NormalHead as clippy's own auto-suggestion proposed." ;
+    agp:alternative "Box ParsedQuadPattern inside ParsedRuleHead::NormalHead instead (clippy's suggested fix) -- rejected as the larger-diff option: it would have required touching every existing ParsedQuadPattern consumer of a rule head, whereas boxing only the new Literal variant's payload touched exactly the three sites this PR already introduced (construction, destructuring in intern_term, and the three test-assertion match patterns)." .
