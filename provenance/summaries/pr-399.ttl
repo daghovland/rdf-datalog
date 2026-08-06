@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written after this session verified and completed
+# the sub-agent's work: the sub-agent implemented the fix and was mid
+# quality-gate (just applying a clippy fix) when it hit an account-level
+# API spend limit and was terminated. This session found the finished,
+# uncommitted work in the worktree, independently reran fmt/clippy/tests,
+# committed, pushed, opened the PR, and wrote this summary.
+
+ghpull:399 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: resolve PREFIX prologue declarations in SPARQL Update" ;
+    bl:number 399 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:392 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr399 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:392 ;
+    prov:startedAtTime "2026-08-06T05:52:20Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T05:52:20Z"^^xsd:dateTime .
+
+session:pr399Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #392 (reported by an external evaluator, equinor/Dexpi2Imf) found SPARQL Update rejected any prefixed name, even ones declared in the same request's own PREFIX prologue -- inconsistent with SELECT, which handled the identical PREFIX style fine. Reading sparql_endpoint::sparql_update before writing anything located the exact cause: skip_prologue scanned past PREFIX/BASE declarations and discarded them outright, so by the time INSERT DATA/DELETE DATA's { ... } content reached turtle::parse_turtle, or a WHERE-form update's template/pattern reached the synthetic SELECT * WHERE {...} query, no prefix mapping existed anywhere -- Turtle's parser only understands its own @prefix p: <iri> . syntax (trailing dot) too, not SPARQL's PREFIX p: <iri> (no dot), so even preserving the raw declaration text wouldn't have been enough on its own. The fix changed skip_prologue to return captured (name, iri) pairs alongside the remaining text, threaded a HashMap<String,String> onto every UpdateOp variant (InsertData, DeleteData, InsertWhere, DeleteWhere, DeleteInsertWhere), and accumulated prefixes across the whole parse_update call rather than resetting between ;-separated operations -- SPARQL 1.1's own prologue grammar makes a prefix declared before one operation apply to every later operation in the same request, not just the next one, which the test suite explicitly exercises (parse_update_carries_prefix_forward_across_ops, and an HTTP-level equivalent). INSERT/DELETE DATA synthesizes matching @prefix lines and prepends them to the content before parsing (since turtle::parse_turtle has no API to pre-seed a prefix map); WHERE-form updates seed the prefixes directly into ParserContext instead, since those already build their own SELECT query text and ParserContext object internally." ;
+    agp:reasoningFor ghpull:399 ;
+    prov:wasGeneratedBy session:pr399 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
