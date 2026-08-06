@@ -1,0 +1,31 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Deliberately no bl:closesIssue: #363 stays open for the remaining
+# rdf_owl_translator/axiom_parser.rs cyclic-list panic cluster.
+
+ghpull:409 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: return Err instead of panicking on unsafe rules (#363)" ;
+    bl:number 409 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr409 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:363 ;
+    prov:startedAtTime "2026-08-06T20:15:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-06T21:15:00Z"^^xsd:dateTime .
+
+session:pr409Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fifth cluster from issue #363's panic-on-malformed-input catalogue: datalog::datalog::is_safe_rule panicked with 'Unsafe variables ... in rule: ...' whenever a rule's head referenced a variable not bound in any body atom, instead of returning an error -- crashing the whole --serve process at rule-load time on a --rules file containing a rule like ex:Foo[?x,?y] :- ex:Bar[?x] . This follows the exact pattern the just-merged PR #405 (stratifier negation-cycle panic) established for issue #301's ReasoningError enum: added a UnsafeRule(String) variant alongside the pre-existing Contradiction and NotStratifiable variants, with the same Display-impl style. is_safe_rule's signature changed from -> bool to -> Result<(), ReasoningError> (dropping the bool return entirely, since no caller ever inspected a false -- they only ever hit the panic or fell through the true case), and DatalogProgram::new/add_rule changed from returning Self/() to Result<Self, ReasoningError>/Result<(), ReasoningError>, propagating is_safe_rule's Result with ?. Call sites: evaluate_rules (already Result-returning, one-character ? added), IncrementalReasoner::new's strata.into_iter().map(DatalogProgram::new).collect() needed to become .collect::<Result<Vec<_>, _>>()? to flatten the now-fallible per-stratum construction, and known-safe test/benchmark call sites in datalog/src/reasoner.rs's test module and tests/performance.rs (two call sites, one direct push, one mapped) got .unwrap() -- no behavioral change, just following the new signature since all of them build known-safe rule sets. Deliberately left alone: apply_substitution_resource's panic (datalog/src/datalog.rs) was not converted to Result -- with is_safe_rule now enforced at every DatalogProgram construction/mutation boundary, no unsafe rule can ever reach apply_substitution_resource in production, so it is now a provably-unreachable defensive invariant check rather than a live DoS surface; threading Result through the entire hot substitution/materialisation path for zero remaining reachability was judged not worth the churn, so a doc comment explaining the invariant (linking back to this PR and #363) was added instead of touching the panic itself. Verification: unit tests in datalog/src/reasoner.rs for both the unsafe-rule case (now Err(UnsafeRule), confirmed it genuinely panicked before the fix) and a normal safe rule (regression check, still Ok(())/builds successfully), plus an integration test in tests/datalog_integration.rs (unsafe_rule_returns_err_not_panic) through datalog::evaluate_rules -- the real top-level entry point a .datalog file load goes through for --rules/--serve -- following the exact style of PR #405's mutual_negation_cycle_returns_err_not_panic test. Branch was confirmed up to date with origin/main (several #363-cluster PRs had merged rapidly the same session) before committing. cargo fmt --all -- --check, cargo clippy --workspace --all-targets -- -D warnings, and cargo test --workspace were all run to completion with genuinely fresh (non-stale-cached) results against the shared CARGO_TARGET_DIR -- all green, zero regressions across the whole workspace." ;
+    agp:reasoningFor ghpull:409 ;
+    prov:wasGeneratedBy session:pr409 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
