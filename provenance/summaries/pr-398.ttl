@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary. The sub-agent implemented the fix, tests, and full
+# quality gate independently, committed, pushed, and opened the PR itself
+# before the orchestrating session checked in — this session independently
+# re-verified with a forced rebuild (workspace-wide, ~40 test suites, all
+# green) given the change touches a function shared across every SPARQL
+# query form, then wrote this summary.
+
+ghpull:398 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: reject undeclared prefixes in queries (#389)" ;
+    bl:number 398 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:389 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr398 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:389 ;
+    prov:startedAtTime "2026-08-05T20:42:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-05T20:42:00Z"^^xsd:dateTime .
+
+session:pr398Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #389 (reported by an external evaluator, equinor/Dexpi2Imf) found SELECT/ASK queries with an undeclared prefix silently returned HTTP 200 with an empty result set instead of an error, inconsistent with SPARQL Update (which already rejects undeclared prefixes via turtle_parser). Root cause, confirmed by reading sparql_parser::parse_prefixed_name before changing anything: when a parsed prefix wasn't in ctx.prefixes, the function fell back to prefix.to_string() + \":\", silently fabricating a bizarre, never-matching IRI instead of failing -- so the query 'parsed' fine and simply matched nothing. Tracing callers confirmed parse_prefixed_name is the single shared parse point for every prefix:local occurrence in a query (triple-pattern terms, ^^-datatype IRIs on typed literals, VALUES constants), so fixing it there fixes all of them at once rather than needing per-call-site patches -- verified this empirically with dedicated tests for FILTER's ^^-datatype position and VALUES, not just triple patterns. Chose nom::Err::Failure over Err::Error for the undeclared-prefix case specifically: once the input has already matched the full prefix:local shape (past the keyword-prefix exclusions like FILTER/OPTIONAL/etc. tested earlier in the same function), there's no other plausible alt() branch worth falling back to, so Err::Failure short-circuits rather than letting alt() paper over the real problem with a different, more confusing downstream parse error. No sparql_endpoint change was needed: it already converts any parse_query Err into a 400 response, and confirmed the remaining-input slice in the error already starts at the offending prefixed name, so the response usefully names the culprit without extra plumbing. Audited existing tests across the workspace for any reliance on the old permissive fallback before finalizing -- found none, consistent with the full cargo test --workspace run passing with zero regressions (~40 test binaries)." ;
+    agp:reasoningFor ghpull:398 ;
+    prov:wasGeneratedBy session:pr398 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
