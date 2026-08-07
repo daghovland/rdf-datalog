@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! Parses anonymous OWL class expressions and restrictions from RDF triples.
 //! Mirrors `DagSemTools.RdfOwlTranslator.ClassExpressionParser`.
 
+use crate::error::TranslatorError;
 use crate::ingress::{
     WellKnownIds, get_rdf_list_elements, topological_sort, try_get_bool_literal,
     try_get_individual, try_get_non_negative_integer_literal,
@@ -41,7 +42,12 @@ pub struct OntologyDeclarations {
 
 impl OntologyDeclarations {
     /// Build initial declarations from the triple store.
-    pub fn build(datastore: &Datastore, ids: &WellKnownIds) -> Self {
+    ///
+    /// Returns `Err` if any `rdf:List` structure referenced by an anonymous
+    /// class expression or restriction (`owl:oneOf`, `owl:intersectionOf`,
+    /// `owl:unionOf`, `owl:onProperties`) is malformed. See
+    /// <https://github.com/daghovland/rdf-datalog/issues/363>.
+    pub fn build(datastore: &Datastore, ids: &WellKnownIds) -> Result<Self, TranslatorError> {
         let class_expressions = build_class_declarations(datastore, ids);
         let data_ranges = build_data_range_declarations(datastore, ids);
         let object_property_expressions = build_object_property_declarations(datastore, ids);
@@ -63,9 +69,9 @@ impl OntologyDeclarations {
         // Parse anonymous class expressions and restrictions in a single unified
         // topological sort so cross-type dependencies (e.g. an owl:Class node whose
         // member list contains owl:Restriction blank nodes) are resolved correctly.
-        parse_anonymous_exprs(datastore, ids, &mut decls);
+        parse_anonymous_exprs(datastore, ids, &mut decls)?;
 
-        decls
+        Ok(decls)
     }
 
     pub fn get_annotations(&self, id: GraphElementId) -> Vec<Annotation> {
@@ -454,7 +460,10 @@ fn is_anon_blank_node(datastore: &Datastore, id: GraphElementId) -> bool {
 /// list members, regardless of whether they appear in `class_expressions`
 /// yet — the unified topological sort handles ordering across both class
 /// expressions and restrictions.
-fn collect_anon_class_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<AnonExpr> {
+fn collect_anon_class_exprs(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+) -> Result<Vec<AnonExpr>, TranslatorError> {
     let anon_class_subjects: Vec<GraphElementId> = datastore
         .get_triples_with_object_predicate(ids.owl_class_id, ids.rdf_type_id)
         .filter_map(|tr| match datastore.resources.get_resource(tr.subject) {
@@ -513,7 +522,7 @@ fn collect_anon_class_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<An
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
                 obj_id,
-            );
+            )?;
             (
                 vec![],
                 Box::new(move |_decls: &OntologyDeclarations, res| {
@@ -530,7 +539,7 @@ fn collect_anon_class_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<An
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
                 obj_id,
-            );
+            )?;
             // Include ALL anonymous blank-node list members as predecessors.
             // Named resources and already-declared class expressions are not
             // in the node set so topological_sort will ignore them safely.
@@ -575,11 +584,14 @@ fn collect_anon_class_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<An
         });
     }
 
-    exprs
+    Ok(exprs)
 }
 
 /// Collect builders for anonymous `owl:Restriction` nodes.
-fn collect_anon_restriction_exprs(datastore: &Datastore, ids: &WellKnownIds) -> Vec<AnonExpr> {
+fn collect_anon_restriction_exprs(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+) -> Result<Vec<AnonExpr>, TranslatorError> {
     let restriction_subjects: Vec<GraphElementId> = datastore
         .get_triples_with_object_predicate(ids.owl_restriction_id, ids.rdf_type_id)
         .filter_map(|tr| match datastore.resources.get_resource(tr.subject) {
@@ -594,27 +606,28 @@ fn collect_anon_restriction_exprs(datastore: &Datastore, ids: &WellKnownIds) -> 
         })
         .collect();
 
-    restriction_subjects
-        .into_iter()
-        .filter_map(|subj| {
-            let triples: Vec<Triple> = datastore
-                .get_triples_with_subject(subj)
-                .filter(|tr| tr.predicate != ids.rdf_type_id)
-                .collect();
+    let mut result = Vec::with_capacity(restriction_subjects.len());
+    for subj in restriction_subjects {
+        let triples: Vec<Triple> = datastore
+            .get_triples_with_subject(subj)
+            .filter(|tr| tr.predicate != ids.rdf_type_id)
+            .collect();
 
-            let pred_iris: Vec<String> = triples
-                .iter()
-                .filter_map(|tr| {
-                    datastore
-                        .resources
-                        .get_named_resource(tr.predicate)
-                        .map(|iri| iri.0.clone())
-                })
-                .collect();
+        let pred_iris: Vec<String> = triples
+            .iter()
+            .filter_map(|tr| {
+                datastore
+                    .resources
+                    .get_named_resource(tr.predicate)
+                    .map(|iri| iri.0.clone())
+            })
+            .collect();
 
-            build_restriction(datastore, ids, subj, &triples, &pred_iris)
-        })
-        .collect()
+        if let Some(anon) = build_restriction(datastore, ids, subj, &triples, &pred_iris)? {
+            result.push(anon);
+        }
+    }
+    Ok(result)
 }
 
 /// Parse all anonymous class expressions and restrictions in one unified
@@ -625,9 +638,9 @@ fn parse_anonymous_exprs(
     datastore: &Datastore,
     ids: &WellKnownIds,
     decls: &mut OntologyDeclarations,
-) {
-    let mut all: Vec<AnonExpr> = collect_anon_class_exprs(datastore, ids);
-    all.extend(collect_anon_restriction_exprs(datastore, ids));
+) -> Result<(), TranslatorError> {
+    let mut all: Vec<AnonExpr> = collect_anon_class_exprs(datastore, ids)?;
+    all.extend(collect_anon_restriction_exprs(datastore, ids)?);
 
     // Deduplicate: a node that is both owl:Class and owl:Restriction typed
     // (unusual but defensive) should only appear once.
@@ -650,6 +663,8 @@ fn parse_anonymous_exprs(
             decls.class_expressions.insert(id, expr);
         }
     }
+
+    Ok(())
 }
 
 fn find_triple_obj(triples: &[Triple], predicate_id: GraphElementId) -> Option<GraphElementId> {
@@ -688,35 +703,55 @@ fn require_cardinality(
     result
 }
 
+/// Build an [`AnonExpr`] for an `owl:Restriction` blank node.
+///
+/// Returns `Err` only when the restriction's `owl:onProperties` list is a
+/// malformed `rdf:List` (see
+/// <https://github.com/daghovland/rdf-datalog/issues/363>); all other
+/// unresolvable-but-syntactically-fine shapes still fall back to `Ok(None)`
+/// with a `log::warn!`, unchanged from before.
 fn build_restriction(
     datastore: &Datastore,
     ids: &WellKnownIds,
     subj: GraphElementId,
     triples: &[Triple],
     pred_iris: &[String],
-) -> Option<AnonExpr> {
+) -> Result<Option<AnonExpr>, TranslatorError> {
     // Determine which kind of restriction this is based on predicates present
     let has = |iri: &str| pred_iris.iter().any(|s| s == iri);
 
     if has(OWL_ON_PROPERTIES) {
         // Data(All|Some)ValuesFrom with multiple properties
-        let on_props_id =
-            require_triple_obj(triples, ids.owl_on_properties_id, "owl:onProperties")?;
+        let Some(on_props_id) =
+            require_triple_obj(triples, ids.owl_on_properties_id, "owl:onProperties")
+        else {
+            return Ok(None);
+        };
         let list_items = get_rdf_list_elements(
             &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
             ids,
             on_props_id,
-        );
+        )?;
         let values_from_id = if has(OWL_ALL_VALUES_FROM) {
-            require_triple_obj(triples, ids.owl_all_values_from_id, "owl:allValuesFrom")?
+            let Some(v) =
+                require_triple_obj(triples, ids.owl_all_values_from_id, "owl:allValuesFrom")
+            else {
+                return Ok(None);
+            };
+            v
         } else if has(OWL_SOME_VALUES_FROM) {
-            require_triple_obj(triples, ids.owl_some_values_from_id, "owl:someValuesFrom")?
+            let Some(v) =
+                require_triple_obj(triples, ids.owl_some_values_from_id, "owl:someValuesFrom")
+            else {
+                return Ok(None);
+            };
+            v
         } else {
             log::warn!("owl:onProperties without allValuesFrom or someValuesFrom — skipping");
-            return None;
+            return Ok(None);
         };
         let use_all = has(OWL_ALL_VALUES_FROM);
-        Some(AnonExpr {
+        return Ok(Some(AnonExpr {
             id: subj,
             predecessors: vec![],
             builder: Box::new(move |decls: &OntologyDeclarations, res| {
@@ -731,8 +766,28 @@ fn build_restriction(
                     ClassExpression::DataSomeValuesFrom(props, dr)
                 }
             }),
-        })
-    } else if has(OWL_SOME_VALUES_FROM) {
+        }));
+    }
+
+    Ok(build_restriction_rest(
+        datastore, ids, subj, triples, pred_iris,
+    ))
+}
+
+/// The remaining `owl:Restriction` shapes, none of which touch an
+/// `rdf:List` and so cannot produce a [`TranslatorError`]. Split out of
+/// [`build_restriction`] purely to keep that function's fallible
+/// `owl:onProperties` branch small.
+fn build_restriction_rest(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+    subj: GraphElementId,
+    triples: &[Triple],
+    pred_iris: &[String],
+) -> Option<AnonExpr> {
+    let has = |iri: &str| pred_iris.iter().any(|s| s == iri);
+
+    if has(OWL_SOME_VALUES_FROM) {
         let y = require_triple_obj(triples, ids.owl_on_property_id, "owl:onProperty")?;
         let z = require_triple_obj(triples, ids.owl_some_values_from_id, "owl:someValuesFrom")?;
         let deps = if is_anon_blank_node(datastore, z) {

@@ -11,6 +11,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::axiom_parser::{axiom_structural_predicate_ids, extract_axiom};
 use crate::class_expression_parser::OntologyDeclarations;
+use crate::error::TranslatorError;
 use crate::ingress::WellKnownIds;
 use dag_rdf::IriReference;
 use dag_rdf::datastore::Datastore;
@@ -21,15 +22,22 @@ use std::collections::HashSet;
 /// Translate all RDF triples in `datastore` into an OWL 2 `OntologyDocument`.
 ///
 /// This is the main entry point, mirroring `Rdf2Owl.extractOntology`.
-pub fn rdf2owl(datastore: &mut Datastore) -> OntologyDocument {
+///
+/// Returns `Err` if the datastore contains a malformed `rdf:List` structure
+/// (a cycle, or a node with the wrong number of `rdf:first`/`rdf:rest`
+/// triples) anywhere it's referenced by OWL's RDF mapping
+/// (`owl:intersectionOf`, `owl:unionOf`, `owl:members`, property chains,
+/// etc.) instead of panicking. See
+/// <https://github.com/daghovland/rdf-datalog/issues/363>.
+pub fn rdf2owl(datastore: &mut Datastore) -> Result<OntologyDocument, TranslatorError> {
     let ids = WellKnownIds::new(&mut datastore.resources);
-    let decls = OntologyDeclarations::build(datastore, &ids);
+    let decls = OntologyDeclarations::build(datastore, &ids)?;
     let (ontology_version, imports) = extract_ontology_name(datastore, &ids);
-    let axioms = extract_axioms_indexed(datastore, &ids, &decls);
-    OntologyDocument::new(
+    let axioms = extract_axioms_indexed(datastore, &ids, &decls)?;
+    Ok(OntologyDocument::new(
         vec![],
         Ontology::new(imports, ontology_version, vec![], axioms),
-    )
+    ))
 }
 
 /// Extract all OWL axioms using the predicate index.
@@ -45,7 +53,7 @@ fn extract_axioms_indexed(
     datastore: &Datastore,
     ids: &WellKnownIds,
     decls: &OntologyDeclarations,
-) -> Vec<Axiom> {
+) -> Result<Vec<Axiom>, TranslatorError> {
     let mut pred_ids: HashSet<_> = axiom_structural_predicate_ids(ids).into_iter().collect();
     pred_ids.extend(decls.object_property_expressions.keys().copied());
     pred_ids.extend(decls.data_property_expressions.keys().copied());
@@ -53,12 +61,12 @@ fn extract_axioms_indexed(
     let mut axioms = Vec::new();
     for pred_id in pred_ids {
         for triple in datastore.get_triples_with_predicate(pred_id) {
-            if let Some(axiom) = extract_axiom(datastore, ids, decls, &triple) {
+            if let Some(axiom) = extract_axiom(datastore, ids, decls, &triple)? {
                 axioms.push(axiom);
             }
         }
     }
-    axioms
+    Ok(axioms)
 }
 
 fn extract_ontology_version_iri(

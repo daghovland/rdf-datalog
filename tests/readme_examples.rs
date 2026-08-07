@@ -120,7 +120,7 @@ fn readme_owl_same_as() {
     let mut ds = Datastore::new(100_000);
     load_file(&mut ds, &testdata("equality.owl")).expect("equality.owl must load");
 
-    let ontology = rdf2owl(&mut ds).ontology;
+    let ontology = rdf2owl(&mut ds).unwrap().ontology;
     let rules = owl2datalog(&mut ds.resources, &ontology);
     assert!(!rules.is_empty(), "OWL-RL should produce Datalog rules");
     evaluate_rules(rules, &mut ds).unwrap();

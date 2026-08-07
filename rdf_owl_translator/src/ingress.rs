@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! Shared helper types and functions.
 //! Mirrors `DagSemTools.RdfOwlTranslator.Ingress`.
 
+use crate::error::TranslatorError;
 use dag_rdf::ingress::Triple;
 use dag_rdf::{
     GraphElement, GraphElementId, GraphElementManager, IriReference, RdfLiteral, RdfResource,
@@ -159,11 +160,17 @@ impl WellKnownIds {
 }
 
 /// Traverse an RDF list and return its elements in order.
+///
+/// Returns [`TranslatorError::MalformedRdfList`] instead of panicking when
+/// the RDF encoding of the list is structurally invalid: a cycle (an
+/// `rdf:rest` chain that revisits a node), or a list node with != 1
+/// `rdf:first`/`rdf:rest` triples. See
+/// <https://github.com/daghovland/rdf-datalog/issues/363>.
 pub fn get_rdf_list_elements(
     triples: &dyn Fn(GraphElementId, GraphElementId) -> Vec<Triple>,
     ids: &WellKnownIds,
     list_id: GraphElementId,
-) -> Vec<GraphElementId> {
+) -> Result<Vec<GraphElementId>, TranslatorError> {
     let mut result = Vec::new();
     let mut current = list_id;
     let mut visited = Vec::new();
@@ -173,26 +180,40 @@ pub fn get_rdf_list_elements(
             break;
         }
         if visited.contains(&current) {
-            panic!("Cyclic RDF list");
+            return Err(TranslatorError::MalformedRdfList(format!(
+                "cyclic rdf:List at node {current}"
+            )));
         }
         visited.push(current);
 
         let first = triples(current, ids.rdf_first_id);
         let head = match first.as_slice() {
             [tr] => tr.obj,
-            _ => panic!("Invalid RDF list: wrong number of rdf:first triples"),
+            other => {
+                return Err(TranslatorError::MalformedRdfList(format!(
+                    "node {} has {} rdf:first triples, expected exactly 1",
+                    current,
+                    other.len()
+                )));
+            }
         };
 
         let rest = triples(current, ids.rdf_rest_id);
         let tail = match rest.as_slice() {
             [tr] => tr.obj,
-            _ => panic!("Invalid RDF list: wrong number of rdf:rest triples"),
+            other => {
+                return Err(TranslatorError::MalformedRdfList(format!(
+                    "node {} has {} rdf:rest triples, expected exactly 1",
+                    current,
+                    other.len()
+                )));
+            }
         };
 
         result.push(head);
         current = tail;
     }
-    result
+    Ok(result)
 }
 
 /// Turn a graph element into an OWL Individual. Panics if it is a literal.
@@ -310,6 +331,137 @@ pub fn topological_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dag_rdf::Datastore;
+
+    /// Build a well-formed 2-element `rdf:List` (a . b . rdf:nil), returning
+    /// `(datastore, ids, list_head_id, [element_a_id, element_b_id])`.
+    fn well_formed_list() -> (Datastore, WellKnownIds, GraphElementId, [GraphElementId; 2]) {
+        let mut ds = Datastore::new(1_000);
+        let ids = WellKnownIds::new(&mut ds.resources);
+
+        let elem_a = ds.resources.create_unnamed_anon_resource();
+        let elem_b = ds.resources.create_unnamed_anon_resource();
+        let node1 = ds.resources.create_unnamed_anon_resource();
+        let node2 = ds.resources.create_unnamed_anon_resource();
+
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_first_id,
+            obj: elem_a,
+        });
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_rest_id,
+            obj: node2,
+        });
+        ds.add_triple(Triple {
+            subject: node2,
+            predicate: ids.rdf_first_id,
+            obj: elem_b,
+        });
+        ds.add_triple(Triple {
+            subject: node2,
+            predicate: ids.rdf_rest_id,
+            obj: ids.rdf_nil_id,
+        });
+
+        (ds, ids, node1, [elem_a, elem_b])
+    }
+
+    fn triples_fn(ds: &Datastore) -> impl Fn(GraphElementId, GraphElementId) -> Vec<Triple> + '_ {
+        move |s, p| ds.get_triples_with_subject_predicate(s, p).collect()
+    }
+
+    #[test]
+    fn get_rdf_list_elements_returns_elements_in_order_for_well_formed_list() {
+        let (ds, ids, head, [elem_a, elem_b]) = well_formed_list();
+        let result = get_rdf_list_elements(&triples_fn(&ds), &ids, head);
+        assert_eq!(result, Ok(vec![elem_a, elem_b]));
+    }
+
+    #[test]
+    fn get_rdf_list_elements_returns_err_on_cycle() {
+        let mut ds = Datastore::new(1_000);
+        let ids = WellKnownIds::new(&mut ds.resources);
+
+        let elem_a = ds.resources.create_unnamed_anon_resource();
+        let node1 = ds.resources.create_unnamed_anon_resource();
+        let node2 = ds.resources.create_unnamed_anon_resource();
+
+        // node1 -> node2 -> node1 (cycle, never reaches rdf:nil)
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_first_id,
+            obj: elem_a,
+        });
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_rest_id,
+            obj: node2,
+        });
+        ds.add_triple(Triple {
+            subject: node2,
+            predicate: ids.rdf_first_id,
+            obj: elem_a,
+        });
+        ds.add_triple(Triple {
+            subject: node2,
+            predicate: ids.rdf_rest_id,
+            obj: node1,
+        });
+
+        let result = get_rdf_list_elements(&triples_fn(&ds), &ids, node1);
+        assert!(matches!(result, Err(TranslatorError::MalformedRdfList(_))));
+    }
+
+    #[test]
+    fn get_rdf_list_elements_returns_err_on_wrong_number_of_first_triples() {
+        let mut ds = Datastore::new(1_000);
+        let ids = WellKnownIds::new(&mut ds.resources);
+
+        let elem_a = ds.resources.create_unnamed_anon_resource();
+        let elem_c = ds.resources.create_unnamed_anon_resource();
+        let node1 = ds.resources.create_unnamed_anon_resource();
+
+        // node1 has TWO rdf:first triples.
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_first_id,
+            obj: elem_a,
+        });
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_first_id,
+            obj: elem_c,
+        });
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_rest_id,
+            obj: ids.rdf_nil_id,
+        });
+
+        let result = get_rdf_list_elements(&triples_fn(&ds), &ids, node1);
+        assert!(matches!(result, Err(TranslatorError::MalformedRdfList(_))));
+    }
+
+    #[test]
+    fn get_rdf_list_elements_returns_err_on_zero_rest_triples() {
+        let mut ds = Datastore::new(1_000);
+        let ids = WellKnownIds::new(&mut ds.resources);
+
+        let elem_a = ds.resources.create_unnamed_anon_resource();
+        let node1 = ds.resources.create_unnamed_anon_resource();
+
+        // node1 has rdf:first but no rdf:rest at all.
+        ds.add_triple(Triple {
+            subject: node1,
+            predicate: ids.rdf_first_id,
+            obj: elem_a,
+        });
+
+        let result = get_rdf_list_elements(&triples_fn(&ds), &ids, node1);
+        assert!(matches!(result, Err(TranslatorError::MalformedRdfList(_))));
+    }
 
     fn typed_bool_literal(lexical: &str) -> GraphElement {
         GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {

@@ -21,7 +21,7 @@ fn parse_and_translate(path: &str) -> Vec<Axiom> {
     let reader = BufReader::new(file);
     let mut datastore = Datastore::new(100_000);
     parse_turtle(&mut datastore, reader).expect("Turtle parse failed");
-    let doc = rdf2owl(&mut datastore);
+    let doc = rdf2owl(&mut datastore).expect("rdf2owl should succeed on well-formed test fixture");
     doc.ontology.axioms
 }
 

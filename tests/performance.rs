@@ -117,7 +117,7 @@ fn run_pipeline(path: &Path) -> (Datastore, PipelineResult) {
 
     // ── Phase 2: RDF → OWL translation ──────────────────────────────────────
     let t1 = Instant::now();
-    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology_doc = rdf2owl(&mut datastore).unwrap();
     let ontology = &ontology_doc.ontology;
     let axiom_count = ontology.axioms.len();
     report("RDF → OWL translation", t1.elapsed().as_millis());
@@ -210,7 +210,7 @@ fn gene_ontology_memory_profile() {
 
     // Phase 2: RDF → OWL
     let t1 = Instant::now();
-    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology_doc = rdf2owl(&mut datastore).unwrap();
     let ontology = &ontology_doc.ontology;
     let axiom_count = ontology.axioms.len();
     let rss2 = rss_mb();
@@ -432,7 +432,7 @@ fn gene_ontology_axiom_extraction() {
     println!("  triples loaded: {}", datastore.named_graphs.quad_count);
 
     let t1 = Instant::now();
-    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology_doc = rdf2owl(&mut datastore).unwrap();
     let ontology = &ontology_doc.ontology;
     println!(
         "  OWL axioms:     {} ({} ms)",
@@ -617,7 +617,7 @@ fn imf_ontology_rule_generation() {
     println!("  triples loaded: {}", datastore.named_graphs.quad_count);
 
     let t1 = Instant::now();
-    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology_doc = rdf2owl(&mut datastore).unwrap();
     let ontology = &ontology_doc.ontology;
     println!(
         "  OWL axioms:     {} ({} ms)",
@@ -663,7 +663,7 @@ fn imf_rules_generation_and_parsing_round_trip() {
     let mut gen_store = Datastore::new(500_000);
     let file = File::open(&path).unwrap();
     parse_turtle(&mut gen_store, BufReader::new(file)).expect("parse must succeed");
-    let ontology_doc = rdf2owl(&mut gen_store);
+    let ontology_doc = rdf2owl(&mut gen_store).unwrap();
     let generated_rules = owl2datalog(&mut gen_store.resources, &ontology_doc.ontology);
     println!("  generated {} Datalog rules", generated_rules.len());
     assert!(
@@ -723,7 +723,7 @@ fn gene_ontology_materialise_progress() {
     let mut datastore = Datastore::new(2_000_000);
     let file = File::open(&path).expect("readable");
     parse_turtle(&mut datastore, BufReader::new(file)).expect("parse ok");
-    let ontology_doc = rdf2owl(&mut datastore);
+    let ontology_doc = rdf2owl(&mut datastore).unwrap();
     let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
     let rule_count = rules.len();
 

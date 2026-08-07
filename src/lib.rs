@@ -267,7 +267,7 @@ pub fn compile_ontology_rules(
         }
     }
 
-    let ontology_doc = rdf2owl(datastore);
+    let ontology_doc = rdf2owl(datastore).map_err(|e| e.to_string())?;
     let ontology = &ontology_doc.ontology;
     let axiom_count = manchester_axiom_count + ontology.axioms.len();
 
@@ -291,7 +291,7 @@ pub fn compile_ontology_rules(
 /// [#301](https://github.com/daghovland/rdf-datalog/issues/301).
 pub fn run_owlrl_reasoning(datastore: &mut Datastore) -> Result<usize, String> {
     let before = datastore.named_graphs.quad_count;
-    let ontology_doc = rdf2owl(datastore);
+    let ontology_doc = rdf2owl(datastore).map_err(|e| e.to_string())?;
     let rules = owl2datalog(&mut datastore.resources, &ontology_doc.ontology);
     datalog::evaluate_rules(rules, datastore).map_err(|e| e.to_string())?;
     Ok(datastore.named_graphs.quad_count - before)
@@ -740,7 +740,7 @@ SELECT ?person WHERE { ?person a ex:Person . }
         let mut ds = Datastore::new(10_000);
         turtle::parse_turtle(&mut ds, FAMILY_TTL.as_bytes()).expect("parse should succeed");
         // Ontology IS the data file here; re-load for reasoning
-        let ontology_doc = rdf2owl(&mut ds);
+        let ontology_doc = rdf2owl(&mut ds).unwrap();
         let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
         datalog::evaluate_rules(rules, &mut ds).unwrap();
 

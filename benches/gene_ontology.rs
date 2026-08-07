@@ -134,7 +134,7 @@ fn bench_owl2datalog(c: &mut Criterion) {
     // Parse + extract axioms once.  Only the GraphElementManager needs cloning
     // per iteration because owl2datalog takes &mut resources.
     let mut base_ds = load_go();
-    let ontology_doc = rdf2owl(&mut base_ds);
+    let ontology_doc = rdf2owl(&mut base_ds).expect("go.ttl should translate cleanly");
 
     c.bench_function("gene_ontology/owl2datalog", |b| {
         b.iter_batched(

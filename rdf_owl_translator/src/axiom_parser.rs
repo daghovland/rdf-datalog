@@ -11,6 +11,7 @@ Contact: hovlanddag@gmail.com
 //! Mirrors `DagSemTools.RdfOwlTranslator.AxiomParser`.
 
 use crate::class_expression_parser::OntologyDeclarations;
+use crate::error::TranslatorError;
 use crate::ingress::{WellKnownIds, get_rdf_list_elements, try_get_individual};
 use dag_rdf::GraphElementId;
 use dag_rdf::datastore::Datastore;
@@ -70,7 +71,11 @@ fn get_axiom_annotations(
 }
 
 /// Extract a single OWL axiom from an RDF triple, if applicable.
-/// Returns None if the triple doesn't encode an OWL axiom.
+/// Returns `Ok(None)` if the triple doesn't encode an OWL axiom, and `Err`
+/// if it does but one of the `rdf:List`s it references (`owl:members` on
+/// `AllDisjointClasses`/`AllDisjointProperties`, `owl:disjointUnionOf`,
+/// `owl:propertyChainAxiom`) is malformed. See
+/// <https://github.com/daghovland/rdf-datalog/issues/363>.
 ///
 /// Dispatch is by `GraphElementId` (u32) rather than IRI string for O(1) matching.
 pub fn extract_axiom(
@@ -78,44 +83,54 @@ pub fn extract_axiom(
     ids: &WellKnownIds,
     decls: &OntologyDeclarations,
     triple: &Triple,
-) -> Option<Axiom> {
+) -> Result<Option<Axiom>, TranslatorError> {
     let res = &datastore.resources;
     let axiom_anns = get_axiom_annotations(datastore, ids, decls, triple);
 
-    match triple.predicate {
+    Ok(match triple.predicate {
         // ── rdf:type ────────────────────────────────────────────────────────
         p if p == ids.rdf_type_id => {
             match triple.obj {
                 o if o == ids.owl_class_id => {
-                    let subj_iri = res.get_named_resource(triple.subject)?;
+                    let Some(subj_iri) = res.get_named_resource(triple.subject) else {
+                        return Ok(None);
+                    };
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::ClassDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
                 o if o == ids.rdfs_datatype_id => {
-                    let subj_iri = res.get_named_resource(triple.subject)?;
+                    let Some(subj_iri) = res.get_named_resource(triple.subject) else {
+                        return Ok(None);
+                    };
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::DatatypeDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
                 o if o == ids.owl_object_property_id => {
-                    let subj_iri = res.get_named_resource(triple.subject)?;
+                    let Some(subj_iri) = res.get_named_resource(triple.subject) else {
+                        return Ok(None);
+                    };
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::ObjectPropertyDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
                 o if o == ids.owl_datatype_property_id => {
-                    let subj_iri = res.get_named_resource(triple.subject)?;
+                    let Some(subj_iri) = res.get_named_resource(triple.subject) else {
+                        return Ok(None);
+                    };
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::DataPropertyDeclaration(FullIri(subj_iri.clone())),
                     )))
                 }
                 o if o == ids.owl_annotation_property_id => {
-                    let subj_iri = res.get_named_resource(triple.subject)?;
+                    let Some(subj_iri) = res.get_named_resource(triple.subject) else {
+                        return Ok(None);
+                    };
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::AnnotationPropertyDeclaration(FullIri(subj_iri.clone())),
@@ -142,7 +157,7 @@ pub fn extract_axiom(
                                 },
                                 ids,
                                 mt.obj,
-                            );
+                            )?;
                             let ces: Vec<ClassExpression> = list
                                 .iter()
                                 .map(|&id| decls.class_expression(id, res))
@@ -167,7 +182,7 @@ pub fn extract_axiom(
                                 },
                                 ids,
                                 mt.obj,
-                            );
+                            )?;
                             let opes: Vec<ObjectPropertyExpression> = list
                                 .iter()
                                 .map(|&id| decls.object_property_expression(id, res))
@@ -233,7 +248,9 @@ pub fn extract_axiom(
                 _ => {
                     // ClassAssertion: :x rdf:type C
                     // Preserve original semantics: blank-node objects return None.
-                    res.get_named_resource(triple.obj)?;
+                    if res.get_named_resource(triple.obj).is_none() {
+                        return Ok(None);
+                    }
                     let ce = decls.class_expression(triple.obj, res);
                     let subj_gel = res.get_graph_element(triple.subject);
                     let individual = try_get_individual(subj_gel);
@@ -259,11 +276,11 @@ pub fn extract_axiom(
                 decls.data_ranges.get(&triple.obj),
                 decls.data_ranges.get(&triple.subject),
             ) {
-                return Some(Axiom::AxiomDatatypeDefinition(
+                return Ok(Some(Axiom::AxiomDatatypeDefinition(
                     axiom_anns,
                     dtype.clone(),
                     dr.clone(),
-                ));
+                )));
             }
             let sub_ce = decls.class_expression(triple.subject, res);
             let obj_ce = decls.class_expression(triple.obj, res);
@@ -285,12 +302,14 @@ pub fn extract_axiom(
 
         // ── owl:disjointUnionOf ─────────────────────────────────────────────
         p if p == ids.owl_disjoint_union_of_id => {
-            let class_iri = res.get_named_resource(triple.subject)?;
+            let Some(class_iri) = res.get_named_resource(triple.subject) else {
+                return Ok(None);
+            };
             let list = get_rdf_list_elements(
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
                 triple.obj,
-            );
+            )?;
             let ces: Vec<ClassExpression> = list
                 .iter()
                 .map(|&id| decls.class_expression(id, res))
@@ -332,7 +351,7 @@ pub fn extract_axiom(
                 &|s, p| datastore.get_triples_with_subject_predicate(s, p).collect(),
                 ids,
                 triple.obj,
-            );
+            )?;
             let chain: Vec<ObjectPropertyExpression> = list
                 .iter()
                 .map(|&id| decls.object_property_expression(id, res))
@@ -464,7 +483,7 @@ pub fn extract_axiom(
                 None
             }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -515,7 +534,7 @@ ex:Fido         owl:sameAs ex:FidoAlt .
         turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
 
         let ids = WellKnownIds::new(&mut ds.resources);
-        let decls = OntologyDeclarations::build(&ds, &ids);
+        let decls = OntologyDeclarations::build(&ds, &ids).unwrap();
 
         // Indexed path
         use std::collections::HashSet;
@@ -527,7 +546,7 @@ ex:Fido         owl:sameAs ex:FidoAlt .
             .iter()
             .flat_map(|&p| {
                 ds.get_triples_with_predicate(p)
-                    .filter_map(|t| extract_axiom(&ds, &ids, &decls, &t))
+                    .filter_map(|t| extract_axiom(&ds, &ids, &decls, &t).unwrap())
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -543,7 +562,7 @@ ex:Fido         owl:sameAs ex:FidoAlt .
                     predicate: q.predicate,
                     obj: q.obj,
                 };
-                extract_axiom(&ds, &ids, &decls, &triple)
+                extract_axiom(&ds, &ids, &decls, &triple).unwrap()
             })
             .collect();
 

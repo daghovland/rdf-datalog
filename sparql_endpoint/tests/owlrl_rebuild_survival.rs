@@ -104,7 +104,7 @@ async fn test_owlrl_derived_quads_survive_contradiction_rebuild() {
     // Compile the ontology's TBox into a Datalog rule, mirroring
     // `dagalog::compile_ontology_rules` (the fixed function that feeds
     // `IncrementalReasoner::new` instead of eagerly/untracked-materialising).
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     let mut rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     assert!(
         !rules.is_empty(),

@@ -18,8 +18,9 @@ use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource};
 use dagalog::load_file;
 use datalog::evaluate_rules;
 use owl2rl2datalog::owl2datalog;
-use rdf_owl_translator::rdf2owl;
+use rdf_owl_translator::{TranslatorError, rdf2owl};
 use std::path::Path;
+use turtle::parse_turtle;
 
 fn testdata(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -31,7 +32,7 @@ fn testdata(name: &str) -> std::path::PathBuf {
 fn load_and_extract_rules(name: &str) -> (Datastore, usize) {
     let mut ds = Datastore::new(500_000);
     load_file(&mut ds, &testdata(name)).expect("ontology must load");
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     let axiom_count = ontology_doc.ontology.axioms.len();
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     let rule_count = rules.len();
@@ -81,7 +82,7 @@ const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 fn load_empty_ontology_does_not_panic() {
     let mut ds = Datastore::new(10_000);
     load_file(&mut ds, &testdata("empty.owl")).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     // File is empty so axiom count is 0; this just verifies no panic
     let _ = ontology_doc.ontology.axioms.len();
 }
@@ -93,7 +94,7 @@ fn load_empty_ontology_does_not_panic() {
 fn load_subclass_restriction_extracts_axioms() {
     let mut ds = Datastore::new(10_000);
     load_file(&mut ds, &testdata("subclass_of_restriction.owl")).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     assert!(
         !ontology_doc.ontology.axioms.is_empty(),
         "subclass_of_restriction.owl should yield OWL axioms"
@@ -166,7 +167,7 @@ fn equality_reasoning_works() {
 fn load_intersection_extracts_axioms() {
     let mut ds = Datastore::new(10_000);
     load_file(&mut ds, &testdata("intersection.owl.ttl")).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     assert!(
         !ontology_doc.ontology.axioms.is_empty(),
         "intersection.owl.ttl should yield OWL axioms"
@@ -264,7 +265,7 @@ fn reasoning_example_qualified_cardinality_intersection() {
 fn descriptor_from_imf_ontology_non_cyclic() {
     let mut ds = Datastore::new(100_000);
     load_file(&mut ds, &testdata("cycle-imf-test.ttl")).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     assert!(
         !ontology_doc.ontology.axioms.is_empty(),
         "expected axioms from cycle-imf-test.ttl"
@@ -287,7 +288,7 @@ fn descriptor_from_imf_ontology_non_cyclic() {
 fn max_qualified_cardinality_is_ignored() {
     let mut ds = Datastore::new(100_000);
     load_file(&mut ds, &testdata("minimal-loop-test.ttl")).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     // Must not panic
     evaluate_rules(rules, &mut ds).unwrap();
@@ -339,7 +340,7 @@ fn load_ido_ontology_works() {
     }
     let mut ds = Datastore::new(1_000_000);
     load_file(&mut ds, &path).unwrap();
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     assert!(
         !ontology_doc.ontology.axioms.is_empty(),
         "LIS-14.ttl should yield OWL axioms"
@@ -417,13 +418,53 @@ fn maxcardinality_zero_without_violation_does_not_panic() {
 fn maxcardinality_zero_violation_is_still_detected() {
     let mut ds = Datastore::new(500_000);
     load_file(&mut ds, &testdata("maxcardinality0_violation.ttl")).expect("ontology must load");
-    let ontology_doc = rdf2owl(&mut ds);
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
     let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
     let result = evaluate_rules(rules, &mut ds);
     assert!(
         matches!(result, Err(datalog::ReasoningError::Contradiction(_))),
         "expected a Contradiction error, got {result:?}"
     );
+}
+
+// ── Malformed rdf:List handling ───────────────────────────────────────────────
+//
+// `rdf_owl_translator::get_rdf_list_elements` used to `panic!` on a
+// structurally malformed `rdf:List` encoding (a node with the wrong number
+// of `rdf:first`/`rdf:rest` triples, or a cycle) reachable from
+// `owl:intersectionOf`/`owl:unionOf`/`owl:members`/property chains etc. —
+// crashing the whole `--serve` process on a load of otherwise-syntactically-
+// valid Turtle. It now returns `Err(TranslatorError::MalformedRdfList)`
+// instead. See [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+
+/// An `owl:intersectionOf` list node with `rdf:first` but no `rdf:rest` at
+/// all (instead of the required exactly-one `rdf:rest`, even to `rdf:nil`).
+/// `rdf2owl` — the entry point a real `--ontology`/`--serve` load goes
+/// through — must return a clean `Err` rather than crash.
+#[test]
+fn malformed_intersection_of_list_returns_err_not_panic() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ex:   <http://example.org/> .
+
+ex:A a owl:Class .
+ex:B a owl:Class .
+
+_:cls a owl:Class ;
+    owl:intersectionOf _:list1 .
+
+_:list1 rdf:first ex:A .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let result = rdf2owl(&mut ds);
+
+    match result {
+        Err(TranslatorError::MalformedRdfList(_)) => {}
+        Ok(_) => panic!("expected Err(MalformedRdfList), got Ok"),
+    }
 }
 
 // ── Tests that cannot be translated (not implemented) ────────────────────────
