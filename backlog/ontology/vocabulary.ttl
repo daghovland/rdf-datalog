@@ -89,6 +89,16 @@ bl:Crate
     rdfs:label "Crate" ;
     rdfs:comment "A Rust workspace member crate. See MODELING_NOTES.md \"DOAP vs. bespoke bl:Crate\" for why this isn't a DOAP term — a doap:Project is used instead for the repository as a whole, one level up." .
 
+bl:Snapshot
+    a rdfs:Class, owl:Class ;
+    rdfs:label "Snapshot" ;
+    rdfs:comment "A single run of `cargo run -p backlog --bin backlog-regenerate`, existing purely to carry generation-time metadata (currently just bl:generatedAt) that doesn't belong on any individual bl:WorkItem/bl:Crate. See #380. Exactly one named individual, bl:CurrentSnapshot, is expected in practice -- there's no notion of retaining multiple historical snapshots as distinct resources today." .
+
+bl:CurrentSnapshot
+    a bl:Snapshot ;
+    rdfs:label "Current snapshot" ;
+    rdfs:comment "The well-known singleton subject that `backlog-regenerate` attaches bl:generatedAt to on every run, overwriting the previous run's value (the checked-in snapshot.ttl only ever reflects the most recent regeneration, not a history). See #380." .
+
 # ── Properties: Issue/PullRequest ────────────────────────────────────────────
 
 bl:number
@@ -118,6 +128,13 @@ bl:closedAt
     rdfs:range xsd:dateTime ;
     rdfs:label "closed at" ;
     rdfs:comment "GitHub's `closed_at` timestamp (ISO-8601), present only for items GitHub's API itself reports a close time for -- absent (not asserted) for an open item, so no sh:minCount is added for this property anywhere, matching how other optional bl:WorkItem/bl:PullRequest properties (e.g. bl:touchesFile) are modeled in this vocabulary. See #379." .
+
+bl:generatedAt
+    a owl:DatatypeProperty ;
+    rdfs:domain bl:Snapshot ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "generated at" ;
+    rdfs:comment "Wall-clock time (`chrono::Utc::now()`, same RFC3339/xsd:dateTime formatting as bl:createdAt/bl:updatedAt/bl:closedAt) at which `backlog-regenerate` produced this snapshot -- the only queryable answer to \"how stale is this data?\", complementing the plain-text `# Generated at:` header comment in the checked-in Turtle file, which SPARQL can't see. Asserted once per run, on bl:CurrentSnapshot. See #380." .
 
 # NOTE: no bl:title property -- an issue/PR's title is given by rdfs:label
 # directly (RDFS's own "human-readable name for the subject"), not a
