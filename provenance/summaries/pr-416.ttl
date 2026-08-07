@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+ghpull:416 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "ci: create GitHub Releases automatically after verifying GHCR tag resolves (#413)" ;
+    bl:number 416 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:413 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr416 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:413 ;
+    prov:startedAtTime "2026-08-07T15:20:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T15:38:23Z"^^xsd:dateTime .
+
+session:pr416Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #413 (reported by the records library, via Testcontainers pinning ghcr.io/daghovland/dagalog by version) described the 0.4.1 rollout announcing a release before docker pull could resolve the just-pushed GHCR tag. Investigation before proposing a fix found there was no automated release-creation workflow at all: existing releases (v0.4.0 through v0.4.2) were all created manually via gh release create --generate-notes right after tagging, entirely unordered relative to docker.yml's asynchronous multi-arch build/push -- so the race wasn't a bug in existing automation, it was the absence of any ordering between two independent manual/automated steps. Asked the repo owner how they wanted this fixed (a manifest-verify-only step vs. full release automation vs. just documenting the race) rather than assuming, since it changes the release process; they chose full automation. Added a new verify-and-release job to docker.yml, gated on needs: build-and-push and v* tag pushes only (not plain main pushes, which also trigger the workflow for the latest tag), that polls docker buildx imagetools inspect with backoff (used instead of the issue's suggested docker manifest inspect, since manifest inspect has required DOCKER_CLI_EXPERIMENTAL=enabled on some Docker CLI versions and buildx imagetools inspect achieves the same resolution check without that concern, while also directly yielding the digest needed for the release notes) until the tag genuinely resolves, then creates the GitHub Release itself via gh release create --generate-notes (matching the exact format of existing releases, confirmed by inspecting v0.4.1/v0.4.2's actual bodies before writing this), appending the verified image tag and digest. One implementation mistake caught before finalizing: an initial version embedded a raw multi-line string (including a bare --- line) inside a YAML block-scalar run: | step to build the release-notes footer, which is invalid -- unindented content inside a block scalar terminates it and a bare --- is then parsed as a new YAML document start, breaking the whole file. Fixed by building the footer via printf into a shell variable instead of inlining multi-line literal text in the YAML source. This replaces the manual gh release create step going forward -- pushing a vX.Y.Z tag alone is now sufficient. Not end-to-end testable locally (no GH Actions runner available); the first real tag push after merge is the actual test, called out explicitly in the PR's test plan." ;
+    agp:reasoningFor ghpull:416 ;
+    agp:decisionPoint session:pr416AutomationDecision ;
+    prov:wasGeneratedBy session:pr416 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr416AutomationDecision a agp:Decision ;
+    agp:summaryText "Asked the repo owner to choose between a manifest-verify-only CI step, full release-creation automation, or just documenting the race manually; they picked full automation." ;
+    agp:alternative "A lighter-weight fix (add only a docker manifest inspect verification step to docker.yml, leaving gh release create manual) was offered as the recommended default but not chosen -- it would have caught the failure mode without changing the release process, at the cost of still requiring a manual step the owner could forget or run before verification passes." .
