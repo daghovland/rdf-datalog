@@ -552,6 +552,26 @@ async fn fuseki_admin_ping_post_returns_200() {
     assert_eq!(resp.status(), 200);
 }
 
+/// C-2b: GET `/$/ready` — readiness check returns 200 (issue #414).
+///
+/// Not part of the Fuseki spec (dagalog-specific). Added because a
+/// bare-TCP-port readiness probe (e.g. Testcontainers'
+/// `UntilInternalTcpPortIsAvailable`) can observe the listening socket before
+/// `axum::serve` starts routing requests — see
+/// `sparql_endpoint::admin::admin_ping` doc comment for why this endpoint is
+/// equivalent to `/$/ping` in this architecture.
+#[tokio::test]
+async fn admin_ready_returns_200() {
+    let server = common::TestServer::start("").await;
+    let resp = server
+        .client
+        .get(server.admin_ready_url())
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+}
+
 /// C-3: GET `/$/server` returns JSON with at least a `version` key.
 ///
 /// Phase F2 — docs/architecture/SERVER.md §6.2

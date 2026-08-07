@@ -174,6 +174,15 @@ pub fn build_router(state: AppState) -> Router {
             "/$/ping",
             get(crate::admin::admin_ping).post(crate::admin::admin_ping),
         )
+        // `/$/ready` — readiness check (issue #414), deliberately reusing
+        // `admin_ping` rather than a distinct handler: see the doc comment
+        // on `admin::admin_ping` for why the two are equivalent in this
+        // architecture (no route is live before startup finishes, so
+        // liveness and readiness coincide here).
+        .route(
+            "/$/ready",
+            get(crate::admin::admin_ping).post(crate::admin::admin_ping),
+        )
         .route("/$/server", get(crate::admin::admin_server))
         .route(
             "/$/datasets",
