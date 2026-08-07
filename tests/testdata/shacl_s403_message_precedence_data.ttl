@@ -1,0 +1,5 @@
+# Issue #403 — data graph for the node-vs-property sh:message precedence
+# test. ex:Bob has no ex:name, so sh:minCount 1 violates.
+PREFIX ex: <http://example.com/ns#>
+
+ex:Bob ex:givenName "Bob"@en .

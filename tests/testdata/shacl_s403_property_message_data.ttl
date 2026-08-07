@@ -1,0 +1,5 @@
+# Issue #403 — data graph for the property-shape sh:message repro.
+# <https://ssi.example.com/subject/1> has no
+# <https://ssi.example.com/predicate/missing> at all, so sh:minCount 1
+# violates.
+<https://ssi.example.com/subject/1> <https://ssi.example.com/predicate/present> "irrelevant" .

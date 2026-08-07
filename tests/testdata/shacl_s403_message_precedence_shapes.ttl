@@ -1,0 +1,16 @@
+# Issue #403 — when both a node shape and its property shape declare their
+# own sh:message, the property shape's own message must win for violations
+# it produces (mirrors the existing sh:severity override precedence from
+# issue #312).
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX ex: <http://example.com/ns#>
+
+ex:PersonShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Bob ;
+    sh:message "Node-level message" ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+        sh:message "Property-level message" ;
+    ] .

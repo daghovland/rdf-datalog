@@ -94,13 +94,14 @@ pub fn shapes_to_rules(
                 viol_preds.extend(new.into_iter().map(|v| {
                     (
                         v,
-                        ViolMeta::new_with_severity_override(
+                        ViolMeta::new_with_overrides(
                             shapes,
                             shape,
                             prop.shapes_id,
                             Some(prop.path.clone()),
                             constraint.component_iri(),
                             prop.severity.clone(),
+                            prop.message.clone(),
                         ),
                     )
                 }));

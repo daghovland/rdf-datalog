@@ -134,7 +134,8 @@ impl ViolMeta {
     /// node for a property-shape-scoped violation, or `shape.shapes_id`
     /// itself for a node-level constraint. `shape` supplies `severity`/
     /// `message` (shape-level, node-shape concerns) unless overridden by a
-    /// property shape's own `sh:severity` — see `new_with_severity_override`.
+    /// property shape's own `sh:severity`/`sh:message` — see
+    /// `new_with_overrides`.
     fn new(
         shapes_store: &Datastore,
         shape: &shapes::ParsedShape,
@@ -142,34 +143,38 @@ impl ViolMeta {
         path: Option<path::ShPath>,
         component: &'static str,
     ) -> Self {
-        Self::new_with_severity_override(
+        Self::new_with_overrides(
             shapes_store,
             shape,
             source_shape_id,
             path,
             component,
             None,
+            None,
         )
     }
 
-    /// As [`new`](Self::new), but `severity_override` — a property shape's
-    /// own `sh:severity`, when declared — takes precedence over the parent
-    /// node shape's severity. See
-    /// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
-    fn new_with_severity_override(
+    /// As [`new`](Self::new), but `severity_override`/`message_override` — a
+    /// property shape's own `sh:severity`/`sh:message`, when declared — take
+    /// precedence over the parent node shape's severity/message. See
+    /// [#312](https://github.com/daghovland/rdf-datalog/issues/312) (severity)
+    /// and [#403](https://github.com/daghovland/rdf-datalog/issues/403)
+    /// (message).
+    fn new_with_overrides(
         shapes_store: &Datastore,
         shape: &shapes::ParsedShape,
         source_shape_id: GraphElementId,
         path: Option<path::ShPath>,
         component: &'static str,
         severity_override: Option<Severity>,
+        message_override: Option<String>,
     ) -> Self {
         ViolMeta {
             severity: severity_override.unwrap_or_else(|| shape.severity.clone()),
             source_shape: graph::element_display(shapes_store, source_shape_id),
             path,
             component,
-            message: shape.message.clone(),
+            message: message_override.or_else(|| shape.message.clone()),
         }
     }
 }

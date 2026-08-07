@@ -198,6 +198,10 @@ fn shacl_testdata_parses() {
         "shacl_s312_targetclass_subclass_shapes.ttl",
         "shacl_s312_severity_override_data.ttl",
         "shacl_s312_severity_override_shapes.ttl",
+        "shacl_s403_property_message_data.ttl",
+        "shacl_s403_property_message_shapes.ttl",
+        "shacl_s403_message_precedence_data.ttl",
+        "shacl_s403_message_precedence_shapes.ttl",
         "shacl_s318_multiclass_data.ttl",
         "shacl_s318_multiclass_shapes.ttl",
         "shacl_s318_datatype_integer_data.ttl",
@@ -2806,6 +2810,71 @@ fn regression_312_custom_severity_and_property_shape_override() {
         node_kind_result.value.as_deref(),
         Some("http://example.com/ns#InvalidResource1"),
         "sh:value for a pathless (node-level) constraint is the focus node itself"
+    );
+}
+
+// ── Issue #403 — property-shape sh:message was silently dropped ────────────
+//
+// `sh:message` declared on an inline `sh:property` block (as opposed to the
+// enclosing `sh:NodeShape`) never surfaced on the resulting
+// `sh:ValidationResult` — `ViolMeta::new_with_severity_override` (now
+// `new_with_overrides`) always used
+// the enclosing node shape's `message` field, which `ParsedPropShape` had no
+// override for at all (unlike `sh:severity`, fixed for the analogous case in
+// #312). See https://github.com/daghovland/rdf-datalog/issues/403.
+
+/// Exact repro from the issue: a property shape's own `sh:message` must
+/// appear on the violation it produces, both in the in-memory
+/// `ValidationResult` and in the serialized RDF report.
+#[test]
+fn regression_403_property_shape_message_surfaced() {
+    let data = load("shacl_s403_property_message_data.ttl");
+    let shapes = load("shacl_s403_property_message_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(
+        report.results[0].message.as_deref(),
+        Some("Missing predicate"),
+        "the property shape's own sh:message must be surfaced on the ValidationResult"
+    );
+
+    let turtle = shacl::report_to_turtle(&report);
+    assert!(
+        turtle.contains("sh:resultMessage \"Missing predicate\""),
+        "serialized RDF report should contain sh:resultMessage:\n{turtle}"
+    );
+
+    let ds = report_to_datastore(&report);
+    let row = select_one_row(
+        &ds,
+        &format!(
+            "{SPARQL_PREFIX}SELECT ?message WHERE {{
+                ?r sh:result ?result .
+                ?result a sh:ValidationResult ;
+                    sh:resultMessage ?message .
+            }}"
+        ),
+    );
+    assert_eq!(as_string_literal(&row["message"]), "Missing predicate");
+}
+
+/// When both a node shape and its property shape declare their own
+/// `sh:message`, the property shape's own message wins for violations it
+/// produces — same precedence semantics as the existing `sh:severity`
+/// override from #312.
+#[test]
+fn regression_403_property_message_overrides_node_message() {
+    let data = load("shacl_s403_message_precedence_data.ttl");
+    let shapes = load("shacl_s403_message_precedence_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(
+        report.results[0].message.as_deref(),
+        Some("Property-level message"),
+        "the property shape's own sh:message must take precedence over the parent \
+         node shape's sh:message"
     );
 }
 

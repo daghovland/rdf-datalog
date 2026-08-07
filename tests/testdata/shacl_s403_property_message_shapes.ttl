@@ -1,0 +1,12 @@
+# Issue #403 — sh:message declared on an inline sh:property block was
+# silently dropped from the validation report. Exact repro from the issue.
+# Source: https://github.com/daghovland/rdf-datalog/issues/403
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+[] a sh:NodeShape ;
+   sh:targetNode <https://ssi.example.com/subject/1> ;
+   sh:property [
+       sh:path <https://ssi.example.com/predicate/missing> ;
+       sh:minCount 1 ;
+       sh:message "Missing predicate" ;
+   ] .
