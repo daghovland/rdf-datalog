@@ -15,7 +15,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::persistence::{LogEntry, to_repr};
 use crate::reasoner_delta::{DeltaError, apply_reasoner_delta};
-use dag_rdf::ingress::DEFAULT_GRAPH_ELEMENT_ID;
+use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, GraphElementId};
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
 use datalog::IncrementalReasoner;
 use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
@@ -720,33 +720,35 @@ pub fn prepare_update(
         match op {
             UpdateOp::InsertData { content, prefixes } => {
                 let tmp = parse_turtle_content(&content, &prefixes)?;
-                for q in tmp
-                    .named_graphs
-                    .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-                    .collect::<Vec<_>>()
-                {
-                    entries.push(LogEntry::InsertQuad {
-                        graph: None,
-                        s: to_repr(tmp.resources.get_graph_element(q.subject)),
-                        p: to_repr(tmp.resources.get_graph_element(q.predicate)),
-                        o: to_repr(tmp.resources.get_graph_element(q.obj)),
-                    });
+                let graph_ids: Vec<GraphElementId> =
+                    tmp.named_graphs.triple_id_index.keys().copied().collect();
+                for gid in graph_ids {
+                    let graph = tmp_graph_iri(&tmp, gid);
+                    for q in tmp.named_graphs.get_graph(gid).collect::<Vec<_>>() {
+                        entries.push(LogEntry::InsertQuad {
+                            graph: graph.clone(),
+                            s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                            p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                            o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                        });
+                    }
                 }
                 prepared.push(PreparedOp::InsertData(tmp));
             }
             UpdateOp::DeleteData { content, prefixes } => {
                 let tmp = parse_turtle_content(&content, &prefixes)?;
-                for q in tmp
-                    .named_graphs
-                    .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-                    .collect::<Vec<_>>()
-                {
-                    entries.push(LogEntry::DeleteQuad {
-                        graph: None,
-                        s: to_repr(tmp.resources.get_graph_element(q.subject)),
-                        p: to_repr(tmp.resources.get_graph_element(q.predicate)),
-                        o: to_repr(tmp.resources.get_graph_element(q.obj)),
-                    });
+                let graph_ids: Vec<GraphElementId> =
+                    tmp.named_graphs.triple_id_index.keys().copied().collect();
+                for gid in graph_ids {
+                    let graph = tmp_graph_iri(&tmp, gid);
+                    for q in tmp.named_graphs.get_graph(gid).collect::<Vec<_>>() {
+                        entries.push(LogEntry::DeleteQuad {
+                            graph: graph.clone(),
+                            s: to_repr(tmp.resources.get_graph_element(q.subject)),
+                            p: to_repr(tmp.resources.get_graph_element(q.predicate)),
+                            o: to_repr(tmp.resources.get_graph_element(q.obj)),
+                        });
+                    }
                 }
                 prepared.push(PreparedOp::DeleteData(tmp));
             }
@@ -851,6 +853,21 @@ pub fn prepare_update(
     Ok((prepared, entries))
 }
 
+/// The `graph` value to log for `LogEntry::InsertQuad`/`DeleteQuad` when a
+/// quad came from graph id `gid` in a temporary (`tmp`) datastore parsed
+/// from `INSERT DATA`/`DELETE DATA` content: `None` for the default graph,
+/// `Some(iri)` for a named graph (e.g. from a `GRAPH <iri> { ... }` block,
+/// see [#404](https://github.com/daghovland/rdf-datalog/issues/404)).
+fn tmp_graph_iri(tmp: &Datastore, gid: GraphElementId) -> Option<String> {
+    if gid == DEFAULT_GRAPH_ELEMENT_ID {
+        None
+    } else {
+        tmp.resources
+            .get_named_resource(gid)
+            .map(|iri| iri.0.clone())
+    }
+}
+
 fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
     let ids: Vec<_> = store
         .named_graphs
@@ -868,13 +885,36 @@ fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
     }
 }
 
-/// Translate quads from a temporary datastore's default graph into the IDs of
-/// the main `store`, interning any new resources.  The quads are NOT inserted
-/// into `store` — the caller decides what to do with them.
+/// Resolve a graph id from a temporary (`tmp`) datastore into the
+/// corresponding graph id in `store`, interning the graph's own resource
+/// (e.g. its IRI) into `store` if it hasn't been seen there before. The
+/// default graph always maps to the default graph in both stores.
+fn resolve_tmp_graph_id(
+    store: &mut Datastore,
+    tmp: &Datastore,
+    tmp_graph_id: GraphElementId,
+) -> GraphElementId {
+    if tmp_graph_id == DEFAULT_GRAPH_ELEMENT_ID {
+        DEFAULT_GRAPH_ELEMENT_ID
+    } else {
+        let elem = tmp.resources.get_graph_element(tmp_graph_id).clone();
+        store.resources.add_resource(elem)
+    }
+}
+
+/// Translate quads from a temporary datastore — from every graph it holds,
+/// default or named (e.g. from a `GRAPH <iri> { ... }` block inside
+/// `INSERT DATA`/`DELETE DATA`, see [#404](https://github.com/daghovland/rdf-datalog/issues/404))
+/// — into the IDs of the main `store`, interning any new resources
+/// (including named-graph IRIs). The quads are NOT inserted into `store` —
+/// the caller decides what to do with them, and each quad's `triple_id`
+/// carries the graph it belongs to in `store`'s ID space.
 pub(crate) fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> Vec<ingress::Quad> {
-    tmp.named_graphs
-        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .map(|q| {
+    let graph_ids: Vec<GraphElementId> = tmp.named_graphs.triple_id_index.keys().copied().collect();
+    let mut result = Vec::new();
+    for tmp_graph_id in graph_ids {
+        let main_graph_id = resolve_tmp_graph_id(store, tmp, tmp_graph_id);
+        for q in tmp.named_graphs.get_graph(tmp_graph_id).collect::<Vec<_>>() {
             let s = store
                 .resources
                 .add_resource(tmp.resources.get_graph_element(q.subject).clone());
@@ -884,14 +924,15 @@ pub(crate) fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> V
             let o = store
                 .resources
                 .add_resource(tmp.resources.get_graph_element(q.obj).clone());
-            ingress::Quad {
-                triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+            result.push(ingress::Quad {
+                triple_id: main_graph_id,
                 subject: s,
                 predicate: p,
                 obj: o,
-            }
-        })
-        .collect()
+            });
+        }
+    }
+    result
 }
 
 /// Apply pre-parsed ops to the store.  No Turtle re-parsing.
@@ -1543,7 +1584,13 @@ pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), S
 
 fn ensure_trailing_dot(content: &str) -> String {
     let t = content.trim_end();
-    if t.ends_with('.') {
+    // A `GRAPH <iri> { ... }` block (TriG `wrappedGraph` production) is
+    // already a complete top-level statement on its own — unlike a bare
+    // `TriplesTemplate`, it does not take a terminating `.`, and appending
+    // one after the closing `}` would itself be a stray, invalid top-level
+    // statement. Only synthesize a `.` for content that looks like it ends
+    // mid-triple.
+    if t.ends_with('.') || t.ends_with('}') {
         content.to_string()
     } else {
         format!("{t} .")
@@ -1551,14 +1598,23 @@ fn ensure_trailing_dot(content: &str) -> String {
 }
 
 /// Parse `content` (the body of an `INSERT DATA`/`DELETE DATA` block) as
-/// Turtle, seeded with `prefixes` captured from the update request's own
+/// TriG, seeded with `prefixes` captured from the update request's own
 /// `PREFIX` prologue.
 ///
-/// `turtle::parse_turtle` only understands Turtle's own `@prefix p: <iri> .`
-/// directive syntax (trailing dot), not SPARQL's `PREFIX p: <iri>` (no dot),
-/// and has no API to pre-seed a prefix map — so each declared prefix is
-/// synthesized as an `@prefix` line and prepended to the content before
-/// parsing. See [#392](https://github.com/daghovland/rdf-datalog/issues/392).
+/// The SPARQL 1.1 `QuadData` grammar production used by `INSERT
+/// DATA`/`DELETE DATA` allows `GRAPH <iri> { ... }` blocks alongside bare
+/// triples — it is TriG-shaped, not plain-Turtle-shaped. We use
+/// `turtle::parse_trig` (a syntactic superset of Turtle: a body with no
+/// `GRAPH` blocks parses identically either way) so that named-graph data
+/// is accepted instead of rejected with a parse error. See
+/// [#404](https://github.com/daghovland/rdf-datalog/issues/404).
+///
+/// `turtle::parse_trig` only understands Turtle/TriG's own
+/// `@prefix p: <iri> .` directive syntax (trailing dot), not SPARQL's
+/// `PREFIX p: <iri>` (no dot), and has no API to pre-seed a prefix map — so
+/// each declared prefix is synthesized as an `@prefix` line and prepended
+/// to the content before parsing. See
+/// [#392](https://github.com/daghovland/rdf-datalog/issues/392).
 fn parse_turtle_content(
     content: &str,
     prefixes: &HashMap<String, String>,
@@ -1570,7 +1626,7 @@ fn parse_turtle_content(
         let _ = writeln!(body, "@prefix {name}: <{iri}> .");
     }
     body.push_str(&ensure_trailing_dot(content));
-    turtle::parse_turtle(&mut tmp, body.as_bytes())
+    turtle::parse_trig(&mut tmp, body.as_bytes())
         .map(|_| tmp)
         .map_err(|e| format!("parse error: {e}"))
 }
