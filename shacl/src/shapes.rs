@@ -205,6 +205,11 @@ pub struct ParsedPropShape {
     /// means "not declared here" — the parent shape's severity applies. See
     /// [#312](https://github.com/daghovland/rdf-datalog/issues/312).
     pub severity: Option<crate::Severity>,
+    /// `sh:message` declared directly on this property shape, overriding the
+    /// parent node shape's message for violations it produces. `None` means
+    /// "not declared here" — the parent shape's message applies. See
+    /// [#403](https://github.com/daghovland/rdf-datalog/issues/403).
+    pub message: Option<String>,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -372,6 +377,8 @@ pub(crate) fn parse_one_shape(
                 severity: graph::get_object(shapes, shape_id, SH_SEVERITY)
                     .and_then(|id| graph::iri_string(shapes, id))
                     .and_then(|iri| crate::Severity::from_iri(&iri)),
+                message: graph::get_object(shapes, shape_id, SH_MESSAGE)
+                    .and_then(|id| literal_string(shapes, id)),
             });
         }
     }
@@ -495,6 +502,8 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                 severity: graph::get_object(shapes, prop_node, SH_SEVERITY)
                     .and_then(|id| graph::iri_string(shapes, id))
                     .and_then(|iri| crate::Severity::from_iri(&iri)),
+                message: graph::get_object(shapes, prop_node, SH_MESSAGE)
+                    .and_then(|id| literal_string(shapes, id)),
             })
         })
         .collect()
