@@ -19,9 +19,25 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dag_rdf::Datastore;
+use dag_rdf::{Datastore, GraphElement, RdfLiteral, RdfResource};
+use ingress::{IriReference, RDF_TYPE};
+use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// `fuseki:name` — literal-valued name of a Fuseki assembler `Service`.
+const FUSEKI_NAME_PREDICATE: &str = "http://jena.apache.org/fuseki#name";
+
+/// `fuseki:endpoint` — endpoint configuration blocks on a `Service`.
+const FUSEKI_ENDPOINT_PREDICATE: &str = "http://jena.apache.org/fuseki#endpoint";
+
+/// `fuseki:dataset` — the dataset node referenced by a `Service`.
+const FUSEKI_DATASET_PREDICATE: &str = "http://jena.apache.org/fuseki#dataset";
+
+/// `ja:MemoryDataset` — the only dataset type Dagalog actually supports via
+/// this API; anything else declared in the assembler is created as an
+/// in-memory dataset anyway, but now with a warning instead of silence.
+const JA_MEMORY_DATASET: &str = "http://jena.hpl.hp.com/2005/11/Assembler#MemoryDataset";
 
 // ── C: ping + server info ─────────────────────────────────────────────────────
 
@@ -129,14 +145,8 @@ pub async fn admin_create_dataset(
     } else if ct.contains("text/turtle") {
         // Fuseki-compatible dataset creation accepts a Turtle assembler payload.
         match extract_fuseki_name_from_assembler(&body_str) {
-            Some(n) => n,
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    "Could not extract fuseki:name from assembler Turtle",
-                )
-                    .into_response();
-            }
+            Ok(n) => n,
+            Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
         }
     } else {
         return (
@@ -161,12 +171,100 @@ pub async fn admin_create_dataset(
     StatusCode::OK.into_response()
 }
 
-fn extract_fuseki_name_from_assembler(body: &str) -> Option<String> {
-    let (_, after_key) = body.split_once("fuseki:name")?;
-    let start = after_key.find('"')?;
-    let tail = &after_key[start + 1..];
-    let end = tail.find('"')?;
-    Some(tail[..end].to_string())
+/// Parses a Fuseki assembler `text/turtle` payload and extracts the
+/// `fuseki:name` literal, real Turtle parsing rather than a substring search
+/// (see [#415](https://github.com/daghovland/rdf-datalog/issues/415)).
+///
+/// Also logs (but does not reject on) two forms of assembler configuration
+/// Dagalog doesn't actually honor:
+/// - a declared `fuseki:dataset` whose `rdf:type` isn't `ja:MemoryDataset`
+///   (Dagalog only creates in-memory datasets via this API regardless);
+/// - any `fuseki:endpoint` blocks (Dagalog always exposes its fixed set of
+///   dataset-scoped routes regardless of what's declared here).
+///
+/// Returns `Err` with a user-facing message on Turtle parse failure or when
+/// no `fuseki:name` string-literal triple is found.
+fn extract_fuseki_name_from_assembler(body: &str) -> Result<String, String> {
+    // Fuseki assembler documents conventionally use fragment-relative IRIs
+    // for the service/dataset nodes (e.g. `<#service>`), which need a base
+    // IRI to resolve per RFC 3986 — there is no requester-supplied base for
+    // this admin endpoint, so a fixed synthetic one is used purely so those
+    // relative references resolve consistently within this one parse.
+    const ASSEMBLER_BASE_IRI: &str = "urn:x-dagalog:fuseki-assembler";
+    let mut datastore = Datastore::new(64);
+    if let Err(e) = turtle::parse_turtle_with_base(
+        &mut datastore,
+        Cursor::new(body.as_bytes()),
+        ASSEMBLER_BASE_IRI,
+    ) {
+        return Err(format!("Invalid Turtle in assembler payload: {e}"));
+    }
+
+    let name_pred = datastore
+        .resources
+        .add_node_resource(RdfResource::Iri(IriReference(
+            FUSEKI_NAME_PREDICATE.to_string(),
+        )));
+    let name = datastore
+        .get_triples_with_predicate(name_pred)
+        .find_map(
+            |triple| match datastore.resources.get_graph_element(triple.obj) {
+                GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s.clone()),
+                _ => None,
+            },
+        );
+    let name = match name {
+        Some(n) => n,
+        None => {
+            return Err("Could not extract fuseki:name from assembler Turtle".to_string());
+        }
+    };
+
+    // New (issue #415): warn instead of silently dropping unsupported
+    // assembler configuration.
+    let type_pred = datastore
+        .resources
+        .add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_string())));
+    let dataset_pred = datastore
+        .resources
+        .add_node_resource(RdfResource::Iri(IriReference(
+            FUSEKI_DATASET_PREDICATE.to_string(),
+        )));
+    for service_triple in datastore.get_triples_with_predicate(dataset_pred) {
+        for type_triple in
+            datastore.get_triples_with_subject_predicate(service_triple.obj, type_pred)
+        {
+            if let GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(type_iri))) =
+                datastore.resources.get_graph_element(type_triple.obj)
+                && type_iri != JA_MEMORY_DATASET
+            {
+                log::warn!(
+                    "Fuseki assembler declares dataset type '{type_iri}'; Dagalog only \
+                     supports in-memory datasets via POST /$/datasets and is creating one \
+                     anyway (see issue #415)"
+                );
+            }
+        }
+    }
+
+    let endpoint_pred = datastore
+        .resources
+        .add_node_resource(RdfResource::Iri(IriReference(
+            FUSEKI_ENDPOINT_PREDICATE.to_string(),
+        )));
+    if datastore
+        .get_triples_with_predicate(endpoint_pred)
+        .next()
+        .is_some()
+    {
+        log::warn!(
+            "Fuseki assembler declares fuseki:endpoint configuration; Dagalog always exposes \
+             its fixed set of dataset-scoped routes and does not honor endpoint config from \
+             this payload (see issue #415)"
+        );
+    }
+
+    Ok(name)
 }
 
 /// `DELETE /$/datasets/{name}` — remove a dataset.

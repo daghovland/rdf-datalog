@@ -3380,6 +3380,7 @@ dependencies = [
  "ingress",
  "jsonld-parser",
  "jsonwebtoken",
+ "log",
  "ottr",
  "owl2rl2datalog",
  "rand 0.8.6",

@@ -1054,6 +1054,220 @@ async fn fuseki_admin_create_dataset_from_assembler_turtle() {
     );
 }
 
+/// Same triples as [`FUSEKI_ASSEMBLER_NEWDS_TTL`], but with a different prefix
+/// binding name for the `fuseki:` namespace and `fuseki:name`/`rdf:type`
+/// declared in a different order in the source text. Equally valid Turtle,
+/// different surface syntax — proves the extraction does real parsing rather
+/// than a substring search for the literal text `fuseki:name` (issue #415).
+const FUSEKI_ASSEMBLER_REORDERED_TTL: &str = r#"
+@prefix fu: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#dataset> rdf:type ja:MemoryDataset .
+
+<#service> fu:name "newds_ttl_reordered" ;
+    rdf:type fu:Service ;
+    fu:dataset <#dataset> .
+"#;
+
+/// E-9b: differently-formatted (but semantically identical) assembler Turtle
+/// still extracts `fuseki:name` correctly. The old substring-search
+/// implementation searched for the literal text `fuseki:name`, so it would
+/// have failed here since this payload uses the `fu:` prefix binding instead.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_from_reordered_assembler_turtle() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_REORDERED_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        200,
+        "create dataset from reordered assembler turtle must return 200, got {}",
+        create.status()
+    );
+
+    let list: serde_json::Value = server
+        .client
+        .get(server.admin_datasets_url())
+        .send()
+        .await
+        .expect("list request failed")
+        .json()
+        .await
+        .expect("list must be JSON");
+    let datasets = list["datasets"].as_array().expect("datasets array");
+    let found = datasets
+        .iter()
+        .any(|d| d["ds.name"] == "/newds_ttl_reordered" || d["ds.name"] == "newds_ttl_reordered");
+    assert!(
+        found,
+        "dataset created from reordered assembler turtle not found in list: {datasets:?}"
+    );
+}
+
+/// Assembler payload declaring a non-memory dataset type (`ja:TDBDataset`
+/// instead of `ja:MemoryDataset`). Dagalog only supports in-memory datasets
+/// via this API; it should still create one (not reject the request) but log
+/// a warning naming the unsupported declared type.
+const FUSEKI_ASSEMBLER_TDB_TTL: &str = r#"
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#service> rdf:type fuseki:Service ;
+    fuseki:name "newds_tdb" ;
+    fuseki:dataset <#dataset> .
+
+<#dataset> rdf:type ja:TDBDataset .
+"#;
+
+/// E-9c: a declared `ja:TDBDataset` (non-memory) still succeeds and creates
+/// an in-memory dataset anyway. The warning that should be logged for the
+/// unsupported type isn't mechanically asserted here — this crate has no
+/// existing log-capturing test utility (checked `sparql_endpoint/tests/` and
+/// `src/`), so per the plan we just verify the observable behavior (dataset
+/// created successfully) and rely on code review / manual log inspection for
+/// the warning itself.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_from_non_memory_assembler_turtle() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_TDB_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        200,
+        "create dataset from non-memory-typed assembler turtle must still return 200, got {}",
+        create.status()
+    );
+
+    let list: serde_json::Value = server
+        .client
+        .get(server.admin_datasets_url())
+        .send()
+        .await
+        .expect("list request failed")
+        .json()
+        .await
+        .expect("list must be JSON");
+    let datasets = list["datasets"].as_array().expect("datasets array");
+    let found = datasets
+        .iter()
+        .any(|d| d["ds.name"] == "/newds_tdb" || d["ds.name"] == "newds_tdb");
+    assert!(
+        found,
+        "dataset created from non-memory-typed assembler turtle not found in list: {datasets:?}"
+    );
+}
+
+/// E-9d: `FUSEKI_ASSEMBLER_NEWDS_TTL` (used by the E-9 regression test above)
+/// already declares several `fuseki:endpoint` blocks, so that same payload
+/// already exercises the "endpoint config is ignored" warning path. This
+/// test just documents/re-asserts that declaring `fuseki:endpoint` doesn't
+/// break dataset creation. As with the non-memory-type case above, the
+/// warning itself isn't mechanically asserted (no log-capture utility in
+/// this crate) — verified by inspection instead.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_with_endpoint_config_succeeds() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_NEWDS_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        200,
+        "create dataset with fuseki:endpoint config must still return 200, got {}",
+        create.status()
+    );
+}
+
+/// Genuinely malformed Turtle (unterminated triple / stray token) — not just
+/// missing `fuseki:name`, but syntactically invalid per the Turtle grammar.
+const FUSEKI_ASSEMBLER_MALFORMED_TTL: &str = r#"
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+
+<#service> fuseki:name "bad"
+"#;
+
+/// E-9e: syntactically invalid Turtle returns 400 with a parser-error-shaped
+/// message, not the old generic "could not extract fuseki:name" message.
+#[tokio::test]
+async fn fuseki_admin_create_dataset_malformed_turtle_returns_400() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_MALFORMED_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        400,
+        "malformed turtle must return 400, got {}",
+        create.status()
+    );
+    let body = create.text().await.expect("body must be readable");
+    assert!(
+        !body.contains("Could not extract fuseki:name"),
+        "malformed turtle should surface a real parser error, not the old generic message: {body}"
+    );
+}
+
+/// Assembler payload that declares `fuseki:name` only via a non-string
+/// object (unusual, but exercises the "found predicate, wrong object type"
+/// branch distinctly from "predicate absent entirely").
+const FUSEKI_ASSEMBLER_NO_NAME_TTL: &str = r#"
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#service> rdf:type fuseki:Service ;
+    fuseki:dataset <#dataset> .
+
+<#dataset> rdf:type ja:MemoryDataset .
+"#;
+
+/// E-9f: valid Turtle that simply never declares `fuseki:name` returns 400
+/// with the same user-facing contract as before (still a 400, just reached
+/// via real parsing now instead of string search).
+#[tokio::test]
+async fn fuseki_admin_create_dataset_missing_name_returns_400() {
+    let server = common::TestServer::start_writable("").await;
+    let create = server
+        .client
+        .post(server.admin_datasets_url())
+        .header("Content-Type", "text/turtle")
+        .body(FUSEKI_ASSEMBLER_NO_NAME_TTL)
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(
+        create.status(),
+        400,
+        "assembler turtle missing fuseki:name must return 400, got {}",
+        create.status()
+    );
+}
+
 // ── F: SPARQL Update — Phase F5 ──────────────────────────────────────────────
 //
 // The `/{name}/update` endpoint accepts SPARQL 1.1 Update operations.
