@@ -17,7 +17,9 @@ Contact: hovlanddag@gmail.com
 
 mod axiom_parser;
 mod class_expression_parser;
+pub mod error;
 pub mod ingress;
 mod translator;
 
+pub use error::TranslatorError;
 pub use translator::rdf2owl;

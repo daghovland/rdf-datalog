@@ -95,7 +95,7 @@ fn manchester_tbox_is_queryable_as_rdf() {
 #[test]
 fn owl_to_rdf_to_owl_round_trip_recovers_subclass_axiom() {
     let (mut ds, _) = manchester_to_rdf();
-    let recovered = rdf2owl(&mut ds).ontology;
+    let recovered = rdf2owl(&mut ds).unwrap().ontology;
 
     let named = |local: &str| {
         ClassExpression::ClassName(FullIri(dag_rdf::IriReference(format!(
