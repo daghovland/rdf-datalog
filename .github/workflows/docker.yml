@@ -43,3 +43,65 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Only runs for version-tag pushes (v*), not plain `main` pushes. Creates
+  # the GitHub Release itself, but only after independently verifying the
+  # just-built image tag actually resolves on GHCR — release announcements
+  # (and anyone pinning the tag, e.g. via Testcontainers) previously could
+  # race ahead of GHCR's own propagation delay after `docker push` returns.
+  # See https://github.com/daghovland/rdf-datalog/issues/413.
+  verify-and-release:
+    needs: build-and-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `docker push` returning success doesn't guarantee the tag is
+      # immediately resolvable via a fresh pull — GHCR has its own
+      # propagation delay. Poll `docker buildx imagetools inspect` with
+      # backoff instead of trusting the build job's own success as
+      # sufficient evidence, and capture the resolved digest for the
+      # release notes.
+      - name: Verify GHCR manifest resolves
+        id: verify
+        run: |
+          set -euo pipefail
+          image="ghcr.io/daghovland/dagalog:${{ github.ref_name }}"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if digest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest'); then
+              if [ -n "$digest" ] && [ "$digest" != "null" ]; then
+                echo "Resolved $image @ $digest after $attempt attempt(s)"
+                echo "digest=$digest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            echo "Attempt $attempt: $image not resolvable yet, retrying in $((attempt * 10))s..."
+            sleep $((attempt * 10))
+          done
+          echo "::error::$image never became resolvable on GHCR after all retries" >&2
+          exit 1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          image="ghcr.io/daghovland/dagalog:${tag}"
+          digest="${{ steps.verify.outputs.digest }}"
+          gh release create "$tag" --generate-notes --title "$tag"
+          notes="$(gh release view "$tag" --json body -q .body)"
+          footer=$(printf '\n\n---\n\n**Container image**: `%s`\nDigest: `%s`\nVerified resolvable on GHCR before this release was created.' "$image" "$digest")
+          gh release edit "$tag" --notes "${notes}${footer}"
