@@ -241,7 +241,7 @@ fn gene_ontology_memory_profile() {
     let t4 = Instant::now();
     let mut programs: Vec<DatalogProgram> = Vec::new();
     for partition in stratification {
-        programs.push(DatalogProgram::new(partition));
+        programs.push(DatalogProgram::new(partition).unwrap());
     }
     let rss5 = rss_mb();
     report("DatalogProgram::new (rule_map)", t4.elapsed().as_millis());
@@ -733,7 +733,8 @@ fn gene_ontology_materialise_progress() {
     let mut programs: Vec<DatalogProgram> = stratification
         .into_iter()
         .map(DatalogProgram::new)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     report_mem("before materialisation", rss_mb());
     println!("    rules: {rule_count}  programs: {}", programs.len());

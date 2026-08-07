@@ -103,12 +103,18 @@ pub fn get_unsafe_head_variables(rule: &Rule) -> Vec<String> {
         .collect()
 }
 
-pub fn is_safe_rule(rule: &Rule) -> bool {
+/// Returns `Ok(())` if every variable in `rule`'s head is bound by some body
+/// atom, `Err(ReasoningError::UnsafeRule)` otherwise — instead of panicking.
+/// See [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+pub fn is_safe_rule(rule: &Rule) -> Result<(), crate::reasoner::ReasoningError> {
     let unsafe_vars = get_unsafe_head_variables(rule);
     if unsafe_vars.is_empty() {
-        true
+        Ok(())
     } else {
-        panic!("Unsafe variables {:?} in rule: {}", unsafe_vars, rule)
+        Err(crate::reasoner::ReasoningError::UnsafeRule(format!(
+            "Unsafe variables {:?} in rule: {}",
+            unsafe_vars, rule
+        )))
     }
 }
 
@@ -151,6 +157,13 @@ pub fn get_substitutions(
 }
 
 /// Apply a substitution to a Term, returning the concrete ID.
+///
+/// The `panic!` below is a defensive invariant check, not a live DoS
+/// surface: it can only fire for a rule whose head references a variable
+/// unbound in its body, and every `DatalogProgram` construction/mutation
+/// path now rejects such rules up front via [`is_safe_rule`] (returning
+/// `Err(ReasoningError::UnsafeRule)` instead of reaching this point). See
+/// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
 pub fn apply_substitution_resource(sub: &Substitution, term: &Term) -> GraphElementId {
     match term {
         Term::Resource(r) => *r,

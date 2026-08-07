@@ -447,6 +447,38 @@ ex:foo a ex:Thing .
     );
 }
 
+/// A rule whose head references a variable not bound in its body (e.g.
+/// `ex:Foo[?x,?y] :- ex:Bar[?x] .`) is unsafe. `datalog::evaluate_rules` —
+/// the real entry point a `.datalog` file load goes through, e.g. for
+/// `--rules`/`--serve` — must return `Err(ReasoningError::UnsafeRule)`
+/// cleanly instead of panicking and crashing the whole process. See
+/// [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+#[test]
+fn unsafe_rule_returns_err_not_panic() {
+    let src = r#"
+prefix ex: <http://example.org/>
+ex:Foo[?x,?y] :- ex:Bar[?x] .
+"#;
+    let data = r#"
+@prefix ex: <http://example.org/> .
+ex:foo a ex:Thing .
+"#;
+    let mut ds = Datastore::new(1_000);
+    turtle::parse_turtle(&mut ds, data.as_bytes()).unwrap();
+    let rules = datalog_parser::parse(src, &mut ds).unwrap();
+
+    let result = datalog::evaluate_rules(rules, &mut ds);
+
+    assert!(
+        matches!(
+            result,
+            Err(datalog::reasoner::ReasoningError::UnsafeRule(_))
+        ),
+        "unsafe rule should return Err(UnsafeRule), not panic; got {:?}",
+        result
+    );
+}
+
 // ── FilterAtom: SPARQL expressions as Datalog guards ─────────────────────────
 //
 // These tests verify Phases E2 and E5 of docs/plans/EXPRESSION_PLAN.md:
