@@ -1,0 +1,43 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Prospective summary (per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# "Session window" section), written immediately after opening PR #410 and
+# before it has merged -- bl:state bl:Open reflects the real state at
+# authoring time; endedAtTime is this session's own wall-clock "now", not
+# a guessed mergedAt.
+#
+# ghpull:410 is asserted as a bl:PullRequest/bl:WorkItem purely so
+# agp:reasoningFor has a real bl:WorkItem to point at (per
+# bl:RequiresWorkItemTypeShape / agentprov-shapes.ttl). ghissues:403 (the
+# issue this PR closes) is referenced only as an object (bl:closesIssue,
+# prov:used), deliberately never typed bl:Issue, mirroring pr-297.ttl/
+# pr-300.ttl/pr-328.ttl's identical choice.
+
+ghpull:410 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: surface a property shape's own sh:message in sh:resultMessage (#403)" ;
+    bl:number 410 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:403 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr410 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:403 ;
+    prov:startedAtTime "2026-08-07T05:56:40Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T05:57:21Z"^^xsd:dateTime .
+
+session:pr410Summary a agp:TranscriptSummary ;
+    agp:summaryText "An external evaluator (equinor/Dexpi2Imf) reported that sh:message on an inline sh:property block never appeared as sh:resultMessage on a violation, even though it was clearly declared. The root cause was already diagnosed in the task brief: ViolMeta::new_with_severity_override in shacl/src/lib.rs always read message from the enclosing ParsedShape, since ParsedPropShape had no message field or override mechanism at all -- unlike sh:severity, which got exactly this treatment in #312 (ParsedPropShape::severity plus a severity_override parameter). The fix mirrors that precedent field-for-field: added ParsedPropShape::message, parsed with the same graph::get_object(shapes, prop_node, SH_MESSAGE).and_then(literal_string) pattern already used for the node-shape-level field, at both of shapes.rs's ParsedPropShape construction sites (the sh:property-block parser and the direct-sh:path-on-shape-node case). Renamed new_with_severity_override to new_with_overrides and added a message_override parameter with the same precedence semantics as severity_override (Option::or_else over shape.message.clone()). Updated all three call sites that already pass prop.severity.clone() (two in evaluate.rs, one in translate.rs) to also pass prop.message.clone(). Wrote two regression tests before implementing: one reproducing the issue's exact repro and checking both the in-memory ValidationResult and the serialized RDF report (report_to_turtle and report_to_datastore) for sh:resultMessage, and one precedence test where a node shape and its property shape both declare sh:message, confirming the property shape's own message wins. Both failed as expected before the fix (message was None / the node-level message leaked through) and passed after. Full workspace test suite (163 shacl_suite tests plus everything else) stayed green throughout, confirming no regression to the #264 node-level message path or the #312 severity-override path." ;
+    agp:abstractText "Added ParsedPropShape::message and a message_override parameter to ViolMeta's constructor, mirroring the existing #312 sh:severity-override pattern, so a property shape's own sh:message is no longer silently dropped from sh:resultMessage." ;
+    agp:reasoningFor ghpull:410 ;
+    prov:wasGeneratedBy session:pr410 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
