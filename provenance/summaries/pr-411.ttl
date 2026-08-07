@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening PR #411 in the same
+# session that did the work. startedAtTime is the implementation commit's
+# authoredDate (git log); endedAtTime is this session's own "now" at
+# authoring time, not a guessed mergedAt.
+
+ghpull:411 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: support GRAPH blocks in INSERT DATA/DELETE DATA (#404)" ;
+    bl:number 411 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:404 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr411 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:404 ;
+    prov:startedAtTime "2026-08-07T05:57:03Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T05:57:38Z"^^xsd:dateTime .
+
+session:pr411Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #404 (external evaluator, equinor/Dexpi2Imf) reported that INSERT DATA { GRAPH <iri> { ... } } -- standard SPARQL 1.1 QuadData syntax, not an edge case -- was rejected with 'GRAPH is not a valid subject or graph name'. Root cause, confirmed by reading sparql_endpoint::sparql_update::parse_turtle_content: it called turtle::parse_turtle (plain Turtle only) instead of the already-TriG-capable turtle::parse_trig, which the turtle crate already had fully tested for default/named/mixed-graph documents but which nothing called from the update path. The one-line parser swap was the plan's stated minimal fix, but tracing where parse_turtle_content's result actually goes (prepare_update and apply_prepared_update in sparql_update.rs) surfaced a second, silent bug the swap alone would have exposed: both translate_to_main_ids (which interns the temp datastore's quads into the live store's ID space) and prepare_update's WAL/changelog-entry generation only ever iterated the temp datastore's default graph (DEFAULT_GRAPH_ELEMENT_ID) -- named-graph quads from a GRAPH block would have been silently dropped entirely (not even misfiled into the default graph) rather than landing in the intended named graph, and never logged for persistence. Fixed by having both iterate every graph id the temp datastore's triple_id_index actually holds, resolving/interning each non-default graph's own IRI resource into the live store so the returned quads carry the correct destination graph id, and by adding a tmp_graph_iri helper so changelog entries log Some(iri) instead of always None. A third small fix: ensure_trailing_dot (from #392, which synthesizes a trailing '.' for content lacking one) was unconditionally appending '.' after any input, which after a GRAPH { ... } block's closing '}' would itself be an invalid stray top-level TriG statement -- now skipped when content already ends in '}'. TDD: reproduced the issue's exact example in a new test file, confirmed genuinely red (reverted just the source diff via git stash, reran, got the exact reported parse error) before restoring the fix; added an independent DELETE DATA { GRAPH ... } test (seeded via GSP PUT rather than assuming INSERT/DELETE symmetry) and a plain-INSERT-DATA regression test. Full fmt/clippy/cargo test --workspace all green on a clean run; one flaky failure (rml::csv_source_quoted_field_with_comma, an unrelated crate this PR never touches) appeared once under concurrent-worktree load and was confirmed to pass both in isolation and on a full re-run, consistent with the shared-CARGO_TARGET_DIR hazard documented in CLAUDE.md rather than a real regression." ;
+    agp:reasoningFor ghpull:411 ;
+    prov:wasGeneratedBy session:pr411 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
