@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written before merge on branch
+# fix/415-fuseki-turtle-parse. Timestamps are real (from `git log main..HEAD`).
+
+ghpull:419 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: parse Fuseki assembler Turtle for real, warn on ignored config (#415)" ;
+    bl:number 419 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:415 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr419 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:415 ;
+    prov:startedAtTime "2026-08-07T19:31:04Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T19:31:04Z"^^xsd:dateTime .
+
+session:pr419Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #415 was first closed by a docs-only commit (83ba7c1) that just described admin_create_dataset's text/turtle branch doing a raw substring search for the literal text fuseki:name -- fragile against equally-valid Turtle written differently, and silently dropping declared dataset type and fuseki:endpoint config. The repo owner reopened it: the implementation itself needed to change. Replaced the substring search with turtle::parse_turtle_with_base into a scratch Datastore, then extracted fuseki:name via a real triple-pattern lookup (add_node_resource to intern the predicate IRI, get_triples_with_predicate, resolve the object back through get_graph_element). Added log::warn! for a declared fuseki:dataset rdf:type other than ja:MemoryDataset, and for any fuseki:endpoint triples -- Dagalog still creates the dataset in both cases, just stops being silent about what it's ignoring. TDD: wrote fuseki_admin_create_dataset_from_reordered_assembler_turtle (same triples, different prefix binding and statement order) and fuseki_admin_create_dataset_malformed_turtle_returns_400 first, confirmed both genuinely red against the pre-fix code before implementing (the reordered payload uses fu: instead of fuseki: as the prefix, defeating a literal-text search; the malformed payload contains the substring fuseki:name \\\"bad\\\" so the old code returned 200 instead of 400). Updated docs/user/deployment.md's Fuseki-assembler section to match the new behavior." ;
+    agp:reasoningFor ghpull:419 ;
+    agp:decisionPoint session:pr419Decision ;
+    prov:wasGeneratedBy session:pr419 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr419Decision a agp:Decision ;
+    agp:summaryText "Fuseki assembler documents conventionally use fragment-relative subject IRIs (<#service>, <#dataset>), which turtle::parse_turtle rejects outright ('No scheme found in an absolute IRI') since it has no base IRI to resolve them against. Switched to turtle::parse_turtle_with_base with a fixed synthetic base (urn:x-dagalog:fuseki-assembler) purely so relative references resolve consistently within one parse -- confirmed empirically by reproducing the parse failure with a small throwaway test before switching functions." ;
+    agp:alternative "Considered leaving parse_turtle as-is and requiring assembler payloads to use absolute IRIs. Rejected: real Fuseki assembler examples (including the issue's own repro) use fragment-relative IRIs as a matter of convention, so requiring absolute IRIs would break the exact compatibility path this endpoint exists for." .
