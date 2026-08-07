@@ -404,12 +404,25 @@ generated RDF directly, touching no dataset — see the
 | Route | Description |
 |---|---|
 | `GET /$/ping` | Liveness check |
+| `GET /$/ready` | Readiness check |
 | `GET /$/server` | Server info (version, dataset list) |
 | `GET /$/datasets` | List all datasets |
 | `POST /$/datasets` | Create a dataset (form body: `dbName=…&dbType=mem`) |
 | `GET /$/datasets/{name}` | Dataset info |
 | `DELETE /$/datasets/{name}` | Drop a dataset |
 | `POST /$/compact` | Rewrite the persistence changelog |
+
+`/$/ping` and `/$/ready` are both true liveness *and* readiness checks in
+this deployment: the server binds its TCP listener before running all
+startup work (changelog replay, initial reasoner materialisation, dataset
+registry construction) and only starts routing HTTP requests — including
+to these two routes — once that work is complete, so a 200 response can
+never precede full readiness. There is no separate "started but not
+ready" state to distinguish, so container-orchestration tooling (e.g.
+Testcontainers, Kubernetes readiness/liveness probes) can poll either
+route interchangeably instead of relying on a bare TCP-port check, which
+can observe the socket before the server is actually serving requests
+(see [#414](https://github.com/daghovland/rdf-datalog/issues/414)).
 
 `POST /$/datasets` also accepts `Content-Type: text/turtle` as a
 Fuseki-compatible alternative to the form-body variant, for clients (such as

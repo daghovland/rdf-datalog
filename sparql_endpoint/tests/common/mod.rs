@@ -561,6 +561,18 @@ impl TestServer {
         format!("{}/$/server", self.base_url)
     }
 
+    /// `GET /$/ready` — readiness check (issue #414).
+    ///
+    /// Not part of the Fuseki admin API; added so container-orchestration
+    /// tooling (e.g. Testcontainers' `WaitStrategy`) has an HTTP-level signal
+    /// that the server has finished initializing and is actually serving
+    /// requests, rather than only observing the TCP port being open. See
+    /// `sparql_endpoint::admin::admin_ping` for why this reuses the same
+    /// handler as `/$/ping`.
+    pub fn admin_ready_url(&self) -> String {
+        format!("{}/$/ready", self.base_url)
+    }
+
     /// `GET|POST /$/datasets` — list or create datasets.
     ///
     /// POST body: `dbName=/{name}&dbType=mem` (form-encoded).

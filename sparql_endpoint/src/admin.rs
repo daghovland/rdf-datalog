@@ -26,6 +26,22 @@ use tokio::sync::RwLock;
 // ── C: ping + server info ─────────────────────────────────────────────────────
 
 /// `GET /$/ping` and `POST /$/ping` — liveness check.
+///
+/// Also wired up as `GET /$/ready` (issue [#414](https://github.com/daghovland/rdf-datalog/issues/414)):
+/// `serve_on_listener` (`sparql_endpoint/src/lib.rs`) binds the TCP listener
+/// *before* running all synchronous startup work (changelog replay,
+/// `IncrementalReasoner::new` initial materialisation, dataset registry
+/// construction), and only starts `axum::serve` — i.e. only starts routing
+/// *any* request, including this one — once all of that has finished. There
+/// is no further async/background initialization after `axum::serve` starts,
+/// so a 200 from this handler is already a fully correct readiness signal by
+/// construction, not just a liveness one. A bare TCP-port check (as used by
+/// some Testcontainers wait strategies) can observe the listening socket
+/// before `axum::serve` begins routing, which is the gap `/$/ready` closes:
+/// callers that need to distinguish "port open" from "actually serving" can
+/// poll this route instead. The two routes intentionally share one handler
+/// rather than diverging, since there is no separate "started but not ready"
+/// state in this architecture to give `/$/ready` a distinct answer for.
 pub async fn admin_ping() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
