@@ -411,6 +411,34 @@ generated RDF directly, touching no dataset — see the
 | `DELETE /$/datasets/{name}` | Drop a dataset |
 | `POST /$/compact` | Rewrite the persistence changelog |
 
+`POST /$/datasets` also accepts `Content-Type: text/turtle` as a
+Fuseki-compatible alternative to the form-body variant, for clients (such as
+Apache Jena's Fuseki admin tooling) that create datasets from an assembler
+document, e.g.:
+
+```turtle
+@prefix fuseki: <http://jena.apache.org/fuseki#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ja: <http://jena.hpl.hp.com/2005/11/Assembler#> .
+
+<#service> rdf:type fuseki:Service ;
+    fuseki:name "my-dataset" ;
+    fuseki:dataset <#dataset> .
+
+<#dataset> rdf:type ja:MemoryDataset .
+```
+
+This is a narrow compatibility path, not a general Fuseki assembler
+implementation: the server only extracts the quoted string value of
+`fuseki:name` from the request body via a substring search — it does not
+run a Turtle parser over the payload, does not inspect or validate the
+`ja:...` dataset type (any payload with a `fuseki:name` literal succeeds,
+regardless of what kind of dataset it declares), and does not honor
+`fuseki:endpoint` configuration. Every dataset created this way is an
+in-memory dataset, identical to `dbType=mem` via the form-body API. If
+`fuseki:name` can't be found in the body, the request is rejected with
+`400 Bad Request`.
+
 ### Library usage
 
 ```rust,no_run
