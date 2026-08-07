@@ -12,7 +12,7 @@ Contact: hovlanddag@gmail.com
 //! `docs/plans/BACKLOG_GITHUB_LOADER_PLAN.md`.
 
 use backlog::github::FixtureSource;
-use backlog::loader::{BL, CRATE_NS, build_snapshot};
+use backlog::loader::{BL, CRATE_NS, add_generated_at, build_snapshot};
 use dag_rdf::{Datastore, GraphElementId};
 use ingress::{IriReference, RdfResource};
 use std::collections::HashMap;
@@ -354,6 +354,48 @@ fn timestamps_are_emitted() {
     assert!(
         closed[0].contains("2026-06-10"),
         "expected #283's fixture closed_at, got: {closed:?}"
+    );
+}
+
+/// `add_generated_at` records a single, well-formed `xsd:dateTime`
+/// `bl:generatedAt` triple on the singleton `bl:CurrentSnapshot` resource,
+/// typed `bl:Snapshot`. See #380.
+#[test]
+fn generated_at_is_emitted() {
+    let source = fixture_source();
+    let mut ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    let now: chrono::DateTime<chrono::Utc> = "2026-08-07T12:34:56Z".parse().unwrap();
+    let subj = add_generated_at(&mut ds, now);
+
+    let type_pred =
+        lookup(&ds, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type").expect("rdf:type interned");
+    let snapshot_class = lookup(&ds, &format!("{BL}Snapshot")).expect("bl:Snapshot interned");
+    let types: Vec<_> = ds
+        .get_triples_with_subject_predicate(subj, type_pred)
+        .map(|t| t.obj)
+        .collect();
+    assert!(
+        types.contains(&snapshot_class),
+        "bl:CurrentSnapshot must be typed bl:Snapshot"
+    );
+
+    let generated_pred = lookup(&ds, &format!("{BL}generatedAt")).expect("bl:generatedAt interned");
+    let generated: Vec<_> = ds
+        .get_triples_with_subject_predicate(subj, generated_pred)
+        .map(|t| ds.resources.get_graph_element(t.obj).to_string())
+        .collect();
+    assert_eq!(generated.len(), 1, "expected exactly one bl:generatedAt");
+    assert!(
+        generated[0].contains("2026-08-07"),
+        "expected the timestamp passed to add_generated_at, got: {generated:?}"
+    );
+
+    let subj_lookup =
+        lookup(&ds, &format!("{BL}CurrentSnapshot")).expect("bl:CurrentSnapshot interned");
+    assert_eq!(
+        subj, subj_lookup,
+        "add_generated_at must use the well-known bl:CurrentSnapshot subject"
     );
 }
 

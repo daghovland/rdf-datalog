@@ -549,6 +549,30 @@ already-shipped `bl:path`-mirroring convention, but the more spec-correct
 reuse if file-level identity ever needs to carry more than a bare path
 string anyway.
 
+## `bl:Snapshot` / `bl:generatedAt`: a singleton resource for regeneration metadata (#380)
+
+`backlog-regenerate`'s output had no generation timestamp anywhere --
+neither a plain comment nor a queryable triple -- so nothing consuming
+`backlog/examples/snapshot.ttl` (including a future dashboard, #378) could
+tell how stale the data was. `bl:generatedAt` mirrors `bl:createdAt`/
+`bl:updatedAt`/`bl:closedAt` (#379) exactly: `owl:DatatypeProperty`, range
+`xsd:dateTime`, same RFC3339 formatting via `chrono`. The one design
+question #379 didn't have to answer: what's the *subject*? Those three
+properties all attach to an existing `bl:WorkItem`; a generation timestamp
+belongs to the snapshot run itself, which had no resource to hang off of.
+Rather than reuse an arbitrary `bl:WorkItem`/`bl:Crate` (semantically
+wrong -- generation time isn't a fact about any one issue or crate), a new
+class `bl:Snapshot` was added with exactly one named individual,
+`bl:CurrentSnapshot`, following the same "well-known individual in the
+`bl:` namespace" pattern already used for `bl:Open`/`bl:Ready`/`bl:Todo`
+etc. `bl:CurrentSnapshot` is a singleton by design: `backlog-regenerate`
+overwrites its `bl:generatedAt` value every run rather than minting a new
+resource per run, since the checked-in snapshot is a point-in-time
+replacement, not a retained history. The human-readable `# Generated at:`
+header comment (added to `regenerate.rs`'s existing output header) is kept
+alongside the triple for quick visual inspection -- the queryable triple
+is additive, not a replacement.
+
 ## What's still open (deliberately, past this issue's scope)
 
 - `bl:Label` individuals carry only `rdfs:label` today, no color/description

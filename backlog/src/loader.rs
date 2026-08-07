@@ -160,6 +160,29 @@ fn add_datetime(ds: &mut Datastore, subject: GraphElementId, predicate_local: &s
     }
 }
 
+/// Records `bl:CurrentSnapshot a bl:Snapshot ; bl:generatedAt "<generated_at>"`
+/// in `ds`, and returns the (interned) `bl:CurrentSnapshot` subject.
+/// `generated_at` is the caller's wall-clock time (`chrono::Utc::now()` in
+/// `backlog-regenerate`) -- deliberately not called from [`build_snapshot`]
+/// itself, since that function is also exercised by fixture-based tests
+/// (`backlog/tests/loader_test.rs`) where "now" isn't meaningful recorded
+/// data. See #380.
+pub fn add_generated_at(
+    ds: &mut Datastore,
+    generated_at: chrono::DateTime<chrono::Utc>,
+) -> GraphElementId {
+    let subj = iri(ds, &bl("CurrentSnapshot"));
+    add_type(ds, subj, "Snapshot");
+    let p = iri(ds, &bl("generatedAt"));
+    let o = ds.add_literal_resource(RdfLiteral::DateTimeLiteral(generated_at));
+    ds.add_triple(dag_rdf::Triple {
+        subject: subj,
+        predicate: p,
+        obj: o,
+    });
+    subj
+}
+
 /// Ensures a `bl:Label` resource exists for `raw_name`, minting it in the
 /// snapshot (with `rdfs:label`) if it isn't one of the vocabulary's own
 /// named individuals (`bl:Bug`/`bl:Enhancement`/`bl:Ready`).
