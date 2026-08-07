@@ -14,6 +14,7 @@ vqs-index = { path = "../vqs_index" }
 jsonld-parser = { path = "../jsonld_parser" }
 rml = { path = "../rml" }
 ottr = { path = "../ottr" }
+log = "0.4"
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1.52", features = ["full"] }
 tower-http = { version = "0.7", features = ["cors", "timeout"] }

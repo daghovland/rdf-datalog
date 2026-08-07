@@ -442,15 +442,25 @@ document, e.g.:
 ```
 
 This is a narrow compatibility path, not a general Fuseki assembler
-implementation: the server only extracts the quoted string value of
-`fuseki:name` from the request body via a substring search — it does not
-run a Turtle parser over the payload, does not inspect or validate the
-`ja:...` dataset type (any payload with a `fuseki:name` literal succeeds,
-regardless of what kind of dataset it declares), and does not honor
-`fuseki:endpoint` configuration. Every dataset created this way is an
-in-memory dataset, identical to `dbType=mem` via the form-body API. If
-`fuseki:name` can't be found in the body, the request is rejected with
-`400 Bad Request`.
+implementation. The request body is parsed as real Turtle (not a substring
+search), and the `fuseki:name` literal is extracted via a triple-pattern
+lookup, so equally-valid Turtle written differently — a different prefix
+binding, different statement order, different whitespace — is handled
+correctly. A syntactically invalid payload is rejected with
+`400 Bad Request` and the Turtle parser's own error message; a
+syntactically valid payload that never declares `fuseki:name` is also
+rejected with `400 Bad Request`.
+
+The server still does not honor everything a full Fuseki assembler
+document can declare: every dataset created this way is an in-memory
+dataset, identical to `dbType=mem` via the form-body API, regardless of
+the declared `ja:...` dataset type, and `fuseki:endpoint` configuration in
+the payload has no effect on the server's fixed set of dataset-scoped
+routes. Unlike before, this is no longer silent — the server logs a
+`WARN`-level message naming the declared (and unsupported) dataset type,
+and another when `fuseki:endpoint` blocks are present, so operators get a
+signal instead of the config quietly vanishing. See
+[#415](https://github.com/daghovland/rdf-datalog/issues/415).
 
 ### Library usage
 
