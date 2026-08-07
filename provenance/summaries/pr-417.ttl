@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written right after opening PR #417 in the same
+# session that did the work. startedAtTime is the implementation commit's
+# authoredDate (git log); endedAtTime is this session's own "now" at
+# authoring time, not a guessed mergedAt.
+
+ghpull:417 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: add GET /$/ready readiness endpoint (#414)" ;
+    bl:number 417 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:414 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr417 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:414 ;
+    prov:startedAtTime "2026-08-07T15:41:46Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T15:42:47Z"^^xsd:dateTime .
+
+session:pr417Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #414 (external evaluator, the records library via Testcontainers) can only wait for the internal TCP port to be listening, not for the server to have actually finished initializing and be serving requests. Investigated sparql_endpoint::serve_on_listener (sparql_endpoint/src/lib.rs): it binds the TCP listener first via tokio::net::TcpListener::bind, then synchronously runs all initialization -- changelog open + replay, IncrementalReasoner::new full initial materialisation, dataset registry construction -- and only builds the axum router and calls axum::serve after all of that completes. So the OS TCP port can be open before axum::serve starts accepting/routing requests, especially with a large changelog replay or slow reasoner materialisation. Critically, once axum::serve IS running, every route is already fully live -- there is no further async/background initialization in this codebase after that point -- so the existing GET /$/ping handler (admin::admin_ping, currently documented as a liveness check) is already a fully correct readiness signal by construction. Rather than inventing a new state machine or a distinct handler, added GET /$/ready (also POST, mirroring /$/ping) as a second route wired to the same admin_ping handler, with a doc comment on admin_ping and on the route registration explaining why the two are equivalent in this architecture, so a future reader isn't confused about the apparent duplication. TDD: added admin_ready_returns_200 in sparql_endpoint/tests/fuseki_compat.rs (plus an admin_ready_url helper in tests/common/mod.rs mirroring admin_ping_url), confirmed it failed with a 404 before the route existed, then added the route and confirmed green, alongside the pre-existing /$/ping tests. Updated docs/user/deployment.md's admin API table with a GET /$/ready row and a short prose note that both routes are true liveness+readiness checks here, since there's no separate started-but-not-ready state to distinguish. Deliberately did not simulate a partial-init/warming-up state in tests, per the plan's explicit instruction, since no such state can occur in this codebase's current architecture. fmt/clippy/cargo test --workspace all green." ;
+    agp:reasoningFor ghpull:417 ;
+    prov:wasGeneratedBy session:pr417 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
