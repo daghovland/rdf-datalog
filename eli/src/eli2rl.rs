@@ -8,7 +8,31 @@ Contact: hovlanddag@gmail.com
 
 //! Translation from ELI to datalog rules.
 //!
-//! Algorithm 1 from <https://arxiv.org/abs/2008.02232>.
+//! The core concept-inclusion translation (`translate_eli`, Algorithm 1
+//! "translateℰℒℐ") is from Fiorentino, A., Zangari, J., and Manna, M.
+//! (2020). "DaRLing: A Datalog rewriter for OWL 2 RL ontological reasoning
+//! under SPARQL queries." <https://arxiv.org/abs/2008.02232>. Its TBox
+//! normalization step (bringing axioms to the normal forms `translate_eli`
+//! expects) readapts a procedure from Kazakov, Y. (2009). "Consequence-
+//! Driven Reasoning for Horn-SHIQ Ontologies." IJCAI 2009, pp. 2040–2045.
+//!
+//! **Scope note**: DaRLing's Algorithm 1 covers only concept inclusions
+//! (CIs) — the paper explicitly excludes role inclusions and transitivity
+//! axioms as "almost trivial," without giving a detailed algorithm for
+//! them. The property-chain support in [`get_obj_prop_pattern`] and
+//! [`get_obj_value_pattern`] is therefore *not* part of what DaRLing/
+//! Kazakov prove; where it's grounded in a standard reference at all, that
+//! reference is the W3C OWL 2 RL/RDF ruleset's `prp-spo2` rule (a property
+//! chain declared via `SubObjectPropertyOf(ObjectPropertyChain(...), Q)`
+//! derives `T(?u1, Q, ?un+1)` from a matching chain of `T(?ui, ?pi,
+//! ?ui+1)` triples — see
+//! <https://www.w3.org/TR/owl2-profiles/#Reasoning_in_OWL_2_RL_and_RDF_Graphs_using_Rules>),
+//! which is the standard, *reachable* place property chains have meaning
+//! in OWL 2. See the doc comments on `get_obj_prop_pattern`/
+//! `get_obj_value_pattern` for why the chain-inside-a-restriction case they
+//! also handle is a different, non-standard, and (per current analysis)
+//! unreachable construct — tracked in
+//! [issue #422](https://github.com/daghovland/rdf-datalog/issues/422).
 
 use crate::axioms::{ComplexConcept, Formula, NormalizedConcept};
 use dag_rdf::query::get_default_graph_pattern;
@@ -237,10 +261,33 @@ where
 /// of `p1, ..., pn` produces `n` atoms joined through `n - 1` fresh
 /// intermediate variables.
 ///
+/// **Speculative completeness, not a reachable OWL 2 feature.** OWL 2's
+/// structural grammar restricts `ObjectPropertyExpression` (the type used
+/// inside `ObjectSomeValuesFrom`/`ObjectHasValue`) to
+/// `ObjectProperty | InverseObjectProperty` — `ObjectPropertyChain` is a
+/// separate grammar production, legal *only* as the antecedent of
+/// `SubObjectPropertyOf`. `ObjectSomeValuesFrom(ObjectPropertyChain(p1 p2),
+/// C)` cannot be written in real OWL 2, and this codebase's own parsers
+/// agree: `rdf_owl_translator::class_expression_parser::object_property_expression`
+/// resolves `owl:onProperty` via a single-node lookup (structurally
+/// incapable of producing a chain — those are extracted only via the
+/// separate `owl:propertyChainAxiom` path used for `SubObjectPropertyOf`),
+/// and `manchester_parser`'s grammar independently implements
+/// `objectPropertyExpression ::= objectPropertyIRI | 'inverse'
+/// objectPropertyIRI`, no chain. So the `ObjectPropertyChain` arm below can
+/// only ever be reached by a `ComplexConcept`/`Formula` value built by hand
+/// (as this module's own tests do) — never by anything parsed from real
+/// Turtle or Manchester syntax. Kept anyway as defensive/speculative
+/// completeness (originally added for [issue #408](https://github.com/daghovland/rdf-datalog/issues/408),
+/// whose scope turned out to rest on this same mistaken premise) rather
+/// than removed, pending [issue #422](https://github.com/daghovland/rdf-datalog/issues/422)'s
+/// research into whether a genuinely-reachable Dagalog-specific extension
+/// along these lines would be worth exposing through the parsers.
+///
 /// Returns `None` for `InverseObjectProperty(ObjectPropertyChain(...))` —
 /// correctly inverting a chain would require reversing its element order
-/// and inverting each link, which is not implemented. See
-/// [issue #408](https://github.com/daghovland/rdf-datalog/issues/408).
+/// and inverting each link, which is not implemented (and per the above,
+/// not reachable either way).
 fn get_obj_prop_pattern(
     resources: &mut GraphElementManager,
     prop: &ObjectPropertyExpression,
@@ -283,6 +330,14 @@ fn get_obj_prop_pattern(
 /// `subject_var` to the fixed `individual` — the `owl:hasValue`
 /// counterpart of [`get_obj_prop_pattern`]. The **last** pattern's object
 /// is `individual` rather than a free variable.
+///
+/// The `NamedObjectProperty`/`AnonymousObjectProperty` and
+/// `InverseObjectProperty(<simple property>)` arms are real, reachable OWL
+/// 2 (`ObjectPropertyExpression ::= ObjectProperty | InverseObjectProperty`
+/// explicitly includes the inverse case). The `ObjectPropertyChain` arm is
+/// **not** reachable from real OWL 2 input, for the same reason documented
+/// on [`get_obj_prop_pattern`] — kept as speculative completeness, tracked
+/// by [issue #422](https://github.com/daghovland/rdf-datalog/issues/422).
 ///
 /// Returns `None` for `InverseObjectProperty(ObjectPropertyChain(...))`,
 /// for the same reason as `get_obj_prop_pattern`. See
