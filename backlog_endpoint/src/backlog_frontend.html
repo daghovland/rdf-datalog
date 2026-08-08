@@ -91,6 +91,19 @@
   details.decision[open] > summary::before { content: '\25BC\00A0'; }
   .alternatives { margin: 0.4rem 0 0.1rem; padding-left: 1.1rem; font-size: 0.8rem; color: #666; }
   .alternatives li { margin-bottom: 0.2rem; }
+  /* "What's relevant" panel */
+  .relevant-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem 1rem; }
+  .relevant-label { font-size: 0.78rem; color: #555; display: block; margin-bottom: 0.2rem; flex-basis: 100%; }
+  .relevant-input { font: inherit; font-size: 0.88rem; padding: 0.35rem 0.5rem; border: 1px solid #ccc;
+                     border-radius: 4px; min-width: 16rem; }
+  .relevant-submit { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.9rem; border: 1px solid #222;
+                      border-radius: 4px; background: #222; color: #fff; cursor: pointer; }
+  .relevant-submit:hover { background: #444; }
+  .relevant-result-group { margin-top: 1rem; }
+  .relevant-result-group h3 { font-size: 0.9rem; margin: 0 0 0.5rem; }
+  .relevant-pr-card { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.6rem 0.8rem;
+                       margin-bottom: 0.6rem; background: #fff; }
+  .relevant-pr-text { margin: 0.35rem 0 0; font-size: 0.85rem; color: #333; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -152,10 +165,31 @@
       </div>
     </section>
     <section id="view-relevant" class="view">
-      <div class="placeholder">
-        "What's relevant" (file/crate &rarr; related PRs + reasoning) panel is not built yet &mdash; see
-        <a href="https://github.com/daghovland/rdf-datalog/issues/384" target="_blank" rel="noopener">issue #384</a>.
+      <div class="card">
+        <h2>What's relevant</h2>
+        <p class="hint" style="font-size:0.8rem;color:#777;margin-top:-0.4rem;">
+          Before touching a file or crate, see which <code>bl:PullRequest</code>s already
+          touched it and why &mdash; via <code>bl:touchesFile</code>/<code>bl:touchesCrate</code>
+          and each PR's <code>agp:TranscriptSummary</code> (<code>agp:reasoningFor</code>).
+          Exact string match on the repo-relative file path (crate names use the
+          package/directory name, e.g. <code>shacl</code>, <code>dag_rdf</code>), not fuzzy
+          search &mdash; see
+          <a href="https://github.com/daghovland/rdf-datalog/issues/384" target="_blank" rel="noopener">issue #384</a>.
+        </p>
+        <form id="relevant-form" class="relevant-form">
+          <label class="relevant-label" for="relevant-file-input">
+            File path (repo-relative, e.g. <code>shacl/src/evaluate.rs</code>)
+          </label>
+          <input type="text" id="relevant-file-input" class="relevant-input"
+                 placeholder="e.g. shacl/src/evaluate.rs" autocomplete="off">
+          <label class="relevant-label" for="relevant-crate-input">Crate name (e.g. <code>shacl</code>)</label>
+          <input type="text" id="relevant-crate-input" class="relevant-input"
+                 placeholder="e.g. shacl" autocomplete="off">
+          <button type="submit" class="relevant-submit">Show related PRs</button>
+        </form>
       </div>
+      <div id="relevant-error"></div>
+      <div id="relevant-results"></div>
     </section>
   </main>
 
@@ -180,6 +214,14 @@
     'PREFIX agp: <' + AGP + '> ' +
     'PREFIX prov: <' + PROV + '> ' +
     'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ';
+
+  // ── bl:Crate resources (#384's crate-name input) -- same identifier
+  //    space as provenance/queries/related_to_crate.sparql's crate:
+  //    prefix, i.e. https://dagalog.dev/ns/backlog/crate#<name>. ──
+  const CRATE_NS = 'https://dagalog.dev/ns/backlog/crate#';
+  const RELEVANT_PREFIXES =
+    'PREFIX agp: <' + AGP + '> ' +
+    'PREFIX bl: <' + BL + '> ';
 
   const STATUS_COLUMNS = [
     { iri: BL + 'Todo', label: 'Todo' },
@@ -688,6 +730,142 @@
     }
   }
 
+  // ── "What's relevant" panel (#384): given a file path and/or crate
+  //    name, run the two-hop join adapted from
+  //    provenance/queries/related_to_file.sparql /
+  //    related_to_crate.sparql (agp:TranscriptSummary ->
+  //    agp:reasoningFor -> bl:PullRequest -> bl:touchesFile/touchesCrate),
+  //    parameterizing the VALUES line with user input instead of the
+  //    query files' hardcoded examples. Unlike loadBoard/loadEpics/
+  //    loadProvenance, this doesn't auto-run on page load: its input is
+  //    user-provided, so querying eagerly at load time would just run an
+  //    empty/meaningless query against every PR. ──
+
+  // Escape a plain string for interpolation into a SPARQL string literal
+  // (STRING_LITERAL2, i.e. a double-quoted literal): backslash must be
+  // escaped first so the subsequent escapes aren't themselves re-escaped,
+  // then the double-quote, then the raw control characters SPARQL's
+  // grammar forbids unescaped inside a string literal (newline, carriage
+  // return, tab). This is the first user-input-driven query in this file
+  // -- see #384's issue body for why this matters (a path containing `"`
+  // or `\` must not be able to break out of the VALUES literal).
+  function escapeSparqlString(s) {
+    return s
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t');
+  }
+
+  // Percent-encode a crate name into a safe IRI local name before
+  // embedding it in an absolute IRIREF (<...>) in the query. bl:Crate
+  // IRIs are minted as CRATE_NS + <crate name> (see
+  // provenance/queries/related_to_crate.sparql's crate: prefix and
+  // backlog/ontology/vocabulary.ttl) -- crate names in this repo are plain
+  // identifiers (letters/digits/underscore/hyphen), but percent-encoding
+  // any character SPARQL's IRIREF grammar disallows (whitespace, `<`,
+  // `>`, `"`, `{`, `}`, `|`, `^`, backtick, and control chars) keeps a
+  // stray/weird input from producing a malformed or injectable query.
+  function encodeCrateIri(name) {
+    return CRATE_NS + encodeURIComponent(name);
+  }
+
+  function buildRelevantQuery(valuesClause, touchesTriple) {
+    return (
+      RELEVANT_PREFIXES +
+      'SELECT ?summary ?pr ?text WHERE { ' +
+      valuesClause + ' ' +
+      '?summary a agp:TranscriptSummary ; ' +
+      '  agp:reasoningFor ?pr ; ' +
+      '  agp:summaryText ?summaryText . ' +
+      '?pr a bl:PullRequest ; ' +
+      touchesTriple + ' ' +
+      'OPTIONAL { ?summary agp:abstractText ?abstractText } ' +
+      'BIND(COALESCE(?abstractText, ?summaryText) AS ?text) ' +
+      '}'
+    );
+  }
+
+  function buildFileQuery(filePath) {
+    return buildRelevantQuery(
+      'VALUES ?file { "' + escapeSparqlString(filePath) + '" }',
+      'bl:touchesFile ?file .'
+    );
+  }
+
+  function buildCrateQuery(crateName) {
+    return buildRelevantQuery(
+      'VALUES ?crate { <' + encodeCrateIri(crateName) + '> }',
+      'bl:touchesCrate ?crate .'
+    );
+  }
+
+  function renderRelevantGroup(container, heading, rows) {
+    const group = el('div', 'relevant-result-group');
+    group.appendChild(el('h3', null, heading));
+    if (rows.length === 0) {
+      group.appendChild(el('div', 'empty-note', 'No related pull requests found.'));
+      container.appendChild(group);
+      return;
+    }
+    for (const row of rows) {
+      const card = el('div', 'relevant-pr-card');
+      card.appendChild(iriLink(row.pr, issueNumber(row.pr) || row.pr));
+      card.appendChild(el('p', 'relevant-pr-text', row.text));
+      group.appendChild(card);
+    }
+    container.appendChild(group);
+  }
+
+  async function runRelevantQuery(query) {
+    const json = await sparqlFetch(query);
+    return bindingsOf(json).map((row) => ({
+      pr: row.pr.value,
+      text: row.text.value,
+    }));
+  }
+
+  async function handleRelevantSubmit(event) {
+    event.preventDefault();
+    const fileInput = document.getElementById('relevant-file-input');
+    const crateInput = document.getElementById('relevant-crate-input');
+    const resultsEl = document.getElementById('relevant-results');
+    const errEl = document.getElementById('relevant-error');
+
+    const file = fileInput.value.trim();
+    const crate = crateInput.value.trim();
+
+    resultsEl.textContent = '';
+    errEl.textContent = '';
+
+    if (!file && !crate) {
+      resultsEl.appendChild(
+        el('div', 'empty-note', 'Enter a file path and/or crate name above, then submit.')
+      );
+      return;
+    }
+
+    try {
+      if (file) {
+        const rows = await runRelevantQuery(buildFileQuery(file));
+        renderRelevantGroup(resultsEl, 'File: ' + file, rows);
+      }
+      if (crate) {
+        const rows = await runRelevantQuery(buildCrateQuery(crate));
+        renderRelevantGroup(resultsEl, 'Crate: ' + crate, rows);
+      }
+    } catch (e) {
+      resultsEl.textContent = '';
+      errEl.appendChild(el('div', 'msg err', 'Failed to load related PRs: ' + e.message));
+    }
+  }
+
+  function initRelevantPanel() {
+    const form = document.getElementById('relevant-form');
+    if (form) form.addEventListener('submit', handleRelevantSubmit);
+  }
+
   // ── Nav (client-side view switch; no page reload — same page other
   //     sibling sub-issues, #382/#383/#384, will plug their views into) ──
   function initNav() {
@@ -714,6 +892,7 @@
   })();
 
   initNav();
+  initRelevantPanel();
   loadFreshness();
   loadBoard();
   loadEpics();
