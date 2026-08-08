@@ -107,7 +107,8 @@ grepping fresh rather than trusting a prior enumeration.
 remaining panic sites (`topological_sort`'s cycle-detection panic in
 `ingress.rs`, and the two "Multiple owl:members on
 owl:AllDisjointClasses/Properties" panics in `axiom_parser.rs`). These
-overlap with [PR #424](https://github.com/daghovland/rdf-datalog/pull/424)
-(open, not yet merged as of this writing), which already targets exactly
-these sites — so they were left alone here rather than duplicated. #363
-stays open.
+overlapped with [PR #424](https://github.com/daghovland/rdf-datalog/pull/424),
+which targeted exactly these sites — so they were left alone here rather
+than duplicated. #424 has since merged; this branch was rebased onto that
+merge. See the [issue](https://github.com/daghovland/rdf-datalog/issues/363)
+for current status.
