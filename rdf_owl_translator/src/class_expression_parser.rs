@@ -546,6 +546,19 @@ fn collect_anon_class_exprs(
                             }
                         })
                         .collect();
+                    if individuals.is_empty() && !list_items.is_empty() {
+                        // Every member was malformed: an empty ObjectOneOf
+                        // denotes the empty class, which is a silent
+                        // behaviour change from "some members" — fall back
+                        // to owl:Thing instead, same convention as
+                        // owl:hasValue below.
+                        log::warn!(
+                            "owl:oneOf has no valid individual members left after skipping malformed ones — using owl:Thing"
+                        );
+                        return ClassExpression::ClassName(FullIri(IriReference(
+                            OWL_THING_IRI.to_string(),
+                        )));
+                    }
                     ClassExpression::ObjectOneOf(individuals)
                 }),
             )

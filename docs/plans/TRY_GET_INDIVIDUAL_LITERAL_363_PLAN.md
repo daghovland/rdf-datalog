@@ -102,3 +102,12 @@ far as this cluster of #363 investigation found — but do a final
 `grep -rn 'panic!\|unwrap()\|expect(' rdf_owl_translator/src/` sweep before
 closing #363, since earlier clusters (#400, #418, #424) each found scope by
 grepping fresh rather than trusting a prior enumeration.
+
+**Update after implementation:** the final sweep did find three genuine
+remaining panic sites (`topological_sort`'s cycle-detection panic in
+`ingress.rs`, and the two "Multiple owl:members on
+owl:AllDisjointClasses/Properties" panics in `axiom_parser.rs`). These
+overlap with [PR #424](https://github.com/daghovland/rdf-datalog/pull/424)
+(open, not yet merged as of this writing), which already targets exactly
+these sites — so they were left alone here rather than duplicated. #363
+stays open.
