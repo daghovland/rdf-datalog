@@ -166,7 +166,13 @@ pub fn extract_axiom(
                                 axiom_anns, ces,
                             )))
                         }
-                        _ => panic!("Multiple owl:members on owl:AllDisjointClasses"),
+                        _ => {
+                            return Err(TranslatorError::MultipleOwlMembers(format!(
+                                "owl:AllDisjointClasses {} has {} owl:members triples, expected at most 1",
+                                triple.subject,
+                                members_triples.len()
+                            )));
+                        }
                     }
                 }
                 o if o == ids.owl_all_disjoint_properties_id => {
@@ -191,7 +197,13 @@ pub fn extract_axiom(
                                 ObjectPropertyAxiom::DisjointObjectProperties(axiom_anns, opes),
                             ))
                         }
-                        _ => panic!("Multiple owl:members on owl:AllDisjointProperties"),
+                        _ => {
+                            return Err(TranslatorError::MultipleOwlMembers(format!(
+                                "owl:AllDisjointProperties {} has {} owl:members triples, expected at most 1",
+                                triple.subject,
+                                members_triples.len()
+                            )));
+                        }
                     }
                 }
                 o if o == ids.owl_functional_property_id => Some(decls.object_or_data_property(
@@ -570,6 +582,144 @@ ex:Fido         owl:sameAs ex:FidoAlt .
             sorted_axiom_debug_strings(&indexed),
             sorted_axiom_debug_strings(&full_scan),
             "indexed and full-scan paths produced different axiom multisets"
+        );
+    }
+
+    /// Build a `Datastore` from an inline Turtle fixture, plus the
+    /// `rdf:type` triple whose subject is `subject_iri` and whose object is
+    /// `type_iri` — the triple `extract_axiom` dispatches on for
+    /// `owl:AllDisjointClasses`/`owl:AllDisjointProperties`.
+    fn extract_type_axiom(
+        ttl: &str,
+        subject_iri: &str,
+        type_iri: &str,
+    ) -> Result<Option<Axiom>, TranslatorError> {
+        let mut ds = Datastore::new(1_000);
+        turtle::parse_turtle(&mut ds, ttl.as_bytes()).unwrap();
+        let ids = WellKnownIds::new(&mut ds.resources);
+        let decls = OntologyDeclarations::build(&ds, &ids).unwrap();
+
+        let triple = ds
+            .get_triples_with_predicate(ids.rdf_type_id)
+            .find(|tr| {
+                ds.resources
+                    .get_named_resource(tr.subject)
+                    .map(|i| i.0.as_str())
+                    == Some(subject_iri)
+                    && ds
+                        .resources
+                        .get_named_resource(tr.obj)
+                        .map(|i| i.0.as_str())
+                        == Some(type_iri)
+            })
+            .unwrap_or_else(|| panic!("no rdf:type triple found for {subject_iri} a {type_iri}"));
+        extract_axiom(&ds, &ids, &decls, &triple)
+    }
+
+    #[test]
+    fn all_disjoint_classes_single_members_triple_succeeds() {
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:A a owl:Class .
+ex:B a owl:Class .
+
+ex:Disj a owl:AllDisjointClasses ;
+    owl:members ( ex:A ex:B ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointClasses",
+        );
+        assert!(
+            matches!(
+                result,
+                Ok(Some(Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
+                    _,
+                    _
+                ))))
+            ),
+            "expected a DisjointClasses axiom, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn all_disjoint_classes_multiple_members_triples_returns_err() {
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:A a owl:Class .
+ex:B a owl:Class .
+ex:C a owl:Class .
+
+ex:Disj a owl:AllDisjointClasses ;
+    owl:members ( ex:A ex:B ) ;
+    owl:members ( ex:B ex:C ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointClasses",
+        );
+        assert!(
+            matches!(result, Err(TranslatorError::MultipleOwlMembers(_))),
+            "expected MultipleOwlMembers error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn all_disjoint_properties_single_members_triple_succeeds() {
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:p a owl:ObjectProperty .
+ex:q a owl:ObjectProperty .
+
+ex:Disj a owl:AllDisjointProperties ;
+    owl:members ( ex:p ex:q ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointProperties",
+        );
+        assert!(
+            matches!(
+                result,
+                Ok(Some(Axiom::AxiomObjectPropertyAxiom(
+                    ObjectPropertyAxiom::DisjointObjectProperties(_, _)
+                )))
+            ),
+            "expected a DisjointObjectProperties axiom, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn all_disjoint_properties_multiple_members_triples_returns_err() {
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:p a owl:ObjectProperty .
+ex:q a owl:ObjectProperty .
+ex:r a owl:ObjectProperty .
+
+ex:Disj a owl:AllDisjointProperties ;
+    owl:members ( ex:p ex:q ) ;
+    owl:members ( ex:q ex:r ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointProperties",
+        );
+        assert!(
+            matches!(result, Err(TranslatorError::MultipleOwlMembers(_))),
+            "expected MultipleOwlMembers error, got {result:?}"
         );
     }
 }

@@ -281,10 +281,14 @@ pub fn try_get_bool_literal(gel: &GraphElement) -> Option<bool> {
 }
 
 /// Topological sort using Kahn's algorithm.
+///
+/// Returns [`TranslatorError::CyclicDependency`] instead of panicking when
+/// `predecessors` describes a cycle among `nodes` (e.g. two anonymous OWL
+/// class expressions whose builders reference each other).
 pub fn topological_sort(
     nodes: &[GraphElementId],
     predecessors: &HashMap<GraphElementId, Vec<GraphElementId>>,
-) -> Vec<GraphElementId> {
+) -> Result<Vec<GraphElementId>, TranslatorError> {
     let node_set: std::collections::HashSet<GraphElementId> = nodes.iter().copied().collect();
 
     let mut in_degree: HashMap<GraphElementId, usize> = nodes.iter().map(|&n| (n, 0)).collect();
@@ -323,9 +327,13 @@ pub fn topological_sort(
     }
 
     if result.len() != nodes.len() {
-        panic!("Cycle detected in OWL class expression dependency graph");
+        return Err(TranslatorError::CyclicDependency(format!(
+            "cycle detected in OWL class expression dependency graph: {} of {} nodes sorted",
+            result.len(),
+            nodes.len()
+        )));
     }
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -461,6 +469,46 @@ mod tests {
 
         let result = get_rdf_list_elements(&triples_fn(&ds), &ids, node1);
         assert!(matches!(result, Err(TranslatorError::MalformedRdfList(_))));
+    }
+
+    #[test]
+    fn topological_sort_returns_err_on_cycle() {
+        let mut ds = Datastore::new(1_000);
+        let node_a = ds.resources.create_unnamed_anon_resource();
+        let node_b = ds.resources.create_unnamed_anon_resource();
+
+        // node_a depends on node_b, and node_b depends on node_a: a genuine
+        // cycle with no valid topological order.
+        let mut predecessors: HashMap<GraphElementId, Vec<GraphElementId>> = HashMap::new();
+        predecessors.insert(node_a, vec![node_b]);
+        predecessors.insert(node_b, vec![node_a]);
+
+        let result = topological_sort(&[node_a, node_b], &predecessors);
+        assert!(matches!(result, Err(TranslatorError::CyclicDependency(_))));
+    }
+
+    #[test]
+    fn topological_sort_returns_ok_on_acyclic_input() {
+        let mut ds = Datastore::new(1_000);
+        let node_a = ds.resources.create_unnamed_anon_resource();
+        let node_b = ds.resources.create_unnamed_anon_resource();
+        let node_c = ds.resources.create_unnamed_anon_resource();
+
+        // node_c depends on node_b, node_b depends on node_a: a valid chain.
+        let mut predecessors: HashMap<GraphElementId, Vec<GraphElementId>> = HashMap::new();
+        predecessors.insert(node_b, vec![node_a]);
+        predecessors.insert(node_c, vec![node_b]);
+
+        let result = topological_sort(&[node_a, node_b, node_c], &predecessors)
+            .expect("acyclic input should sort successfully");
+
+        // node_a must come before node_b, which must come before node_c.
+        let pos_a = result.iter().position(|&n| n == node_a).unwrap();
+        let pos_b = result.iter().position(|&n| n == node_b).unwrap();
+        let pos_c = result.iter().position(|&n| n == node_c).unwrap();
+        assert!(pos_a < pos_b);
+        assert!(pos_b < pos_c);
+        assert_eq!(result.len(), 3);
     }
 
     fn typed_bool_literal(lexical: &str) -> GraphElement {

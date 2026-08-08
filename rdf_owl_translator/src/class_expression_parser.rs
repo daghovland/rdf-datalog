@@ -655,7 +655,7 @@ fn parse_anonymous_exprs(
     let builder_map: HashMap<GraphElementId, usize> =
         all.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
 
-    let sorted = topological_sort(&ids_vec, &pred_map);
+    let sorted = topological_sort(&ids_vec, &pred_map)?;
 
     for id in sorted {
         if let Some(&idx) = builder_map.get(&id) {

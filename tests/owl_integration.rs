@@ -464,6 +464,7 @@ _:list1 rdf:first ex:A .
     match result {
         Err(TranslatorError::MalformedRdfList(_)) => {}
         Ok(_) => panic!("expected Err(MalformedRdfList), got Ok"),
+        Err(other) => panic!("expected Err(MalformedRdfList), got {other:?}"),
     }
 }
 

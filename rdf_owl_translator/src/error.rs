@@ -8,11 +8,11 @@ Contact: hovlanddag@gmail.com
 
 //! Error types for RDF → OWL translation.
 //!
-//! Scoped to the malformed-`rdf:List` panics fixed under
+//! Scoped to the malformed-`rdf:List` panics, the anonymous class-expression
+//! dependency cycle, and the multiple-`owl:members` panics fixed under
 //! <https://github.com/daghovland/rdf-datalog/issues/363>. Other panic sites
-//! in this crate (`try_get_individual`, `try_get_literal`, the
-//! multiple-`owl:members` cases in `axiom_parser.rs`) are a follow-up under
-//! the same issue and are not yet represented here.
+//! in this crate (`try_get_individual`, `try_get_literal`) are a follow-up
+//! under the same issue and are not yet represented here.
 
 use std::fmt;
 
@@ -25,6 +25,15 @@ pub enum TranslatorError {
     /// etc.) is malformed: a cycle, or a node with the wrong number of
     /// `rdf:first`/`rdf:rest` triples.
     MalformedRdfList(String),
+    /// The dependency graph among anonymous (blank-node) OWL class
+    /// expressions contains a cycle — e.g. two blank-node
+    /// `owl:intersectionOf`/`owl:unionOf` expressions whose member lists
+    /// reference each other — so no topological order exists.
+    CyclicDependency(String),
+    /// A subject of `rdf:type owl:AllDisjointClasses` or
+    /// `rdf:type owl:AllDisjointProperties` has more than one `owl:members`
+    /// triple, so which list to use is ambiguous.
+    MultipleOwlMembers(String),
 }
 
 impl fmt::Display for TranslatorError {
@@ -32,6 +41,12 @@ impl fmt::Display for TranslatorError {
         match self {
             TranslatorError::MalformedRdfList(msg) => {
                 write!(f, "malformed rdf:List: {msg}")
+            }
+            TranslatorError::CyclicDependency(msg) => {
+                write!(f, "cyclic dependency: {msg}")
+            }
+            TranslatorError::MultipleOwlMembers(msg) => {
+                write!(f, "multiple owl:members: {msg}")
             }
         }
     }
