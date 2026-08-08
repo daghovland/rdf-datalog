@@ -67,6 +67,30 @@
   /* Placeholder views */
   .placeholder { color: #666; font-size: 0.88rem; padding: 1.5rem 0; }
   .placeholder a { color: #005a9c; }
+  /* Provenance timeline */
+  details.session { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.5rem 0.7rem; margin-bottom: 0.6rem; background: #fff; }
+  details.session summary { cursor: pointer; font-size: 0.88rem; }
+  details.session summary::-webkit-details-marker { display: none; }
+  details.session summary::before { content: '\25B6\00A0'; font-size: 0.65rem; opacity: 0.6; }
+  details.session[open] > summary::before { content: '\25BC\00A0'; }
+  .session-time { font-weight: 600; color: #222; }
+  .session-agent { color: #555; margin-left: 0.4rem; }
+  .session-issues { color: #888; font-size: 0.8rem; margin-left: 0.4rem; }
+  .session-body { margin: 0.6rem 0 0.2rem 1.1rem; padding-left: 0.8rem; border-left: 2px solid #eee; }
+  .summary-block { margin-bottom: 0.9rem; font-size: 0.85rem; }
+  .summary-block:last-child { margin-bottom: 0; }
+  .abstract-text { font-weight: 600; margin: 0 0 0.3rem; }
+  .summary-text { margin: 0 0 0.4rem; color: #333; line-height: 1.4; }
+  .reasoning-for { font-size: 0.8rem; color: #666; }
+  .decisions { margin-top: 0.5rem; }
+  .decisions h4 { margin: 0 0 0.3rem; font-size: 0.78rem; color: #555; text-transform: uppercase; letter-spacing: 0.02em; }
+  details.decision { border: 1px solid #eee; border-radius: 4px; padding: 0.35rem 0.55rem; margin-bottom: 0.35rem; background: #fcfcfc; }
+  details.decision summary { cursor: pointer; font-size: 0.82rem; }
+  details.decision summary::-webkit-details-marker { display: none; }
+  details.decision summary::before { content: '\25B6\00A0'; font-size: 0.6rem; opacity: 0.6; }
+  details.decision[open] > summary::before { content: '\25BC\00A0'; }
+  .alternatives { margin: 0.4rem 0 0.1rem; padding-left: 1.1rem; font-size: 0.8rem; color: #666; }
+  .alternatives li { margin-bottom: 0.2rem; }
 </style>
 </head>
 <body>
@@ -111,9 +135,20 @@
       </div>
     </section>
     <section id="view-provenance" class="view">
-      <div class="placeholder">
-        Agent/session/provenance timeline view is not built yet &mdash; see
-        <a href="https://github.com/daghovland/rdf-datalog/issues/383" target="_blank" rel="noopener">issue #383</a>.
+      <div id="provenance-error"></div>
+      <div class="card">
+        <h2>Agent sessions</h2>
+        <p class="hint" style="font-size:0.8rem;color:#777;margin-top:-0.4rem;">
+          Ordered by <code>prov:startedAtTime</code>, most recent first &mdash; the only
+          currently-timestamped part of this corpus
+          (<code>bl:WorkItem</code> timestamps are tracked separately under
+          <a href="https://github.com/daghovland/rdf-datalog/issues/379" target="_blank" rel="noopener">#379</a>).
+          Expand a session for its <code>agp:TranscriptSummary</code> and any
+          <code>agp:decisionPoint</code> drill-down.
+        </p>
+        <div id="sessions-list">
+          <div class="empty-note">Loading agent sessions&hellip;</div>
+        </div>
       </div>
     </section>
     <section id="view-relevant" class="view">
@@ -133,6 +168,17 @@
   const BL = 'https://dagalog.dev/ns/backlog#';
   const PREFIXES =
     'PREFIX bl: <' + BL + '> ' +
+    'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ';
+
+  // ── agp:/prov: vocabulary (agent-provenance timeline, #383) — see
+  //    backlog/ontology/agentprov-vocabulary.ttl and provenance/queries/
+  //    for the hand-editable query templates this view's unparameterized
+  //    queries are modeled on. ──
+  const AGP = 'https://dagalog.dev/ns/agentprov#';
+  const PROV = 'http://www.w3.org/ns/prov#';
+  const PROV_PREFIXES =
+    'PREFIX agp: <' + AGP + '> ' +
+    'PREFIX prov: <' + PROV + '> ' +
     'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ';
 
   const STATUS_COLUMNS = [
@@ -419,6 +465,229 @@
     }
   }
 
+  // ── Provenance timeline (#383): agp:AgentSessions ordered by
+  //    prov:startedAtTime, each drilling down into its
+  //    agp:TranscriptSummary and that summary's agp:decisionPoints. Split
+  //    into several unparameterized queries (mirroring loadBoard/loadEpics'
+  //    "one query per join shape, group client-side" pattern) rather than
+  //    one giant join, so that a session with zero summaries, or a summary
+  //    with zero decision points, still renders instead of vanishing from
+  //    an inner join. ──
+
+  async function loadSessions() {
+    // One row per session (assumes exactly one prov:wasAssociatedWith
+    // agent per session, per agp:AgentSession's own doc comment).
+    const json = await sparqlFetch(
+      PROV_PREFIXES +
+        'SELECT ?session ?startedAtTime ?endedAtTime ?agent ?agentLabel WHERE { ' +
+        '  ?session a agp:AgentSession ; prov:wasAssociatedWith ?agent . ' +
+        '  OPTIONAL { ?session prov:startedAtTime ?startedAtTime } ' +
+        '  OPTIONAL { ?session prov:endedAtTime ?endedAtTime } ' +
+        '  OPTIONAL { ?agent rdfs:label ?agentLabel } ' +
+        '}'
+    );
+    return bindingsOf(json).map((row) => ({
+      session: row.session.value,
+      startedAtTime: row.startedAtTime ? row.startedAtTime.value : null,
+      endedAtTime: row.endedAtTime ? row.endedAtTime.value : null,
+      agent: row.agent.value,
+      agentLabel: row.agentLabel ? row.agentLabel.value : row.agent.value,
+    }));
+  }
+
+  async function loadIssuesBySession() {
+    const json = await sparqlFetch(
+      PROV_PREFIXES +
+        'SELECT ?session ?issue WHERE { ' +
+        '  ?session a agp:AgentSession ; prov:used ?issue . ' +
+        '}'
+    );
+    const bySession = new Map();
+    for (const row of bindingsOf(json)) {
+      const s = row.session.value;
+      if (!bySession.has(s)) bySession.set(s, []);
+      bySession.get(s).push(row.issue.value);
+    }
+    return bySession;
+  }
+
+  async function loadSummariesBySession() {
+    // agp:abstractText is OPTIONAL and (per the vocabulary) at most one per
+    // summary, so folding it in here doesn't multiply rows the way joining
+    // agp:decisionPoint would (see all_decision_points.sparql's comment).
+    const json = await sparqlFetch(
+      PROV_PREFIXES +
+        'SELECT ?summary ?session ?summaryText ?abstractText ?reasoningFor WHERE { ' +
+        '  ?summary a agp:TranscriptSummary ; ' +
+        '    prov:wasGeneratedBy ?session ; ' +
+        '    agp:summaryText ?summaryText . ' +
+        '  OPTIONAL { ?summary agp:abstractText ?abstractText } ' +
+        '  OPTIONAL { ?summary agp:reasoningFor ?reasoningFor } ' +
+        '}'
+    );
+    const bySession = new Map();
+    for (const row of bindingsOf(json)) {
+      const s = row.session.value;
+      if (!bySession.has(s)) bySession.set(s, []);
+      bySession.get(s).push({
+        summary: row.summary.value,
+        summaryText: row.summaryText.value,
+        abstractText: row.abstractText ? row.abstractText.value : null,
+        reasoningFor: row.reasoningFor ? row.reasoningFor.value : null,
+      });
+    }
+    return bySession;
+  }
+
+  async function loadDecisionsBySummary() {
+    // Same core join as provenance/queries/all_decision_points.sparql,
+    // deliberately not also joining agp:alternative here for the same
+    // reason that query gives: it would multiply rows per alternative.
+    // Alternatives are fetched separately below and merged client-side.
+    const [decisionsJson, altsJson] = await Promise.all([
+      sparqlFetch(
+        PROV_PREFIXES +
+          'SELECT ?summary ?decision ?summaryText WHERE { ' +
+          '  ?summary a agp:TranscriptSummary ; agp:decisionPoint ?decision . ' +
+          '  ?decision agp:summaryText ?summaryText . ' +
+          '} ORDER BY ?summary ?decision'
+      ),
+      sparqlFetch(
+        PROV_PREFIXES +
+          // No "?decision a agp:Decision" triple: agp:alternative's domain
+          // is already agp:Decision, so the type triple is redundant and
+          // would only silently drop an alternative if its decision
+          // resource ever omitted the explicit rdf:type (relying instead
+          // on the range of agp:decisionPoint), which the core join query
+          // above doesn't require either.
+          'SELECT ?decision ?alternative WHERE { ' +
+          '  ?decision agp:alternative ?alternative . ' +
+          '}'
+      ),
+    ]);
+
+    const altsByDecision = new Map();
+    for (const row of bindingsOf(altsJson)) {
+      const d = row.decision.value;
+      if (!altsByDecision.has(d)) altsByDecision.set(d, []);
+      altsByDecision.get(d).push(row.alternative.value);
+    }
+
+    const bySummary = new Map();
+    for (const row of bindingsOf(decisionsJson)) {
+      const s = row.summary.value;
+      if (!bySummary.has(s)) bySummary.set(s, []);
+      bySummary.get(s).push({
+        decision: row.decision.value,
+        summaryText: row.summaryText.value,
+        alternatives: altsByDecision.get(row.decision.value) || [],
+      });
+    }
+    return bySummary;
+  }
+
+  function renderDecision(decision) {
+    const details = document.createElement('details');
+    details.className = 'decision';
+    const summary = document.createElement('summary');
+    summary.textContent = decision.summaryText;
+    details.appendChild(summary);
+    if (decision.alternatives.length > 0) {
+      const ul = el('ul', 'alternatives');
+      for (const alt of decision.alternatives) {
+        ul.appendChild(el('li', null, alt));
+      }
+      details.appendChild(ul);
+    }
+    return details;
+  }
+
+  function renderSummaryBlock(summary, decisionsBySummary) {
+    const block = el('div', 'summary-block');
+    if (summary.abstractText) {
+      block.appendChild(el('p', 'abstract-text', summary.abstractText));
+    }
+    block.appendChild(el('p', 'summary-text', summary.summaryText));
+    if (summary.reasoningFor) {
+      const line = el('div', 'reasoning-for');
+      line.appendChild(document.createTextNode('Reasoning for: '));
+      line.appendChild(iriLink(summary.reasoningFor, issueNumber(summary.reasoningFor) || summary.reasoningFor));
+      block.appendChild(line);
+    }
+    const decisions = decisionsBySummary.get(summary.summary) || [];
+    if (decisions.length > 0) {
+      const wrap = el('div', 'decisions');
+      wrap.appendChild(el('h4', null, 'Decision points'));
+      for (const d of decisions) {
+        wrap.appendChild(renderDecision(d));
+      }
+      block.appendChild(wrap);
+    }
+    return block;
+  }
+
+  async function loadProvenance() {
+    const listEl = document.getElementById('sessions-list');
+    const errEl = document.getElementById('provenance-error');
+    try {
+      const [sessions, issuesBySession, summariesBySession, decisionsBySummary] = await Promise.all([
+        loadSessions(),
+        loadIssuesBySession(),
+        loadSummariesBySession(),
+        loadDecisionsBySummary(),
+      ]);
+
+      // Most recent first. Sessions with no startedAtTime (shouldn't happen
+      // per the vocabulary's own doc comment, but not enforced) sort last
+      // rather than being dropped.
+      sessions.sort((a, b) => {
+        if (!a.startedAtTime && !b.startedAtTime) return 0;
+        if (!a.startedAtTime) return 1;
+        if (!b.startedAtTime) return -1;
+        return a.startedAtTime < b.startedAtTime ? 1 : a.startedAtTime > b.startedAtTime ? -1 : 0;
+      });
+
+      listEl.textContent = '';
+      if (sessions.length === 0) {
+        listEl.appendChild(el('div', 'empty-note', 'No agent sessions found.'));
+        return;
+      }
+      for (const s of sessions) {
+        const details = document.createElement('details');
+        details.className = 'session';
+        const summaryEl = document.createElement('summary');
+        summaryEl.appendChild(
+          el('span', 'session-time', s.startedAtTime || 'unknown time')
+        );
+        summaryEl.appendChild(el('span', 'session-agent', s.agentLabel));
+        const issues = issuesBySession.get(s.session) || [];
+        if (issues.length > 0) {
+          const issuesSpan = el('span', 'session-issues', '');
+          issuesSpan.textContent =
+            '(' + issues.map((i) => issueNumber(i) || i).join(', ') + ')';
+          summaryEl.appendChild(issuesSpan);
+        }
+        details.appendChild(summaryEl);
+
+        const body = el('div', 'session-body');
+        const summaries = summariesBySession.get(s.session) || [];
+        if (summaries.length === 0) {
+          body.appendChild(el('div', 'empty-note', 'No transcript summary recorded for this session.'));
+        } else {
+          for (const summary of summaries) {
+            body.appendChild(renderSummaryBlock(summary, decisionsBySummary));
+          }
+        }
+        details.appendChild(body);
+        listEl.appendChild(details);
+      }
+    } catch (e) {
+      listEl.textContent = '';
+      errEl.textContent = '';
+      errEl.appendChild(el('div', 'msg err', 'Failed to load provenance timeline: ' + e.message));
+    }
+  }
+
   // ── Nav (client-side view switch; no page reload — same page other
   //     sibling sub-issues, #382/#383/#384, will plug their views into) ──
   function initNav() {
@@ -448,6 +717,7 @@
   loadFreshness();
   loadBoard();
   loadEpics();
+  loadProvenance();
 })();
 </script>
 </body>

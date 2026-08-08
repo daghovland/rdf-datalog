@@ -1,0 +1,40 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary (see docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# "Session window" -- prospective case): written right after opening PR
+# #429, in the same session that did the work, before merge. endedAtTime
+# below is this session's own real wall-clock "now" at authoring time, not
+# a guessed mergedAt.
+
+ghpull:429 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog_endpoint: agent-provenance timeline view (#383)" ;
+    bl:number 429 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:383 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr429 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:383 ;
+    prov:startedAtTime "2026-08-08T20:31:05Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-08T21:05:00Z"^^xsd:dateTime .
+
+session:pr429Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #383 asked for a real Provenance view on the #381 dashboard shell, surfacing agp:AgentSession/agp:TranscriptSummary/agp:Decision data that until now only had hand-editable, single-subject query templates in provenance/queries/*.sparql. The approach mirrors loadBoard/loadEpics' existing pattern in backlog_frontend.html rather than inventing a new one: several small unparameterized SPARQL queries (sessions, issues-used-by-session, summaries-by-session, decision-points, alternatives-by-decision) run in parallel via Promise.all and are joined client-side by IRI, instead of one large SPARQL join. This avoids the row-multiplication trap the existing all_decision_points.sparql query already documents (joining agp:alternative into the core decision-points query would multiply rows per alternative), and means a session with zero summaries, or a summary with zero decision points, still renders instead of silently disappearing behind an inner join. Verified against the real local corpus (scripts/serve-backlog.sh, all 45 provenance/summaries/*.ttl files loaded): extracted the actual concatenated JS query strings verbatim via a small headless Node harness (stubbing document/window, using real fetch against a live dagalog instance) rather than trusting hand-retyped curl approximations of the queries, confirming all five queries return correct, real data (45 sessions, 45 summaries, 26 decision points, 26 alternatives, real GitHub cross-links) and that the full render path throws no exceptions." ;
+    agp:reasoningFor ghpull:429 ;
+    agp:decisionPoint session:pr429AlternativeJoinDecision ;
+    prov:wasGeneratedBy session:pr429 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr429AlternativeJoinDecision a agp:Decision ;
+    agp:summaryText "The agp:alternative query was written to match on plain '?decision agp:alternative ?alternative' with no accompanying '?decision a agp:Decision' type triple, even though the sibling decision-points query does type its ?summary as agp:TranscriptSummary. This was a deliberate, review-driven choice: agp:alternative's rdfs:domain in agentprov-vocabulary.ttl already is agp:Decision, so requiring the explicit rdf:type on the query side adds no filtering power on well-formed data and could only ever silently drop real alternatives if a decision resource's rdf:type triple were ever omitted while its agp:decisionPoint link (whose range is agp:Decision) was still asserted." ;
+    agp:alternative "Initially wrote the alternatives query as '?decision a agp:Decision ; agp:alternative ?alternative', mirroring the decisions query's own '?summary a agp:TranscriptSummary' typing for visual symmetry. Rejected after review pointed out the asymmetry was itself the tell: counting agp:alternative rows with and without the added type triple against the real 45-file corpus gave identical counts (26/26) today, but the extra triple bought no correctness and was a strictly worse query for any future summary file that relied on inferred typing instead of an explicit assertion." .
