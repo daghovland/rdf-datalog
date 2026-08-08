@@ -128,6 +128,45 @@ async fn root_route_serves_dashboard_markers() {
     );
 }
 
+/// The served body must contain the crates view (#382) -- its section id,
+/// the Cytoscape.js CDN script URL it lazily loads for the dependency
+/// graph, and the `bl:dependsOnCrate`/`bl:touchesCrate` queries it issues
+/// -- proving the crate list + dependency graph + per-crate open-work-item
+/// view actually shipped in this page rather than staying a stub.
+#[tokio::test]
+async fn root_route_serves_crates_view_markers() {
+    let server = TestServer::start(TEST_SPARQL_ENDPOINT).await;
+
+    let resp = server
+        .client
+        .get(&server.base_url)
+        .send()
+        .await
+        .expect("request failed");
+
+    let body = resp.text().await.expect("body");
+    assert!(
+        body.contains("id=\"view-crates\""),
+        "expected crates view section in body"
+    );
+    assert!(
+        body.contains("cytoscape@3.30.2"),
+        "expected Cytoscape.js CDN script URL in body"
+    );
+    assert!(
+        body.contains("bl:dependsOnCrate"),
+        "expected a bl:dependsOnCrate query in body"
+    );
+    assert!(
+        body.contains("bl:touchesCrate"),
+        "expected a bl:touchesCrate query in body"
+    );
+    assert!(
+        !body.contains("Crate list + dependency graph view is not built yet"),
+        "crates view should no longer be a stub placeholder"
+    );
+}
+
 /// The provenance timeline view (#383) must be present in the served body:
 /// its section/list container and the `agp:` namespace it queries against.
 /// This is the same "assert markers are in the static body" coverage level
