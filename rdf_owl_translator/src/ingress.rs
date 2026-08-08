@@ -216,30 +216,26 @@ pub fn get_rdf_list_elements(
     Ok(result)
 }
 
-/// Turn a graph element into an OWL Individual. Panics if it is a literal.
-pub fn try_get_individual(gel: &GraphElement) -> Individual {
+/// Turn a graph element into an OWL Individual.
+///
+/// Returns [`TranslatorError::InvalidIndividual`] instead of panicking when
+/// `gel` is a literal, or an RDF 1.2 triple term (triple terms cannot be OWL
+/// individuals at all; full RDF 1.2 support tracked in
+/// <https://github.com/daghovland/rdf-datalog/issues/143>). See
+/// <https://github.com/daghovland/rdf-datalog/issues/363>.
+pub fn try_get_individual(gel: &GraphElement) -> Result<Individual, TranslatorError> {
     match gel {
-        GraphElement::GraphLiteral(lit) => {
-            panic!("Invalid OWL: literal {:?} used as individual", lit)
-        }
+        GraphElement::GraphLiteral(lit) => Err(TranslatorError::InvalidIndividual(format!(
+            "literal {lit:?} used as individual"
+        ))),
         GraphElement::NodeOrEdge(res) => match res {
-            RdfResource::Iri(iri) => Individual::NamedIndividual(FullIri(iri.clone())),
-            RdfResource::AnonymousBlankNode(n) => Individual::AnonymousIndividual(*n),
+            RdfResource::Iri(iri) => Ok(Individual::NamedIndividual(FullIri(iri.clone()))),
+            RdfResource::AnonymousBlankNode(n) => Ok(Individual::AnonymousIndividual(*n)),
         },
-        // Triple terms cannot be OWL individuals; full RDF 1.2 support tracked in #143.
-        GraphElement::TripleTerm(_) => {
-            panic!(
-                "Invalid OWL: triple term used as individual (RDF 1.2 not yet supported, see issue #143)"
-            )
-        }
-    }
-}
-
-/// Extract a literal from a graph element. Panics if it is not a literal.
-pub fn try_get_literal(gel: &GraphElement) -> &RdfLiteral {
-    match gel {
-        GraphElement::GraphLiteral(lit) => lit,
-        other => panic!("{:?} used as a literal but is not one", other),
+        GraphElement::TripleTerm(_) => Err(TranslatorError::InvalidIndividual(
+            "triple term used as individual (RDF 1.2 not yet supported, see issue #143)"
+                .to_string(),
+        )),
     }
 }
 
@@ -545,5 +541,51 @@ mod tests {
     fn try_get_bool_literal_returns_none_for_non_boolean_literal() {
         let gel = GraphElement::GraphLiteral(RdfLiteral::LiteralString("hello".to_string()));
         assert_eq!(try_get_bool_literal(&gel), None);
+    }
+
+    #[test]
+    fn try_get_individual_ok_on_iri_resource() {
+        let gel = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            "http://example.org/x".to_string(),
+        )));
+        assert_eq!(
+            try_get_individual(&gel),
+            Ok(Individual::NamedIndividual(FullIri(IriReference(
+                "http://example.org/x".to_string()
+            ))))
+        );
+    }
+
+    #[test]
+    fn try_get_individual_ok_on_anonymous_blank_node() {
+        let gel = GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(42));
+        assert_eq!(
+            try_get_individual(&gel),
+            Ok(Individual::AnonymousIndividual(42))
+        );
+    }
+
+    #[test]
+    fn try_get_individual_err_on_literal() {
+        let gel = GraphElement::GraphLiteral(RdfLiteral::LiteralString("hello".to_string()));
+        assert!(matches!(
+            try_get_individual(&gel),
+            Err(TranslatorError::InvalidIndividual(_))
+        ));
+    }
+
+    #[test]
+    fn try_get_individual_err_on_triple_term() {
+        use dag_rdf::TripleTermKey;
+
+        let gel = GraphElement::TripleTerm(TripleTermKey {
+            subject: 1,
+            predicate: 2,
+            obj: 3,
+        });
+        assert!(matches!(
+            try_get_individual(&gel),
+            Err(TranslatorError::InvalidIndividual(_))
+        ));
     }
 }

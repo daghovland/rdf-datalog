@@ -526,9 +526,25 @@ fn collect_anon_class_exprs(
             (
                 vec![],
                 Box::new(move |_decls: &OntologyDeclarations, res| {
+                    // Skip malformed members (e.g. a literal used where an
+                    // individual is expected) rather than aborting the whole
+                    // owl:oneOf — an ObjectOneOf missing one bad member is
+                    // more useful than none at all. See
+                    // <https://github.com/daghovland/rdf-datalog/issues/363>.
                     let individuals: Vec<Individual> = list_items
                         .iter()
-                        .map(|&id| try_get_individual(res.get_graph_element(id)))
+                        .filter_map(|&id| {
+                            let gel = res.get_graph_element(id);
+                            match try_get_individual(gel) {
+                                Ok(ind) => Some(ind),
+                                Err(e) => {
+                                    log::warn!(
+                                        "owl:oneOf member is not a valid individual: {e} — skipping"
+                                    );
+                                    None
+                                }
+                            }
+                        })
                         .collect();
                     ClassExpression::ObjectOneOf(individuals)
                 }),
@@ -848,7 +864,17 @@ fn build_restriction_rest(
                 decls.object_or_data_property(
                     y,
                     res,
-                    |ope| ClassExpression::ObjectHasValue(ope, try_get_individual(&z_gel)),
+                    |ope| match try_get_individual(&z_gel) {
+                        Ok(ind) => ClassExpression::ObjectHasValue(ope, ind),
+                        Err(e) => {
+                            log::warn!(
+                                "owl:hasValue object is not a valid individual: {e} — using owl:Thing"
+                            );
+                            ClassExpression::ClassName(FullIri(IriReference(
+                                OWL_THING_IRI.to_string(),
+                            )))
+                        }
+                    },
                     |dp| ClassExpression::DataHasValue(dp, z_gel.clone()),
                 )
             }),
