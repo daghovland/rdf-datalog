@@ -442,7 +442,13 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
     // that `IRI()`/`URI()` can resolve a runtime string argument against it
     // at evaluation time, not just IRIs written directly in query syntax
     // (`ParserContext::base` handles those at parse time — #217). See #346.
-    match execute_with_base(&query, datastore, NetworkPolicy::Deny, ctx.base.as_deref())? {
+    match execute_with_base(
+        &query,
+        datastore,
+        NetworkPolicy::Deny,
+        ctx.base.as_deref(),
+        None,
+    )? {
         QueryResult::Select(r) => Ok(r),
         QueryResult::Ask(_) => {
             Err("ASK queries are not supported via run_sparql_query".to_string())

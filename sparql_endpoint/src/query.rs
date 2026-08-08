@@ -38,6 +38,7 @@ use axum::{
 use dag_rdf::Datastore;
 use sparql_parser::{ParserContext, QueryResult, execute_with_base, parse_query};
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// `GET /sparql?query=<url-encoded SPARQL>`
 pub async fn sparql_get(
@@ -344,15 +345,10 @@ async fn run_transactional_query(
         &view,
         state.network_policy.clone(),
         ctx.base.as_deref(),
+        configured_query_timeout(state.config.max_query_timeout_secs),
     ) {
         Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Execution error: {}", e),
-            )
-                .into_response();
-        }
+        Err(e) => return query_execution_error_response(&e),
     };
     format_query_result(result, headers, &view)
 }
@@ -570,15 +566,10 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
         &store,
         state.network_policy.clone(),
         ctx.base.as_deref(),
+        configured_query_timeout(state.config.max_query_timeout_secs),
     ) {
         Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Execution error: {}", e),
-            )
-                .into_response();
-        }
+        Err(e) => return query_execution_error_response(&e),
     };
 
     match result {
@@ -669,6 +660,45 @@ async fn run_select_query(query_str: &str, headers: &HeaderMap, state: &AppState
                 &etag,
             )
         }
+    }
+}
+
+/// Convert `Config::max_query_timeout_secs` into the `Option<Duration>`
+/// [`execute_with_base`] expects. `0` is treated as "disabled" (the common
+/// convention for a "maximum ... seconds" config field with no separate
+/// on/off flag), matching how a caller would reasonably signal "no timeout"
+/// with this field's type. The default (30) is a real, enforced bound. See
+/// [#372](https://github.com/daghovland/rdf-datalog/issues/372).
+fn configured_query_timeout(max_query_timeout_secs: u64) -> Option<Duration> {
+    if max_query_timeout_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(max_query_timeout_secs))
+    }
+}
+
+/// Map a query execution error to an HTTP response, giving the cooperative
+/// query-timeout case (#372) its own `503 Service Unavailable` — distinct
+/// from the generic `500` used for every other execution error — so a
+/// client (or an operator watching status codes) can tell "this query is too
+/// expensive to run within the configured limit" apart from "the query
+/// itself is broken". `execute`/`execute_with_base` use a plain
+/// `Result<_, String>` (no dedicated error enum to match on), so this is a
+/// string-content check against the exact message `Deadline::check` returns;
+/// see `sparql_parser::deadline`.
+fn query_execution_error_response(message: &str) -> Response {
+    if message.contains("exceeded the configured timeout") {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Query execution error: {message}"),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Execution error: {message}"),
+        )
+            .into_response()
     }
 }
 
