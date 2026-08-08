@@ -113,3 +113,23 @@ fn translate_has_self_numeric_lexical_form() {
         axioms
     );
 }
+
+/// Regression test for #363: two blank-node `owl:intersectionOf` class
+/// expressions whose member lists reference each other form a cycle in the
+/// anonymous-class-expression dependency graph. `rdf2owl` must return a
+/// clean `Err` instead of panicking the process.
+#[test]
+fn translate_cyclic_intersection_of_classes_returns_err() {
+    let file = File::open("tests/data/cyclicIntersectionOfClasses.ttl")
+        .expect("Cannot open tests/data/cyclicIntersectionOfClasses.ttl");
+    let reader = BufReader::new(file);
+    let mut datastore = Datastore::new(1_000);
+    parse_turtle(&mut datastore, reader).expect("Turtle parse failed");
+
+    let result = rdf2owl(&mut datastore);
+    assert!(
+        result.is_err(),
+        "Expected rdf2owl to return Err on a cyclic class-expression dependency graph, got {:?}",
+        result.map(|doc| doc.ontology.axioms)
+    );
+}
