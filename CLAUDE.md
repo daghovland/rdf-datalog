@@ -26,7 +26,9 @@ Reference the current working branch of the repository in the issue when working
 
 When marking code as incomplete, f.ex. tests that are ignored, dead code that is allowed, or comments with todo's, always link to one or more issues or epics that will fix it
 
-When creating an issue mark it as TODO and leave it unlabeled — it needs the `ready` label from the user before any agent may pick it up (see "Implementation workflow" below). When working on it mark it as In Progress, use a worktree to create a new branch and note the agent and worktree id in the issue. 
+When creating an issue mark it as TODO and leave it unlabeled — it needs the `ready` label from the user before any agent may pick it up (see "Implementation workflow" below). When working on it mark it as In Progress **as early as possible** — see step 1 of "Implementation workflow" below — use a worktree to create a new branch and note the agent and worktree id in the issue.
+
+The GitHub project's own Status field (Todo/In Progress/Done) is the authoritative "what's being worked on" signal, checked *before* the `ready` label when scanning for work — an issue already In Progress must never be picked up by a second agent even if it's still labeled `ready`. Status only ever advances Todo → In Progress → Done; Done is set once the PR is open and CI is green (ready for review, not yet merged) — it is **not** the same event as the issue closing, which happens automatically on merge via `Closes #N`. Use `scripts/set-issue-status.sh <issue#> <Todo|"In Progress"|Done>` rather than hand-writing the Projects v2 GraphQL each time.
 
 The environment the agents and subagents run in is prone to token limitation and rebooots.
 Agents should therefore early in the work create a branch, push that branch to the repo and create a pull request.
@@ -39,7 +41,9 @@ When finished finalize the pull request between that branch and main before remo
 
 All code changes (bug fixes, features) follow this workflow:
 
-1. **Pick an issue** from the [Dagalog backlog](https://github.com/users/daghovland/projects/11) — **only an issue labeled `ready`**. This label is applied by the user (Dag) after reviewing the issue; an agent (including Claude when orchestrating other agents) must never start work on an issue that lacks it, no matter how well-scoped or obviously-correct the issue looks. If you write an issue yourself (e.g. after finding a bug or filing a follow-up), leave it unlabeled and tell the user it's awaiting review — do not add the `ready` label yourself and do not start work on it in the same session. Mark the issue In Progress and post the working branch name as a comment once you do start.
+1. **Pick an issue** from the [Dagalog backlog](https://github.com/users/daghovland/projects/11) — **only an issue labeled `ready` AND whose Status is still `Todo`** (not already `In Progress`/`Done` — that means another agent already claimed it, even if this session doesn't remember doing so). This label is applied by the user (Dag) after reviewing the issue; an agent (including Claude when orchestrating other agents) must never start work on an issue that lacks it, no matter how well-scoped or obviously-correct the issue looks. If you write an issue yourself (e.g. after finding a bug or filing a follow-up), leave it unlabeled and tell the user it's awaiting review — do not add the `ready` label yourself and do not start work on it in the same session.
+
+   **Mark the issue's Status `In Progress` immediately** — before creating the worktree, definitely before delegating to a sub-agent (`bash scripts/set-issue-status.sh <issue#> "In Progress"`) — and post the working branch name as a comment once you do start. This is the single most important ordering in this whole workflow: doing it late is what lets two agents pick up the same issue.
 2. **Create a worktree** for isolation:
    ```bash
    git worktree add .claude/worktrees/<branch-name> -b <branch-name>
@@ -54,7 +58,7 @@ All code changes (bug fixes, features) follow this workflow:
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
-6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you."
+6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you." Once CI is fully green, mark the issue's Status `Done` (`bash scripts/set-issue-status.sh <issue#> Done`) — this reflects "the work is finished and awaiting your review," not "the issue is closed"; the issue only actually closes when you merge.
 6b. **Write a transcript summary** before removing the worktree: one `provenance/summaries/pr-<N>.ttl` file distilling the actual reasoning behind the PR you just finished, per [`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md) (issue [#334](https://github.com/daghovland/rdf-datalog/issues/334), part of the agent-provenance epic [#306](https://github.com/daghovland/rdf-datalog/issues/306)). Self-authored — you write your own summary, not a separate reviewing agent. `tests/provenance_queries.rs` picks up any new file under `provenance/summaries/` automatically and SHACL-validates it against `backlog/ontology/agentprov-shapes.ttl`.
 7. **Remove the worktree** once the PR merges (keep it around until then — conflict-resolution or review-feedback commits may still need to land on the branch):
    ```bash
@@ -69,6 +73,7 @@ All code changes (bug fixes, features) follow this workflow:
 - `scripts/worktree-status.sh` — ahead/behind + dirty-state summary across all worktrees (see above).
 - `scripts/pr-ready-if-green.sh <PR#>...` — for each PR, checks CI is fully green and, if so, marks it ready for review (`gh pr ready`) and posts a short confirmation comment. Never merges.
 - `scripts/new-provenance-summary.sh <PR#> <issue#> <branch>` — scaffolds a `provenance/summaries/pr-<N>.ttl` file (prefixes, `PullRequest`/`AgentSession` triples, real timestamps from `git log <branch>`) with a `TODO` placeholder for the actual `summaryText`/`decisionPoint` prose, which must still be written by hand per [`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md).
+- `scripts/set-issue-status.sh <issue#> <Todo|"In Progress"|Done>` — sets the Dagalog project's Status field via the Projects v2 GraphQL API (not a label). Use this at step 1 (In Progress, before delegating) and step 6 (Done, once CI is green) of the workflow above.
 
 Exception: trivial single-file documentation updates (like this one) may be committed directly to main without a worktree or PR.
 
