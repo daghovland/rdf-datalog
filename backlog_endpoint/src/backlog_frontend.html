@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backlog Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 1100px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  header { border-bottom: 2px solid #222; padding-bottom: 0.75rem; margin-bottom: 1rem; }
+  header h1 { margin: 0; font-size: 1.6rem; display: inline; }
+  .header-top { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  .back-link { font-size: 0.85rem; color: #555; text-decoration: none; }
+  .back-link:hover { color: #222; text-decoration: underline; }
+  nav { margin-top: 0.5rem; display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; }
+  .nav-link { padding: 0.35rem 0.9rem 0.35rem 0; font-size: 0.85rem; color: #555;
+              text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+              background: none; border-top: none; border-left: none; border-right: none;
+              cursor: pointer; font-family: inherit; }
+  .nav-link:hover { color: #222; }
+  .nav-link.active { color: #222; border-bottom-color: #222; font-weight: 600; }
+  .view { display: none; }
+  .view.active { display: block; }
+  /* Freshness banner */
+  .freshness { margin-top: 0.6rem; font-size: 0.82rem; padding: 0.45rem 0.75rem;
+               border-radius: 4px; border: 1px solid #ddd; background: #fff; color: #444; }
+  .freshness.stale { background: #fff8e6; border-color: #e6c766; color: #6b5400; }
+  .freshness.fresh { background: #eafaea; border-color: #a8d8a8; color: #1a5c1a; }
+  /* Board */
+  .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+           gap: 0.9rem; margin-top: 1rem; }
+  .board-col { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; }
+  .board-col h3 { margin: 0 0 0.6rem; font-size: 0.9rem; color: #333;
+                  display: flex; justify-content: space-between; align-items: baseline; }
+  .board-col h3 .count { font-weight: normal; color: #888; font-size: 0.8rem; }
+  .card-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 32rem; overflow-y: auto; }
+  .item-card { border: 1px solid #e2e2e2; border-radius: 4px; padding: 0.45rem 0.55rem;
+               font-size: 0.82rem; background: #fcfcfc; }
+  .item-card a.title-link { color: #1a1a1a; text-decoration: none; font-weight: 500; }
+  .item-card a.title-link:hover { text-decoration: underline; color: #005a9c; }
+  .item-number { color: #888; font-size: 0.78rem; margin-right: 0.3rem; }
+  .label-badges { margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.25rem; }
+  .label-badge { display: inline-block; background: #eef2f7; color: #33475b;
+                 border-radius: 8px; padding: 0.05rem 0.45rem; font-size: 0.7rem; }
+  .empty-note { color: #888; font-size: 0.8rem; font-style: italic; padding: 0.4rem 0; }
+  .msg { font-family: monospace; font-size: 0.85rem; padding: 0.5rem 0.75rem; border-radius: 4px; }
+  .msg.err { background: #fdecea; color: #7a1a1a; border: 1px solid #f0a0a0; margin-top: 1rem; }
+  /* Epics */
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 1.1rem; margin-top: 1.5rem; }
+  .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+  details.epic { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.5rem 0.7rem; margin-bottom: 0.5rem; }
+  details.epic summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  details.epic summary::-webkit-details-marker { display: none; }
+  details.epic summary::before { content: '\25B6\00A0'; font-size: 0.65rem; opacity: 0.6; }
+  details.epic[open] > summary::before { content: '\25BC\00A0'; }
+  .epic-status { font-weight: normal; color: #666; font-size: 0.78rem; margin-left: 0.4rem; }
+  .child-list { margin: 0.5rem 0 0.2rem 1.1rem; padding-left: 0.8rem; border-left: 2px solid #eee; }
+  .child-item { font-size: 0.82rem; padding: 0.2rem 0; }
+  .child-item .item-number { margin-left: 0; }
+  /* Placeholder views */
+  .placeholder { color: #666; font-size: 0.88rem; padding: 1.5rem 0; }
+  .placeholder a { color: #005a9c; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <h1>Backlog Dashboard</h1>
+      <a class="back-link" id="back-link" href="/">&larr; Query UI</a>
+    </div>
+    <div id="freshness-banner" class="freshness">Checking snapshot freshness&hellip;</div>
+    <nav id="main-nav">
+      <button type="button" class="nav-link active" data-view="board">Board</button>
+      <button type="button" class="nav-link" data-view="crates">Crates</button>
+      <button type="button" class="nav-link" data-view="provenance">Provenance</button>
+      <button type="button" class="nav-link" data-view="relevant">What's relevant</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ── Board view (issue/epic board + epic drill-down) ── -->
+    <section id="view-board" class="view active">
+      <div id="board-error"></div>
+      <div id="board" class="board">
+        <div class="empty-note">Loading open issues&hellip;</div>
+      </div>
+
+      <div class="card">
+        <h2>Epics</h2>
+        <p class="hint" style="font-size:0.8rem;color:#777;margin-top:-0.4rem;">
+          Each epic's sub-issues (<code>bl:subIssueOf</code>, arbitrary depth) are nested underneath it.
+        </p>
+        <div id="epics-list">
+          <div class="empty-note">Loading epics&hellip;</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Stub views for sibling sub-issues under epic #378 ── -->
+    <section id="view-crates" class="view">
+      <div class="placeholder">
+        Crate list + dependency graph view is not built yet &mdash; see
+        <a href="https://github.com/daghovland/rdf-datalog/issues/382" target="_blank" rel="noopener">issue #382</a>.
+      </div>
+    </section>
+    <section id="view-provenance" class="view">
+      <div class="placeholder">
+        Agent/session/provenance timeline view is not built yet &mdash; see
+        <a href="https://github.com/daghovland/rdf-datalog/issues/383" target="_blank" rel="noopener">issue #383</a>.
+      </div>
+    </section>
+    <section id="view-relevant" class="view">
+      <div class="placeholder">
+        "What's relevant" (file/crate &rarr; related PRs + reasoning) panel is not built yet &mdash; see
+        <a href="https://github.com/daghovland/rdf-datalog/issues/384" target="_blank" rel="noopener">issue #384</a>.
+      </div>
+    </section>
+  </main>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── bl:/agp: vocabulary (hardcoded deliberately — see #381 / the
+  //    epic-level plan's "Decision: dogfood tool, not a product feature") ──
+  const BL = 'https://dagalog.dev/ns/backlog#';
+  const PREFIXES =
+    'PREFIX bl: <' + BL + '> ' +
+    'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ';
+
+  const STATUS_COLUMNS = [
+    { iri: BL + 'Todo', label: 'Todo' },
+    { iri: BL + 'Ready', label: 'Ready' },
+    { iri: BL + 'InProgress', label: 'In progress' },
+    { iri: BL + 'Done', label: 'Done' },
+  ];
+  // bl:status is sparse in practice (see vocabulary.ttl's own comment on
+  // bl:status, and bl:InProgress in particular has no derivable GitHub
+  // label) -- issues with no bl:status asserted get their own bucket
+  // rather than being silently dropped from the board.
+  const NO_STATUS_LABEL = 'No status recorded';
+
+  // ── SPARQL fetch (same request/response shape as frontend.html's
+  //    sparqlFetch). backlog_endpoint is a separate process/origin from the
+  //    dagalog SPARQL endpoint it queries (see #381's Stage 1 restructuring
+  //    plan), so the target is injected by the server at request time as
+  //    window.SPARQL_ENDPOINT rather than assumed same-origin. Falls back to
+  //    '/sparql' so the page still degrades reasonably if it's ever
+  //    reverse-proxied under one origin with dagalog later. ──
+  const SPARQL_ENDPOINT = window.SPARQL_ENDPOINT || '/sparql';
+  async function sparqlFetch(query) {
+    const resp = await fetch(SPARQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sparql-query',
+        'Accept': 'application/sparql-results+json',
+      },
+      body: query,
+    });
+    const text = await resp.text();
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + text);
+    return JSON.parse(text);
+  }
+
+  function bindingsOf(json) {
+    return (json && json.results && json.results.bindings) || [];
+  }
+
+  // ── DOM helpers (textContent only — issue titles are untrusted GitHub
+  //    text and must never go through innerHTML) ──
+  function el(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function iriLink(iri, text) {
+    const a = document.createElement('a');
+    a.href = iri;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'title-link';
+    a.textContent = text;
+    return a;
+  }
+
+  function issueNumber(iri) {
+    const m = /\/(issues|pull)\/(\d+)$/.exec(iri);
+    return m ? '#' + m[2] : '';
+  }
+
+  // ── Freshness banner (#380's bl:generatedAt on bl:CurrentSnapshot) ──
+  async function loadFreshness() {
+    const banner = document.getElementById('freshness-banner');
+    try {
+      const json = await sparqlFetch(
+        PREFIXES + 'SELECT ?generatedAt WHERE { bl:CurrentSnapshot bl:generatedAt ?generatedAt }'
+      );
+      const rows = bindingsOf(json);
+      if (rows.length === 0 || !rows[0].generatedAt) {
+        banner.textContent =
+          'Data as of: unknown — this snapshot predates bl:generatedAt (#380); ' +
+          'regenerate with `cargo run -p backlog --bin backlog-regenerate` to get a timestamp.';
+        banner.classList.add('stale');
+        return;
+      }
+      banner.textContent = 'Data as of: ' + rows[0].generatedAt.value;
+      banner.classList.add('fresh');
+    } catch (e) {
+      banner.textContent = 'Data as of: unknown (freshness query failed: ' + e.message + ')';
+      banner.classList.add('stale');
+    }
+  }
+
+  // ── Board (open, non-epic bl:Issues grouped by bl:status) ──
+  async function loadLabelsByIssue() {
+    const json = await sparqlFetch(
+      PREFIXES +
+        'SELECT ?issue ?labelName WHERE { ' +
+        '  ?issue a bl:Issue ; bl:hasLabel ?lbl . ' +
+        '  ?lbl rdfs:label ?labelName . ' +
+        '}'
+    );
+    const byIssue = new Map();
+    for (const row of bindingsOf(json)) {
+      const iri = row.issue.value;
+      if (!byIssue.has(iri)) byIssue.set(iri, []);
+      byIssue.get(iri).push(row.labelName.value);
+    }
+    return byIssue;
+  }
+
+  function renderLabelBadges(container, labels) {
+    if (!labels || labels.length === 0) return;
+    const wrap = el('div', 'label-badges');
+    for (const l of labels) {
+      wrap.appendChild(el('span', 'label-badge', l));
+    }
+    container.appendChild(wrap);
+  }
+
+  function renderItemCard(iri, title, labels) {
+    const card = el('div', 'item-card');
+    const numSpan = el('span', 'item-number', issueNumber(iri));
+    card.appendChild(numSpan);
+    card.appendChild(iriLink(iri, title));
+    renderLabelBadges(card, labels);
+    return card;
+  }
+
+  async function loadBoard() {
+    const boardEl = document.getElementById('board');
+    const errEl = document.getElementById('board-error');
+    try {
+      const [issuesJson, labelsByIssue] = await Promise.all([
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?issue ?title ?status WHERE { ' +
+            '  ?issue a bl:Issue ; bl:state bl:Open ; rdfs:label ?title . ' +
+            '  FILTER NOT EXISTS { ?issue a bl:Epic } ' +
+            '  OPTIONAL { ?issue bl:status ?status } ' +
+            '}'
+        ),
+        loadLabelsByIssue(),
+      ]);
+
+      const columns = new Map();
+      for (const col of STATUS_COLUMNS) columns.set(col.iri, []);
+      columns.set('__none__', []);
+
+      for (const row of bindingsOf(issuesJson)) {
+        const iri = row.issue.value;
+        const title = row.title.value;
+        const statusIri = row.status ? row.status.value : '__none__';
+        const bucket = columns.has(statusIri) ? statusIri : '__none__';
+        columns.get(bucket).push({ iri, title, labels: labelsByIssue.get(iri) || [] });
+      }
+
+      boardEl.textContent = '';
+      const allColumns = STATUS_COLUMNS.concat([{ iri: '__none__', label: NO_STATUS_LABEL }]);
+      for (const col of allColumns) {
+        const items = columns.get(col.iri);
+        const colEl = el('div', 'board-col');
+        const h3 = el('h3');
+        h3.appendChild(document.createTextNode(col.label + ' '));
+        h3.appendChild(el('span', 'count', '(' + items.length + ')'));
+        colEl.appendChild(h3);
+        const list = el('div', 'card-list');
+        if (items.length === 0) {
+          list.appendChild(el('div', 'empty-note', 'No open issues'));
+        } else {
+          for (const it of items) {
+            list.appendChild(renderItemCard(it.iri, it.title, it.labels));
+          }
+        }
+        colEl.appendChild(list);
+        boardEl.appendChild(colEl);
+      }
+    } catch (e) {
+      boardEl.textContent = '';
+      errEl.textContent = '';
+      errEl.appendChild(el('div', 'msg err', 'Failed to load board: ' + e.message));
+    }
+  }
+
+  // ── Epics + arbitrary-depth bl:subIssueOf drill-down ──
+  async function loadEpics() {
+    const listEl = document.getElementById('epics-list');
+    try {
+      const [epicsJson, edgesJson, labelsByIssue] = await Promise.all([
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?epic ?title ?status ?state WHERE { ' +
+            '  ?epic a bl:Epic ; rdfs:label ?title . ' +
+            '  OPTIONAL { ?epic bl:status ?status } ' +
+            '  OPTIONAL { ?epic bl:state ?state } ' +
+            '}'
+        ),
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?child ?parent ?title ?status ?state WHERE { ' +
+            '  ?child bl:subIssueOf ?parent ; rdfs:label ?title . ' +
+            '  OPTIONAL { ?child bl:status ?status } ' +
+            '  OPTIONAL { ?child bl:state ?state } ' +
+            '}'
+        ),
+        loadLabelsByIssue(),
+      ]);
+
+      // parent IRI -> list of { iri, title, status, state }
+      const childrenByParent = new Map();
+      for (const row of bindingsOf(edgesJson)) {
+        const parent = row.parent.value;
+        if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+        childrenByParent.get(parent).push({
+          iri: row.child.value,
+          title: row.title.value,
+          status: row.status ? row.status.value : null,
+          state: row.state ? row.state.value : null,
+        });
+      }
+
+      function statusLabel(statusIri) {
+        const found = STATUS_COLUMNS.find((c) => c.iri === statusIri);
+        return found ? found.label : NO_STATUS_LABEL;
+      }
+
+      // Recursive render with a visited-set cycle guard: bl:subIssueOf is
+      // meant to be a DAG (child -> parent), but the dashboard must not
+      // hang if real data ever contains a cycle.
+      function renderChildTree(parentIri, visited) {
+        const children = childrenByParent.get(parentIri) || [];
+        if (children.length === 0) return null;
+        const ul = el('div', 'child-list');
+        for (const child of children) {
+          if (visited.has(child.iri)) continue;
+          const nextVisited = new Set(visited);
+          nextVisited.add(child.iri);
+
+          const row = el('div', 'child-item');
+          row.appendChild(el('span', 'item-number', issueNumber(child.iri)));
+          row.appendChild(iriLink(child.iri, child.title));
+          row.appendChild(
+            el('span', 'epic-status', '[' + statusLabel(child.status) + ']')
+          );
+          renderLabelBadges(row, labelsByIssue.get(child.iri) || []);
+          const subtree = renderChildTree(child.iri, nextVisited);
+          if (subtree) row.appendChild(subtree);
+          ul.appendChild(row);
+        }
+        return ul.childNodes.length ? ul : null;
+      }
+
+      listEl.textContent = '';
+      const epics = bindingsOf(epicsJson);
+      if (epics.length === 0) {
+        listEl.appendChild(el('div', 'empty-note', 'No epics found.'));
+        return;
+      }
+      for (const row of epics) {
+        const iri = row.epic.value;
+        const title = row.title.value;
+        const status = row.status ? row.status.value : null;
+        const details = document.createElement('details');
+        details.className = 'epic';
+        const summary = document.createElement('summary');
+        summary.appendChild(document.createTextNode(issueNumber(iri) + ' ' + title));
+        summary.appendChild(el('span', 'epic-status', '[' + statusLabel(status) + ']'));
+        details.appendChild(summary);
+
+        const linkLine = el('div', 'hint');
+        linkLine.style.fontSize = '0.78rem';
+        linkLine.style.margin = '0.3rem 0';
+        linkLine.appendChild(document.createTextNode('GitHub: '));
+        linkLine.appendChild(iriLink(iri, iri));
+        details.appendChild(linkLine);
+
+        renderLabelBadges(details, labelsByIssue.get(iri) || []);
+
+        const subtree = renderChildTree(iri, new Set([iri]));
+        if (subtree) {
+          details.appendChild(subtree);
+        } else {
+          details.appendChild(el('div', 'empty-note', 'No sub-issues.'));
+        }
+        listEl.appendChild(details);
+      }
+    } catch (e) {
+      listEl.textContent = '';
+      listEl.appendChild(el('div', 'msg err', 'Failed to load epics: ' + e.message));
+    }
+  }
+
+  // ── Nav (client-side view switch; no page reload — same page other
+  //     sibling sub-issues, #382/#383/#384, will plug their views into) ──
+  function initNav() {
+    const links = document.querySelectorAll('.nav-link');
+    links.forEach((link) => {
+      link.addEventListener('click', () => {
+        links.forEach((l) => l.classList.remove('active'));
+        link.classList.add('active');
+        document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+        document.getElementById('view-' + link.dataset.view).classList.add('active');
+      });
+    });
+  }
+
+  // ── Wire "Query UI" back-link to the actual dagalog origin, now that
+  //    this page is served from a separate process (see SPARQL_ENDPOINT
+  //    above) -- '/' on backlog_endpoint's own server is this same page,
+  //    not the generic query UI. ──
+  (function fixBackLink() {
+    const link = document.getElementById('back-link');
+    if (!link) return;
+    const m = SPARQL_ENDPOINT.match(/^(https?:\/\/[^/]+)/);
+    if (m) link.href = m[1] + '/';
+  })();
+
+  initNav();
+  loadFreshness();
+  loadBoard();
+  loadEpics();
+})();
+</script>
+</body>
+</html>

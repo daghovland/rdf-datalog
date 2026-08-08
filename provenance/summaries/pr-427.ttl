@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+ghpull:427 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog dashboard: own crate/binary (backlog_endpoint), not a sparql_endpoint route (#381)" ;
+    bl:number 427 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:381 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr427 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:381 ;
+    prov:startedAtTime "2026-08-08T15:58:17Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-08T17:10:00Z"^^xsd:dateTime .
+
+session:pr427Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #381 asked for a page shell plus an issue/epic board hardcoding bl:/agp: IRIs rather than reusing frontend.html's generic discovery (that file is deliberately schema-agnostic and already conflicts with #42/#47). The first pass shipped it as a GET /backlog route inside sparql_endpoint -- dagalog's own domain-agnostic RDF/SPARQL engine binary -- with sparql_endpoint/src/backlog_frontend.rs + .html wired into the same axum Router as /sparql. Reviewing that against the actual product boundary (dagalog as a generic triplestore vs. rdf-backlog as an application that uses dagalog as a backend, the way an app uses Postgres) surfaced a real coupling problem: the core engine binary would ship GitHub-issue-tracking-specific code and could never version/release independently of this dashboard's churn. Rather than jump straight to a second Git repository (real cost -- cross-repo pinning, duplicate CI, losing tip-of-tree testing -- not justified without a real forcing function), the fix was Stage 1 of a two-stage separation: pull the dashboard into its own crate/binary, backlog_endpoint, within the same Cargo workspace. It does not depend on sparql_endpoint's Rust internals at all; its JS talks to a separately running dagalog SPARQL endpoint over plain HTTP, with the target injected server-side as window.SPARQL_ENDPOINT (default http://localhost:3030/sparql) instead of assuming same-origin. scripts/serve-backlog.sh was extended to start both processes (dagalog backgrounded, backlog_endpoint foregrounded with an EXIT trap to avoid leaking the background server on Ctrl-C) so the one-command local workflow still produces a fully working dashboard. Before writing the original board/epic-drill-down logic (unchanged by this restructuring), the SPARQL queries had already been run directly against the real local dataset to settle two questions: whether bl:Epic individuals are also asserted a bl:Issue (yes, all 22 are), and how populated bl:status actually is (only 113 of 244 issues have any status, all bl:Ready -- so the board keeps a fifth 'No status recorded' bucket rather than a strict four-column layout that would drop over half of open issues)." ;
+    agp:reasoningFor ghpull:427 ;
+    prov:wasGeneratedBy session:pr427 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr427Decision, session:pr427RestructureDecision .
+
+session:pr427Decision a agp:Decision ;
+    agp:summaryText "Excluded bl:Epic individuals from the open-issue board (FILTER NOT EXISTS { ?issue a bl:Epic }) and gave epics their own dedicated drill-down section instead of a board card alongside ordinary issues." ;
+    agp:alternative "Considered showing epics as board cards too, keyed by their own bl:status like any other issue. Rejected because an epic sitting in a status column next to its own children (which can have different, more granular statuses) reads as misleading -- the board's status columns describe leaf work, not the aggregate state of a tree; a separate section makes the epic/child relationship the primary axis instead of forcing it into the same status grouping." .
+
+session:pr427RestructureDecision a agp:Decision ;
+    agp:summaryText "Moved the dashboard out of sparql_endpoint into a new backlog_endpoint crate/binary in the same Cargo workspace (Stage 1 of the dagalog/rdf-backlog separation), rather than leaving it as a GET /backlog route or jumping straight to a separate Git repository." ;
+    agp:alternative "Considered leaving the dashboard inside sparql_endpoint (rejected: couples the generic triplestore's release/versioning to a GitHub-specific application, and ships bl:/agp: knowledge in the core engine binary) and splitting into a second Git repository now (rejected: real cross-repo cost -- dependency pinning, duplicate CI, losing tip-of-tree testing against dagalog -- with no forcing function yet, since nothing today demands independent release trains or a second real consumer of dagalog beyond this dogfooding case)." .

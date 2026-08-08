@@ -1,0 +1,16 @@
+[package]
+name = "backlog-endpoint"
+version = "0.1.0"
+edition = "2024"
+autoexamples = false
+autobenches = false
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "signal"] }
+clap = { version = "4", features = ["derive", "env"] }
+log = "0.4"
+env_logger = "0.10"
+
+[dev-dependencies]
+reqwest = { version = "0.13", features = ["json"] }
