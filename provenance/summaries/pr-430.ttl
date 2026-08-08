@@ -1,0 +1,35 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/384-relevant-panel).
+
+ghpull:430 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog_endpoint: \"what's relevant\" panel (file/crate → related PRs + reasoning) (#384)" ;
+    bl:number 430 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:384 ;
+    bl:touchesFile "backlog_endpoint/src/backlog_frontend.html" ,
+        "backlog_endpoint/tests/backlog_frontend.rs" ;
+    bl:touchesCrate <https://dagalog.dev/ns/backlog/crate#backlog_endpoint> .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr430 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:384 ;
+    prov:startedAtTime "2026-08-08T21:05:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-08T21:05:00Z"^^xsd:dateTime .
+
+session:pr430Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #384 asked for a dashboard panel answering 'before I touch this file/crate, what's already been done here and why', replacing the #view-relevant stub with a UI over the #351 query pair (related_to_file.sparql/related_to_crate.sparql) rather than redesigning the query shape. The panel adds two plain-text inputs (file path, crate name) and, on submit, builds the same agp:TranscriptSummary -> agp:reasoningFor -> bl:PullRequest -> bl:touchesFile/bl:touchesCrate join those .sparql files use, substituting the user's input for the hardcoded VALUES example. It deliberately does not auto-query on page load like the Board/Provenance views, since running the join with no input would be meaningless. Since this is the first user-input-driven SPARQL query built in backlog_frontend.html (every prior query is a static, hand-written string), the file path had to be escaped before interpolation into the VALUES string literal to prevent injection -- backslash, double-quote, and the SPARQL-forbidden raw newline/CR/tab were all escaped, then verified live: a probe input containing an unescaped-would-be `\" } ?s ?p ?o . SELECT * WHERE { VALUES ?x { \"` sequence was posted to a running dagalog instance and confirmed to parse as a single VALUES literal (HTTP 200, zero rows) rather than corrupting the query. The crate-name identifier space (bl:Crate IRIs use the package/directory name, e.g. dag_rdf not dag-rdf) was confirmed against backlog/examples/snapshot.ttl's real bl:touchesCrate triples before trusting the panel's crate input, since #382 (which would have supplied a loadCrates()-style reference implementation to mirror) hadn't merged yet. Verification throughout used curl/Python against a real scripts/serve-backlog.sh instance loaded with the actual snapshot + provenance corpus, since no headless browser was available to click through the UI directly." ;
+    agp:reasoningFor ghpull:430 ;
+    prov:wasGeneratedBy session:pr430 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
