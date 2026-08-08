@@ -464,7 +464,66 @@ _:list1 rdf:first ex:A .
     match result {
         Err(TranslatorError::MalformedRdfList(_)) => {}
         Ok(_) => panic!("expected Err(MalformedRdfList), got Ok"),
-        Err(other) => panic!("expected Err(MalformedRdfList), got {other:?}"),
+        Err(other) => panic!("expected Err(MalformedRdfList), got Err({other:?})"),
+    }
+}
+
+/// An `owl:NamedIndividual` declaration whose subject is (malformed) a
+/// literal rather than an IRI/blank node. `rdf2owl` must return a clean
+/// `Err`, not panic. See <https://github.com/daghovland/rdf-datalog/issues/363>.
+///
+/// Turtle's grammar itself forbids a literal in subject position, so this
+/// malformed shape can only arise from data built directly against the
+/// `Datastore` API (e.g. a non-Turtle ingress path) rather than from a
+/// `parse_turtle` fixture — the triples are constructed by hand here.
+#[test]
+fn named_individual_declaration_with_literal_subject_returns_err_not_panic() {
+    const RDF_TYPE_IRI: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    const OWL_NAMED_INDIVIDUAL_IRI: &str = "http://www.w3.org/2002/07/owl#NamedIndividual";
+
+    let mut ds = Datastore::new(1_000);
+    let subj = ds.add_literal_resource(dag_rdf::RdfLiteral::LiteralString(
+        "not an individual".to_string(),
+    ));
+    let pred = ds.add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE_IRI.to_string())));
+    let obj = ds.add_node_resource(RdfResource::Iri(IriReference(
+        OWL_NAMED_INDIVIDUAL_IRI.to_string(),
+    )));
+    ds.add_triple(dag_rdf::ingress::Triple {
+        subject: subj,
+        predicate: pred,
+        obj,
+    });
+
+    let result = rdf2owl(&mut ds);
+
+    match result {
+        Err(TranslatorError::InvalidIndividual(_)) => {}
+        Ok(_) => panic!("expected Err(InvalidIndividual), got Ok"),
+        Err(other) => panic!("expected Err(InvalidIndividual), got Err({other:?})"),
+    }
+}
+
+/// An `owl:sameAs` axiom with a literal in individual position must return a
+/// clean `Err`, not panic. See
+/// <https://github.com/daghovland/rdf-datalog/issues/363>.
+#[test]
+fn same_as_with_literal_individual_returns_err_not_panic() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+ex:a owl:sameAs "not an individual" .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let result = rdf2owl(&mut ds);
+
+    match result {
+        Err(TranslatorError::InvalidIndividual(_)) => {}
+        Ok(_) => panic!("expected Err(InvalidIndividual), got Ok"),
+        Err(other) => panic!("expected Err(InvalidIndividual), got Err({other:?})"),
     }
 }
 

@@ -1,0 +1,15 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix : <http://example.org/> .
+
+# Ordinary, well-formed owl:hasValue restriction on an object property:
+# regression coverage for #363, proving the fix to try_get_individual did not
+# change behaviour on valid input.
+:likes a owl:ObjectProperty .
+
+:Fan rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :likes ;
+    owl:hasValue :cats
+] .

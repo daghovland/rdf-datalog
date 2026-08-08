@@ -9,10 +9,10 @@ Contact: hovlanddag@gmail.com
 //! Error types for RDF → OWL translation.
 //!
 //! Scoped to the malformed-`rdf:List` panics, the anonymous class-expression
-//! dependency cycle, and the multiple-`owl:members` panics fixed under
-//! <https://github.com/daghovland/rdf-datalog/issues/363>. Other panic sites
-//! in this crate (`try_get_individual`, `try_get_literal`) are a follow-up
-//! under the same issue and are not yet represented here.
+//! dependency cycle, the multiple-`owl:members` panics, and the
+//! `try_get_individual` panic, all fixed under
+//! <https://github.com/daghovland/rdf-datalog/issues/363>. `try_get_literal`
+//! was deleted outright (dead code, zero call sites) rather than converted.
 
 use std::fmt;
 
@@ -34,6 +34,12 @@ pub enum TranslatorError {
     /// `rdf:type owl:AllDisjointProperties` has more than one `owl:members`
     /// triple, so which list to use is ambiguous.
     MultipleOwlMembers(String),
+    /// A graph element that was expected to denote an OWL individual (an
+    /// IRI resource or a blank node) turned out to be a literal, or an RDF
+    /// 1.2 triple term (which cannot be an OWL individual at all — full RDF
+    /// 1.2 support is tracked in
+    /// <https://github.com/daghovland/rdf-datalog/issues/143>).
+    InvalidIndividual(String),
 }
 
 impl fmt::Display for TranslatorError {
@@ -47,6 +53,9 @@ impl fmt::Display for TranslatorError {
             }
             TranslatorError::MultipleOwlMembers(msg) => {
                 write!(f, "multiple owl:members: {msg}")
+            }
+            TranslatorError::InvalidIndividual(msg) => {
+                write!(f, "invalid OWL individual: {msg}")
             }
         }
     }

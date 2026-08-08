@@ -1,0 +1,14 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix : <http://example.org/> .
+
+# owl:oneOf list whose only member is malformed (a literal instead of an
+# individual). Regression/fix coverage for #363: filtering out every
+# malformed member must not silently produce an empty ObjectOneOf (which
+# denotes the empty class) — it falls back to owl:Thing instead, with a
+# log::warn!, same as the mixed-membership case in oneOfWithMalformedMember.ttl.
+:Enum owl:equivalentClass [
+    a owl:Class ;
+    owl:oneOf ( "not an individual" )
+] .

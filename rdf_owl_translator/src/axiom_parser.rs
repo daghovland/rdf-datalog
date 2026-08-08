@@ -138,7 +138,7 @@ pub fn extract_axiom(
                 }
                 o if o == ids.owl_named_individual_id => {
                     let subj_gel = res.get_graph_element(triple.subject);
-                    let individual = try_get_individual(subj_gel);
+                    let individual = try_get_individual(subj_gel)?;
                     Some(Axiom::AxiomDeclaration((
                         vec![],
                         Entity::NamedIndividualDeclaration(individual),
@@ -265,7 +265,7 @@ pub fn extract_axiom(
                     }
                     let ce = decls.class_expression(triple.obj, res);
                     let subj_gel = res.get_graph_element(triple.subject);
-                    let individual = try_get_individual(subj_gel);
+                    let individual = try_get_individual(subj_gel)?;
                     Some(Axiom::AxiomAssertion(Assertion::ClassAssertion(
                         axiom_anns, ce, individual,
                     )))
@@ -460,8 +460,8 @@ pub fn extract_axiom(
 
         // ── owl:sameAs ──────────────────────────────────────────────────────
         p if p == ids.owl_same_as_id => {
-            let ind1 = try_get_individual(res.get_graph_element(triple.subject));
-            let ind2 = try_get_individual(res.get_graph_element(triple.obj));
+            let ind1 = try_get_individual(res.get_graph_element(triple.subject))?;
+            let ind2 = try_get_individual(res.get_graph_element(triple.obj))?;
             Some(Axiom::AxiomAssertion(Assertion::SameIndividual(
                 axiom_anns,
                 vec![ind1, ind2],
@@ -479,14 +479,14 @@ pub fn extract_axiom(
 
             if is_obj_prop {
                 let ope = decls.object_property_expression(triple.predicate, res);
-                let subj_ind = try_get_individual(res.get_graph_element(triple.subject));
-                let obj_ind = try_get_individual(res.get_graph_element(triple.obj));
+                let subj_ind = try_get_individual(res.get_graph_element(triple.subject))?;
+                let obj_ind = try_get_individual(res.get_graph_element(triple.obj))?;
                 Some(Axiom::AxiomAssertion(Assertion::ObjectPropertyAssertion(
                     axiom_anns, ope, subj_ind, obj_ind,
                 )))
             } else if is_data_prop {
                 let dp = decls.data_property_expression(triple.predicate, res);
-                let subj_ind = try_get_individual(res.get_graph_element(triple.subject));
+                let subj_ind = try_get_individual(res.get_graph_element(triple.subject))?;
                 let obj_gel = res.get_graph_element(triple.obj).clone();
                 Some(Axiom::AxiomAssertion(Assertion::DataPropertyAssertion(
                     axiom_anns, dp, subj_ind, obj_gel,

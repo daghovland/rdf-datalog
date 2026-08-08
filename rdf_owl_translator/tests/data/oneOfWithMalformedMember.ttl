@@ -1,0 +1,13 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix : <http://example.org/> .
+
+# owl:oneOf list with one literal among otherwise-valid individual IRIs.
+# Regression/fix coverage for #363: try_get_individual must not panic on the
+# malformed member; the malformed member is skipped (with a log::warn!) and
+# the resulting ObjectOneOf contains only the valid individuals.
+:Enum owl:equivalentClass [
+    a owl:Class ;
+    owl:oneOf ( :a "not an individual" :b )
+] .
