@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/382-crate-dependency-graph).
+
+ghpull:428 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog_endpoint: crate list + dependency graph view (#382)" ;
+    bl:number 428 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:382 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr428 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:382 ;
+    prov:startedAtTime "2026-08-08T20:25:14Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-08T20:28:05Z"^^xsd:dateTime .
+
+session:pr428Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #382 asked for a Crates view on the backlog dashboard: every bl:Crate with its bl:path, its direct bl:dependsOnCrate edges as a dependency graph, and per-crate the open bl:WorkItems touching it. The issue body's original text assumed the graph rendering could reuse frontend.html's Cytoscape.js machinery via a JS module shared between the two dashboard pages -- but #381's Stage 1 restructuring (merged as #427, ahead of this branch) had already split the dashboard into its own crate/binary/process (backlog_endpoint), separate from sparql_endpoint which still hosts frontend.html. A shared module across that process/origin boundary would need static-asset serving infrastructure neither page has today, so the starting comment on #382 pre-committed to duplicating the minimal Cytoscape subset into backlog_frontend.html instead -- and a smaller subset than frontend.html's own, since this page always renders one fixed graph (all crates, all edges) rather than arbitrary user SPARQL results, so per-query node-limit capping and layout keying weren't needed. Self-review before the PR (via the advisor) caught a real bug the curl-based verification couldn't see: the initial implementation called renderCrateGraph unconditionally at page load, but #view-crates starts display:none, so Cytoscape measured a 0x0 container. Fixed by deferring construction until the tab is first shown, mirroring frontend.html's own showTab-gated pattern, plus a fullscreenchange listener for state sync on Escape." ;
+    agp:reasoningFor ghpull:428 ;
+    agp:decisionPoint session:pr428Decision ;
+    prov:wasGeneratedBy session:pr428 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr428Decision a agp:Decision ;
+    agp:summaryText "Duplicated the minimal Cytoscape.js pan/zoom/fullscreen/PNG-export subset directly into backlog_frontend.html rather than factoring it into a module shared with sparql_endpoint/src/frontend.html." ;
+    agp:alternative "A shared JS module both pages load was the option the original issue text assumed, written before #381 Stage 1 split the dashboard into its own process. Rejected because backlog_endpoint and sparql_endpoint are now separate origins/binaries with no shared static-asset serving today -- building that infrastructure was out of scope for this issue, and the duplicated subset needed is small since this page's graph is fixed-shape, not arbitrary query results." .
