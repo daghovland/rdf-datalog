@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written before merge on branch
+# feat/372-query-timeout. Timestamps are real (from `git log main..HEAD`).
+# Not closesIssue: the write-route concurrency-limit half of #372 (deferred
+# back in #367) remains unaddressed, so #372 stays open on merge.
+
+ghpull:423 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser/sparql_endpoint: enforce query timeout via cooperative cancellation (#372)" ;
+    bl:number 423 ;
+    bl:state bl:Open .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr423 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:372 ;
+    prov:startedAtTime "2026-08-08T08:43:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-08T09:31:48Z"^^xsd:dateTime .
+
+session:pr423Summary a agp:TranscriptSummary ;
+    agp:summaryText "Config::max_query_timeout_secs was dead code: nothing enforced it, so a runaway SPARQL query (an expensive transitive-closure property path, or a large Cartesian-product BGP) could run indefinitely. Investigated execute_with_base's actual call graph (~5200-line sparql_parser::execute.rs) before writing anything, confirming the plan doc's premises against the real current function signatures rather than trusting them as given. Added sparql_parser::deadline::Deadline, wrapping Option<Instant> with a cheap check() -> Result<(), String> matching execute/execute_with_base's existing plain-String error convention (no new error enum). Threaded &Deadline by reference through the evaluator's loop-bearing functions only -- the BGP/OPTIONAL/UNION/MINUS/GRAPH/subquery join chain (eval_components, eval_components_budgeted, eval_component, eval_independent_then_join, eval_bgp, eval_triple_pattern/eval_triple_pattern_core) and the property-path/transitive-closure chain (eval_path_pattern, eval_repeat_path, eval_exact_repeat, transitive_closure) -- converting each from a bare Vec<PartialSub> return to Result<Vec<PartialSub>, String> so a Deadline::check() failure at a loop-iteration boundary (per candidate quad, per outer solution row, per BFS pop in transitive_closure's while loop) propagates cleanly up to execute_with_base via '?'. Deliberately left expression evaluation (FILTER, arithmetic, casts, string functions) and EXISTS/NOT EXISTS's inner sub-evaluation outside the threaded chain -- no meaningful iteration to bound there, and reaching them would have ballooned the diff for no correctness benefit; EXISTS/NOT EXISTS calls eval_components with Deadline::none() instead, documented inline as an accepted gap. Wired sparql_endpoint::query's two execute_with_base call sites (run_select_query, run_transactional_query) to Config::max_query_timeout_secs, treating 0 as disabled, and gave a timeout its own 503 Service Unavailable response (a string-content check against Deadline::check's message, since there's no dedicated error enum to match on) distinct from the generic 500 used for other execution errors. TDD: unit tests for Deadline::check colocated with the type (none/not-yet-expired/already-expired); sparql_parser/tests/query_timeout_tests.rs exercises both chains directly (a 50k-node chain graph with a transitive-closure '+' path, and a 2000x2000 Cartesian-product BGP, each under a 1ms timeout) plus a byte-identical-results check under a generous 60s timeout. Ran the full cargo test --workspace afterward as the primary correctness bar (this change touches the evaluator's hottest, most heavily-tested paths) -- tests/sparql12_suite.rs (143 tests) and tests/w3c_sparql11_suite.rs (22 tests) both passed with zero failures and no timeout configured anywhere, confirming the added Result plumbing changed no existing query's actual output." ;
+    agp:abstractText "Threads a Deadline through the SPARQL evaluator's loop chain; enforces query-timeout via cooperative cancellation." ;
+    agp:reasoningFor ghpull:423 ;
+    agp:decisionPoint session:pr423Decision ;
+    prov:wasGeneratedBy session:pr423 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr423Decision a agp:Decision ;
+    agp:summaryText "The repo owner had already ruled out a naive tokio::time::timeout wrapped around query execution: execute_with_base is fully synchronous and non-yielding, with no .await point for an async timeout future to preempt -- the future never gets polled again until the synchronous call already returned. spawn_blocking plus an owned per-query Datastore clone would work, but at a real, avoidable cost for the common no-timeout case. Cooperative cancellation -- the evaluator checking an absolute deadline at loop-iteration boundaries -- was the deliberate choice instead: bounded, best-effort cancellation (in-flight work between checks runs to completion) for zero overhead when unconfigured." ;
+    agp:alternative "Considered making the deadline check unconditionally call Instant::now() on every function entry regardless of whether a timeout was configured, for simplicity. Rejected: a true no-op was required for the None case (no syscall-per-loop-iteration regression for the default unconfigured path), so Deadline's None variant short-circuits check() to a bare Ok(()) with no time read at all." .

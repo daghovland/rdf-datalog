@@ -157,6 +157,16 @@ pub struct Config {
     /// If true, the update endpoint is disabled.
     pub read_only: bool,
     /// Maximum query execution time in seconds (default: 30).
+    ///
+    /// Enforced via cooperative cancellation inside the SPARQL evaluator
+    /// (`sparql_parser::deadline::Deadline`, threaded through
+    /// `execute_with_base`'s `timeout` parameter): the evaluator itself
+    /// periodically checks an absolute deadline at loop-iteration
+    /// boundaries and aborts once it has elapsed. `0` disables the timeout
+    /// entirely (no deadline is constructed at all — a true no-op, not a
+    /// zero-length one). A timed-out query gets a `503 Service Unavailable`
+    /// response, distinct from the generic `500` used for other execution
+    /// errors. See [#372](https://github.com/daghovland/rdf-datalog/issues/372).
     pub max_query_timeout_secs: u64,
     /// Authentication mode (default: none).
     pub auth: AuthConfig,
@@ -202,8 +212,10 @@ pub struct Config {
     /// client from holding a connection (and, transitively, a request slot)
     /// open indefinitely.
     ///
-    /// Distinct from `max_query_timeout_secs`, which is presently unused —
-    /// see [#372](https://github.com/daghovland/rdf-datalog/issues/372).
+    /// Distinct from `max_query_timeout_secs`, which bounds SPARQL
+    /// evaluator work itself (cooperative cancellation inside the
+    /// evaluator) rather than connection occupancy — see
+    /// [#372](https://github.com/daghovland/rdf-datalog/issues/372).
     ///
     /// Configurable via `--request-timeout` / `DAGALOG_REQUEST_TIMEOUT`.
     /// See [#367](https://github.com/daghovland/rdf-datalog/issues/367).

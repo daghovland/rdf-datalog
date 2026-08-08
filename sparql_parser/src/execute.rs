@@ -16,6 +16,7 @@ use crate::ast::{
     Aggregate, BinaryOp, DatasetClause, Expression, GroupCondition, OrderCondition,
     ProjectionElement, PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
+use crate::deadline::Deadline;
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfLiteral, DEFAULT_GRAPH_ELEMENT_ID};
 use ingress::{
     IriReference, NetworkPolicy, XSD_BOOLEAN, XSD_DATE, XSD_DATE_TIME, XSD_DECIMAL, XSD_DOUBLE,
@@ -25,6 +26,7 @@ use num_bigint::BigInt;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::time::Duration;
 
 /// A single bound solution: variable name → concrete graph element.
 pub type SolutionRow = HashMap<String, GraphElement>;
@@ -144,7 +146,7 @@ pub fn execute(
     datastore: &Datastore,
     network: NetworkPolicy,
 ) -> Result<QueryResult, String> {
-    execute_with_base(query, datastore, network, None)
+    execute_with_base(query, datastore, network, None, None)
 }
 
 /// Execute a parsed SPARQL query against `datastore`, with `base` installed
@@ -157,20 +159,32 @@ pub fn execute(
 /// directly in query syntax (parse-time, `ParserContext::base`, #217) but
 /// also for a string computed at runtime and passed through `IRI()`/`URI()`
 /// (evaluation-time, this function). See #346.
+///
+/// `timeout`, when `Some`, bounds the wall-clock time this call may spend
+/// evaluating the query: the evaluator periodically checks an absolute
+/// deadline derived from it at loop-iteration boundaries and returns `Err`
+/// once it has elapsed (cooperative cancellation — see
+/// [`crate::deadline`] for why this approach was chosen over an async
+/// `tokio::time::timeout`). `None` (the common case, and what every
+/// pre-existing caller passes) means no timeout is enforced. See
+/// <https://github.com/daghovland/rdf-datalog/issues/372>.
 pub fn execute_with_base(
     query: &Query,
     datastore: &Datastore,
     network: NetworkPolicy,
     base: Option<&str>,
+    timeout: Option<Duration>,
 ) -> Result<QueryResult, String> {
     let _base_guard = BaseGuard::install(base);
-    execute_inner(query, datastore, network)
+    let deadline = Deadline::from_timeout(timeout);
+    execute_inner(query, datastore, network, &deadline)
 }
 
 fn execute_inner(
     query: &Query,
     datastore: &Datastore,
     network: NetworkPolicy,
+    deadline: &Deadline,
 ) -> Result<QueryResult, String> {
     let where_clause = match query {
         Query::Select { where_clause, .. } => where_clause.as_slice(),
@@ -227,7 +241,8 @@ fn execute_inner(
                 datastore,
                 dataset_active_graph(dataset, datastore),
                 budget,
-            );
+                deadline,
+            )?;
 
             let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
@@ -310,7 +325,8 @@ fn execute_inner(
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
-            );
+                deadline,
+            )?;
             Ok(QueryResult::Ask(!solutions.is_empty()))
         }
         Query::Describe {
@@ -324,7 +340,8 @@ fn execute_inner(
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
-            );
+                deadline,
+            )?;
 
             let mut output: HashSet<ResolvedTriple> = HashSet::new();
 
@@ -371,7 +388,8 @@ fn execute_inner(
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
-            );
+                deadline,
+            )?;
 
             let effective_template: Vec<TriplePattern> = if template.is_empty() {
                 collect_bgps_from_components(where_clause)
@@ -761,8 +779,16 @@ fn eval_components(
     solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: ActiveGraph,
-) -> Vec<PartialSub> {
-    eval_components_budgeted(components, solutions, datastore, active_graph, None)
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
+    eval_components_budgeted(
+        components,
+        solutions,
+        datastore,
+        active_graph,
+        None,
+        deadline,
+    )
 }
 
 /// Evaluate a component list, optionally short-circuiting once `budget`
@@ -797,7 +823,8 @@ fn eval_components_budgeted(
     datastore: &Datastore,
     active_graph: ActiveGraph,
     budget: Option<usize>,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     // SPARQL 1.1 §18.2.2.8: every `FILTER` in a `GroupGraphPatternSub`
     // applies after ALL of that same scope's other elements have been
     // joined, regardless of the `FILTER`'s textual position among them (W3C
@@ -861,13 +888,21 @@ fn eval_components_budgeted(
     let mut current = solutions;
     let last = ordered.len().saturating_sub(1);
     for (i, comp) in ordered.into_iter().enumerate() {
+        deadline.check()?;
         let comp_budget = if i == last { budget } else { None };
-        current = eval_component(comp, current, datastore, &active_graph, comp_budget);
+        current = eval_component(
+            comp,
+            current,
+            datastore,
+            &active_graph,
+            comp_budget,
+            deadline,
+        )?;
         if current.is_empty() {
             break;
         }
     }
-    current
+    Ok(current)
 }
 
 /// Evaluate `inner` as its own independent scope (SPARQL 1.1 §18.2.2.8) —
@@ -890,17 +925,25 @@ fn eval_independent_then_join(
     outer_solutions: Vec<PartialSub>,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
-) -> Vec<PartialSub> {
-    let inner_sols = eval_components(inner, vec![HashMap::new()], datastore, active_graph.clone());
-    outer_solutions
-        .into_iter()
-        .flat_map(|outer_sub| {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
+    let inner_sols = eval_components(
+        inner,
+        vec![HashMap::new()],
+        datastore,
+        active_graph.clone(),
+        deadline,
+    )?;
+    let mut result = Vec::new();
+    for outer_sub in outer_solutions {
+        deadline.check()?;
+        result.extend(
             inner_sols
                 .iter()
-                .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore))
-                .collect::<Vec<_>>()
-        })
-        .collect()
+                .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore)),
+        );
+    }
+    Ok(result)
 }
 
 fn eval_component(
@@ -909,54 +952,82 @@ fn eval_component(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     budget: Option<usize>,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     match comp {
-        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, datastore, active_graph, budget),
-
-        QueryComponent::PathPattern(subject, path, object) => solutions
-            .into_iter()
-            .flat_map(|sub| eval_path_pattern(subject, path, object, sub, datastore, active_graph))
-            .collect(),
-
-        QueryComponent::Subquery(inner_query) => {
-            let inner_rows = execute_select_inner(inner_query, datastore, active_graph);
-            solutions
-                .into_iter()
-                .flat_map(|outer_sub| {
-                    inner_rows
-                        .iter()
-                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+        QueryComponent::BGP(tps) => {
+            eval_bgp(tps, solutions, datastore, active_graph, budget, deadline)
         }
 
-        QueryComponent::Filter(expr) => solutions
+        QueryComponent::PathPattern(subject, path, object) => {
+            let mut result = Vec::new();
+            for sub in solutions {
+                deadline.check()?;
+                result.extend(eval_path_pattern(
+                    subject,
+                    path,
+                    object,
+                    sub,
+                    datastore,
+                    active_graph,
+                    deadline,
+                )?);
+            }
+            Ok(result)
+        }
+
+        QueryComponent::Subquery(inner_query) => {
+            let inner_rows = execute_select_inner(inner_query, datastore, active_graph, deadline)?;
+            let mut result = Vec::new();
+            for outer_sub in solutions {
+                deadline.check()?;
+                result.extend(
+                    inner_rows
+                        .iter()
+                        .filter_map(|inner_sub| merge_solutions(&outer_sub, inner_sub, datastore)),
+                );
+            }
+            Ok(result)
+        }
+
+        QueryComponent::Filter(expr) => Ok(solutions
             .into_iter()
             .filter(|sub| eval_filter(expr, sub, datastore, active_graph))
-            .collect(),
+            .collect()),
 
         QueryComponent::Optional(inner) => {
             let mut result = Vec::new();
             for sub in solutions {
-                let extended =
-                    eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+                deadline.check()?;
+                let extended = eval_components(
+                    inner,
+                    vec![sub.clone()],
+                    datastore,
+                    (*active_graph).clone(),
+                    deadline,
+                )?;
                 if extended.is_empty() {
                     result.push(sub);
                 } else {
                     result.extend(extended);
                 }
             }
-            result
+            Ok(result)
         }
 
         QueryComponent::Union(left, right) => {
-            let left_sols =
-                eval_independent_then_join(left, solutions.clone(), datastore, active_graph);
-            let right_sols = eval_independent_then_join(right, solutions, datastore, active_graph);
+            let left_sols = eval_independent_then_join(
+                left,
+                solutions.clone(),
+                datastore,
+                active_graph,
+                deadline,
+            )?;
+            let right_sols =
+                eval_independent_then_join(right, solutions, datastore, active_graph, deadline)?;
             let mut result = left_sols;
             result.extend(right_sols);
-            result
+            Ok(result)
         }
 
         // A bare nested `{ ... }` group: its own scope (SPARQL 1.1
@@ -966,7 +1037,7 @@ fn eval_component(
         // inner solution drops the outer row entirely (this is a mandatory
         // join, not a left join). See issue #198.
         QueryComponent::Group(inner) => {
-            eval_independent_then_join(inner, solutions, datastore, active_graph)
+            eval_independent_then_join(inner, solutions, datastore, active_graph, deadline)
         }
 
         QueryComponent::Minus(inner) => {
@@ -1006,39 +1077,49 @@ fn eval_component(
             // follow-up if this ever shows up as a hot path.
             let mut minus_solutions: Option<Vec<PartialSub>> = None;
 
-            solutions
-                .into_iter()
-                .filter(|sub| {
-                    if !sub.keys().any(|k| inner_vars.contains(k)) {
-                        // Domain-disjointness escape: statically impossible
-                        // for this row to share a variable with the body.
-                        return true;
-                    }
-                    let minus_sols = minus_solutions.get_or_insert_with(|| {
-                        eval_components(
+            let mut result = Vec::new();
+            for sub in solutions {
+                deadline.check()?;
+                if !sub.keys().any(|k| inner_vars.contains(k)) {
+                    // Domain-disjointness escape: statically impossible
+                    // for this row to share a variable with the body.
+                    result.push(sub);
+                    continue;
+                }
+                let minus_sols = match &minus_solutions {
+                    Some(sols) => sols,
+                    None => {
+                        let sols = eval_components(
                             inner,
                             vec![HashMap::new()],
                             datastore,
                             (*active_graph).clone(),
-                        )
-                    });
-                    // Exclude `sub` iff some μ2 is compatible with it AND
-                    // actually shares a bound variable with it — the
-                    // spec's `¬(¬compatible ∨ dom-disjoint)`.
-                    !minus_sols.iter().any(|ms| {
-                        compatible(sub, ms, datastore) && sub.keys().any(|k| ms.contains_key(k))
-                    })
-                })
-                .collect()
+                            deadline,
+                        )?;
+                        minus_solutions.insert(sols)
+                    }
+                };
+                // Exclude `sub` iff some μ2 is compatible with it AND
+                // actually shares a bound variable with it — the
+                // spec's `¬(¬compatible ∨ dom-disjoint)`.
+                let excluded = minus_sols.iter().any(|ms| {
+                    compatible(&sub, ms, datastore) && sub.keys().any(|k| ms.contains_key(k))
+                });
+                if !excluded {
+                    result.push(sub);
+                }
+            }
+            Ok(result)
         }
 
-        QueryComponent::Graph(graph_term, inner) => solutions
-            .into_iter()
-            .flat_map(|sub| {
+        QueryComponent::Graph(graph_term, inner) => {
+            let mut result = Vec::new();
+            for sub in solutions {
+                deadline.check()?;
                 let scoped_graph = match graph_term {
                     Term::Constant(gel) => {
                         let Some(&graph_id) = datastore.resources.resource_map.get(gel) else {
-                            return Vec::new();
+                            continue;
                         };
                         ActiveGraph::Fixed(graph_id)
                     }
@@ -1049,13 +1130,20 @@ fn eval_component(
                         }
                     }
                     // A triple term can never name a graph.
-                    Term::TripleTerm(_) => return Vec::new(),
+                    Term::TripleTerm(_) => continue,
                 };
-                eval_components(inner, vec![sub], datastore, scoped_graph)
-            })
-            .collect(),
+                result.extend(eval_components(
+                    inner,
+                    vec![sub],
+                    datastore,
+                    scoped_graph,
+                    deadline,
+                )?);
+            }
+            Ok(result)
+        }
 
-        QueryComponent::Bind(expr, alias) => solutions
+        QueryComponent::Bind(expr, alias) => Ok(solutions
             .into_iter()
             .map(|mut sub| {
                 // SPARQL 1.1 §18.3 Extend: if evaluating the expression
@@ -1070,16 +1158,16 @@ fn eval_component(
                 }
                 sub
             })
-            .collect(),
+            .collect()),
 
         QueryComponent::Values(vars, rows) => {
-            join_solutions_with_values(solutions, vars, rows, datastore)
+            Ok(join_solutions_with_values(solutions, vars, rows, datastore))
         }
 
         QueryComponent::Service(_, inner, _) => {
             // SERVICE not supported; return empty
             let _ = inner;
-            Vec::new()
+            Ok(Vec::new())
         }
     }
 }
@@ -1220,7 +1308,8 @@ fn eval_bgp(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     budget: Option<usize>,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     let already_bound: HashSet<String> = solutions
         .first()
         .map(|sub| sub.keys().cloned().collect())
@@ -1245,6 +1334,7 @@ fn eval_bgp(
                     if acc.len() >= b {
                         break;
                     }
+                    deadline.check()?;
                     let remaining = b - acc.len();
                     acc.extend(eval_triple_pattern(
                         pattern,
@@ -1252,20 +1342,32 @@ fn eval_bgp(
                         datastore,
                         active_graph,
                         Some(remaining),
-                    ));
+                        deadline,
+                    )?);
                 }
                 acc
             }
-            None => current
-                .into_iter()
-                .flat_map(|sub| eval_triple_pattern(pattern, &sub, datastore, active_graph, None))
-                .collect(),
+            None => {
+                let mut acc = Vec::new();
+                for sub in current {
+                    deadline.check()?;
+                    acc.extend(eval_triple_pattern(
+                        pattern,
+                        &sub,
+                        datastore,
+                        active_graph,
+                        None,
+                        deadline,
+                    )?);
+                }
+                acc
+            }
         };
         if current.is_empty() {
             break;
         }
     }
-    current
+    Ok(current)
 }
 
 fn eval_triple_pattern(
@@ -1274,7 +1376,8 @@ fn eval_triple_pattern(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     budget: Option<usize>,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     // RDF 1.2 triple-term subject: `<<( s p o )>> pred obj`. Resolve the
     // embedded pattern against `reified_triples` first (yielding one or more
     // candidate triple-term `GraphElementId`s plus any bindings for
@@ -1287,6 +1390,7 @@ fn eval_triple_pattern(
     if let Term::TripleTerm(inner) = &tp.subject {
         let mut results = Vec::new();
         for (term_id, inner_bindings) in triple_term_candidates(inner, sub, datastore) {
+            deadline.check()?;
             let mut merged = sub.clone();
             let mut ok = true;
             for (var, val) in inner_bindings {
@@ -1311,13 +1415,14 @@ fn eval_triple_pattern(
                     datastore,
                     active_graph,
                     None,
-                ));
+                    deadline,
+                )?);
             }
         }
-        return results;
+        return Ok(results);
     }
 
-    eval_triple_pattern_core(tp, None, sub, datastore, active_graph, budget)
+    eval_triple_pattern_core(tp, None, sub, datastore, active_graph, budget, deadline)
 }
 
 /// Core outer-pattern evaluation shared by plain triple patterns and the
@@ -1331,12 +1436,13 @@ fn eval_triple_pattern_core(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     budget: Option<usize>,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
         if let Term::Constant(gel) = term {
             if !datastore.resources.resource_map.contains_key(gel) {
-                return Vec::new();
+                return Ok(Vec::new());
             }
         }
     }
@@ -1362,7 +1468,7 @@ fn eval_triple_pattern_core(
         || matches!(p_match, MatchTerm::Never)
         || matches!(o_match, MatchTerm::Never)
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let s = s_match.into_query_arg();
     let p = p_match.into_query_arg();
@@ -1383,6 +1489,11 @@ fn eval_triple_pattern_core(
     };
 
     for quad in datastore.quads_matching_limited(g, s, p, o, quad_limit) {
+        // Per-candidate check (issue #372): the loop enumerating matching
+        // quads is the actual "matching loop" that can run long on a
+        // dense/unselective pattern (e.g. an unbound predicate over a large
+        // graph).
+        deadline.check()?;
         let mut new_sub = sub.clone();
         let mut ok = true;
 
@@ -1432,7 +1543,7 @@ fn eval_triple_pattern_core(
             }
         }
     }
-    new_solutions
+    Ok(new_solutions)
 }
 
 /// Result of resolving a SPARQL [`Term`] against the current solution, for use
@@ -2914,13 +3025,38 @@ fn eval_expression_bool(
         }
         Expression::FunctionCall(name, args) => eval_function_bool(name, args, sub, datastore),
         Expression::Exists(inner) => {
-            let sols =
-                eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+            // EXISTS/NOT EXISTS sub-evaluation is intentionally outside the
+            // deadline-threaded chain (#372): expression evaluation is
+            // itself out of scope for cooperative-cancellation checks (no
+            // per-row iteration to bound at this level), and threading a
+            // `Deadline` into every expression-evaluation function just to
+            // reach these two cases would balloon the diff for a case that
+            // is bounded by the query's own solution-row size in practice.
+            // `Deadline::none()` can never itself produce an `Err` (its
+            // `check()` is always `Ok(())`), so the only way this call could
+            // fail is if a *nested* deadline-bearing evaluation propagated an
+            // error into it — which cannot happen here, since `None` never
+            // installs an expiring deadline anywhere downstream either.
+            let sols = eval_components(
+                inner,
+                vec![sub.clone()],
+                datastore,
+                (*active_graph).clone(),
+                &Deadline::none(),
+            )
+            .unwrap_or_default();
             Some(!sols.is_empty())
         }
         Expression::NotExists(inner) => {
-            let sols =
-                eval_components(inner, vec![sub.clone()], datastore, (*active_graph).clone());
+            // See the comment on the `Exists` arm above.
+            let sols = eval_components(
+                inner,
+                vec![sub.clone()],
+                datastore,
+                (*active_graph).clone(),
+                &Deadline::none(),
+            )
+            .unwrap_or_default();
             Some(sols.is_empty())
         }
         _ => {
@@ -3588,7 +3724,8 @@ fn execute_select_inner(
     query: &Query,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     let Query::Select {
         projection,
         where_clause,
@@ -3601,7 +3738,7 @@ fn execute_select_inner(
         ..
     } = query
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let initial: Vec<PartialSub> = vec![HashMap::new()];
@@ -3612,7 +3749,8 @@ fn execute_select_inner(
         datastore,
         (*active_graph).clone(),
         budget,
-    );
+        deadline,
+    )?;
 
     let aggregate_mode = !group_by.is_empty() || projection.iter().any(elem_has_aggregate);
 
@@ -3696,7 +3834,7 @@ fn execute_select_inner(
         rows.truncate(*lim as usize);
     }
 
-    rows
+    Ok(rows)
 }
 
 /// Sort solution rows by ORDER BY conditions.
@@ -3915,6 +4053,11 @@ fn zero_hop_all_nodes(
 /// multiplicity, and safe on cyclic data since it's a fixed number of
 /// joins) followed by zero-or-more further hops (fixed-point reachability,
 /// so cycles don't cause non-termination or multiplicity blow-up).
+// The `&Deadline` parameter (#372) pushes this over clippy's default
+// too-many-arguments threshold; splitting the existing (subject, path,
+// object, sub, datastore, active_graph) tuple into a struct is a bigger,
+// unrelated refactor this change intentionally doesn't take on.
+#[allow(clippy::too_many_arguments)]
 fn eval_repeat_path(
     subject_term: &Term,
     inner: &PropertyPath,
@@ -3923,15 +4066,17 @@ fn eval_repeat_path(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     range: (usize, Option<usize>),
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     let (min, max) = range;
     match max {
         Some(max_n) => {
             if min > max_n {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let mut results = Vec::new();
             for k in min..=max_n {
+                deadline.check()?;
                 results.extend(eval_exact_repeat(
                     subject_term,
                     inner,
@@ -3940,9 +4085,10 @@ fn eval_repeat_path(
                     datastore,
                     active_graph,
                     k,
-                ));
+                    deadline,
+                )?);
             }
-            results
+            Ok(results)
         }
         None => {
             // {min,} == inner{min} / inner*
@@ -3956,12 +4102,14 @@ fn eval_repeat_path(
                 sub,
                 datastore,
                 active_graph,
+                deadline,
             )
         }
     }
 }
 
 /// Evaluate `inner{k}` for an exact, non-negative repeat count `k`.
+#[allow(clippy::too_many_arguments)] // see `eval_repeat_path` above (#372)
 fn eval_exact_repeat(
     subject_term: &Term,
     inner: &PropertyPath,
@@ -3970,9 +4118,16 @@ fn eval_exact_repeat(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     k: usize,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     if k == 0 {
-        zero_hop_solutions(subject_term, object_term, &sub, datastore, active_graph)
+        Ok(zero_hop_solutions(
+            subject_term,
+            object_term,
+            &sub,
+            datastore,
+            active_graph,
+        ))
     } else {
         let steps: Vec<PropertyPath> = (0..k).map(|_| inner.clone()).collect();
         let seq = PropertyPath::Sequence(steps);
@@ -3983,6 +4138,7 @@ fn eval_exact_repeat(
             sub,
             datastore,
             active_graph,
+            deadline,
         )
     }
 }
@@ -3994,7 +4150,8 @@ fn eval_path_pattern(
     sub: PartialSub,
     datastore: &Datastore,
     active_graph: &ActiveGraph,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     match path {
         PropertyPath::Iri(gel) => {
             let tp = TriplePattern {
@@ -4002,12 +4159,12 @@ fn eval_path_pattern(
                 predicate: Term::Constant(gel.clone()),
                 object: object_term.clone(),
             };
-            eval_triple_pattern(&tp, &sub, datastore, active_graph, None)
+            eval_triple_pattern(&tp, &sub, datastore, active_graph, None, deadline)
         }
 
         PropertyPath::Sequence(steps) => {
             if steps.is_empty() {
-                return vec![sub];
+                return Ok(vec![sub]);
             }
             // Chain: introduce fresh bridge variables for intermediate nodes.
             // Each bridge variable is freshly generated (see
@@ -4027,23 +4184,24 @@ fn eval_path_pattern(
                     bridge_names.push(name.clone());
                     Term::Variable(name)
                 };
-                current_subs = current_subs
-                    .into_iter()
-                    .flat_map(|s| {
-                        eval_path_pattern(
-                            &current_subject,
-                            step,
-                            &current_object,
-                            s,
-                            datastore,
-                            active_graph,
-                        )
-                    })
-                    .collect();
+                let mut next_subs = Vec::new();
+                for s in current_subs {
+                    deadline.check()?;
+                    next_subs.extend(eval_path_pattern(
+                        &current_subject,
+                        step,
+                        &current_object,
+                        s,
+                        datastore,
+                        active_graph,
+                        deadline,
+                    )?);
+                }
+                current_subs = next_subs;
                 current_subject = current_object;
             }
             // Remove internal bridge variables from each solution
-            current_subs
+            Ok(current_subs
                 .into_iter()
                 .map(|mut s| {
                     for name in &bridge_names {
@@ -4051,7 +4209,7 @@ fn eval_path_pattern(
                     }
                     s
                 })
-                .collect()
+                .collect())
         }
 
         PropertyPath::Alternative(left, right) => {
@@ -4062,7 +4220,8 @@ fn eval_path_pattern(
                 sub.clone(),
                 datastore,
                 active_graph,
-            );
+                deadline,
+            )?;
             let right_subs = eval_path_pattern(
                 subject_term,
                 right,
@@ -4070,9 +4229,10 @@ fn eval_path_pattern(
                 sub,
                 datastore,
                 active_graph,
-            );
+                deadline,
+            )?;
             left_subs.extend(right_subs);
-            left_subs
+            Ok(left_subs)
         }
 
         PropertyPath::Inverse(inner) => {
@@ -4084,6 +4244,7 @@ fn eval_path_pattern(
                 sub,
                 datastore,
                 active_graph,
+                deadline,
             )
         }
 
@@ -4098,18 +4259,20 @@ fn eval_path_pattern(
                 sub,
                 datastore,
                 active_graph,
-            );
+                deadline,
+            )?;
             // Deduplicate (zero-hop and one-hop may produce the same solution).
             // Compare by resolved value: zero-hop bindings are `Computed` while
             // one-hop bindings from a BGP match are `Interned`, so the same
             // logical solution can appear in two representations (#141).
             let mut result = zero_hop;
             for s in one_hop {
+                deadline.check()?;
                 if !result.iter().any(|r| partial_subs_equal(r, &s, datastore)) {
                     result.push(s);
                 }
             }
-            result
+            Ok(result)
         }
 
         PropertyPath::OneOrMore(inner) => transitive_closure(
@@ -4120,6 +4283,7 @@ fn eval_path_pattern(
             datastore,
             active_graph,
             false,
+            deadline,
         ),
 
         PropertyPath::ZeroOrMore(inner) => transitive_closure(
@@ -4130,6 +4294,7 @@ fn eval_path_pattern(
             datastore,
             active_graph,
             true,
+            deadline,
         ),
 
         PropertyPath::Repeat(inner, min, max) => eval_repeat_path(
@@ -4140,6 +4305,7 @@ fn eval_path_pattern(
             datastore,
             active_graph,
             (*min, *max),
+            deadline,
         ),
 
         PropertyPath::NegatedSet(excluded) => {
@@ -4153,7 +4319,7 @@ fn eval_path_pattern(
             // or a never-interned constant must not silently degrade to an
             // unconstrained wildcard.
             if matches!(s_match, MatchTerm::Never) || matches!(o_match, MatchTerm::Never) {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let s = s_match.into_query_arg();
             let o = o_match.into_query_arg();
@@ -4164,6 +4330,7 @@ fn eval_path_pattern(
 
             let mut results = Vec::new();
             for quad in datastore.quads_matching(g, s, None, o) {
+                deadline.check()?;
                 if excluded_ids.contains(&quad.predicate) {
                     continue;
                 }
@@ -4195,7 +4362,7 @@ fn eval_path_pattern(
                     results.push(new_sub);
                 }
             }
-            results
+            Ok(results)
         }
     }
 }
@@ -4221,6 +4388,7 @@ fn resolve_term_to_gel(
 ///
 /// Strategy: BFS from the subject if it is bound (forward traversal).
 /// If the subject is unbound and the object is bound, reverse BFS using ^path.
+#[allow(clippy::too_many_arguments)] // see `eval_repeat_path` above (#372)
 fn transitive_closure(
     subject_term: &Term,
     path: &PropertyPath,
@@ -4229,7 +4397,8 @@ fn transitive_closure(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     include_zero: bool,
-) -> Vec<PartialSub> {
+    deadline: &Deadline,
+) -> Result<Vec<PartialSub>, String> {
     let subject_gel = resolve_term_to_gel(subject_term, &sub, datastore);
     let object_gel = resolve_term_to_gel(object_term, &sub, datastore);
 
@@ -4238,10 +4407,19 @@ fn transitive_closure(
     // Forward BFS: returns all nodes reachable from start_gel.
     // For `include_zero` (p*): includes start_gel itself.
     // For `!include_zero` (p+): excludes start_gel.
-    let reachable_from = |start_gel: GraphElement| -> Vec<GraphElement> {
+    //
+    // Issue #372: this `while` loop is the classic "runaway SPARQL query"
+    // vector — a transitive-closure property path with no useful bound can
+    // do a large amount of work on a big/dense graph before the `visited`
+    // cycle guard makes it terminate. Checked every iteration (not batched):
+    // it is a whole BGP-shaped `eval_path_pattern` call per pop, so the
+    // relative overhead of one extra `Instant::now()` per iteration is
+    // negligible next to that.
+    let reachable_from = |start_gel: GraphElement| -> Result<Vec<GraphElement>, String> {
         let mut visited: HashSet<GraphElement> = HashSet::new();
         let mut queue = vec![start_gel.clone()];
         while let Some(current) = queue.pop() {
+            deadline.check()?;
             let current_term = Term::Constant(current.clone());
             let next_subs = eval_path_pattern(
                 &current_term,
@@ -4250,7 +4428,8 @@ fn transitive_closure(
                 sub.clone(),
                 datastore,
                 active_graph,
-            );
+                deadline,
+            )?;
             for s in next_subs {
                 if let Some(next_val) = s.get("__tc_next") {
                     let next_gel = next_val.resolve(datastore);
@@ -4263,33 +4442,33 @@ fn transitive_closure(
         if include_zero {
             visited.insert(start_gel);
         }
-        visited.into_iter().collect()
+        Ok(visited.into_iter().collect())
     };
 
     match (subject_gel, object_gel) {
         (Some(s_gel), Some(o_gel)) => {
             // Both bound: check if object is reachable from subject
-            let reachable = reachable_from(s_gel);
+            let reachable = reachable_from(s_gel)?;
             if reachable.contains(&o_gel) {
-                vec![sub]
+                Ok(vec![sub])
             } else {
-                Vec::new()
+                Ok(Vec::new())
             }
         }
         (Some(s_gel), None) => {
             // Subject bound, object unbound: enumerate all reachable nodes
-            let reachable = reachable_from(s_gel);
+            let reachable = reachable_from(s_gel)?;
             if let Term::Variable(obj_var) = object_term {
-                reachable
+                Ok(reachable
                     .into_iter()
                     .map(|gel| {
                         let mut new_sub = sub.clone();
                         new_sub.insert(obj_var.clone(), PartialSubValue::Computed(gel));
                         new_sub
                     })
-                    .collect()
+                    .collect())
             } else {
-                Vec::new()
+                Ok(Vec::new())
             }
         }
         (None, Some(o_gel)) => {
@@ -4301,6 +4480,7 @@ fn transitive_closure(
                 let mut visited: HashSet<GraphElement> = HashSet::new();
                 let mut queue = vec![o_gel.clone()];
                 while let Some(current) = queue.pop() {
+                    deadline.check()?;
                     let current_term = Term::Constant(current.clone());
                     let next_subs = eval_path_pattern(
                         &current_term,
@@ -4309,7 +4489,8 @@ fn transitive_closure(
                         sub.clone(),
                         datastore,
                         active_graph,
-                    );
+                        deadline,
+                    )?;
                     for s in next_subs {
                         if let Some(prev_val) = s.get("__tc_prev") {
                             let prev_gel = prev_val.resolve(datastore);
@@ -4325,16 +4506,16 @@ fn transitive_closure(
                 visited
             };
             if let Term::Variable(subj_var) = subject_term {
-                reachable
+                Ok(reachable
                     .into_iter()
                     .map(|gel| {
                         let mut new_sub = sub.clone();
                         new_sub.insert(subj_var.clone(), PartialSubValue::Computed(gel));
                         new_sub
                     })
-                    .collect()
+                    .collect())
             } else {
-                Vec::new()
+                Ok(Vec::new())
             }
         }
         (None, None) => {
@@ -4351,16 +4532,17 @@ fn transitive_closure(
             // W3C `pp35`).
             let (subj_var, obj_var) = match (subject_term, object_term) {
                 (Term::Variable(s), Term::Variable(o)) => (s, o),
-                _ => return Vec::new(),
+                _ => return Ok(Vec::new()),
             };
 
             let reachable_from_in = |start_gel: GraphElement,
                                      base_sub: &PartialSub,
                                      ag: &ActiveGraph|
-             -> Vec<GraphElement> {
+             -> Result<Vec<GraphElement>, String> {
                 let mut visited: HashSet<GraphElement> = HashSet::new();
                 let mut queue = vec![start_gel.clone()];
                 while let Some(current) = queue.pop() {
+                    deadline.check()?;
                     let current_term = Term::Constant(current.clone());
                     let next_subs = eval_path_pattern(
                         &current_term,
@@ -4369,7 +4551,8 @@ fn transitive_closure(
                         base_sub.clone(),
                         datastore,
                         ag,
-                    );
+                        deadline,
+                    )?;
                     for s in next_subs {
                         if let Some(next_val) = s.get("__tc_next") {
                             let next_gel = next_val.resolve(datastore);
@@ -4382,7 +4565,7 @@ fn transitive_closure(
                 if include_zero {
                     visited.insert(start_gel);
                 }
-                visited.into_iter().collect()
+                Ok(visited.into_iter().collect())
             };
 
             // One (base_sub, resolved_active_graph, graph_id) tuple per
@@ -4409,7 +4592,13 @@ fn transitive_closure(
             for (base_sub, ag, gid) in graph_scopes {
                 let all_subjects = graph_nodes(datastore, gid);
                 for s_gel in all_subjects {
-                    let reachable = reachable_from_in(s_gel.clone(), &base_sub, &ag);
+                    // The Cartesian-product-shaped outer loop this function
+                    // description already flags as "expensive" — check here
+                    // too, not just inside the inner BFS, so a query with
+                    // many subject nodes but a cheap per-subject BFS still
+                    // gets bounded (#372).
+                    deadline.check()?;
+                    let reachable = reachable_from_in(s_gel.clone(), &base_sub, &ag)?;
                     for o_gel in reachable {
                         let mut new_sub = base_sub.clone();
                         new_sub.insert(subj_var.clone(), PartialSubValue::Computed(s_gel.clone()));
@@ -4423,7 +4612,7 @@ fn transitive_closure(
                     }
                 }
             }
-            results
+            Ok(results)
         }
     }
 }
