@@ -52,14 +52,11 @@ a different set of `.ttl` files.
 `related_to_file`/`related_to_crate` need `bl:touchesFile`/`bl:touchesCrate`
 facts, which live in `backlog/examples/snapshot.ttl` rather than under
 `provenance/summaries/` — `run.sh` loads that file by default alongside the
-summaries. The checked-in snapshot predates the loader's `bl:touchesFile`
-support ([#358](https://github.com/daghovland/rdf-datalog/issues/358)) and
-hasn't been regenerated from a live `gh api` call since, so
-`related_to_file`'s shipped example won't return a row against `run.sh`'s
-default data until the snapshot is regenerated (`related_to_crate`'s does,
-since `bl:touchesCrate` data is already present and current) — tracked as
-follow-up [#395](https://github.com/daghovland/rdf-datalog/issues/395)
-(unlabeled, awaiting review).
+summaries. The snapshot was regenerated from a live `gh api` call in
+[#395](https://github.com/daghovland/rdf-datalog/issues/395) to pick up the
+loader's `bl:touchesFile` support ([#358](https://github.com/daghovland/rdf-datalog/issues/358)),
+so both `related_to_file`'s and `related_to_crate`'s shipped examples now
+return real rows against `run.sh`'s default data.
 
 All six are exercised against every real `../summaries/*.ttl` file (not
 just parsed) by `tests/provenance_queries.rs` at the repo root, which globs
