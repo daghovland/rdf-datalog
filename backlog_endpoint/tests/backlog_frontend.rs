@@ -167,6 +167,38 @@ async fn root_route_serves_crates_view_markers() {
     );
 }
 
+/// The provenance timeline view (#383) must be present in the served body:
+/// its section/list container and the `agp:` namespace it queries against.
+/// This is the same "assert markers are in the static body" coverage level
+/// the rest of this file uses for the #381 board/epics sections -- the page
+/// is otherwise exercised by hand against the real dagalog/provenance
+/// corpus (see #383's PR description for that manual verification).
+#[tokio::test]
+async fn root_route_serves_provenance_timeline_markers() {
+    let server = TestServer::start(TEST_SPARQL_ENDPOINT).await;
+
+    let resp = server
+        .client
+        .get(&server.base_url)
+        .send()
+        .await
+        .expect("request failed");
+
+    let body = resp.text().await.expect("body");
+    assert!(
+        body.contains("id=\"sessions-list\""),
+        "expected provenance timeline's sessions-list container in body"
+    );
+    assert!(
+        body.contains("https://dagalog.dev/ns/agentprov#"),
+        "expected agp: namespace hardcoded in body"
+    );
+    assert!(
+        body.contains("agp:AgentSession"),
+        "expected the provenance timeline's session query to reference agp:AgentSession"
+    );
+}
+
 /// The configured `--sparql-endpoint` must actually be injected into the
 /// served page as `window.SPARQL_ENDPOINT`, proving the cross-process
 /// wiring the #381 restructuring depends on (the page's JS reads this
