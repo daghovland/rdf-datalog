@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.dev/ns/agentprov#> .
+@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+
+ghpull:421 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "eli: implement property chains in existentials/hasValue, inverse in hasValue (#408)" ;
+    bl:number 421 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:408 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr421 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:408 ;
+    prov:startedAtTime "2026-08-07T21:00:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-07T22:01:34Z"^^xsd:dateTime .
+
+session:pr421Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #408 asked for the real implementation of three OWL 2 constructs (property chains inside existentials, property chains and inverse properties inside owl:hasValue) that PR #407 had only made safe-to-skip (log a warning, return None) rather than actually translated. The core design problem: get_obj_prop_pattern/get_obj_value_pattern previously each produced exactly one datalog quad-pattern atom per call, but a property chain p1 o p2 o ... o pn needs n join atoms through n-1 fresh intermediate variables -- so both functions had to change their return type from a single QuadPattern to Vec<QuadPattern>, which rippled into every caller. Before delegating implementation, worked out the full design by hand: extracted get_single_role_pattern/get_single_obj_value_pattern as the non-chain base case, wrote a shared build_prop_chain helper (generic over a final_link closure) reused by both functions' chain cases to avoid duplicating the fresh-variable-chain-building loop twice, and worked out that the owl:sameAs head-position call in get_at_most_one_normalized_rule needed to sidestep the Vec entirely (since sameAs is always a fixed simple property, never a chain, and a rule head is structurally one atom) by calling get_role_pattern directly rather than unwrapping a guaranteed-single-element Vec. The trickiest caller was get_object_has_value_normalized_rule: a chained ObjectHasValue genuinely can produce multiple patterns, split correctly into body atoms (the chain's intermediate joins) plus exactly one head atom (the last pattern, whose object is the fixed individual) -- for a simple non-chain property this degenerates to exactly the pre-existing behavior. Deliberately scoped out InverseObjectProperty wrapping an ObjectPropertyChain in both functions: OWL 2's RDF mapping does not structurally permit ObjectPropertyChain as ObjectInverseOf's direct target in a SubObjectPropertyOf axiom, so this combination likely cannot be constructed from real Turtle-encoded OWL at all, making it a reasonable scope trim rather than a gap. Verification went beyond translation-succeeds checks: added materialisation-level tests running the generated rules through the real datalog reasoner for a 2-hop chain existential, inverse-in-hasValue, and chain-in-hasValue, each paired with a negative control proving the join is actually selective rather than vacuously true -- this was the issue's own explicit acceptance bar (\"rules are actually generated and materialise correctly\", not just that translation type-checks). Reviewed the sub-agent's full diff personally before finalizing rather than trusting a green-CI report alone, confirming the head/body split and the sameAs sidestep were both implemented exactly as designed." ;
+    agp:reasoningFor ghpull:421 ;
+    agp:decisionPoint session:pr421ScopeDecision ;
+    prov:wasGeneratedBy session:pr421 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr421ScopeDecision a agp:Decision ;
+    agp:summaryText "Left InverseObjectProperty wrapping an ObjectPropertyChain unimplemented in both get_obj_prop_pattern and get_obj_value_pattern, rather than also implementing chain-reversal-plus-per-link-inversion." ;
+    agp:alternative "Implementing the nested case would require reversing the chain's element order and inverting each individual link -- extra complexity for a combination OWL 2's RDF mapping does not structurally allow as ObjectInverseOf's direct target in a SubObjectPropertyOf axiom, so it likely cannot arise from real Turtle-encoded ontologies. Kept the existing log::warn!-and-skip behavior from PR #407 for this one remaining case instead." .
