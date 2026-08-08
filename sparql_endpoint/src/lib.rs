@@ -10,7 +10,6 @@ Contact: hovlanddag@gmail.com
 
 pub mod admin;
 pub mod auth;
-pub mod backlog_frontend;
 pub mod constraints;
 pub mod dataset_routes;
 pub mod frontend;

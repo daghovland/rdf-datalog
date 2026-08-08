@@ -269,6 +269,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "backlog-endpoint"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "env_logger",
+ "log",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

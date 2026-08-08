@@ -124,11 +124,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
         .route("/", get(crate::frontend::serve_frontend))
-        // ── Backlog/provenance dashboard (schema-specific, see #381) ────────
-        .route(
-            "/backlog",
-            get(crate::backlog_frontend::serve_backlog_frontend),
-        )
         .route(
             "/upload",
             post(crate::upload::upload_turtle).layer(rdf_body_limit),

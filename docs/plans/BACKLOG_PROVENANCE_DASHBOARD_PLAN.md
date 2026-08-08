@@ -34,14 +34,47 @@ also touch it ([#42](https://github.com/daghovland/rdf-datalog/issues/42) SPARQL
 syntax highlighting, [#47](https://github.com/daghovland/rdf-datalog/issues/47)
 Query Builder Cytoscape canvas).
 
-**Chosen approach**: a new, separate route and file (e.g. `GET /backlog`,
-`sparql_endpoint/src/backlog_frontend.rs` + `backlog_frontend.html`), following
-`frontend.html`'s existing implementation pattern — single self-contained HTML
-file via `include_str!`, vanilla JS, no build step, no framework, no external
-JS dependency beyond what's already loaded lazily (Cytoscape.js) — but as its
-own page, hardcoding the `bl:`/`agp:` vocabulary throughout rather than
-discovering it generically. This is a deliberate choice the user can override;
-noted here so it isn't silently assumed.
+**Chosen approach**: a new, separate route and file, following `frontend.html`'s
+existing implementation pattern — single self-contained HTML file via
+`include_str!`, vanilla JS, no build step, no framework, no external JS
+dependency beyond what's already loaded lazily (Cytoscape.js) — hardcoding the
+`bl:`/`agp:` vocabulary throughout rather than discovering it generically.
+
+**Revised (Stage 1 of the dagalog/rdf-backlog separation, see below): its own
+crate and binary, not a route inside `sparql_endpoint`.** The first
+implementation (#381, initially) put this route inside `sparql_endpoint`
+itself (`GET /backlog`, `sparql_endpoint/src/backlog_frontend.rs` +
+`backlog_frontend.html`) — reviewing that against the actual product
+boundary surfaced a real problem: dagalog is meant to be a domain-agnostic
+RDF/SPARQL engine, and rdf-backlog (this dashboard, the `bl:`/`agp:`
+vocabularies, the GitHub loader) is a distinct *application* that uses
+dagalog as a backend, the way an app uses Postgres. Baking a GitHub-specific,
+`bl:`-hardcoded page into dagalog's own core HTTP server binary means the
+generic triplestore product ships application-specific code it shouldn't
+know about, and the two can never be released/versioned independently.
+
+Rather than jump straight to splitting into two Git repositories (real cost:
+cross-repo dependency pinning instead of path deps, duplicate CI, losing
+"test rdf-backlog against dagalog's tip-of-tree with no version-bump
+ceremony" — not justified yet, since nothing today demands independent
+release trains or a second real consumer of dagalog beyond this dogfooding
+case), the dashboard moves into its **own crate and binary** within the same
+Cargo workspace: `backlog_endpoint` (`backlog_endpoint/src/main.rs` — a small
+standalone axum server, `backlog_endpoint/src/backlog_frontend.html`). It
+does not link against `sparql_endpoint` at all; its JS talks to a *running*
+dagalog SPARQL endpoint over plain HTTP (configurable base URL, defaulting to
+`http://localhost:3030/sparql` — the same way `frontend.html`'s JS already
+talks to `/sparql`, just not assuming same-origin). This is the real
+`rdf-backlog uses dagalog as a backend` relationship, expressed as a process/
+network boundary rather than an in-process one, while still living in one
+repo/workspace for now. A full repo split (Stage 2) remains available later, once there's an actual
+forcing function — dagalog wanting an independent release/versioning story
+decoupled from rdf-backlog's churn, rdf-backlog growing a second real backend
+loader (Jira/Linear) or consumer proving it's genuinely reusable, or monorepo
+friction (build times, onboarding) becoming a real rather than theoretical
+pain. Nothing about this crate/binary structure blocks that move later — it
+only makes it lower-stakes when it happens, since `backlog_endpoint` already
+depends on dagalog only via its public HTTP API, not its Rust internals.
 
 ## What already exists (don't rebuild)
 

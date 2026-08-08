@@ -73,7 +73,7 @@
   <header>
     <div class="header-top">
       <h1>Backlog Dashboard</h1>
-      <a class="back-link" href="/">&larr; Query UI</a>
+      <a class="back-link" id="back-link" href="/">&larr; Query UI</a>
     </div>
     <div id="freshness-banner" class="freshness">Checking snapshot freshness&hellip;</div>
     <nav id="main-nav">
@@ -148,9 +148,15 @@
   const NO_STATUS_LABEL = 'No status recorded';
 
   // ── SPARQL fetch (same request/response shape as frontend.html's
-  //    sparqlFetch) ──
+  //    sparqlFetch). backlog_endpoint is a separate process/origin from the
+  //    dagalog SPARQL endpoint it queries (see #381's Stage 1 restructuring
+  //    plan), so the target is injected by the server at request time as
+  //    window.SPARQL_ENDPOINT rather than assumed same-origin. Falls back to
+  //    '/sparql' so the page still degrades reasonably if it's ever
+  //    reverse-proxied under one origin with dagalog later. ──
+  const SPARQL_ENDPOINT = window.SPARQL_ENDPOINT || '/sparql';
   async function sparqlFetch(query) {
-    const resp = await fetch('/sparql', {
+    const resp = await fetch(SPARQL_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/sparql-query',
@@ -426,6 +432,17 @@
       });
     });
   }
+
+  // ── Wire "Query UI" back-link to the actual dagalog origin, now that
+  //    this page is served from a separate process (see SPARQL_ENDPOINT
+  //    above) -- '/' on backlog_endpoint's own server is this same page,
+  //    not the generic query UI. ──
+  (function fixBackLink() {
+    const link = document.getElementById('back-link');
+    if (!link) return;
+    const m = SPARQL_ENDPOINT.match(/^(https?:\/\/[^/]+)/);
+    if (m) link.href = m[1] + '/';
+  })();
 
   initNav();
   loadFreshness();
