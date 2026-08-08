@@ -19,8 +19,8 @@ Contact: hovlanddag@gmail.com
 //! **Scope note**: DaRLing's Algorithm 1 covers only concept inclusions
 //! (CIs) — the paper explicitly excludes role inclusions and transitivity
 //! axioms as "almost trivial," without giving a detailed algorithm for
-//! them. The property-chain support in [`get_obj_prop_pattern`] and
-//! [`get_obj_value_pattern`] is therefore *not* part of what DaRLing/
+//! them. The property-chain support in `get_obj_prop_pattern` and
+//! `get_obj_value_pattern` is therefore *not* part of what DaRLing/
 //! Kazakov prove; where it's grounded in a standard reference at all, that
 //! reference is the W3C OWL 2 RL/RDF ruleset's `prp-spo2` rule (a property
 //! chain declared via `SubObjectPropertyOf(ObjectPropertyChain(...), Q)`
