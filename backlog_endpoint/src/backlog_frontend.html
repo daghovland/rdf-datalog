@@ -143,7 +143,6 @@
           Direct <code>bl:dependsOnCrate</code> edges only (not a computed transitive closure &mdash;
           see the property's own doc comment in <code>vocabulary.ttl</code>).
         </p>
-        <p id="crate-graph-warning" class="msg err" style="display:none;margin-bottom:0.5rem"></p>
         <div id="crate-cy-fullscreen-wrap" class="cy-wrap">
           <div class="cy-toolbar">
             <button type="button" id="crate-graph-reset-btn" class="btn-graph-action">Reset layout</button>
@@ -491,6 +490,14 @@
   // needs far less of frontend.html's machinery: no per-query node-limit
   // capping, no per-query layout keying, no click-to-browse-resource).
   let crateCyInstance = null;
+  // Fetched-but-not-yet-rendered crate/edge data, and whether the graph has
+  // been rendered at least once. Cytoscape measures its container's size on
+  // construction, and #view-crates is `display:none` until its nav tab is
+  // clicked (see .view/.view.active CSS) -- rendering eagerly at page load,
+  // before the pane is ever shown, would hand Cytoscape a 0x0 viewport and
+  // produce a blank/collapsed canvas (mirrors frontend.html's own
+  // showTab-gated `if (!cyInstance && lastResults) await renderGraph(...)`).
+  let crateGraphData = null;
   const CRATE_LAYOUT_KEY = 'dagalog-backlog-crate-graph-layout';
   const CRATE_COSE_LAYOUT_OPTIONS = {
     name: 'cose', padding: 30, animate: false, nodeOverlap: 20,
@@ -580,6 +587,19 @@
     }
   }
 
+  // Keeps the fullscreen button label/state in sync when the user exits
+  // native fullscreen via Escape (or the browser UI) instead of clicking
+  // the button itself -- without this, crateGraphFullscreen/the button
+  // label would desync until the next click self-healed it.
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && crateGraphFullscreen) {
+      crateGraphFullscreen = false;
+      const btn = document.getElementById('crate-graph-fs-btn');
+      if (btn) btn.textContent = 'Fullscreen';
+      if (crateCyInstance) setTimeout(() => crateCyInstance.resize(), 50);
+    }
+  });
+
   let cytoscapeLoading = null;
   function ensureCytoscape() {
     if (window.cytoscape) return Promise.resolve();
@@ -597,7 +617,6 @@
 
   async function renderCrateGraph(crates, edges) {
     const container = document.getElementById('crate-cy');
-    const warnEl = document.getElementById('crate-graph-warning');
     if (!container) return;
     container.textContent = 'Rendering graph…';
     try {
@@ -653,7 +672,28 @@
     });
 
     crateCyInstance.on('dragfree', 'node', () => saveCurrentCrateLayout());
-    warnEl.style.display = 'none';
+  }
+
+  function isCratesViewActive() {
+    const view = document.getElementById('view-crates');
+    return !!view && view.classList.contains('active');
+  }
+
+  // Renders the graph the first time the Crates tab is actually visible
+  // with data in hand (whichever happens second: the SPARQL fetch in
+  // loadCrates() finishing, or the user clicking the Crates nav tab). On
+  // later activations, just resize/fit the existing instance -- Cytoscape
+  // doesn't need re-construction, only a fresh viewport measurement.
+  function maybeRenderCrateGraph() {
+    if (!crateGraphData || !isCratesViewActive()) return;
+    if (crateCyInstance) {
+      setTimeout(() => {
+        crateCyInstance.resize();
+        crateCyInstance.fit();
+      }, 50);
+      return;
+    }
+    renderCrateGraph(crateGraphData.crates, crateGraphData.edges);
   }
 
   async function loadCrates() {
@@ -720,7 +760,8 @@
         }
       }
 
-      await renderCrateGraph(crates, edges);
+      crateGraphData = { crates, edges };
+      maybeRenderCrateGraph();
     } catch (e) {
       listEl.textContent = '';
       errEl.textContent = '';
@@ -747,6 +788,7 @@
         link.classList.add('active');
         document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
         document.getElementById('view-' + link.dataset.view).classList.add('active');
+        if (link.dataset.view === 'crates') maybeRenderCrateGraph();
       });
     });
   }
