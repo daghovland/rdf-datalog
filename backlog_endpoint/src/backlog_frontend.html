@@ -67,6 +67,36 @@
   /* Placeholder views */
   .placeholder { color: #666; font-size: 0.88rem; padding: 1.5rem 0; }
   .placeholder a { color: #005a9c; }
+  /* Crate dependency graph (#382) -- duplicated subset of frontend.html's
+     Cytoscape.js graph view (pan/zoom/fullscreen/PNG export/layout-save);
+     see this page's own script comment on why it's duplicated rather than
+     shared across the backlog_endpoint/sparql_endpoint process boundary. */
+  .cy-wrap { position: relative; }
+  #crate-cy { width: 100%; height: 480px; border: 1px solid #ddd; border-radius: 4px;
+              background: #f8f8f8; cursor: grab; margin-top: 0.5rem; }
+  #crate-cy:active { cursor: grabbing; }
+  .graph-hint { font-size: 0.78rem; color: #888; margin: 0.3rem 0 0; }
+  .cy-toolbar { display: flex; justify-content: flex-end; gap: 0.5rem; margin-bottom: 0.35rem; }
+  .btn-graph-action { padding: 0.25rem 0.7rem; font-size: 0.8rem; background: #f0f0f0;
+                       color: #444; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
+  .btn-graph-action:hover { background: #e0e0e0; }
+  .cy-wrap.graph-fs { position: fixed; inset: 0; z-index: 9000; background: #fff;
+                       padding: 1rem; display: flex; flex-direction: column; }
+  .cy-wrap.graph-fs #crate-cy { flex: 1; height: auto !important; margin-top: 0; border-radius: 0; }
+  .cy-wrap.graph-fs .graph-hint { margin-top: 0.5rem; flex-shrink: 0; }
+  .cy-wrap.graph-fs .cy-toolbar { flex-shrink: 0; }
+  #crate-cy-fullscreen-wrap:fullscreen { padding: 1rem; background: #fff; display: flex; flex-direction: column; }
+  #crate-cy-fullscreen-wrap:fullscreen #crate-cy { flex: 1; height: auto !important; margin-top: 0; border-radius: 0; }
+  #crate-cy-fullscreen-wrap:fullscreen .cy-toolbar { flex-shrink: 0; }
+  #crate-cy-fullscreen-wrap:fullscreen .graph-hint { margin-top: 0.5rem; flex-shrink: 0; }
+  .crate-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+  details.crate { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.5rem 0.7rem; }
+  details.crate summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  details.crate summary::-webkit-details-marker { display: none; }
+  details.crate summary::before { content: '\25B6\00A0'; font-size: 0.65rem; opacity: 0.6; }
+  details.crate[open] > summary::before { content: '\25BC\00A0'; }
+  .crate-path { font-weight: normal; color: #888; font-size: 0.78rem; margin-left: 0.4rem; font-family: monospace; }
+  .crate-items { margin: 0.5rem 0 0.2rem 1.1rem; padding-left: 0.8rem; border-left: 2px solid #eee; }
 </style>
 </head>
 <body>
@@ -105,9 +135,36 @@
 
     <!-- ── Stub views for sibling sub-issues under epic #378 ── -->
     <section id="view-crates" class="view">
-      <div class="placeholder">
-        Crate list + dependency graph view is not built yet &mdash; see
-        <a href="https://github.com/daghovland/rdf-datalog/issues/382" target="_blank" rel="noopener">issue #382</a>.
+      <div id="crates-error"></div>
+
+      <div class="card">
+        <h2>Dependency graph</h2>
+        <p class="hint" style="font-size:0.8rem;color:#777;margin-top:-0.4rem;">
+          Direct <code>bl:dependsOnCrate</code> edges only (not a computed transitive closure &mdash;
+          see the property's own doc comment in <code>vocabulary.ttl</code>).
+        </p>
+        <p id="crate-graph-warning" class="msg err" style="display:none;margin-bottom:0.5rem"></p>
+        <div id="crate-cy-fullscreen-wrap" class="cy-wrap">
+          <div class="cy-toolbar">
+            <button type="button" id="crate-graph-reset-btn" class="btn-graph-action">Reset layout</button>
+            <button type="button" id="crate-graph-png-btn" class="btn-graph-action">Save PNG</button>
+            <button type="button" id="crate-graph-fs-btn" class="btn-graph-action">Fullscreen</button>
+          </div>
+          <div id="crate-cy">
+            <div class="empty-note">Loading dependency graph&hellip;</div>
+          </div>
+          <p class="graph-hint">Scroll to zoom &middot; drag canvas to pan &middot; drag nodes to rearrange</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Crates</h2>
+        <p class="hint" style="font-size:0.8rem;color:#777;margin-top:-0.4rem;">
+          Each crate's open issues/PRs (<code>bl:touchesCrate</code>) are listed underneath it.
+        </p>
+        <div id="crates-list" class="crate-list">
+          <div class="empty-note">Loading crates&hellip;</div>
+        </div>
       </div>
     </section>
     <section id="view-provenance" class="view">
@@ -419,6 +476,267 @@
     }
   }
 
+  // ── Crates: list + dependency graph (#382) ──
+  // Cytoscape.js graph rendering (pan/zoom/fullscreen/PNG export/layout
+  // save) is a duplicated subset of sparql_endpoint/src/frontend.html's
+  // renderGraph/saveGraphPng/resetGraphLayout/toggleGraphFullscreen --
+  // NOT a shared module. As of #381's Stage 1 restructuring this dashboard
+  // is a separate crate/binary/process/port from sparql_endpoint (which
+  // still hosts frontend.html), so the two pages are different origins
+  // with no shared static-asset serving infrastructure between them --
+  // factoring the JS into a module both pages load would need that
+  // infrastructure built first. Duplicating the minimal subset (this page
+  // only ever renders one fixed graph -- all crates + all
+  // bl:dependsOnCrate edges -- not arbitrary user SPARQL results, so it
+  // needs far less of frontend.html's machinery: no per-query node-limit
+  // capping, no per-query layout keying, no click-to-browse-resource).
+  let crateCyInstance = null;
+  const CRATE_LAYOUT_KEY = 'dagalog-backlog-crate-graph-layout';
+  const CRATE_COSE_LAYOUT_OPTIONS = {
+    name: 'cose', padding: 30, animate: false, nodeOverlap: 20,
+    componentSpacing: 50, nodeRepulsion: () => 8000,
+    edgeElasticity: () => 100, idealEdgeLength: () => 80,
+  };
+
+  function loadCrateLayout() {
+    try {
+      const raw = localStorage.getItem(CRATE_LAYOUT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCrateLayout(positions) {
+    try {
+      localStorage.setItem(CRATE_LAYOUT_KEY, JSON.stringify(positions));
+    } catch {
+      /* storage unavailable/full: silently skip persistence */
+    }
+  }
+
+  function clearCrateLayout() {
+    try {
+      localStorage.removeItem(CRATE_LAYOUT_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function saveCurrentCrateLayout() {
+    if (!crateCyInstance) return;
+    const positions = {};
+    crateCyInstance.nodes().forEach((n) => {
+      positions[n.id()] = n.position();
+    });
+    saveCrateLayout(positions);
+  }
+
+  function resetCrateGraphLayout() {
+    if (!crateCyInstance) return;
+    clearCrateLayout();
+    crateCyInstance.layout(CRATE_COSE_LAYOUT_OPTIONS).run();
+  }
+
+  function saveCrateGraphPng() {
+    if (!crateCyInstance) return;
+    const blob = crateCyInstance.png({ output: 'blob', full: true });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'crate-dependency-graph.png';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  let crateGraphFullscreen = false;
+  async function toggleCrateGraphFullscreen() {
+    const wrap = document.getElementById('crate-cy-fullscreen-wrap');
+    const btn = document.getElementById('crate-graph-fs-btn');
+    if (!wrap || !btn) return;
+    if (!crateGraphFullscreen) {
+      crateGraphFullscreen = true;
+      btn.textContent = 'Exit Fullscreen';
+      if (wrap.requestFullscreen) {
+        try {
+          await wrap.requestFullscreen();
+          return;
+        } catch {
+          /* fall through to CSS mode */
+        }
+      }
+      wrap.classList.add('graph-fs');
+      document.body.style.overflow = 'hidden';
+      if (crateCyInstance) setTimeout(() => crateCyInstance.resize(), 50);
+    } else {
+      crateGraphFullscreen = false;
+      btn.textContent = 'Fullscreen';
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        wrap.classList.remove('graph-fs');
+        document.body.style.overflow = '';
+        if (crateCyInstance) setTimeout(() => crateCyInstance.resize(), 50);
+      }
+    }
+  }
+
+  let cytoscapeLoading = null;
+  function ensureCytoscape() {
+    if (window.cytoscape) return Promise.resolve();
+    if (!cytoscapeLoading) {
+      cytoscapeLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js';
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Could not load Cytoscape.js from CDN'));
+        document.head.appendChild(s);
+      });
+    }
+    return cytoscapeLoading;
+  }
+
+  async function renderCrateGraph(crates, edges) {
+    const container = document.getElementById('crate-cy');
+    const warnEl = document.getElementById('crate-graph-warning');
+    if (!container) return;
+    container.textContent = 'Rendering graph…';
+    try {
+      await ensureCytoscape();
+    } catch (e) {
+      container.textContent = e.message;
+      return;
+    }
+
+    if (crates.length === 0) {
+      container.textContent = 'No crates to display.';
+      return;
+    }
+
+    const savedPositions = loadCrateLayout();
+    const usableSaved = savedPositions && crates.every((c) => savedPositions[c.iri]);
+
+    const elements = [
+      ...crates.map((c) => ({
+        group: 'nodes',
+        data: { id: c.iri, label: c.label },
+        ...(usableSaved ? { position: { x: savedPositions[c.iri].x, y: savedPositions[c.iri].y } } : {}),
+      })),
+      ...edges.map((e, i) => ({
+        group: 'edges',
+        data: { id: 'e' + i, source: e.from, target: e.to },
+      })),
+    ];
+
+    if (crateCyInstance) {
+      crateCyInstance.destroy();
+      crateCyInstance = null;
+    }
+
+    crateCyInstance = cytoscape({
+      container,
+      elements,
+      style: [
+        { selector: 'node', style: {
+          label: 'data(label)', 'font-size': '11px', 'background-color': '#2b6cb0',
+          color: '#fff', 'text-halign': 'center', 'text-valign': 'center',
+          width: 'label', height: 'label', padding: '8px', shape: 'round-rectangle',
+          'text-wrap': 'wrap', 'text-max-width': '140px', 'border-width': 0,
+        } },
+        { selector: 'node:selected', style: { 'background-color': '#1a365d', 'border-width': 2, 'border-color': '#fff' } },
+        { selector: 'edge', style: {
+          'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+          'line-color': '#b0b0b0', 'target-arrow-color': '#b0b0b0',
+          'arrow-scale': 0.9, width: 1.5,
+        } },
+      ],
+      layout: usableSaved ? { name: 'preset', fit: true, padding: 30 } : CRATE_COSE_LAYOUT_OPTIONS,
+    });
+
+    crateCyInstance.on('dragfree', 'node', () => saveCurrentCrateLayout());
+    warnEl.style.display = 'none';
+  }
+
+  async function loadCrates() {
+    const listEl = document.getElementById('crates-list');
+    const errEl = document.getElementById('crates-error');
+    try {
+      const [cratesJson, edgesJson, touchesJson] = await Promise.all([
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?crate ?label ?path WHERE { ' +
+            '  ?crate a bl:Crate ; rdfs:label ?label ; bl:path ?path . ' +
+            '}'
+        ),
+        sparqlFetch(PREFIXES + 'SELECT ?from ?to WHERE { ?from bl:dependsOnCrate ?to }'),
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?crate ?item ?title WHERE { ' +
+            '  ?item bl:touchesCrate ?crate ; bl:state bl:Open ; rdfs:label ?title . ' +
+            '}'
+        ),
+      ]);
+
+      const crates = bindingsOf(cratesJson)
+        .map((row) => ({ iri: row.crate.value, label: row.label.value, path: row.path.value }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+
+      const edges = bindingsOf(edgesJson).map((row) => ({ from: row.from.value, to: row.to.value }));
+
+      const itemsByCrate = new Map();
+      for (const row of bindingsOf(touchesJson)) {
+        const crateIri = row.crate.value;
+        if (!itemsByCrate.has(crateIri)) itemsByCrate.set(crateIri, []);
+        itemsByCrate.get(crateIri).push({ iri: row.item.value, title: row.title.value });
+      }
+
+      listEl.textContent = '';
+      if (crates.length === 0) {
+        listEl.appendChild(el('div', 'empty-note', 'No crates found.'));
+      } else {
+        for (const crate of crates) {
+          const details = document.createElement('details');
+          details.className = 'crate';
+          const summary = document.createElement('summary');
+          summary.appendChild(document.createTextNode(crate.label));
+          summary.appendChild(el('span', 'crate-path', crate.path));
+          details.appendChild(summary);
+
+          const items = itemsByCrate.get(crate.iri) || [];
+          if (items.length === 0) {
+            const empty = el('div', 'crate-items');
+            empty.appendChild(el('div', 'empty-note', 'No open issues/PRs touching this crate.'));
+            details.appendChild(empty);
+          } else {
+            const itemsWrap = el('div', 'crate-items');
+            for (const item of items) {
+              const row = el('div', 'child-item');
+              row.appendChild(el('span', 'item-number', issueNumber(item.iri)));
+              row.appendChild(iriLink(item.iri, item.title));
+              itemsWrap.appendChild(row);
+            }
+            details.appendChild(itemsWrap);
+          }
+          listEl.appendChild(details);
+        }
+      }
+
+      await renderCrateGraph(crates, edges);
+    } catch (e) {
+      listEl.textContent = '';
+      errEl.textContent = '';
+      errEl.appendChild(el('div', 'msg err', 'Failed to load crates: ' + e.message));
+    }
+  }
+
+  function initCrateGraphButtons() {
+    const resetBtn = document.getElementById('crate-graph-reset-btn');
+    const pngBtn = document.getElementById('crate-graph-png-btn');
+    const fsBtn = document.getElementById('crate-graph-fs-btn');
+    if (resetBtn) resetBtn.addEventListener('click', resetCrateGraphLayout);
+    if (pngBtn) pngBtn.addEventListener('click', saveCrateGraphPng);
+    if (fsBtn) fsBtn.addEventListener('click', toggleCrateGraphFullscreen);
+  }
+
   // ── Nav (client-side view switch; no page reload — same page other
   //     sibling sub-issues, #382/#383/#384, will plug their views into) ──
   function initNav() {
@@ -445,9 +763,11 @@
   })();
 
   initNav();
+  initCrateGraphButtons();
   loadFreshness();
   loadBoard();
   loadEpics();
+  loadCrates();
 })();
 </script>
 </body>
