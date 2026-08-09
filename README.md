@@ -444,6 +444,9 @@ scripts/serve-backlog.sh
 See [`backlog_endpoint/README.md`](backlog_endpoint/README.md) for the full
 quickstart and what's on each tab.
 
+To expose both dagalog and the dashboard publicly, gated by Google sign-in,
+see [`docs/deploy/PUBLIC_DEPLOYMENT.md`](docs/deploy/PUBLIC_DEPLOYMENT.md).
+
 ---
 
 ## License

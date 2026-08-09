@@ -1,0 +1,6 @@
+# Copy to deploy/authenticated-emails.txt and list the Google account(s)
+# allowed to sign in, one email per line. This is the actual access-control
+# decision -- oauth2-proxy lets anyone *authenticate* to Google, but only
+# emails listed here are let through afterward. deploy/authenticated-emails.txt
+# is gitignored (see .gitignore) -- it's a real allowlist, not a template.
+your-email@gmail.com
