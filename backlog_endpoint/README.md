@@ -67,6 +67,26 @@ The configured `--sparql-endpoint` is injected into the served page as
 `window.SPARQL_ENDPOINT`, so the dashboard's JS knows where to send its
 queries — it does not assume same-origin `/sparql`.
 
+Because `backlog_endpoint` runs on its own port, every query it issues is
+a cross-origin request against the dagalog instance. The wrapper script
+(`scripts/serve-backlog.sh`) passes `--cors-allow-origin` to the dagalog
+instance it starts automatically, but a dagalog instance you start by
+hand does not get this for free — pass it yourself, matching the
+dashboard's own origin, or every query will fail in the browser with a
+CORS `NetworkError` (see
+[#435](https://github.com/daghovland/rdf-datalog/issues/435)). `--cors-allow-origin`
+is repeatable, and the browser may report either `localhost` or
+`127.0.0.1` as the dashboard's origin depending on how you open it, so
+pass both:
+
+```sh
+cargo run --bin dagalog -- \
+  --data <your data files> \
+  --serve --read-only --port 3030 \
+  --cors-allow-origin http://localhost:3031 \
+  --cors-allow-origin http://127.0.0.1:3031
+```
+
 ## What's on the dashboard
 
 Four tabs, each backed by unparameterized SPARQL queries run client-side
