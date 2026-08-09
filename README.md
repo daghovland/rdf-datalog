@@ -427,6 +427,25 @@ Navigate to `http://localhost:3030` for the interactive interface:
 
 ---
 
+## Backlog dashboard
+
+A separate, standalone dashboard for browsing *this repository's own*
+backlog and agent-provenance data (issues/epics/PRs, crate dependencies,
+agent-session transcript summaries) lives in the
+[`backlog_endpoint`](backlog_endpoint/README.md) crate. It's not part of
+dagalog's own HTTP server — it's a distinct application that queries a
+running dagalog instance over plain HTTP, the way an app uses Postgres.
+
+```sh
+scripts/serve-backlog.sh
+# then open http://localhost:3031
+```
+
+See [`backlog_endpoint/README.md`](backlog_endpoint/README.md) for the full
+quickstart and what's on each tab.
+
+---
+
 ## License
 
 GNU General Public License v3.0 — see [`LICENSE`](LICENSE).
