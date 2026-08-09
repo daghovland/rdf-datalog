@@ -1,0 +1,58 @@
+# Reverse-proxy + automatic HTTPS (Let's Encrypt) for a public dagalog +
+# backlog_endpoint deployment, gated by Google sign-in via oauth2-proxy.
+# See docs/deploy/PUBLIC_DEPLOYMENT.md for the full setup this assumes, and
+# that doc's "not yet live-tested" note -- this file has been reviewed for
+# correct Caddyfile syntax and standard oauth2-proxy/Caddy integration
+# patterns, but has not been deployed against a real domain (none exists yet
+# for this server). Test the deny path (see PUBLIC_DEPLOYMENT.md's
+# "Verifying the deny path" section) before trusting this in production.
+#
+# Routing:
+#   /oauth2/*  -> oauth2-proxy directly (its own callback/sign-in routes;
+#                 must stay outside forward_auth or sign-in itself would
+#                 require being already signed in -- a redirect loop)
+#   everything else -> forward_auth to oauth2-proxy first (redirects to
+#                 Google sign-in if not authenticated; on success, forwards
+#                 X-Auth-Request-* headers upstream), then:
+#     /, /backlog*  -> backlog-endpoint (the dashboard)
+#     everything else -> dagalog (SPARQL endpoint + its own query-UI
+#                 frontend: /sparql, /rdf-graph-store, /$/*, etc.)
+#
+# dagalog itself stays on AuthConfig::None (the default) -- authentication is
+# fully handled here, at the edge, before any request reaches it. This is
+# deliberate, see the "why edge, not in-app" discussion in
+# docs/deploy/PUBLIC_DEPLOYMENT.md. dagalog is never reachable except through
+# this proxy (no host port mapping on the dagalog/backlog-endpoint services,
+# see docker-compose.public.yml's `networks: [edge]` with no `ports:` on
+# either), so AuthConfig::None here does not mean "unauthenticated on the
+# public internet" -- it means "authentication happens one layer up."
+
+{$PUBLIC_DOMAIN} {
+	# oauth2-proxy's own routes must stay outside forward_auth: it needs to
+	# be reachable *before* the user is authenticated (that's the whole
+	# point of the sign-in/callback flow).
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180
+	}
+
+	# Everything else requires a valid session first.
+	handle {
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			copy_headers X-Auth-Request-User X-Auth-Request-Email
+			trusted_proxies private_ranges
+		}
+
+		handle /backlog* {
+			reverse_proxy backlog-endpoint:3031
+		}
+
+		handle / {
+			reverse_proxy backlog-endpoint:3031
+		}
+
+		handle {
+			reverse_proxy dagalog:3030
+		}
+	}
+}

@@ -30,3 +30,9 @@ target
 /tests/testdata/large.datalog
 /tests/testdata/wikidata-sample.nt
 /tests/testdata/dblp-sample.nt
+
+# Public-deployment secrets (see deploy/*.example templates) -- never commit
+# real OAuth client secrets, cookie secrets, or the authenticated-emails
+# allowlist.
+/deploy/.env
+/deploy/authenticated-emails.txt

@@ -1,0 +1,88 @@
+# Public deployment overlay: dagalog + backlog_endpoint, gated by Google
+# sign-in at the edge (oauth2-proxy) behind Caddy's automatic HTTPS.
+#
+# This is deliberately a SEPARATE compose file from the repo root's
+# docker-compose.yml (which stays the simple, local/trusted single-service
+# setup) rather than an extension of it -- see docs/deploy/PUBLIC_DEPLOYMENT.md
+# for the full prerequisites (a domain name pointed at this host, a Google
+# OAuth client) and step-by-step setup this file assumes.
+#
+# Usage (from the repo root, once the prerequisites in PUBLIC_DEPLOYMENT.md
+# are met and deploy/.env is filled in from deploy/.env.example):
+#   docker compose -f deploy/docker-compose.public.yml --env-file deploy/.env up -d
+#
+# Only `caddy` publishes ports to the host (80/443). `dagalog`,
+# `backlog-endpoint`, and `oauth2-proxy` are reachable only on the internal
+# Docker network `edge` -- there is no host port mapping for them here, so
+# even a misconfigured firewall can't accidentally expose the unauthenticated
+# dagalog/backlog-endpoint ports directly. Caddy is the only ingress.
+
+services:
+  dagalog:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ../data:/data
+    command: ["--serve", "--read-only", "--data", "/data/dataset.ttl"]
+    networks: [edge]
+    restart: unless-stopped
+
+  backlog-endpoint:
+    build:
+      context: ..
+      dockerfile: backlog_endpoint/Dockerfile
+    environment:
+      BACKLOG_ENDPOINT_PORT: "3031"
+      # Same-origin via Caddy (see Caddyfile) once deployed, so this can stay
+      # the in-cluster service name -- no public dagalog origin needed here.
+      BACKLOG_ENDPOINT_SPARQL_ENDPOINT: "http://dagalog:3030/sparql"
+    networks: [edge]
+    restart: unless-stopped
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    environment:
+      OAUTH2_PROXY_PROVIDER: "google"
+      OAUTH2_PROXY_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID}"
+      OAUTH2_PROXY_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET}"
+      OAUTH2_PROXY_COOKIE_SECRET: "${OAUTH2_PROXY_COOKIE_SECRET}"
+      # Restrict sign-in to your own account(s) -- comma-separated emails.
+      # This is the actual access-control decision: anyone with a Google
+      # account can authenticate to Google, but only emails listed here are
+      # let through oauth2-proxy's own allow/deny gate.
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: "/etc/oauth2-proxy/authenticated-emails.txt"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_REDIRECT_URL: "https://${PUBLIC_DOMAIN}/oauth2/callback"
+      OAUTH2_PROXY_UPSTREAMS: "static://200"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+    volumes:
+      - ./authenticated-emails.txt:/etc/oauth2-proxy/authenticated-emails.txt:ro
+    networks: [edge]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      PUBLIC_DOMAIN: "${PUBLIC_DOMAIN}"
+    networks: [edge]
+    restart: unless-stopped
+
+networks:
+  edge:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
