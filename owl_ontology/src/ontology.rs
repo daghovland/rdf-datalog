@@ -171,3 +171,105 @@ impl OntologyDocument {
         self.ontology.try_get_version_iri()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Direct unit coverage for [`Ontology::remove_axiom`], part of
+    //! incremental TBox retraction
+    //! ([#162](https://github.com/daghovland/rdf-datalog/issues/162)). The
+    //! end-to-end path (`remove_axiom` + `owl2rl2datalog::axiom2datalog` +
+    //! `datalog::IncrementalReasoner::apply_rule_deletions`) is covered in
+    //! `owl2rl2datalog/src/lib.rs`'s `tbox_retraction_tests` module — these
+    //! tests exercise `remove_axiom` itself, in isolation.
+    use super::*;
+    use crate::axioms::{ClassAxiom, ClassExpression};
+
+    fn sub_class_of_axiom(sub: &str, sup: &str) -> Axiom {
+        Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            ClassExpression::ClassName(FullIri(IriReference(sub.to_string()))),
+            ClassExpression::ClassName(FullIri(IriReference(sup.to_string()))),
+        ))
+    }
+
+    fn empty_ontology(axioms: Vec<Axiom>) -> Ontology {
+        Ontology::new(vec![], OntologyVersion::UnNamedOntology, vec![], axioms)
+    }
+
+    /// Removing an axiom that is actually present returns `true` and the
+    /// axiom is genuinely gone from `self.axioms` afterwards.
+    #[test]
+    fn test_remove_axiom_present_returns_true_and_removes_it() {
+        let axiom = sub_class_of_axiom("http://example.org/Dog", "http://example.org/Animal");
+        let mut ontology = empty_ontology(vec![axiom.clone()]);
+
+        assert!(ontology.remove_axiom(&axiom));
+        assert!(
+            ontology.axioms.is_empty(),
+            "the axiom must actually be gone from self.axioms, not just report true"
+        );
+    }
+
+    /// Removing an axiom that was never added is a no-op: returns `false`
+    /// and leaves `self.axioms` untouched.
+    #[test]
+    fn test_remove_axiom_absent_returns_false_no_op() {
+        let present = sub_class_of_axiom("http://example.org/Dog", "http://example.org/Animal");
+        let mut ontology = empty_ontology(vec![present.clone()]);
+
+        let never_added = sub_class_of_axiom("http://example.org/Cat", "http://example.org/Animal");
+        assert!(!ontology.remove_axiom(&never_added));
+        assert_eq!(
+            ontology.axioms,
+            vec![present],
+            "self.axioms must be completely untouched by a no-op removal"
+        );
+    }
+
+    /// When two value-equal axioms are both present, `remove_axiom` removes
+    /// only the first match — per its doc comment — leaving the other(s)
+    /// untouched. Modelled here via two *distinct* axioms plus a duplicate
+    /// of one of them, so the surviving count is unambiguous.
+    #[test]
+    fn test_remove_axiom_duplicate_removes_only_first_match() {
+        let dup = sub_class_of_axiom("http://example.org/Dog", "http://example.org/Animal");
+        let other = sub_class_of_axiom("http://example.org/Cat", "http://example.org/Animal");
+        let mut ontology = empty_ontology(vec![dup.clone(), other.clone(), dup.clone()]);
+
+        assert!(ontology.remove_axiom(&dup));
+        assert_eq!(
+            ontology.axioms,
+            vec![other, dup],
+            "only the first value-equal match must be removed; the second duplicate \
+             and the unrelated axiom must survive untouched"
+        );
+    }
+
+    /// A built-in declaration synthesised by `all_axioms()`/
+    /// `built_in_declarations` (e.g. `owl:Thing`) is never actually stored
+    /// in `self.axioms`, so removing it always returns `false` — even
+    /// though it appears in `all_axioms()`'s output.
+    #[test]
+    fn test_remove_axiom_built_in_declaration_returns_false() {
+        let mut ontology = empty_ontology(vec![]);
+
+        let owl_thing_decl = Axiom::AxiomDeclaration((
+            vec![],
+            Entity::ClassDeclaration(FullIri(IriReference(
+                "http://www.w3.org/2002/07/owl#Thing".to_string(),
+            ))),
+        ));
+        assert!(
+            ontology.all_axioms().any(|a| a == owl_thing_decl),
+            "sanity: owl:Thing's declaration must actually appear in all_axioms()"
+        );
+        assert!(
+            !ontology.remove_axiom(&owl_thing_decl),
+            "a built-in declaration is never in self.axioms, so removal must report false"
+        );
+        assert!(
+            ontology.axioms.is_empty(),
+            "self.axioms must remain empty: there was nothing to remove"
+        );
+    }
+}
