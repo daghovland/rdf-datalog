@@ -82,6 +82,19 @@ pub struct DatalogProgram {
     /// materialisation during rollback, `rebuild_from_base` always does. See
     /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
     pub(crate) materialise_calls: usize,
+    /// Indices into `rules` of rules that have been retracted via
+    /// [`Self::disable_rule`] (TBox/rule retraction, see
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162)).
+    ///
+    /// A disabled rule is **not** removed from `rules` — doing so would shift
+    /// every later rule's index, silently corrupting existing
+    /// [`Derivation::rule_id`](crate::types::Derivation::rule_id) references
+    /// recorded in `derived_from` for facts derived by *other* rules. Instead
+    /// the rule stays at its original index but is filtered out of
+    /// `get_rules_for_fact`/`get_facts`, so it can never fire again while old
+    /// derivation records that point at its index remain meaningful (e.g. for
+    /// `IncrementalReasoner`'s backward phase to find facts it once produced).
+    pub(crate) disabled_rules: std::collections::HashSet<usize>,
 }
 
 impl DatalogProgram {
@@ -117,7 +130,29 @@ impl DatalogProgram {
             rule_map,
             derived_from: DerivedFromIndex::new(),
             materialise_calls: 0,
+            disabled_rules: std::collections::HashSet::new(),
         })
+    }
+
+    /// Retract the rule at `rule_id` (an index into `rules`) so it can no
+    /// longer fire. Returns `true` iff it was not already disabled.
+    ///
+    /// See the `disabled_rules` field doc for why this does not remove the
+    /// rule from `rules` outright. Part of [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    pub(crate) fn disable_rule(&mut self, rule_id: usize) -> bool {
+        self.disabled_rules.insert(rule_id)
+    }
+
+    /// Re-enable a previously-disabled rule (used to roll back a failed
+    /// [`crate::IncrementalReasoner::apply_rule_deletions`] call). Returns
+    /// `true` iff it was actually disabled beforehand.
+    pub(crate) fn enable_rule(&mut self, rule_id: usize) -> bool {
+        self.disabled_rules.remove(&rule_id)
+    }
+
+    /// True iff the rule at `rule_id` has been retracted via [`Self::disable_rule`].
+    pub(crate) fn is_rule_disabled(&self, rule_id: usize) -> bool {
+        self.disabled_rules.contains(&rule_id)
     }
 
     /// Adds a single `rule` to this program.
@@ -147,6 +182,7 @@ impl DatalogProgram {
             .iter()
             .filter_map(|wc| self.rule_map.get(wc))
             .flatten()
+            .filter(|pr| !self.disabled_rules.contains(&pr.rule_id))
             .flat_map(|pr| get_matches_for_rule(fact, pr))
             .collect()
     }
@@ -154,8 +190,9 @@ impl DatalogProgram {
     fn get_facts(&self) -> Result<Vec<dag_rdf::Quad>, ReasoningError> {
         self.rules
             .iter()
-            .filter(|r| is_fact(r))
-            .map(|r| match &r.head {
+            .enumerate()
+            .filter(|(rule_id, r)| is_fact(r) && !self.disabled_rules.contains(rule_id))
+            .map(|(_, r)| match &r.head {
                 RuleHead::Contradiction => Err(ReasoningError::Contradiction(format!("{r}"))),
                 RuleHead::NormalHead(p) => Ok(apply_substitution_quad(&empty_substitution(), p)),
             })

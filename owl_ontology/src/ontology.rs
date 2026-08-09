@@ -32,6 +32,32 @@ impl Ontology {
         }
     }
 
+    /// Remove the first axiom in `self.axioms` that is value-equal to `axiom`.
+    ///
+    /// Returns `true` iff an axiom was actually removed.
+    ///
+    /// Only searches user-supplied `self.axioms` — the built-in declarations
+    /// synthesised by [`Self::all_axioms`] (via the private
+    /// `built_in_declarations` helper)
+    /// (`owl:Thing`, `owl:Nothing`, `owl:topObjectProperty`, the XSD
+    /// datatypes, ...) are not stored there and can never be removed this
+    /// way; passing one of those always returns `false`.
+    ///
+    /// Part of incremental TBox retraction, see
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162):
+    /// pairs with `owl2rl2datalog::axiom2datalog` (map the removed axiom to
+    /// its compiled `Rule`s) and
+    /// `datalog::IncrementalReasoner::apply_rule_deletions` (retract the
+    /// facts those rules derived).
+    pub fn remove_axiom(&mut self, axiom: &Axiom) -> bool {
+        if let Some(pos) = self.axioms.iter().position(|a| a == axiom) {
+            self.axioms.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
     /// All axioms including built-in OWL 2 declarations.
     pub fn all_axioms(&self) -> impl Iterator<Item = Axiom> + '_ {
         let user: Vec<Axiom> = self.axioms.clone();
