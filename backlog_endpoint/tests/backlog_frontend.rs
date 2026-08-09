@@ -199,6 +199,45 @@ async fn root_route_serves_provenance_timeline_markers() {
     );
 }
 
+/// The "what's relevant" panel (#384) must be present in the served body:
+/// its section id, an input control for the file-path/crate-name query,
+/// and the two-hop query fragments (`bl:touchesFile`/`bl:touchesCrate`
+/// joined through `agp:reasoningFor`) adapted from
+/// `provenance/queries/related_to_file.sparql`/`related_to_crate.sparql`.
+/// Same "assert markers in the static body" coverage level as the other
+/// views in this file -- this panel has no live SPARQL endpoint to query
+/// against in these tests, so it's verified by hand against the real
+/// corpus (see #384's PR description for that manual verification).
+#[tokio::test]
+async fn root_route_serves_relevant_panel_markers() {
+    let server = TestServer::start(TEST_SPARQL_ENDPOINT).await;
+
+    let resp = server
+        .client
+        .get(&server.base_url)
+        .send()
+        .await
+        .expect("request failed");
+
+    let body = resp.text().await.expect("body");
+    assert!(
+        body.contains("id=\"view-relevant\""),
+        "expected the relevant panel's section id in body"
+    );
+    assert!(
+        body.contains("id=\"relevant-file-input\"") && body.contains("id=\"relevant-crate-input\""),
+        "expected file-path and crate-name input controls in body"
+    );
+    assert!(
+        body.contains("bl:touchesFile") && body.contains("bl:touchesCrate"),
+        "expected both bl:touchesFile and bl:touchesCrate query fragments in body"
+    );
+    assert!(
+        body.contains("agp:reasoningFor"),
+        "expected agp:reasoningFor join fragment in body"
+    );
+}
+
 /// The configured `--sparql-endpoint` must actually be injected into the
 /// served page as `window.SPARQL_ENDPOINT`, proving the cross-process
 /// wiring the #381 restructuring depends on (the page's JS reads this
