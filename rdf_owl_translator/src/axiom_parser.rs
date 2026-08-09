@@ -38,6 +38,7 @@ pub fn axiom_structural_predicate_ids(ids: &WellKnownIds) -> Vec<GraphElementId>
         ids.rdfs_range_id,
         ids.owl_object_inverse_of_id,
         ids.owl_same_as_id,
+        ids.owl_different_from_id,
     ]
 }
 
@@ -463,6 +464,16 @@ pub fn extract_axiom(
             let ind1 = try_get_individual(res.get_graph_element(triple.subject))?;
             let ind2 = try_get_individual(res.get_graph_element(triple.obj))?;
             Some(Axiom::AxiomAssertion(Assertion::SameIndividual(
+                axiom_anns,
+                vec![ind1, ind2],
+            )))
+        }
+
+        // ── owl:differentFrom ───────────────────────────────────────────────
+        p if p == ids.owl_different_from_id => {
+            let ind1 = try_get_individual(res.get_graph_element(triple.subject))?;
+            let ind2 = try_get_individual(res.get_graph_element(triple.obj))?;
+            Some(Axiom::AxiomAssertion(Assertion::DifferentIndividuals(
                 axiom_anns,
                 vec![ind1, ind2],
             )))

@@ -32,6 +32,7 @@ pub const RDFS_DOMAIN: &str = "http://www.w3.org/2000/01/rdf-schema#domain";
 pub const RDFS_RANGE: &str = "http://www.w3.org/2000/01/rdf-schema#range";
 
 pub const OWL_SAME_AS: &str = "http://www.w3.org/2002/07/owl#sameAs";
+pub const OWL_DIFFERENT_FROM: &str = "http://www.w3.org/2002/07/owl#differentFrom";
 pub const OWL_ONTOLOGY: &str = "http://www.w3.org/2002/07/owl#Ontology";
 pub const OWL_IMPORT: &str = "http://www.w3.org/2002/07/owl#imports";
 pub const OWL_VERSION_IRI: &str = "http://www.w3.org/2002/07/owl#versionIri";

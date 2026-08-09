@@ -84,6 +84,7 @@ pub struct WellKnownIds {
     pub owl_all_different_id: GraphElementId,
     pub owl_annotation_id: GraphElementId,
     pub owl_same_as_id: GraphElementId,
+    pub owl_different_from_id: GraphElementId,
 }
 
 fn iri_id(res: &mut GraphElementManager, iri: &str) -> GraphElementId {
@@ -155,6 +156,7 @@ impl WellKnownIds {
             owl_all_different_id: iri_id(res, OWL_ALL_DIFFERENT),
             owl_annotation_id: iri_id(res, OWL_ANNOTATION),
             owl_same_as_id: iri_id(res, OWL_SAME_AS),
+            owl_different_from_id: iri_id(res, OWL_DIFFERENT_FROM),
         }
     }
 }
