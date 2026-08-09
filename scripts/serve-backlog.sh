@@ -82,6 +82,8 @@ done
 # start backlog_endpoint afterwards. Killed on exit via the trap below.
 cargo run --manifest-path "$REPO_ROOT/Cargo.toml" -q --bin dagalog -- \
   "${DATA_ARGS[@]}" --serve --read-only --port "$DAGALOG_PORT" \
+  --cors-allow-origin "http://localhost:$DASHBOARD_PORT" \
+  --cors-allow-origin "http://127.0.0.1:$DASHBOARD_PORT" \
   "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 DAGALOG_PID=$!
 trap 'kill "$DAGALOG_PID" 2>/dev/null || true' EXIT

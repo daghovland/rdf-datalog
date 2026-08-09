@@ -89,6 +89,52 @@ fn display(row: &std::collections::HashMap<String, GraphElement>, var: &str) -> 
         .unwrap_or_else(|| "(unbound)".to_string())
 }
 
+/// Regression test for issue
+/// [#435](https://github.com/daghovland/rdf-datalog/issues/435): the
+/// dagalog instance the script starts must allow cross-origin requests
+/// from the dashboard it also starts, or every `sparqlFetch` call the
+/// dashboard makes gets blocked by the browser as a CORS `NetworkError`.
+///
+/// Checks per-line rather than for one exact substring, so a future
+/// requoting/reflow of the dagalog invocation doesn't produce a false
+/// failure -- only actually dropping the flag (or the port variable, or
+/// one of the two origins) does. Both `localhost` and `127.0.0.1` need
+/// their own `--cors-allow-origin` line because browsers can report
+/// either as the dashboard's origin depending on how it was opened, and
+/// the endpoint's allow-list does exact string matching (see
+/// `sparql_endpoint::server::build_allow_origin`) -- no wildcard or
+/// hostname-normalization is done, so an unlisted variant fails closed
+/// with the very `NetworkError` this flag exists to prevent.
+///
+/// This only checks the script text (not a real end-to-end HTTP round
+/// trip -- that was verified manually via curl when fixing #435, for
+/// both origins and against a mismatched-origin negative control).
+#[test]
+fn script_passes_cors_allow_origin_to_dagalog() {
+    let script = repo_root().join("scripts").join("serve-backlog.sh");
+    let contents = std::fs::read_to_string(&script)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", script.display()));
+
+    let cors_lines: Vec<&str> = contents
+        .lines()
+        .filter(|line| line.contains("--cors-allow-origin"))
+        .collect();
+
+    for expected_origin in [
+        "http://localhost:$DASHBOARD_PORT",
+        "http://127.0.0.1:$DASHBOARD_PORT",
+    ] {
+        assert!(
+            cors_lines.iter().any(|line| line.contains(expected_origin)),
+            "expected {} to pass --cors-allow-origin {expected_origin} to the dagalog \
+             invocation so the dashboard's cross-origin sparqlFetch calls aren't blocked \
+             regardless of whether the browser reports the dashboard's origin as `localhost` \
+             or `127.0.0.1` (see https://github.com/daghovland/rdf-datalog/issues/435)",
+            script.display()
+        );
+    }
+}
+
 /// `scripts/serve-backlog.sh --print-data-args` must resolve to a list that
 /// includes both vocab files, the backlog snapshot, and at least one
 /// provenance summary -- the exact combination #356 asks for.
