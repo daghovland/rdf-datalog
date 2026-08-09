@@ -23,7 +23,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::reasoner::{DatalogProgram, ReasoningError};
 use crate::stratifier::RulePartitioner;
-use crate::types::{Derivation, Rule};
+use crate::types::{Derivation, DerivedFromIndex, Rule};
 use dag_rdf::{Datastore, Quad, QuadTable};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -38,6 +38,15 @@ const FALLBACK_THRESHOLD: f64 = 0.25;
 pub struct IncrementalReasoner {
     /// One `DatalogProgram` per stratum, in topological stratum order.
     programs: Vec<DatalogProgram>,
+    /// Number of times a `full_rematerialise*` fallback has run. Test-only
+    /// instrumentation: unlike `materialise_call_count()` (which increases by
+    /// the same amount on both the incremental and the fallback path — both
+    /// call materialisation exactly once per program — this counter is the
+    /// only thing that actually distinguishes "the 25% `FALLBACK_THRESHOLD`
+    /// guard tripped" from "the incremental BF path ran". See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    #[cfg(test)]
+    pub(crate) fallback_count: usize,
 }
 
 impl IncrementalReasoner {
@@ -60,7 +69,11 @@ impl IncrementalReasoner {
         for program in &mut programs {
             program.materialise_seminaive(base)?;
         }
-        Ok(IncrementalReasoner { programs })
+        Ok(IncrementalReasoner {
+            programs,
+            #[cfg(test)]
+            fallback_count: 0,
+        })
     }
 
     /// Apply a batch of base-fact deletions using the BF algorithm.
@@ -104,6 +117,84 @@ impl IncrementalReasoner {
 
         // --- Forward phase ---
         self.forward_phase(base, pd, deletes)
+    }
+
+    /// Apply a batch of TBox (rule/axiom) retractions using the BF algorithm,
+    /// seeded from rule removal rather than base-fact removal.
+    ///
+    /// The ABox-shaped counterpart to [`Self::apply_deletions`]. Typical
+    /// caller flow: `owl_ontology::Ontology::remove_axiom` drops the axiom
+    /// from the ontology model, `owl2rl2datalog::axiom2datalog` maps it to
+    /// the `Rule`s it compiled to, and those rules are passed here to
+    /// retract everything they derived (and re-derive anything still
+    /// provable via a surviving rule).
+    ///
+    /// **Precondition: every rule in `rules` must be genuinely dead** — no
+    /// longer produced by *any* surviving axiom. `owl2rl2datalog::owl2datalog`
+    /// deduplicates its output, so one compiled `Rule` can be shared by
+    /// several axioms; passing a still-justified rule disables it with no way
+    /// back (the forward phase only re-derives via surviving, enabled rules),
+    /// permanently and wrongly losing facts justified by the other axiom. See
+    /// `owl2rl2datalog::axiom2datalog`'s doc comment for how a caller
+    /// should compute this (the `datalog` crate has no dependency on
+    /// `owl2rl2datalog`, so this cannot be a linkable intra-doc reference).
+    /// Rules not found in any program (already removed,
+    /// or never part of this reasoner) are silently skipped — the call is a
+    /// no-op (`Ok(0)`) if none of `rules` match anything.
+    ///
+    /// Returns the number of derived facts removed from the closure (not
+    /// re-derived). Same `Err(ReasoningError::Contradiction)`/rollback
+    /// contract as [`Self::apply_deletions`] — on error, `base`/`self` are
+    /// restored to their exact pre-call state (including re-enabling any
+    /// rule this call disabled) via a cheap undo-log rollback. See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    pub fn apply_rule_deletions(
+        &mut self,
+        base: &mut Datastore,
+        rules: &[Rule],
+    ) -> Result<usize, ReasoningError> {
+        if rules.is_empty() {
+            return Ok(0);
+        }
+
+        // Locate every (program_index, rule_id) occurrence of a targeted
+        // rule across all strata, skipping already-disabled indices so
+        // repeat calls are idempotent no-ops for already-removed rules.
+        let mut targets: Vec<(usize, usize)> = Vec::new();
+        for (program_index, program) in self.programs.iter().enumerate() {
+            for (rule_id, existing) in program.rules.iter().enumerate() {
+                if program.is_rule_disabled(rule_id) {
+                    continue;
+                }
+                if rules.contains(existing) {
+                    targets.push((program_index, rule_id));
+                }
+            }
+        }
+        if targets.is_empty() {
+            return Ok(0);
+        }
+
+        // --- Backward phase ---
+        let pd = self.backward_phase_from_rule_removal(base, &targets);
+
+        // --- Tipping-point check ---
+        let total_derived: usize = self
+            .programs
+            .iter()
+            .map(|p| p.derived_from.iter().count())
+            .sum();
+        if total_derived > 0 && pd.len() as f64 / total_derived as f64 > FALLBACK_THRESHOLD {
+            return self.full_rematerialise_rules(base, &targets);
+        }
+
+        // --- Disable the targeted rules so they can't refire ---
+        for &(program_index, rule_id) in &targets {
+            self.programs[program_index].disable_rule(rule_id);
+        }
+
+        // --- Forward phase ---
+        self.forward_phase_rules(base, pd, &targets)
     }
 
     /// Apply a batch of base-fact insertions.
@@ -204,6 +295,12 @@ impl IncrementalReasoner {
     /// `derived_from` index and will be silently discarded, not re-derived.
     /// Do not call this on a store that mixes this reasoner's incrementally-
     /// maintained closure with derived quads from a separate reasoning pass.
+    ///
+    /// Any rule previously retracted via [`Self::apply_rule_deletions`]
+    /// **stays retracted** across a rebuild: this re-runs
+    /// `materialise_seminaive`, which now respects each program's disabled-rule
+    /// set, so a rebuild will not resurrect facts that only a retracted rule
+    /// could produce. See [#162](https://github.com/daghovland/rdf-datalog/issues/162).
     pub fn rebuild_from_base(&mut self, base: &mut Datastore) -> Result<(), ReasoningError> {
         let base_facts: Vec<Quad> = base.named_graphs.extensional_quads().collect();
         let hint = base_facts.len() as u32;
@@ -241,7 +338,27 @@ impl IncrementalReasoner {
     /// Starts from the deleted base facts and collects every derived quad whose
     /// derivation chain is broken — the possibly-deleted set PD.
     fn backward_phase(&self, deletes: &[Quad]) -> HashSet<Quad> {
-        // Build reverse index: witness_quad → all derived quads that use it as a witness.
+        let reverse = self.build_reverse_index();
+
+        // BFS: propagate deletion upward through derived facts.
+        let mut pd: HashSet<Quad> = HashSet::new();
+        let mut worklist: VecDeque<Quad> = deletes.iter().copied().collect();
+        while let Some(q) = worklist.pop_front() {
+            if let Some(dependents) = reverse.get(&q) {
+                for &derived in dependents {
+                    if pd.insert(derived) {
+                        // Propagate: derived facts that depend on this one are also suspect.
+                        worklist.push_back(derived);
+                    }
+                }
+            }
+        }
+        pd
+    }
+
+    /// Build the reverse witness index shared by both backward-phase
+    /// variants: `witness_quad → all derived quads that use it as a witness`.
+    fn build_reverse_index(&self) -> HashMap<Quad, Vec<Quad>> {
         let mut reverse: HashMap<Quad, Vec<Quad>> = HashMap::new();
         for program in &self.programs {
             for (derived, derivations) in program.derived_from.iter() {
@@ -252,15 +369,59 @@ impl IncrementalReasoner {
                 }
             }
         }
+        reverse
+    }
 
-        // BFS: propagate deletion upward through derived facts.
+    /// Backward phase for rule (TBox) retraction: seeded from every derived
+    /// quad that has at least one [`Derivation`] whose `rule_id` matches one
+    /// of `targets` (`(program_index, rule_id)` pairs), rather than from
+    /// deleted base facts.
+    ///
+    /// Unlike [`Self::backward_phase`] (where the deleted base facts
+    /// themselves are never added to PD — they're not derived quads at all),
+    /// here the seed quads *are* derived facts and belong in PD directly:
+    /// they were produced by a rule that no longer exists. From there, the
+    /// same BFS propagates through the reverse witness index to catch
+    /// anything transitively depending on those facts. See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    ///
+    /// **A quad that is currently extensional (EDB) in `base` is never added
+    /// to PD, and the BFS never propagates through it** — even if it also
+    /// happens to have a stale derivation record naming a `targets` rule
+    /// (this happens whenever two rules mutually re-derive each other's
+    /// base facts, e.g. `EquivalentClasses(A, B)`'s two directional rules
+    /// each re-deriving the other's asserted instance). An extensional fact
+    /// is unconditionally true regardless of its derivation history, so
+    /// including it in PD would make [`Self::forward_phase_rules`] delete a
+    /// real base fact from the store — permanently, since nothing
+    /// re-derives a plain asserted fact. Found alongside the
+    /// [`dag_rdf::QuadTable::add_intensional_quad`] EDB-downgrade bug this
+    /// retraction path also fixes; see
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    fn backward_phase_from_rule_removal(
+        &self,
+        base: &Datastore,
+        targets: &[(usize, usize)],
+    ) -> HashSet<Quad> {
+        let reverse = self.build_reverse_index();
+
         let mut pd: HashSet<Quad> = HashSet::new();
-        let mut worklist: VecDeque<Quad> = deletes.iter().copied().collect();
+        let mut worklist: VecDeque<Quad> = VecDeque::new();
+        for &(program_index, rule_id) in targets {
+            let program = &self.programs[program_index];
+            for (derived, derivations) in program.derived_from.iter() {
+                if derivations.iter().any(|d| d.rule_id == rule_id)
+                    && !base.named_graphs.is_extensional(derived)
+                    && pd.insert(*derived)
+                {
+                    worklist.push_back(*derived);
+                }
+            }
+        }
         while let Some(q) = worklist.pop_front() {
             if let Some(dependents) = reverse.get(&q) {
                 for &derived in dependents {
-                    if pd.insert(derived) {
-                        // Propagate: derived facts that depend on this one are also suspect.
+                    if !base.named_graphs.is_extensional(&derived) && pd.insert(derived) {
                         worklist.push_back(derived);
                     }
                 }
@@ -388,6 +549,10 @@ impl IncrementalReasoner {
         base: &mut Datastore,
         deletes: &[Quad],
     ) -> Result<usize, ReasoningError> {
+        #[cfg(test)]
+        {
+            self.fallback_count += 1;
+        }
         // Remove base facts.
         for q in deletes {
             base.named_graphs.remove_quad(*q);
@@ -409,6 +574,163 @@ impl IncrementalReasoner {
         }
         // Return the number of newly derived facts (may differ from the original PD size
         // since some may have been re-derivable, but we report the new derivations added).
+        Ok(base.named_graphs.quad_count - before)
+    }
+
+    /// Forward phase for [`Self::apply_rule_deletions`]: mirrors
+    /// [`Self::forward_phase`] (remove PD from the closure, then re-run
+    /// semi-naive to re-derive anything still provable), with one addition —
+    /// on a `Contradiction` during re-derivation, rollback must also
+    /// re-enable the rules this call disabled (fact deletion never touches
+    /// `disabled_rules`, so [`Self::undo_deletions`] doesn't need to).
+    fn forward_phase_rules(
+        &mut self,
+        base: &mut Datastore,
+        pd: HashSet<Quad>,
+        targets: &[(usize, usize)],
+    ) -> Result<usize, ReasoningError> {
+        let removed = pd.len();
+        let mut removed_derivations: Vec<(Quad, usize, Vec<Derivation>)> = Vec::new();
+        for q in &pd {
+            base.named_graphs.remove_quad(*q);
+            for (program_index, program) in self.programs.iter_mut().enumerate() {
+                let derivations = program.derived_from.derivations_for(q);
+                if !derivations.is_empty() {
+                    removed_derivations.push((*q, program_index, derivations.to_vec()));
+                }
+                program.derived_from.remove(q);
+            }
+        }
+
+        let redelta_start = base.named_graphs.quad_count;
+
+        let mut tracked: Vec<Vec<(Quad, Derivation)>> = Vec::with_capacity(self.programs.len());
+        for program in &mut self.programs {
+            let mut buf = Vec::new();
+            let result = program.materialise_seminaive_tracked(base, &mut buf);
+            tracked.push(buf);
+            if let Err(e) = result {
+                self.undo_rule_deletions(
+                    base,
+                    redelta_start,
+                    &tracked,
+                    &pd,
+                    targets,
+                    &removed_derivations,
+                );
+                return Err(e);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Undo exactly what [`Self::forward_phase_rules`] changed during a call
+    /// that failed partway through re-derivation — same shape as
+    /// [`Self::undo_deletions`], plus re-enabling every rule `targets`
+    /// disabled so the reasoner's rule set is restored to its exact pre-call
+    /// state, not just its derived closure.
+    fn undo_rule_deletions(
+        &mut self,
+        base: &mut Datastore,
+        redelta_start: usize,
+        tracked: &[Vec<(Quad, Derivation)>],
+        pd: &HashSet<Quad>,
+        targets: &[(usize, usize)],
+        removed_derivations: &[(Quad, usize, Vec<Derivation>)],
+    ) {
+        for (program, buf) in self.programs.iter_mut().zip(tracked.iter()) {
+            for (q, d) in buf {
+                program.derived_from.unrecord(q, d);
+            }
+        }
+        base.named_graphs.truncate_to(redelta_start);
+        for q in pd {
+            base.named_graphs.add_intensional_quad(*q);
+        }
+        for (q, program_index, derivations) in removed_derivations {
+            for d in derivations {
+                self.programs[*program_index]
+                    .derived_from
+                    .record(*q, d.clone());
+            }
+        }
+        for &(program_index, rule_id) in targets {
+            self.programs[program_index].enable_rule(rule_id);
+        }
+    }
+
+    /// Full re-materialisation fallback for [`Self::apply_rule_deletions`]
+    /// when PD is large relative to the closure — mirrors
+    /// [`Self::full_rematerialise`]: disables the targeted rules (index-stable,
+    /// consistent with the fast-path representation, so a subsequent call
+    /// sees the same "which rules are live" state regardless of which path
+    /// was taken), tears down the derived closure, and rebuilds from scratch
+    /// over the surviving base facts with the disabled rules excluded.
+    ///
+    /// Snapshots `base.named_graphs` and every program's `derived_from`
+    /// before touching anything, and — on a genuine `Contradiction` raised
+    /// while re-materialising — restores both snapshots and re-enables
+    /// every rule `targets` disabled, so the exact-pre-call-state rollback
+    /// contract [`Self::apply_rule_deletions`]'s doc comment promises holds
+    /// on *both* the incremental and the fallback path, not just the
+    /// former. Without this, a rule disabled here right before a
+    /// contradiction was found would stay disabled forever (the caller sees
+    /// `Err` and has no way to know a rule was silently and permanently
+    /// dropped) — found while adding rollback test coverage for
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    ///
+    /// This is intentionally *stronger* than [`Self::full_rematerialise`]
+    /// (the plain-fact-deletion fallback), whose own doc — and
+    /// [`Self::apply_deletions`]'s — explicitly documents leaving `base`
+    /// and `self` in a partially-rebuilt state on error, requiring the
+    /// caller to call [`Self::rebuild_from_base`]: that path never disables
+    /// anything irreversible, so a caller re-deriving from the (still
+    /// intact) base facts is a safe enough recovery. A disabled rule has no
+    /// such recovery route, so this path pays for an explicit snapshot
+    /// instead.
+    fn full_rematerialise_rules(
+        &mut self,
+        base: &mut Datastore,
+        targets: &[(usize, usize)],
+    ) -> Result<usize, ReasoningError> {
+        #[cfg(test)]
+        {
+            self.fallback_count += 1;
+        }
+
+        let named_graphs_before = base.named_graphs.clone();
+        let derived_from_before: Vec<DerivedFromIndex> = self
+            .programs
+            .iter()
+            .map(|p| p.derived_from.clone())
+            .collect();
+
+        for &(program_index, rule_id) in targets {
+            self.programs[program_index].disable_rule(rule_id);
+        }
+
+        let base_facts: Vec<Quad> = base.named_graphs.extensional_quads().collect();
+        let hint = base_facts.len() as u32;
+
+        base.named_graphs = QuadTable::new(hint);
+        for q in base_facts {
+            base.named_graphs.add_quad(q);
+        }
+
+        let before = base.named_graphs.quad_count;
+        for program in &mut self.programs {
+            program.derived_from = Default::default();
+            if let Err(e) = program.materialise_seminaive(base) {
+                base.named_graphs = named_graphs_before;
+                for (program, saved) in self.programs.iter_mut().zip(derived_from_before) {
+                    program.derived_from = saved;
+                }
+                for &(program_index, rule_id) in targets {
+                    self.programs[program_index].enable_rule(rule_id);
+                }
+                return Err(e);
+            }
+        }
         Ok(base.named_graphs.quad_count - before)
     }
 }
@@ -1363,4 +1685,1061 @@ mod tests {
         assert!(!ds.named_graphs.contains(&fact_ab));
         assert!(!ds.named_graphs.contains(&derived_ab3));
     }
+
+    // ── TBox (rule/axiom) retraction — #162 ─────────────────────────────────
+
+    /// Removing the only rule that derived a fact must remove that fact,
+    /// via the incremental BF path (not the `FALLBACK_THRESHOLD` fallback —
+    /// exercised separately below).
+    ///
+    /// Setup: A→B→C with transitivity rule (derives A→C). Also present: an
+    /// unrelated alias rule (p2→p) with several independent facts, purely to
+    /// inflate the total derived-fact count so removing the one
+    /// transitivity-derived fact stays comfortably under the 25%
+    /// `FALLBACK_THRESHOLD` and exercises the incremental path — asserted via
+    /// `fallback_count` staying unchanged. Removing the transitivity rule
+    /// must remove A→C, but leave the base facts and the unrelated alias
+    /// closure untouched.
+    #[test]
+    fn test_remove_rule_removes_uniquely_derived_facts() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        // Four independent alias-rule facts, unrelated to the transitivity
+        // chain above, to inflate the closure's total derived-fact count.
+        let mut alias_sources = Vec::new();
+        for i in 0..4 {
+            let s = ds
+                .resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/alias_s{i}"
+                ))));
+            let o = ds
+                .resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/alias_o{i}"
+                ))));
+            ds.named_graphs.add_quad(Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p2,
+                obj: o,
+            });
+            alias_sources.push((s, o));
+        }
+
+        let transitivity = transitivity_rule(g, p);
+        let alias_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p2),
+                object: Term::Variable("z".to_string()),
+            })],
+        };
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity.clone(), alias_rule], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A→C should be derived before rule removal"
+        );
+        for &(s, o) in &alias_sources {
+            assert!(ds.named_graphs.contains(&Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p,
+                obj: o,
+            }));
+        }
+
+        let fallback_count_before = reasoner.fallback_count;
+        let removed = reasoner
+            .apply_rule_deletions(&mut ds, &[transitivity])
+            .expect("removing the transitivity rule must not error");
+        assert_eq!(
+            removed, 1,
+            "exactly the one derived fact A→C should be removed"
+        );
+        assert_eq!(
+            reasoner.fallback_count, fallback_count_before,
+            "removing 1 of 5 derived facts (20%) must stay under FALLBACK_THRESHOLD"
+        );
+
+        assert!(
+            !ds.named_graphs.contains(&derived_ac),
+            "A→C should be gone: its only rule was retracted"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_ab),
+            "base fact A→B must survive rule retraction"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_bc),
+            "base fact B→C must survive rule retraction"
+        );
+        for &(s, o) in &alias_sources {
+            assert!(
+                ds.named_graphs.contains(&Quad {
+                    triple_id: g,
+                    subject: s,
+                    predicate: p,
+                    obj: o,
+                }),
+                "unrelated alias-derived facts must survive transitivity-rule retraction"
+            );
+        }
+
+        // The rule must actually be inert now: inserting a fresh base fact
+        // that would have triggered it produces no new transitive closure.
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: d,
+        };
+        reasoner.apply_insertions(&mut ds, &[fact_cd]).unwrap();
+        let derived_bd = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: d,
+        };
+        assert!(
+            !ds.named_graphs.contains(&derived_bd),
+            "retracted transitivity rule must not fire again after later insertions"
+        );
+    }
+
+    /// A fact derivable via two independent rules survives removal of one of
+    /// them — mirrors `test_delete_base_fact_keeps_multiply_derived` at the
+    /// rule level.
+    ///
+    /// Setup: A→B, B→C (derive A→C via transitivity), plus A→p2→C and an
+    /// alias rule p2→p. Removing the transitivity rule leaves A→C intact,
+    /// still derivable via the alias rule.
+    #[test]
+    fn test_remove_rule_keeps_multiply_derived_fact() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        let fact_ac_p2 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p2,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+        ds.named_graphs.add_quad(fact_ac_p2);
+
+        let transitivity = transitivity_rule(g, p);
+        let alias_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p2),
+                object: Term::Variable("z".to_string()),
+            })],
+        };
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity.clone(), alias_rule], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A→C should be derived before rule removal"
+        );
+
+        reasoner
+            .apply_rule_deletions(&mut ds, &[transitivity])
+            .expect("removing the transitivity rule must not error");
+
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A→C should survive: still derivable via A→p2→C + the surviving alias rule"
+        );
+    }
+
+    /// Removing a `Rule` value that was never part of the program is a no-op.
+    #[test]
+    fn test_remove_rule_no_op_for_unknown_rule() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        let rule = transitivity_rule(g, p);
+        let mut reasoner = IncrementalReasoner::new(vec![rule], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(ds.named_graphs.contains(&derived_ac));
+
+        // A rule that was never registered with this reasoner.
+        let unrelated_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let removed = reasoner
+            .apply_rule_deletions(&mut ds, &[unrelated_rule])
+            .expect("removing an unknown rule must not error");
+        assert_eq!(removed, 0, "no rule matched, so nothing should be removed");
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "closure must be untouched by a no-op rule removal"
+        );
+    }
+
+    /// Pins the `apply_rule_deletions` precondition: `owl2datalog`-style
+    /// deduplication means one compiled `Rule` can be shared by two distinct
+    /// source axioms. If a caller correctly computes "genuinely dead rules"
+    /// (the rule is still produced by a surviving axiom, so nothing is
+    /// genuinely dead), the call must be a no-op and the closure must survive
+    /// untouched — mirrors the issue's "or another axiom implying the same
+    /// rule" clause.
+    #[test]
+    fn test_remove_rule_shared_by_two_axioms_survives_if_one_remains() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        // Two distinct "axioms" that happen to compile to the identical
+        // `Rule` value (this is exactly what `owl2datalog`'s dedup produces
+        // for structurally-identical rules from different axioms) — modelled
+        // here directly as a single shared `Rule`, since `Rule` carries no
+        // axiom-identity information once compiled.
+        let shared_rule = transitivity_rule(g, p);
+        let mut reasoner = IncrementalReasoner::new(vec![shared_rule.clone()], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(ds.named_graphs.contains(&derived_ac));
+
+        // Caller correctly computed the "genuinely dead" set as empty
+        // (the rule is still justified by the other, surviving axiom) —
+        // so it calls apply_rule_deletions with an empty slice.
+        let removed = reasoner
+            .apply_rule_deletions(&mut ds, &[])
+            .expect("empty rule-deletion batch must not error");
+        assert_eq!(removed, 0);
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "closure must be fully untouched: the rule is still justified by a surviving axiom"
+        );
+
+        // Sanity: the rule is genuinely still live (not disabled) — a
+        // fresh insertion still triggers it.
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: d,
+        };
+        reasoner.apply_insertions(&mut ds, &[fact_cd]).unwrap();
+        let derived_ad = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: d,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ad),
+            "shared rule must still be active since it was never actually retracted"
+        );
+    }
+
+    /// A large rule removal (crossing `FALLBACK_THRESHOLD`) falls back to
+    /// full re-materialisation rather than the incremental BF path.
+    ///
+    /// Setup: a chain A→B→C→D→E with transitivity, so removing the
+    /// transitivity rule wipes out every pairwise-derived fact (well over
+    /// 25% of the closure, since ALL derived facts come from this one rule).
+    /// Verifies both the resulting closure (correct) and that the fallback
+    /// path actually ran (`fallback_count`), not the incremental path —
+    /// `materialise_call_count()` cannot distinguish the two paths (both call
+    /// materialisation exactly once per program), so a dedicated counter is
+    /// used instead.
+    #[test]
+    fn test_remove_rule_large_removal_falls_back_to_full_rematerialise() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+        let e = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/e".to_string(),
+            )));
+
+        for (s, o) in [(a, b), (b, c), (c, d), (d, e)] {
+            ds.named_graphs.add_quad(Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p,
+                obj: o,
+            });
+        }
+
+        let rule = transitivity_rule(g, p);
+        let mut reasoner = IncrementalReasoner::new(vec![rule.clone()], &mut ds).unwrap();
+
+        // Every derived pairwise fact comes from this one rule, so PD == 100%
+        // of the derived closure — comfortably over FALLBACK_THRESHOLD.
+        //
+        // Note: `full_rematerialise_rules` (like the pre-existing
+        // `full_rematerialise` it mirrors) reports *newly derived facts
+        // added* by the rebuild, not "facts removed" — since the sole rule
+        // behind this closure is now disabled, the rebuild derives nothing
+        // new, so `removed` is legitimately 0 here. The real correctness
+        // check is the store contents asserted below, not this count.
+        let fallback_count_before = reasoner.fallback_count;
+        let removed = reasoner
+            .apply_rule_deletions(&mut ds, &[rule])
+            .expect("large rule removal must not error");
+        assert_eq!(
+            removed, 0,
+            "the fallback rebuild derives nothing new once the sole rule is disabled"
+        );
+
+        assert_eq!(
+            reasoner.fallback_count,
+            fallback_count_before + 1,
+            "removing the sole rule behind the entire closure must trip the fallback path"
+        );
+
+        // Correctness: base facts survive, every transitively-derived fact
+        // is gone (no rule left to justify any of them).
+        for (s, o) in [(a, b), (b, c), (c, d), (d, e)] {
+            assert!(ds.named_graphs.contains(&Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p,
+                obj: o,
+            }));
+        }
+        for (s, o) in [(a, c), (a, d), (a, e), (b, d), (b, e), (c, e)] {
+            assert!(
+                !ds.named_graphs.contains(&Quad {
+                    triple_id: g,
+                    subject: s,
+                    predicate: p,
+                    obj: o,
+                }),
+                "transitively-derived fact {s:?}→{o:?} must be gone: its only rule was retracted"
+            );
+        }
+    }
+
+    /// `apply_rule_deletions` must roll back a re-derivation-triggered
+    /// contradiction — including **re-enabling** every rule the failed call
+    /// disabled — on *both* of its internal paths, not just the cheap
+    /// incremental one. This test exercises the **fallback**
+    /// (`full_rematerialise_rules`, tripped when PD is a large fraction of
+    /// the closure) path specifically; see
+    /// `test_apply_rule_deletions_contradiction_rollback_reenables_rule_incremental_path`
+    /// for the same property on the incremental (`forward_phase_rules`) path.
+    ///
+    /// This test caught a genuine bug while it was being written: prior to
+    /// the fix, `full_rematerialise_rules` propagated a `Contradiction` via
+    /// a bare `?` with no rollback at all — the disabled rule stayed
+    /// disabled forever, and `base`'s derived facts stayed wiped — despite
+    /// `apply_rule_deletions`'s doc comment explicitly promising "restored
+    /// to their exact pre-call state (including re-enabling any rule this
+    /// call disabled)" as its `Err` contract. `full_rematerialise_rules` now
+    /// snapshots `base.named_graphs` and every program's `derived_from`
+    /// before mutating either, and restores both plus re-enables the
+    /// targeted rules on error. See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    ///
+    /// Setup mirrors `test_apply_deletions_contradiction_rollback_uses_undo_log`,
+    /// except the trigger is retracting the *rule* that derives `p3`, not
+    /// deleting a base `p3` fact directly:
+    /// - Stratum 1: `copy_rule`, `?x p3 ?y :- ?x p ?y`.
+    /// - Stratum 2 (negatively depends on p3):
+    ///   `Contradiction :- ?x p2 ?y, NOT ?x p3 ?y`.
+    /// - Base facts: `A p B` and `C p D` (both derive their `p3` counterpart
+    ///   via `copy_rule`), plus `C p2 D` — consistent initially because
+    ///   `copy_rule` derives `C p3 D`, satisfying the `NOT` guard.
+    ///
+    /// `copy_rule` is the only rule in the program, so retracting it makes
+    /// PD == 100% of the derived closure — comfortably over
+    /// `FALLBACK_THRESHOLD` — confirmed below via `fallback_count`.
+    /// Retracting `copy_rule` removes both `A p3 B` and `C p3 D`, then
+    /// re-materialisation finds `C p2 D` with no surviving `C p3 D` and
+    /// raises `Contradiction`. The call must report `Err`, and `copy_rule`
+    /// must be re-enabled by the rollback, exactly as if the call had never
+    /// happened.
+    #[test]
+    fn test_apply_rule_deletions_contradiction_rollback_reenables_rule_fallback_path() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let p3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p3".to_string(),
+            )));
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+
+        // Stratum 1: ?x p3 ?y :- ?x p ?y
+        let copy_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p3),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        // Stratum 2 (negatively depends on p3): Contradiction :- ?x p2 ?y, NOT ?x p3 ?y
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p3),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        // Base facts: A p B and C p D (both derive their p3 counterpart via
+        // copy_rule), plus C p2 D (consistent initially: C p3 D is derived).
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: d,
+        };
+        let fact_cd_p2 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p2,
+            obj: d,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_cd);
+        ds.named_graphs.add_quad(fact_cd_p2);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![copy_rule.clone(), contradiction_rule], &mut ds).unwrap();
+
+        let derived_ab3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p3,
+            obj: b,
+        };
+        let derived_cd3 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p3,
+            obj: d,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "stratum 1 should have derived A p3 B at initial materialisation"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_cd3),
+            "stratum 1 should have derived C p3 D at initial materialisation"
+        );
+
+        // Locate copy_rule's (program_index, rule_id) to check its disabled
+        // state directly, the same way apply_rule_deletions itself does.
+        let (program_index, rule_id) = reasoner
+            .programs
+            .iter()
+            .enumerate()
+            .find_map(|(pi, program)| {
+                program
+                    .rules
+                    .iter()
+                    .position(|r| *r == copy_rule)
+                    .map(|ri| (pi, ri))
+            })
+            .expect("copy_rule must be present in some program");
+        assert!(
+            !reasoner.programs[program_index].is_rule_disabled(rule_id),
+            "copy_rule must be enabled before the call under test"
+        );
+
+        let quads_before = ds.named_graphs.quad_list.clone();
+        let extensional_before: HashMap<Quad, bool> = quads_before
+            .iter()
+            .map(|q| (*q, ds.named_graphs.is_extensional(q)))
+            .collect();
+        let fallback_count_before = reasoner.fallback_count;
+
+        let result = reasoner.apply_rule_deletions(&mut ds, std::slice::from_ref(&copy_rule));
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
+        );
+        assert_eq!(
+            reasoner.fallback_count,
+            fallback_count_before + 1,
+            "PD == 100% of the closure must trip the fallback path, not the incremental one"
+        );
+
+        // (a) Exact rollback: same quads, same extensional/intensional status.
+        let quads_before_set: HashSet<Quad> = quads_before.iter().copied().collect();
+        let quads_after_set: HashSet<Quad> = ds.named_graphs.quad_list.iter().copied().collect();
+        assert_eq!(
+            quads_after_set, quads_before_set,
+            "store must contain exactly the same quads as before the call"
+        );
+        for (q, was_extensional) in &extensional_before {
+            assert_eq!(
+                ds.named_graphs.is_extensional(q),
+                *was_extensional,
+                "extensional/intensional status of {q:?} must be unchanged by the rollback"
+            );
+        }
+        assert!(
+            ds.named_graphs.contains(&derived_ab3),
+            "A p3 B must be restored after rollback"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_cd3),
+            "C p3 D must be restored after rollback"
+        );
+
+        // (b) The key correctness property this test exists for: the rule
+        // disabled mid-call must be re-enabled by the rollback, not left
+        // permanently disabled.
+        assert!(
+            !reasoner.programs[program_index].is_rule_disabled(rule_id),
+            "copy_rule must be re-enabled after the rollback — a failed call must not \
+             permanently disable a rule it only tentatively touched"
+        );
+
+        // Behavioural confirmation: the rule is genuinely live again, not
+        // just reporting `false` from a stale bookkeeping bit — a fresh
+        // insertion still triggers it.
+        let e = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/e".to_string(),
+            )));
+        let fact_ef = Quad {
+            triple_id: g,
+            subject: e,
+            predicate: p,
+            obj: c,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[fact_ef])
+            .expect("reasoner must remain usable after the rollback");
+        let derived_ef3 = Quad {
+            triple_id: g,
+            subject: e,
+            predicate: p3,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ef3),
+            "copy_rule must actually still fire on new insertions after being re-enabled"
+        );
+    }
+
+    /// Same property as
+    /// `test_apply_rule_deletions_contradiction_rollback_reenables_rule_fallback_path`
+    /// — a rule disabled mid-call is re-enabled on `Contradiction` rollback
+    /// — but forced down the **incremental** (`forward_phase_rules`/
+    /// `undo_rule_deletions`) path instead of the fallback, confirmed via
+    /// `fallback_count` staying unchanged. Padded with several unrelated
+    /// alias-derived facts (same technique as
+    /// `test_remove_rule_removes_uniquely_derived_facts`) so PD (the 2
+    /// `copy_rule`-derived facts) stays under `FALLBACK_THRESHOLD` relative
+    /// to the padded closure.
+    #[test]
+    fn test_apply_rule_deletions_contradiction_rollback_reenables_rule_incremental_path() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let p3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p3".to_string(),
+            )));
+        let p4 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p4".to_string(),
+            )));
+        let d = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+
+        // Stratum 1: ?x p3 ?y :- ?x p ?y
+        let copy_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p3),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        // Unrelated stratum-1 alias rule, purely to inflate the total
+        // derived-fact count so PD/total stays under FALLBACK_THRESHOLD.
+        let alias_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p3),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p4),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        // Stratum 2 (negatively depends on p3): Contradiction :- ?x p2 ?y, NOT ?x p3 ?y
+        let contradiction_rule = Rule {
+            head: RuleHead::Contradiction,
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p2),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p3),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+
+        // Base facts: A p B and C p D (both derive their p3 counterpart via
+        // copy_rule), plus C p2 D (consistent initially: C p3 D is derived).
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_cd = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p,
+            obj: d,
+        };
+        let fact_cd_p2 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p2,
+            obj: d,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_cd);
+        ds.named_graphs.add_quad(fact_cd_p2);
+
+        // Eight independent alias-rule facts, unrelated to copy_rule's
+        // derivations, so PD (2 facts) stays comfortably under 25% of the
+        // padded total (10 facts).
+        let mut alias_sources = Vec::new();
+        for i in 0..8 {
+            let s = ds
+                .resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/alias_s{i}"
+                ))));
+            let o = ds
+                .resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/alias_o{i}"
+                ))));
+            ds.named_graphs.add_quad(Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p4,
+                obj: o,
+            });
+            alias_sources.push((s, o));
+        }
+
+        let mut reasoner = IncrementalReasoner::new(
+            vec![copy_rule.clone(), alias_rule, contradiction_rule],
+            &mut ds,
+        )
+        .unwrap();
+
+        let derived_ab3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p3,
+            obj: b,
+        };
+        let derived_cd3 = Quad {
+            triple_id: g,
+            subject: c,
+            predicate: p3,
+            obj: d,
+        };
+        assert!(ds.named_graphs.contains(&derived_ab3));
+        assert!(ds.named_graphs.contains(&derived_cd3));
+        for &(s, o) in &alias_sources {
+            assert!(ds.named_graphs.contains(&Quad {
+                triple_id: g,
+                subject: s,
+                predicate: p3,
+                obj: o,
+            }));
+        }
+
+        let (program_index, rule_id) = reasoner
+            .programs
+            .iter()
+            .enumerate()
+            .find_map(|(pi, program)| {
+                program
+                    .rules
+                    .iter()
+                    .position(|r| *r == copy_rule)
+                    .map(|ri| (pi, ri))
+            })
+            .expect("copy_rule must be present in some program");
+        assert!(!reasoner.programs[program_index].is_rule_disabled(rule_id));
+
+        let quads_before = ds.named_graphs.quad_list.clone();
+        let fallback_count_before = reasoner.fallback_count;
+
+        let result = reasoner.apply_rule_deletions(&mut ds, std::slice::from_ref(&copy_rule));
+        assert!(
+            matches!(result, Err(ReasoningError::Contradiction(_))),
+            "expected a Contradiction error, got {result:?}"
+        );
+        assert_eq!(
+            reasoner.fallback_count, fallback_count_before,
+            "PD (2/10 = 20%) must stay under FALLBACK_THRESHOLD and take the incremental path"
+        );
+
+        // Exact rollback.
+        let quads_before_set: HashSet<Quad> = quads_before.iter().copied().collect();
+        let quads_after_set: HashSet<Quad> = ds.named_graphs.quad_list.iter().copied().collect();
+        assert_eq!(
+            quads_after_set, quads_before_set,
+            "store must contain exactly the same quads as before the call"
+        );
+        assert!(ds.named_graphs.contains(&derived_ab3));
+        assert!(ds.named_graphs.contains(&derived_cd3));
+        for &(s, o) in &alias_sources {
+            assert!(
+                ds.named_graphs.contains(&Quad {
+                    triple_id: g,
+                    subject: s,
+                    predicate: p3,
+                    obj: o,
+                }),
+                "unrelated alias-derived facts must be untouched by the rollback"
+            );
+        }
+
+        // The key correctness property: the rule disabled mid-call must be
+        // re-enabled by the rollback.
+        assert!(
+            !reasoner.programs[program_index].is_rule_disabled(rule_id),
+            "copy_rule must be re-enabled after the rollback"
+        );
+    }
+
+    /// Regression test for two bugs found while adding
+    /// `apply_rule_deletions` end-to-end coverage for `EquivalentClasses`
+    /// (a positive two-rule cycle: `?x cB ?y :- ?x cA ?y` and its reverse):
+    ///
+    /// 1. [`dag_rdf::QuadTable::add_intensional_quad`]/`mark_intensional`
+    ///    used to unconditionally mark a quad intensional, even when it was
+    ///    already present as an extensional (asserted) fact — so once
+    ///    `rule_atob` re-derived `y type B` (already a base fact) and
+    ///    `rule_btoa` re-derived `x type A` (also already a base fact),
+    ///    both base facts permanently lost their EDB status. The next
+    ///    `full_rematerialise_rules` rebuild then used
+    ///    `extensional_quads()` to reseed the store and silently dropped
+    ///    them.
+    /// 2. `backward_phase_from_rule_removal` didn't check `is_extensional`
+    ///    before adding a quad to PD, so even with (1) fixed, a still-live
+    ///    base fact with a *stale* derivation record naming the retracted
+    ///    rule would be swept into PD and deleted outright by
+    ///    `forward_phase_rules`'s `base.named_graphs.remove_quad` sweep —
+    ///    with nothing to re-derive it afterwards, since it was never a
+    ///    rule consequence to begin with.
+    ///
+    /// See [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    #[test]
+    fn test_retracting_one_rule_of_a_two_rule_cycle_preserves_base_facts() {
+        let (mut ds, g, _a, _p, _b, _c) = setup_store();
+        let class_a = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/A".to_string(),
+            )));
+        let class_b = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/B".to_string(),
+            )));
+        let rdf_type = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
+            )));
+        let x = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/x".to_string(),
+            )));
+        let y = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/y".to_string(),
+            )));
+
+        // rule_atob: ?X type B :- ?X type A
+        let rule_atob = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("X".to_string()),
+                predicate: Term::Resource(rdf_type),
+                object: Term::Resource(class_b),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("X".to_string()),
+                predicate: Term::Resource(rdf_type),
+                object: Term::Resource(class_a),
+            })],
+        };
+        // rule_btoa: ?X type A :- ?X type B
+        let rule_btoa = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("X".to_string()),
+                predicate: Term::Resource(rdf_type),
+                object: Term::Resource(class_a),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("X".to_string()),
+                predicate: Term::Resource(rdf_type),
+                object: Term::Resource(class_b),
+            })],
+        };
+
+        let fact_x_a = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: class_a,
+        };
+        let fact_y_b = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: class_b,
+        };
+        ds.named_graphs.add_quad(fact_x_a);
+        ds.named_graphs.add_quad(fact_y_b);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![rule_atob.clone(), rule_btoa.clone()], &mut ds).unwrap();
+
+        let derived_x_b = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: class_b,
+        };
+        let derived_y_a = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: class_a,
+        };
+        assert!(ds.named_graphs.contains(&derived_x_b));
+        assert!(ds.named_graphs.contains(&derived_y_a));
+
+        reasoner
+            .apply_rule_deletions(&mut ds, &[rule_btoa])
+            .unwrap();
+
+        assert!(
+            ds.named_graphs.contains(&derived_x_b),
+            "x type B must survive: justified independently by rule_atob + base fact x type A"
+        );
+        assert!(
+            !ds.named_graphs.contains(&derived_y_a),
+            "y type A must be gone: only justified by the retracted rule_btoa"
+        );
+        // The two original base facts must survive as base facts, not just
+        // survive as *some* quad in the store — pinning bug (1) above.
+        assert!(
+            ds.named_graphs.is_extensional(&fact_x_a),
+            "x type A must remain extensional: it was asserted, never only derived"
+        );
+        assert!(
+            ds.named_graphs.is_extensional(&fact_y_b),
+            "y type B must remain extensional: it was asserted, never only derived"
+        );
+    }
+
+    // The end-to-end `Ontology::remove_axiom` + `axiom2datalog` +
+    // `apply_rule_deletions` test lives in `owl2rl2datalog` (which already
+    // depends on `datalog`, avoiding a dev-dependency cycle) — see
+    // `owl2rl2datalog/src/lib.rs`'s test module, `test_remove_axiom_end_to_end_retracts_derived_type_assertions`.
 }

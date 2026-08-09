@@ -332,14 +332,34 @@ impl QuadTable {
     }
 
     /// Mark this quad as intensional (IDB, reasoner-produced). Must be called after `add_quad`.
+    ///
+    /// A quad that is already present and extensional (EDB) is left alone:
+    /// once a fact is asserted, a rule later re-deriving the same fact must
+    /// not downgrade its EDB status — doing so would make it (wrongly)
+    /// disappear from [`Self::extensional_quads`], which
+    /// `IncrementalReasoner::full_rematerialise`/`full_rematerialise_rules`/
+    /// `rebuild_from_base` treat as the authoritative base-fact set to
+    /// rebuild the closure from. See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162), which
+    /// found this via a two-rule positive cycle (`A⊑B` + `B⊑A`) where each
+    /// rule re-derives the other's base fact.
     pub fn mark_intensional(&mut self, quad: Quad) {
-        self.intensional_quads.insert(quad);
+        if !self.is_extensional(&quad) {
+            self.intensional_quads.insert(quad);
+        }
     }
 
-    /// Add a quad and immediately mark it as intensional (IDB). Used by the reasoner.
+    /// Add a quad and immediately mark it as intensional (IDB), unless it is
+    /// already present as an extensional (EDB) fact — see
+    /// [`Self::mark_intensional`]'s doc comment for why that case must be a
+    /// no-op rather than downgrading the quad's EDB status. Used by the
+    /// reasoner.
     pub fn add_intensional_quad(&mut self, quad: Quad) {
+        let already_extensional = self.is_extensional(&quad);
         self.add_quad(quad);
-        self.intensional_quads.insert(quad);
+        if !already_extensional {
+            self.intensional_quads.insert(quad);
+        }
     }
 
     /// True iff the quad is present and is extensional (EDB, not derived by any rule).
@@ -422,6 +442,42 @@ mod tests {
             table.intensional_quads_iter().count(),
             0,
             "intensional set should be empty after remove"
+        );
+    }
+
+    /// A quad asserted first (`add_quad`, extensional/EDB) that a rule later
+    /// also happens to derive (`add_intensional_quad`) must **keep** its EDB
+    /// status — the second call must be a no-op with respect to the
+    /// intensional flag. Before the fix, `add_intensional_quad` (and
+    /// `mark_intensional`) unconditionally inserted into `intensional_quads`,
+    /// downgrading an asserted fact to "derived-only" the moment any rule
+    /// happened to re-derive it (e.g. `EquivalentClasses`' two directional
+    /// rules each re-deriving the other's asserted instance) — silently
+    /// dropping it from `extensional_quads()`, which
+    /// `IncrementalReasoner::full_rematerialise`/`full_rematerialise_rules`/
+    /// `rebuild_from_base` treat as the authoritative base-fact set to
+    /// rebuild the closure from. See
+    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    #[test]
+    fn test_asserted_then_derived_quad_stays_extensional() {
+        let mut table = QuadTable::new(10);
+        let q = make_quad(0, 1, 2, 3);
+        table.add_quad(q);
+        table.add_intensional_quad(q);
+        assert!(
+            table.is_extensional(&q),
+            "a quad asserted before a rule also derives it must stay extensional (EDB)"
+        );
+        assert_eq!(
+            table.intensional_quads_iter().count(),
+            0,
+            "the quad must not appear in the intensional set"
+        );
+        let extensional: Vec<Quad> = table.extensional_quads().collect();
+        assert_eq!(
+            extensional,
+            vec![q],
+            "the quad must still appear in extensional_quads()"
         );
     }
 }

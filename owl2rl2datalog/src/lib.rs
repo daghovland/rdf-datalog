@@ -282,7 +282,31 @@ fn class_axiom2datalog(resources: &mut GraphElementManager, axiom: &ClassAxiom) 
 
 // ── Top-level ─────────────────────────────────────────────────────────────────
 
-fn owl_axiom2datalog(resources: &mut GraphElementManager, axiom: &Axiom) -> Vec<Rule> {
+/// Translate a single OWL 2 axiom into the datalog rules it compiles to.
+///
+/// This is the per-axiom building block `owl2datalog` maps over the whole
+/// ontology and deduplicates; used directly (not via `owl2datalog`) by TBox
+/// retraction (see [#162](https://github.com/daghovland/rdf-datalog/issues/162))
+/// to find which rules a *specific* removed axiom produced, without the
+/// whole-ontology `sort_unstable()+dedup()` in `owl2datalog` reordering or
+/// collapsing them against other axioms' output.
+///
+/// **`resources` must be the same [`GraphElementManager`] that compiled the
+/// live rule set being retracted from.** A different (or freshly-created)
+/// manager interns IRIs to different numeric IDs, so the `Rule`s returned
+/// here would not equal any rule actually present in the reasoner — a caller
+/// that gets this wrong will not see an error, just a silent no-op (nothing
+/// matches, nothing is retracted).
+///
+/// Because `owl2datalog` deduplicates, **a `Rule` this returns for `axiom`
+/// may also be produced by some other axiom still in the ontology** (e.g.
+/// two structurally-different-but-compiling-to-the-same-rule subsumption
+/// axioms). Retracting a still-justified rule is unsound — see the
+/// precondition documented on
+/// [`datalog::IncrementalReasoner::apply_rule_deletions`]. Callers must
+/// compute the set difference against the *remaining* ontology's
+/// `owl2datalog(...)` output before calling it.
+pub fn axiom2datalog(resources: &mut GraphElementManager, axiom: &Axiom) -> Vec<Rule> {
     match axiom {
         Axiom::AxiomObjectPropertyAxiom(a) => object_property_axiom2datalog(resources, a),
         Axiom::AxiomClassAxiom(a) => class_axiom2datalog(resources, a),
@@ -299,7 +323,7 @@ fn owl_axiom2datalog(resources: &mut GraphElementManager, axiom: &Axiom) -> Vec<
 pub fn owl2datalog(resources: &mut GraphElementManager, ontology: &Ontology) -> Vec<Rule> {
     let mut rules: Vec<Rule> = ontology
         .all_axioms()
-        .flat_map(|axiom| owl_axiom2datalog(resources, &axiom))
+        .flat_map(|axiom| axiom2datalog(resources, &axiom))
         .collect();
 
     rules.extend(equality::get_equality_axioms(resources));
@@ -307,4 +331,312 @@ pub fn owl2datalog(resources: &mut GraphElementManager, ontology: &Ontology) -> 
     rules.sort_unstable();
     rules.dedup();
     rules
+}
+
+#[cfg(test)]
+mod tbox_retraction_tests {
+    //! End-to-end coverage for incremental TBox retraction
+    //! ([#162](https://github.com/daghovland/rdf-datalog/issues/162)):
+    //! `Ontology::remove_axiom` + `axiom2datalog` +
+    //! `IncrementalReasoner::apply_rule_deletions`. Lives here (not in
+    //! `datalog::incremental`'s test module) because `owl2rl2datalog` already
+    //! depends on `datalog` — the reverse would be a dev-dependency cycle.
+    use super::*;
+    use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, Quad};
+    use datalog::IncrementalReasoner;
+    use ingress::OntologyVersion;
+    use owl_ontology::{ClassAxiom, ClassExpression};
+
+    /// Retracting `Dog SubClassOf Animal` must remove the `rdf:type Animal`
+    /// assertion it derived for an individual asserted `rdf:type Dog`,
+    /// while leaving that base ABox fact itself untouched.
+    #[test]
+    fn test_remove_axiom_end_to_end_retracts_derived_type_assertions() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        let dog_iri = IriReference("http://example.org/Dog".to_string());
+        let animal_iri = IriReference("http://example.org/Animal".to_string());
+        let rex_iri = IriReference("http://example.org/rex".to_string());
+
+        let axiom = Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            ClassExpression::ClassName(FullIri(dog_iri.clone())),
+            ClassExpression::ClassName(FullIri(animal_iri.clone())),
+        ));
+        let mut ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![axiom.clone()],
+        );
+
+        let rules = owl2datalog(&mut ds.resources, &ontology);
+
+        let dog = ds.resources.add_node_resource(RdfResource::Iri(dog_iri));
+        let animal = ds.resources.add_node_resource(RdfResource::Iri(animal_iri));
+        let rex = ds.resources.add_node_resource(RdfResource::Iri(rex_iri));
+        let rdf_type = rdf_type_id(&mut ds.resources);
+
+        let fact_rex_dog = Quad {
+            triple_id: g,
+            subject: rex,
+            predicate: rdf_type,
+            obj: dog,
+        };
+        ds.named_graphs.add_quad(fact_rex_dog);
+
+        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let derived_rex_animal = Quad {
+            triple_id: g,
+            subject: rex,
+            predicate: rdf_type,
+            obj: animal,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_rex_animal),
+            "rex should be inferred to be an Animal before axiom retraction"
+        );
+
+        assert!(
+            ontology.remove_axiom(&axiom),
+            "axiom must be found and removed from the ontology model"
+        );
+
+        // Per `axiom2datalog`'s documented precondition: `resources` here
+        // must be the same manager that compiled the live rule set — reuse
+        // `ds.resources`, not a fresh manager.
+        let dead_rules = axiom2datalog(&mut ds.resources, &axiom);
+
+        reasoner
+            .apply_rule_deletions(&mut ds, &dead_rules)
+            .expect("retracting the SubClassOf axiom's rules must not error");
+
+        assert!(
+            !ds.named_graphs.contains(&derived_rex_animal),
+            "rex should no longer be inferred to be an Animal: the only supporting axiom is gone"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_rex_dog),
+            "the base ABox fact rex a Dog must survive TBox retraction"
+        );
+    }
+
+    /// `ObjectPropertyAxiom` end-to-end coverage: retracting
+    /// `ObjectPropertyDomain(hasParent, Person)` must remove the `rdf:type
+    /// Person` assertion it derived for an individual related via
+    /// `hasParent`, while the base ABox fact survives. Domain/range is used
+    /// here (not `SubObjectPropertyOf`) because
+    /// `object_property_axiom2datalog` doesn't yet compile property
+    /// hierarchy to rules — see the `log::warn!` in
+    /// `data_property_axiom2datalog`'s sibling match arms and
+    /// `ObjectPropertyAxiom::SubObjectPropertyOf`'s absence from
+    /// `object_property_axiom2datalog`'s match.
+    #[test]
+    fn test_remove_object_property_domain_axiom_end_to_end_retracts_derived_type_assertions() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        let has_parent_iri = IriReference("http://example.org/hasParent".to_string());
+        let person_iri = IriReference("http://example.org/Person".to_string());
+        let alice_iri = IriReference("http://example.org/alice".to_string());
+        let bob_iri = IriReference("http://example.org/bob".to_string());
+
+        let axiom = Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+            ObjectPropertyExpression::NamedObjectProperty(FullIri(has_parent_iri.clone())),
+            ClassExpression::ClassName(FullIri(person_iri.clone())),
+        ));
+        let mut ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![axiom.clone()],
+        );
+
+        let rules = owl2datalog(&mut ds.resources, &ontology);
+
+        let has_parent = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(has_parent_iri));
+        let person = ds.resources.add_node_resource(RdfResource::Iri(person_iri));
+        let alice = ds.resources.add_node_resource(RdfResource::Iri(alice_iri));
+        let bob = ds.resources.add_node_resource(RdfResource::Iri(bob_iri));
+        let rdf_type = rdf_type_id(&mut ds.resources);
+
+        let fact_alice_has_parent_bob = Quad {
+            triple_id: g,
+            subject: alice,
+            predicate: has_parent,
+            obj: bob,
+        };
+        ds.named_graphs.add_quad(fact_alice_has_parent_bob);
+
+        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let derived_alice_person = Quad {
+            triple_id: g,
+            subject: alice,
+            predicate: rdf_type,
+            obj: person,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_alice_person),
+            "alice should be inferred to be a Person before axiom retraction"
+        );
+
+        assert!(ontology.remove_axiom(&axiom));
+        let dead_rules = axiom2datalog(&mut ds.resources, &axiom);
+
+        reasoner
+            .apply_rule_deletions(&mut ds, &dead_rules)
+            .expect("retracting the ObjectPropertyDomain axiom's rules must not error");
+
+        assert!(
+            !ds.named_graphs.contains(&derived_alice_person),
+            "alice should no longer be inferred to be a Person: the domain axiom is gone"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_alice_has_parent_bob),
+            "the base ABox fact alice hasParent bob must survive TBox retraction"
+        );
+    }
+
+    /// `ClassAxiom::EquivalentClasses` end-to-end coverage, exercising the
+    /// "shared rule" precondition documented on `axiom2datalog`:
+    /// `EquivalentClasses(A, B)` compiles to *two* directional rules
+    /// (A⊑B and B⊑A, per `eli_axiom_extractor`'s `A ≡ B ↔ A ⊑ B ∧ B ⊑ A`
+    /// expansion) — retracting the whole axiom must retract both, but only
+    /// the direction not *also* justified by a separate, surviving
+    /// `SubClassOf(A, B)` axiom should actually lose its derived facts.
+    ///
+    /// Setup: `SubClassOf(A, B)` (axiom1, kept) plus `EquivalentClasses(A,
+    /// B)` (axiom2, removed). `axiom2`'s A⊑B direction is a duplicate of
+    /// axiom1's rule (`owl2datalog` dedups this at the whole-ontology
+    /// level), so per `axiom2datalog`'s documented caller contract, `dead
+    /// rules` must be computed as `axiom2datalog(axiom2)` minus
+    /// `owl2datalog(ontology-after-removing-axiom2)` — the correct way to
+    /// discover A⊑B is still justified and only B⊑A is genuinely dead.
+    ///
+    /// `x rdf:type A` derives `x rdf:type B` via either direction —
+    /// must survive (still justified by axiom1). `y rdf:type B` derives `y
+    /// rdf:type A` *only* via axiom2's B⊑A direction — must be retracted.
+    #[test]
+    fn test_remove_equivalent_classes_axiom_end_to_end_retracts_only_unjustified_direction() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        let a_iri = IriReference("http://example.org/A".to_string());
+        let b_iri = IriReference("http://example.org/B".to_string());
+        let x_iri = IriReference("http://example.org/x".to_string());
+        let y_iri = IriReference("http://example.org/y".to_string());
+
+        let a_expr = ClassExpression::ClassName(FullIri(a_iri.clone()));
+        let b_expr = ClassExpression::ClassName(FullIri(b_iri.clone()));
+
+        // axiom1: A ⊑ B (kept throughout).
+        let sub_class_axiom = Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            a_expr.clone(),
+            b_expr.clone(),
+        ));
+        // axiom2: A ≡ B (removed partway through the test).
+        let equiv_axiom = Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(
+            vec![],
+            vec![a_expr.clone(), b_expr.clone()],
+        ));
+
+        let mut ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![sub_class_axiom.clone(), equiv_axiom.clone()],
+        );
+
+        let rules = owl2datalog(&mut ds.resources, &ontology);
+
+        let a = ds.resources.add_node_resource(RdfResource::Iri(a_iri));
+        let b = ds.resources.add_node_resource(RdfResource::Iri(b_iri));
+        let x = ds.resources.add_node_resource(RdfResource::Iri(x_iri));
+        let y = ds.resources.add_node_resource(RdfResource::Iri(y_iri));
+        let rdf_type = rdf_type_id(&mut ds.resources);
+
+        let fact_x_a = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: a,
+        };
+        let fact_y_b = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_x_a);
+        ds.named_graphs.add_quad(fact_y_b);
+
+        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let derived_x_b = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: b,
+        };
+        let derived_y_a = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: a,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_x_b),
+            "x should be inferred to be a B before retraction (via axiom1 and/or axiom2)"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_y_a),
+            "y should be inferred to be an A before retraction (only via axiom2's B⊑A direction)"
+        );
+
+        assert!(ontology.remove_axiom(&equiv_axiom));
+
+        // Per `axiom2datalog`'s documented caller contract: compute the
+        // genuinely-dead set as the set difference against the *remaining*
+        // ontology's `owl2datalog` output, so a rule still justified by
+        // axiom1 (A⊑B) is correctly excluded.
+        let equiv_rules = axiom2datalog(&mut ds.resources, &equiv_axiom);
+        let remaining_rules = owl2datalog(&mut ds.resources, &ontology);
+        let dead_rules: Vec<Rule> = equiv_rules
+            .into_iter()
+            .filter(|r| !remaining_rules.contains(r))
+            .collect();
+        assert_eq!(
+            dead_rules.len(),
+            1,
+            "exactly one direction (B⊑A) must be genuinely dead; A⊑B survives via axiom1"
+        );
+
+        reasoner
+            .apply_rule_deletions(&mut ds, &dead_rules)
+            .expect("retracting the genuinely-dead direction must not error");
+
+        assert!(
+            ds.named_graphs.contains(&derived_x_b),
+            "x's inferred B membership must survive: still justified by the surviving axiom1"
+        );
+        assert!(
+            !ds.named_graphs.contains(&derived_y_a),
+            "y's inferred A membership must be gone: its only justification (axiom2's \
+             B⊑A direction) was retracted"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_x_a),
+            "base ABox fact x a A must survive TBox retraction"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_y_b),
+            "base ABox fact y a B must survive TBox retraction"
+        );
+    }
 }
