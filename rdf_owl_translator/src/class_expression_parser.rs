@@ -133,12 +133,31 @@ impl OntologyDeclarations {
         // only ever appears as a `DataPropertyRange`/similar target, since
         // that structural mapping only declares *named entities the
         // ontology introduces* (classes/properties/individuals), not
-        // referenced XSD vocabulary. Recognise the namespace directly so
-        // such a reference round-trips as the real datatype rather than
-        // falling back to `owl:Literal`. See
+        // referenced XSD vocabulary. Recognise the fixed set of built-in
+        // XSD *datatype* IRIs (not the whole `xsd:` namespace — that also
+        // contains constraining-facet IRIs like `xsd:minLength` that are
+        // never valid data ranges) so such a reference round-trips as the
+        // real datatype rather than falling back to `owl:Literal`. See
         // [#179](https://github.com/daghovland/rdf-datalog/issues/179).
+        const BUILTIN_XSD_DATATYPES: &[&str] = &[
+            XSD_STRING,
+            XSD_BOOLEAN,
+            XSD_DECIMAL,
+            XSD_FLOAT,
+            XSD_DOUBLE,
+            XSD_DURATION,
+            XSD_DATE_TIME,
+            XSD_TIME,
+            XSD_DATE,
+            XSD_INT,
+            XSD_INTEGER,
+            XSD_NON_NEGATIVE_INTEGER,
+            XSD_HEX_BINARY,
+            XSD_BASE64_BINARY,
+            XSD_ANY_URI,
+        ];
         if let Some(RdfResource::Iri(iri)) = resources.get_resource(id)
-            && iri.0.starts_with(ingress::XSD)
+            && BUILTIN_XSD_DATATYPES.contains(&iri.0.as_str())
         {
             return DataRange::NamedDataRange(FullIri(iri.clone()));
         }
