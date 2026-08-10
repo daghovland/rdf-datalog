@@ -1,5 +1,5 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
 @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
 

@@ -1,4 +1,4 @@
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -11,7 +11,7 @@
 # ../examples/ — every class/property below is exercised by at least
 # one triple there.
 
-<https://dagalog.dev/ns/backlog>
+<https://dagalog.no/ns/backlog>
     a owl:Ontology ;
     rdfs:label "dagalog backlog vocabulary" ;
     rdfs:comment "Minimal vocabulary for mirroring a GitHub issue/PR backlog (and the codebase it tracks) as RDF, for the dagalog-on-dagalog self-hosting epic (#282)." ;

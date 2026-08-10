@@ -20,8 +20,8 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-pub const BL: &str = "https://dagalog.dev/ns/backlog#";
-pub const CRATE_NS: &str = "https://dagalog.dev/ns/backlog/crate#";
+pub const BL: &str = "https://dagalog.no/ns/backlog#";
+pub const CRATE_NS: &str = "https://dagalog.no/ns/backlog/crate#";
 
 fn bl(local: &str) -> String {
     format!("{BL}{local}")

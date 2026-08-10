@@ -192,8 +192,8 @@ fn cross_file_join_pr_and_provenance_works() {
     let ds = load(&files);
 
     let query = r#"
-        PREFIX agp: <https://dagalog.dev/ns/agentprov#>
-        PREFIX bl: <https://dagalog.dev/ns/backlog#>
+        PREFIX agp: <https://dagalog.no/ns/agentprov#>
+        PREFIX bl: <https://dagalog.no/ns/backlog#>
         PREFIX ghpull: <https://github.com/daghovland/rdf-datalog/pull/>
 
         SELECT ?crate ?summaryText WHERE {
@@ -220,7 +220,7 @@ fn cross_file_join_pr_and_provenance_works() {
         result
             .rows
             .iter()
-            .any(|row| display(row, "crate") == "<https://dagalog.dev/ns/backlog/crate#shacl>"),
+            .any(|row| display(row, "crate") == "<https://dagalog.no/ns/backlog/crate#shacl>"),
         "expected ghpull:300's bl:touchesCrate (from snapshot.ttl) to include the shacl crate, got: {:#?}",
         result
             .rows

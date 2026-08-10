@@ -1,11 +1,11 @@
-@prefix agp: <https://dagalog.dev/ns/agentprov#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
 @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
 
 # Prospective summary for PR #359 (issue #354), written per
 # docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's "Session window" prospective

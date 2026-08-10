@@ -8,7 +8,7 @@
 # transitive closure, change `bl:dependsOnCrate ?target` below to
 # `bl:dependsOnCrate+ ?target` (a SPARQL 1.1 property path).
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?dependentName WHERE {

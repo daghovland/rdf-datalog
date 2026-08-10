@@ -56,8 +56,8 @@ const BL_VOCAB: &str = "ontology/vocabulary.ttl";
 /// reused PROV-O terms (`prov:Activity`/`prov:Entity`/`prov:SoftwareAgent`/
 /// `prov:Person` and the relation properties).
 const VALID_FIXTURE: &str = r#"
-@prefix agp: <https://dagalog.dev/ns/agentprov#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -137,7 +137,7 @@ fn summary_without_reasoning_for_is_a_violation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix ex: <http://example.com/ns#> .
         ex:agent a prov:SoftwareAgent .
@@ -166,7 +166,7 @@ fn session_without_agent_is_a_violation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
         @prefix ex: <http://example.com/ns#> .
         ex:orphanSession a agp:AgentSession .
         "#
@@ -189,8 +189,8 @@ fn summary_without_generating_session_is_a_violation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
@@ -221,8 +221,8 @@ fn abstract_text_under_max_length_conforms() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
@@ -257,8 +257,8 @@ fn abstract_text_over_max_length_is_a_violation() {
     let too_long = "x".repeat(161);
     let ttl = format!(
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
@@ -296,8 +296,8 @@ fn summary_generated_by_non_agent_session_is_a_violation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .

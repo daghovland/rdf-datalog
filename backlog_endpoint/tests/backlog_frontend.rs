@@ -119,7 +119,7 @@ async fn root_route_serves_dashboard_markers() {
         "expected dashboard title marker in body"
     );
     assert!(
-        body.contains("https://dagalog.dev/ns/backlog#"),
+        body.contains("https://dagalog.no/ns/backlog#"),
         "expected bl: namespace hardcoded in body"
     );
     assert!(
@@ -190,7 +190,7 @@ async fn root_route_serves_provenance_timeline_markers() {
         "expected provenance timeline's sessions-list container in body"
     );
     assert!(
-        body.contains("https://dagalog.dev/ns/agentprov#"),
+        body.contains("https://dagalog.no/ns/agentprov#"),
         "expected agp: namespace hardcoded in body"
     );
     assert!(

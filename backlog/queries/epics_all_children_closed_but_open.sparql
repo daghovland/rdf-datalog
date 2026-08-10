@@ -10,7 +10,7 @@
 # query additionally requires at least one child, to not overlap with
 # epics_with_no_subissues.sparql's very different situation).
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?epic ?number ?title WHERE {

@@ -3,7 +3,7 @@
 # e.g. "shacl", "sparql-endpoint" -- see crates_and_dependencies.ttl's
 # rdfs:label values, not the directory name) you want to check.
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?number ?title ?stateName WHERE {

@@ -177,7 +177,7 @@ fn load_all_summaries_snapshot_and_touched_file() -> Datastore {
     turtle::parse_turtle(
         &mut ds,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
         ghpull:300 bl:touchesFile "shacl/src/evaluate.rs" .
         "#
@@ -384,7 +384,7 @@ fn malformed_summary_fails_shacl_validation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix agp: <https://dagalog.dev/ns/agentprov#> .
+        @prefix agp: <https://dagalog.no/ns/agentprov#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         @prefix ex: <http://example.com/ns#> .
         ex:agent a prov:SoftwareAgent .

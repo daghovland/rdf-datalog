@@ -6,9 +6,9 @@
 # Shipped pointing at the "Claude Sonnet 5" agent asserted in
 # ../summaries/pr-300.ttl.
 
-PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX agp: <https://dagalog.no/ns/agentprov#>
 PREFIX prov: <http://www.w3.org/ns/prov#>
-PREFIX session: <https://dagalog.dev/ns/agentprov/session#>
+PREFIX session: <https://dagalog.no/ns/agentprov/session#>
 
 SELECT ?summary ?summaryText ?workItem WHERE {
   VALUES ?agent { session:claudeSonnet5 }

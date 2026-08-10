@@ -12,7 +12,7 @@
 # status as its own axis" -- so this can't yet exclude in-progress issues
 # specifically; it's "open and ready", which is still a useful view.)
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?issue ?number ?title WHERE {

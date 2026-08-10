@@ -1,5 +1,5 @@
-@prefix agp: <https://dagalog.dev/ns/agentprov#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
@@ -23,7 +23,7 @@
 # PROV-O doesn't already have: the summary text itself, and a direct
 # shortcut from a summary to the bl: work item it explains.
 
-<https://dagalog.dev/ns/agentprov>
+<https://dagalog.no/ns/agentprov>
     a owl:Ontology ;
     rdfs:label "dagalog agent-provenance vocabulary" ;
     rdfs:comment "Vocabulary for recording distilled agent-session/transcript-summary provenance (why a change was made, not just what/when), linked to bl: work items and grounded in PROV-O. Part of the agent-provenance epic (#306)." ;
