@@ -7,7 +7,7 @@ FROM rust:1-slim AS builder
 WORKDIR /build
 COPY . .
 RUN apt-get update && apt-get install -y ca-certificates
-RUN cargo build --release --bin backlog-endpoint
+RUN cargo build --release -p backlog-endpoint --bin backlog-endpoint
 
 # ── runtime ───────────────────────────────────────────────────────────────────
 FROM debian:trixie-slim
