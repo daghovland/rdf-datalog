@@ -40,7 +40,7 @@ provenance relations, not by re-reading full conversation logs.
 
 ### Namespace and reuse strategy
 
-New vocabulary at `https://dagalog.dev/ns/agentprov#` (prefix `agp:`),
+New vocabulary at `https://dagalog.no/ns/agentprov#` (prefix `agp:`),
 following the `bl:` precedent of reusing a real external vocabulary
 wherever the term already exists (`bl:partOfProject` reuses `doap:Project`)
 rather than reinventing it. Concretely: reuse `prov:Entity`, `prov:Activity`,

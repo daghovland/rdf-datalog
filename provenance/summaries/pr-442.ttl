@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #442, per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md.
+# Timestamps are real, from `git log main..HEAD` on branch chore/440-dagalog-no-namespace.
+
+ghpull:442 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Migrate bl:/agp: vocabulary namespace from dagalog.dev to dagalog.no (#440)" ;
+    bl:number 442 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:440 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr442 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:440 ;
+    prov:startedAtTime "2026-08-10T05:36:38Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-10T05:36:38Z"^^xsd:dateTime .
+
+session:pr442Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #440 asked for the bl:/agp: vocabulary namespace to move from dagalog.dev to dagalog.no, since dagalog.dev was never registered or resolvable. The chosen approach was a purely mechanical find/replace of every dagalog.dev occurrence across the whole repository — Rust BL/CRATE_NS constants, vocabulary/shapes TTL files, example fixtures, SPARQL queries, the backlog frontend's JS namespace constants, docs, and, importantly, the historical provenance/summaries/*.ttl transcript files themselves plus the scripts/new-provenance-summary.sh scaffold template that generates new ones — so newly-scaffolded summaries would automatically pick up the new namespace without a follow-up fix. Per explicit direction on the issue thread, no owl:sameAs or redirect compatibility triple was kept for the old namespace, since nothing real ever depended on dagalog.dev resolving. Verification was exhaustive rather than spot-checked: an unrestricted repo-wide grep for dagalog.dev confirmed zero remaining occurrences, and the full quality gate (fmt, clippy -D warnings, cargo test --workspace including doctests, and rustdoc with -D warnings) plus a targeted re-run of the provenance_queries suite (including its SHACL validation of every renamed summary file against agentprov-shapes.ttl) all passed clean before the PR was opened." ;
+    agp:reasoningFor ghpull:442 ;
+    prov:wasGeneratedBy session:pr442 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -4,7 +4,7 @@
 # an open PR touching a crate isn't a bug to fix, it's in-flight work
 # already addressing one.
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT DISTINCT ?crateName WHERE {

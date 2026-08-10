@@ -6,7 +6,7 @@
 # pointing at PR #300 (https://github.com/daghovland/rdf-datalog/pull/300),
 # the worked example in ../summaries/pr-300.ttl.
 
-PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX agp: <https://dagalog.no/ns/agentprov#>
 PREFIX ghpull: <https://github.com/daghovland/rdf-datalog/pull/>
 
 SELECT ?summary ?summaryText WHERE {

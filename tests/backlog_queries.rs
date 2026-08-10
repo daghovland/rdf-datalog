@@ -113,7 +113,7 @@ fn epics_with_no_subissues_matches_a_real_empty_epic() {
     turtle::parse_turtle(
         &mut ds,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
         ex:freshEpic a bl:Issue, bl:Epic, bl:WorkItem ; rdfs:label "fresh epic" ;

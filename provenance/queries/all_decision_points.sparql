@@ -2,7 +2,7 @@
 # across every agp:TranscriptSummary, for a review dashboard. Not
 # parameterized: runs over the whole loaded provenance/ dataset.
 
-PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX agp: <https://dagalog.no/ns/agentprov#>
 
 # Deliberately does NOT also join agp:alternative here: a decision point can
 # have several repeatable agp:alternative values, and joining them in would

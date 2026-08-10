@@ -1,11 +1,11 @@
-@prefix agp: <https://dagalog.dev/ns/agentprov#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
 @prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix session: <https://dagalog.dev/ns/agentprov/session#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
 
 # Timestamps below are real (from `git log main..HEAD` on branch
 # feat/384-relevant-panel).
@@ -17,7 +17,7 @@ ghpull:430 a bl:PullRequest, bl:WorkItem ;
     bl:closesIssue ghissues:384 ;
     bl:touchesFile "backlog_endpoint/src/backlog_frontend.html" ,
         "backlog_endpoint/tests/backlog_frontend.rs" ;
-    bl:touchesCrate <https://dagalog.dev/ns/backlog/crate#backlog_endpoint> .
+    bl:touchesCrate <https://dagalog.no/ns/backlog/crate#backlog_endpoint> .
 
 session:claudeSonnet5 a prov:SoftwareAgent ;
     rdfs:label "Claude Sonnet 5" .

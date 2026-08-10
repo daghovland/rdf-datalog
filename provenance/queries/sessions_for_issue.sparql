@@ -7,7 +7,7 @@
 # (https://github.com/daghovland/rdf-datalog/issues/264), the issue PR #300
 # closed (see ../summaries/pr-300.ttl).
 
-PREFIX agp: <https://dagalog.dev/ns/agentprov#>
+PREFIX agp: <https://dagalog.no/ns/agentprov#>
 PREFIX prov: <http://www.w3.org/ns/prov#>
 PREFIX ghissues: <https://github.com/daghovland/rdf-datalog/issues/>
 

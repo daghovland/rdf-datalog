@@ -14,8 +14,8 @@
 # "shacl/src/evaluate.rs", a real file changed by PR #300 (see
 # ../summaries/pr-300.ttl and backlog/examples/snapshot.ttl).
 
-PREFIX agp: <https://dagalog.dev/ns/agentprov#>
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX agp: <https://dagalog.no/ns/agentprov#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 
 SELECT ?summary ?pr ?text WHERE {
   VALUES ?file { "shacl/src/evaluate.rs" }

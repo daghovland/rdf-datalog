@@ -5,7 +5,7 @@
 # property in this ontology yet to check "how long", see
 # backlog/queries/README.md's "not implemented" list).
 
-PREFIX bl: <https://dagalog.dev/ns/backlog#>
+PREFIX bl: <https://dagalog.no/ns/backlog#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?epic ?number ?title WHERE {

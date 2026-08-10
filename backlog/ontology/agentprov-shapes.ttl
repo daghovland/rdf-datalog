@@ -1,5 +1,5 @@
-@prefix agp: <https://dagalog.dev/ns/agentprov#> .
-@prefix bl: <https://dagalog.dev/ns/backlog#> .
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 

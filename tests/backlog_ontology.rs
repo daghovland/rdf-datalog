@@ -113,7 +113,7 @@ fn missing_workitem_type_is_a_violation() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
         ex:noWorkItem a bl:Issue ; rdfs:label "Missing WorkItem type" ;
@@ -140,7 +140,7 @@ fn issue_and_pull_request_are_mutually_exclusive() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
         ex:both a bl:Issue, bl:PullRequest, bl:WorkItem ; rdfs:label "both types" ;
@@ -167,7 +167,7 @@ fn in_progress_implies_open() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix ex: <http://example.com/ns#> .
         ex:contradiction a bl:Issue, bl:WorkItem ; rdfs:label "contradiction" ;
@@ -195,7 +195,7 @@ fn missing_required_fields_are_violations() {
     turtle::parse_turtle(
         &mut data,
         r#"
-        @prefix bl: <https://dagalog.dev/ns/backlog#> .
+        @prefix bl: <https://dagalog.no/ns/backlog#> .
         @prefix ex: <http://example.com/ns#> .
         ex:incomplete a bl:Issue, bl:Epic, bl:WorkItem .
         "#
