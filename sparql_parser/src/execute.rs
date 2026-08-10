@@ -3618,16 +3618,54 @@ fn cast_to_xsd_datetime(el: &GraphElement) -> Option<GraphElement> {
 /// then falls back to plain equality for every other RDF term shape (IRIs,
 /// blank nodes, plain strings, language-tagged literals) — where the
 /// native/parsed split does not exist and `==` was already correct.
+///
+/// One more cross-representation split needs normalizing here (#360): a
+/// simple/plain string literal (`RdfLiteral::LiteralString`) and an
+/// explicitly `xsd:string`-typed literal (`RdfLiteral::TypedLiteral {
+/// type_iri: xsd:string, .. }`) are, per RDF 1.1 §5.1, the *same value* — but
+/// they are different Rust enum variants, so raw `==` (and `a == b` at the
+/// end of this function) sees them as unequal. This split is reachable
+/// without any Turtle ingestion at all: `sparql_parser`'s own query-text
+/// literal grammar (`parse_string_literal`) already parses `"foo"^^xsd:string`
+/// as a distinct `TypedLiteral` rather than collapsing it (unlike
+/// `turtle::convert_literal`, which historically collapsed the Turtle-syntax
+/// form — see the ingestion-side investigation in
+/// `docs/plans/XSD_STRING_LITERAL_360_PLAN.md`), so `"foo" = "foo"^^xsd:string`
+/// in a bare `FILTER` was wrong before any ingestion change. `sameTerm`
+/// deliberately keeps using raw `==` (term identity, not value equality) and
+/// is unaffected by this normalization.
 fn values_equal(a: &GraphElement, b: &GraphElement) -> bool {
     if let (GraphElement::GraphLiteral(a_lit), GraphElement::GraphLiteral(b_lit)) = (a, b) {
         if let (Some(af), Some(bf)) = (literal_to_f64(a_lit), literal_to_f64(b_lit)) {
             return af.partial_cmp(&bf) == Some(std::cmp::Ordering::Equal);
+        }
+        if let (Some(a_s), Some(b_s)) = (
+            simple_or_xsd_string_value(a_lit),
+            simple_or_xsd_string_value(b_lit),
+        ) {
+            return a_s == b_s;
         }
     }
     if let (Some(a_bool), Some(b_bool)) = (element_to_bool(a), element_to_bool(b)) {
         return a_bool == b_bool;
     }
     a == b
+}
+
+/// If `lit` is a simple/plain literal or an explicitly `xsd:string`-typed
+/// literal, return its lexical value — the two are value-equal per RDF 1.1
+/// §5.1 (see `values_equal`). Returns `None` for every other literal shape
+/// (language-tagged, numeric, boolean, other datatypes), so callers only
+/// normalize this one specific split and never widen matching to e.g.
+/// language-tagged literals.
+fn simple_or_xsd_string_value(lit: &RdfLiteral) -> Option<&str> {
+    match lit {
+        RdfLiteral::LiteralString(s) => Some(s.as_str()),
+        RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_STRING => {
+            Some(literal.as_str())
+        }
+        _ => None,
+    }
 }
 
 /// Compare graph elements for FILTER relational operators.
