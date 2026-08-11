@@ -22,7 +22,7 @@ use datalog::types::{Rule, RuleAtom, RuleHead};
 use ingress::{IriReference, RDF_TYPE};
 use owl_ontology::{
     Axiom, ClassAxiom, ClassExpression, DataPropertyAxiom, FullIri, ObjectPropertyAxiom,
-    ObjectPropertyExpression, Ontology,
+    ObjectPropertyExpression, Ontology, SubPropertyExpression,
 };
 
 // ── Resource helpers ──────────────────────────────────────────────────────────
@@ -175,6 +175,41 @@ fn transitive_object_property(
     }]
 }
 
+/// prp-spo1: T(?p1, rdfs:subPropertyOf, ?p2) T(?x, ?p1, ?y) -> T(?x, ?p2, ?y)
+///
+/// Only the simple case (`SubPropertyExpression::SubObjectPropertyExpression`,
+/// a plain `P rdfs:subPropertyOf Q`) is implemented here. The
+/// `PropertyExpressionChain` variant is `prp-spo2` (property chains, e.g.
+/// `hasParent ∘ hasParent ⊑ hasGrandparent`) — a separate, more complex OWL 2
+/// RL rule, out of scope for
+/// [#451](https://github.com/daghovland/rdf-datalog/issues/451); it is
+/// skipped with a `log::warn!` rather than silently dropped with no signal.
+fn sub_object_property_of(
+    resources: &mut GraphElementManager,
+    sub_prop: &SubPropertyExpression,
+    super_prop: &ObjectPropertyExpression,
+) -> Vec<Rule> {
+    let sub_prop = match sub_prop {
+        SubPropertyExpression::SubObjectPropertyExpression(prop) => prop,
+        SubPropertyExpression::PropertyExpressionChain(_) => {
+            log::warn!(
+                "Property chain sub-property axioms (prp-spo2) not implemented yet, see #451"
+            );
+            return vec![];
+        }
+    };
+    let Some(body_quad) = get_obj_prop_pattern(resources, sub_prop, "x", "y") else {
+        return vec![];
+    };
+    let Some(head_quad) = get_obj_prop_pattern(resources, super_prop, "x", "y") else {
+        return vec![];
+    };
+    vec![Rule {
+        head: RuleHead::NormalHead(head_quad),
+        body: vec![RuleAtom::PositivePattern(body_quad)],
+    }]
+}
+
 fn object_property_axiom2datalog(
     resources: &mut GraphElementManager,
     axiom: &ObjectPropertyAxiom,
@@ -185,6 +220,9 @@ fn object_property_axiom2datalog(
         }
         ObjectPropertyAxiom::ObjectPropertyRange(prop, range) => {
             object_property_range(resources, prop, range)
+        }
+        ObjectPropertyAxiom::SubObjectPropertyOf(_, sub_prop, super_prop) => {
+            sub_object_property_of(resources, sub_prop, super_prop)
         }
         ObjectPropertyAxiom::SymmetricObjectProperty(_, prop) => {
             symmetric_object_property(resources, prop)
@@ -244,6 +282,33 @@ fn data_property_range(
     }]
 }
 
+/// prp-spo1 (data property variant): T(?p1, rdfs:subPropertyOf, ?p2)
+/// T(?x, ?p1, ?y) -> T(?x, ?p2, ?y). Unlike the object-property case, data
+/// properties have no `PropertyExpressionChain` counterpart in OWL 2, so this
+/// is the whole rule — no prp-spo2-style follow-up needed.
+fn sub_data_property_of(
+    resources: &mut GraphElementManager,
+    sub_prop: &IriReference,
+    super_prop: &IriReference,
+) -> Vec<Rule> {
+    let sub_id = resources.add_node_resource(RdfResource::Iri(sub_prop.clone()));
+    let super_id = resources.add_node_resource(RdfResource::Iri(super_prop.clone()));
+    let body_quad = get_default_graph_pattern(
+        Term::Variable("x".to_owned()),
+        Term::Resource(sub_id),
+        Term::Variable("y".to_owned()),
+    );
+    let head_quad = get_default_graph_pattern(
+        Term::Variable("x".to_owned()),
+        Term::Resource(super_id),
+        Term::Variable("y".to_owned()),
+    );
+    vec![Rule {
+        head: RuleHead::NormalHead(head_quad),
+        body: vec![RuleAtom::PositivePattern(body_quad)],
+    }]
+}
+
 fn data_property_axiom2datalog(
     resources: &mut GraphElementManager,
     axiom: &DataPropertyAxiom,
@@ -255,9 +320,8 @@ fn data_property_axiom2datalog(
         DataPropertyAxiom::DataPropertyRange(_, FullIri(iri), range) => {
             data_property_range(resources, iri, range)
         }
-        DataPropertyAxiom::SubDataPropertyOf(_, _, _) => {
-            log::warn!("Data property hierarchy not implemented yet");
-            vec![]
+        DataPropertyAxiom::SubDataPropertyOf(_, FullIri(sub_iri), FullIri(super_iri)) => {
+            sub_data_property_of(resources, sub_iri, super_iri)
         }
         DataPropertyAxiom::EquivalentDataProperties(_, _) => {
             log::warn!("Equivalent data property not implemented yet");
@@ -427,12 +491,11 @@ mod tbox_retraction_tests {
     /// `ObjectPropertyDomain(hasParent, Person)` must remove the `rdf:type
     /// Person` assertion it derived for an individual related via
     /// `hasParent`, while the base ABox fact survives. Domain/range is used
-    /// here (not `SubObjectPropertyOf`) because
-    /// `object_property_axiom2datalog` doesn't yet compile property
-    /// hierarchy to rules — see the `log::warn!` in
-    /// `data_property_axiom2datalog`'s sibling match arms and
-    /// `ObjectPropertyAxiom::SubObjectPropertyOf`'s absence from
-    /// `object_property_axiom2datalog`'s match.
+    /// here (not `SubObjectPropertyOf`) simply because it was the first
+    /// axiom kind wired up for this retraction test; `SubObjectPropertyOf`
+    /// (prp-spo1) is now also compiled to rules — see
+    /// `sub_object_property_of` above and
+    /// [#451](https://github.com/daghovland/rdf-datalog/issues/451).
     #[test]
     fn test_remove_object_property_domain_axiom_end_to_end_retracts_derived_type_assertions() {
         let mut ds = Datastore::new(100);
