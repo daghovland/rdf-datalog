@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# fix/447-backlog-status-loader).
+
+ghpull:454 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog loader: derive bl:status Todo/InProgress/Done from Project Status field (#447)" ;
+    bl:number 454 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:447 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr454 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:447 ;
+    prov:startedAtTime "2026-08-11T16:37:09Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-11T16:37:09Z"^^xsd:dateTime .
+
+session:pr454Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #447 asked for bl:status to reflect the Dagalog project's own Status field (Todo/In Progress/Done), not just the derived bl:Ready that already came from the 'ready' GitHub label. Before this PR the snapshot only ever asserted bl:Ready, so an in-progress or already-done issue looked identical to an untouched backlog item once queried. Implementation reused the GraphQL query shape scripts/set-issue-status.sh already uses to write the Status field, turned around into a read: a single paginated query against the Dagalog project's own items connection (100/page), rather than one REST/GraphQL call per issue -- this repo has 400+ items on the board, so a per-issue call would have meant hundreds of gh invocations per regenerate run. The raw option names ('Todo'/'In Progress'/'Done') are mapped to bl:Todo/bl:InProgress/bl:Done local names via map_project_status, with unrecognised values silently ignored rather than erroring, since the live board's Status options are configured outside this code and could be renamed without warning. decisionPoint below records the one real design fork: whether Project-Status-derived bl:status should override or coexist with label-derived bl:Ready." ;
+    agp:reasoningFor ghpull:454 ;
+    agp:decisionPoint session:pr454Decision ;
+    prov:wasGeneratedBy session:pr454 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr454Decision a agp:Decision ;
+    agp:summaryText "bl:status is asserted additively: an issue can carry both bl:status bl:Ready (from the 'ready' label) and bl:status bl:InProgress (from the Project Status field) at the same time, since this is the normal, expected state for an issue an agent has just picked up under CLAUDE.md's own workflow -- the label isn't removed when work starts. bl:status has no sh:maxCount in shapes.ttl and isn't declared functional in vocabulary.ttl, so there was no schema reason to pick a single winner." ;
+    agp:alternative "Considered making Project Status take precedence and suppressing bl:Ready once an issue's Status left Todo, so each issue would have exactly one bl:status value. Rejected because it would require either mutating/removing the existing label-derived triple (extra coupling between two independent derivations) or introducing a priority-ordering concept the vocabulary doesn't have, to solve a problem that isn't actually a conflict -- 'still labeled ready' and 'currently in progress' are both true statements about the issue at once, verified directly against #447's own snapshot entry during this PR (bl:status bl:InProgress and bl:status bl:Ready both present)." .
