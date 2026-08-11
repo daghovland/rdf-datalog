@@ -527,6 +527,134 @@ ex:a owl:sameAs "not an individual" .
     }
 }
 
+// ── OWL 2 RL prp-spo1: rdfs:subPropertyOf propagation to ABox ────────────────
+//
+// See <https://github.com/daghovland/rdf-datalog/issues/451>.
+//
+// `object_property_axiom2datalog` used to silently drop
+// `ObjectPropertyAxiom::SubObjectPropertyOf` (fell through to `_ => vec![]`),
+// so a `P rdfs:subPropertyOf Q` axiom was never compiled into the datalog
+// rule `Q[?s, ?o] :- P[?s, ?o]` (OWL 2 RL rule `prp-spo1`), and subproperty
+// hierarchy never propagated to the ABox.
+
+/// The exact reproducer from issue #451: `:hasTerminal rdfs:subPropertyOf
+/// :adjacentTo`, plus data `:block1 :hasTerminal :terminal1`, must
+/// materialise `:block1 :adjacentTo :terminal1`.
+#[test]
+fn sub_object_property_of_propagates_to_abox() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <http://example.org/> .
+
+ex:hasTerminal a owl:ObjectProperty ;
+    rdfs:subPropertyOf ex:adjacentTo .
+ex:adjacentTo a owl:ObjectProperty .
+
+ex:block1 ex:hasTerminal ex:terminal1 .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(
+        has_triple(
+            &ds,
+            "http://example.org/block1",
+            "http://example.org/adjacentTo",
+            "http://example.org/terminal1",
+        ),
+        "expected :block1 :adjacentTo :terminal1 to be derived via prp-spo1"
+    );
+}
+
+/// A `PropertyExpressionChain` sub-property axiom (`prp-spo2`, e.g.
+/// `hasParent ∘ hasParent ⊑ hasGrandparent`) is out of scope for #451 — it
+/// must be safely skipped (warn, not panic, not silently produce a wrong
+/// rule) rather than implemented here. This test only exercises the simple
+/// `SubObjectPropertyExpression` case above; there is no parser path from
+/// Turtle to a `PropertyExpressionChain` axiom to exercise the skip branch
+/// end-to-end, so that branch is covered at the `owl2rl2datalog` unit-test
+/// level instead (see `owl2rl2datalog/src/lib.rs`).
+#[test]
+fn sub_object_property_expression_does_not_regress_plain_case() {
+    // Sanity check: a *reflexive-looking* but otherwise ordinary hierarchy
+    // (P subPropertyOf P, i.e. self-subproperty) must not loop or panic.
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <http://example.org/> .
+
+ex:knows a owl:ObjectProperty ;
+    rdfs:subPropertyOf ex:knows .
+
+ex:a ex:knows ex:b .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(has_triple(
+        &ds,
+        "http://example.org/a",
+        "http://example.org/knows",
+        "http://example.org/b",
+    ));
+}
+
+/// Adjacent gap fixed alongside #451: the data-property twin of prp-spo1.
+/// `DataPropertyAxiom::SubDataPropertyOf` has no `PropertyExpressionChain`
+/// equivalent (data properties can't be chained in OWL 2), so it's a
+/// strictly simpler fix than the object-property case and was folded into
+/// the same PR.
+#[test]
+fn sub_data_property_of_propagates_to_abox() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <http://example.org/> .
+
+ex:hasNickname a owl:DatatypeProperty ;
+    rdfs:subPropertyOf ex:hasName .
+ex:hasName a owl:DatatypeProperty .
+
+ex:person1 ex:hasNickname "Al" .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    let s = ds
+        .resources
+        .resource_map
+        .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            "http://example.org/person1".to_string(),
+        ))))
+        .copied()
+        .unwrap();
+    let p = ds
+        .resources
+        .resource_map
+        .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+            "http://example.org/hasName".to_string(),
+        ))))
+        .copied()
+        .unwrap();
+    assert!(
+        !ds.quads_matching(None, Some(s), Some(p), None).is_empty(),
+        "expected :person1 :hasName \"Al\" to be derived via prp-spo1 (data property variant)"
+    );
+}
+
 // ── Tests that cannot be translated (not implemented) ────────────────────────
 //
 // TableauWorks / Imf2AlcWorks: the Tableau (ALC) reasoner is not implemented
