@@ -46,6 +46,12 @@ fn fixture_source() -> FixtureSource {
     FixtureSource::from_ndjson(ndjson, pr_files)
 }
 
+/// Like [`fixture_source`], but with a Projects v2 Status map attached, for
+/// tests exercising the Status-field -> `bl:status` derivation (#447).
+fn fixture_source_with_project_status(project_status: HashMap<u64, String>) -> FixtureSource {
+    fixture_source().with_project_status(project_status)
+}
+
 fn lookup(ds: &Datastore, full_iri: &str) -> Option<GraphElementId> {
     ds.resources
         .resource_map
@@ -426,4 +432,116 @@ fn generated_snapshot_conforms_to_shapes() {
         "loader output for this fixture slice must conform to shapes.ttl, got violations: {:#?}",
         report.results
     );
+}
+
+/// #447: Projects v2 `Status` field values map to `bl:Todo`/`bl:InProgress`/
+/// `bl:Done`, asserted directly (no corresponding GitHub label exists for
+/// these three, unlike `bl:Ready`).
+#[test]
+fn project_status_maps_to_bl_status() {
+    let mut project_status = HashMap::new();
+    // #282 is open, no ready label in the fixture -> Todo.
+    project_status.insert(282, "Todo".to_string());
+    // #284 is open and ready-labeled in the fixture -> In Progress.
+    project_status.insert(284, "In Progress".to_string());
+    // #283 is closed in the fixture -> Done.
+    project_status.insert(283, "Done".to_string());
+    let source = fixture_source_with_project_status(project_status);
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    assert!(has_triple(
+        &ds,
+        "https://github.com/daghovland/rdf-datalog/issues/282",
+        &format!("{BL}status"),
+        &format!("{BL}Todo")
+    ));
+    assert!(has_triple(
+        &ds,
+        "https://github.com/daghovland/rdf-datalog/issues/284",
+        &format!("{BL}status"),
+        &format!("{BL}InProgress")
+    ));
+    assert!(has_triple(
+        &ds,
+        "https://github.com/daghovland/rdf-datalog/issues/283",
+        &format!("{BL}status"),
+        &format!("{BL}Done")
+    ));
+}
+
+/// An issue that is both labeled `ready` AND has Project Status
+/// `In Progress` (the normal case once an agent picks up a ready issue)
+/// gets BOTH `bl:status bl:Ready` (from the label) and `bl:status
+/// bl:InProgress` (from the Project Status field) -- `bl:status` isn't
+/// declared single-valued in vocabulary.ttl/shapes.ttl, so this is two true
+/// facts, not a conflict requiring precedence. See #447.
+#[test]
+fn ready_label_and_project_status_both_asserted_when_both_present() {
+    let mut project_status = HashMap::new();
+    // #284 is ready-labeled in the fixture.
+    project_status.insert(284, "In Progress".to_string());
+    let source = fixture_source_with_project_status(project_status);
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    let subj = "https://github.com/daghovland/rdf-datalog/issues/284";
+    assert!(
+        has_triple(&ds, subj, &format!("{BL}status"), &format!("{BL}Ready")),
+        "expected the label-derived bl:status bl:Ready to still be asserted"
+    );
+    assert!(
+        has_triple(
+            &ds,
+            subj,
+            &format!("{BL}status"),
+            &format!("{BL}InProgress")
+        ),
+        "expected the Project-Status-derived bl:status bl:InProgress to also be asserted"
+    );
+}
+
+/// A Project Status value not present in `bl:WorkflowStatus`'s controlled
+/// vocabulary (a hypothetical custom/renamed board column) is silently
+/// ignored rather than asserted or erroring.
+#[test]
+fn unknown_project_status_value_is_ignored() {
+    let mut project_status = HashMap::new();
+    project_status.insert(282, "Blocked".to_string());
+    let source = fixture_source_with_project_status(project_status);
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    let subj = "https://github.com/daghovland/rdf-datalog/issues/282";
+    let subj_id = lookup(&ds, subj).expect("issue #282 must be interned");
+    let status_pred = lookup(&ds, &format!("{BL}status"));
+    if let Some(status_pred) = status_pred {
+        assert_eq!(
+            ds.get_triples_with_subject_predicate(subj_id, status_pred)
+                .count(),
+            0,
+            "an unrecognized Status value must not produce any bl:status triple"
+        );
+    }
+}
+
+/// A pull request never gets `bl:status` from the Project Status field
+/// either (same domain restriction as the label-derived `bl:Ready` case --
+/// `bl:status`'s domain is `bl:Issue` only).
+#[test]
+fn pull_request_never_gets_status_from_project_field() {
+    let mut project_status = HashMap::new();
+    // #276 is a pull request in the fixture.
+    project_status.insert(276, "In Progress".to_string());
+    let source = fixture_source_with_project_status(project_status);
+    let ds = build_snapshot(&source, &workspace_root()).expect("build_snapshot must succeed");
+
+    let pr = "https://github.com/daghovland/rdf-datalog/pull/276";
+    let pr_id = lookup(&ds, pr).expect("PR #276 must be interned");
+    let status_pred = lookup(&ds, &format!("{BL}status"));
+    if let Some(status_pred) = status_pred {
+        assert_eq!(
+            ds.get_triples_with_subject_predicate(pr_id, status_pred)
+                .count(),
+            0,
+            "a PullRequest must never get bl:status even via Project Status"
+        );
+    }
 }

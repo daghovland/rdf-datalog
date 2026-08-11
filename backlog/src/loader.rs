@@ -49,6 +49,22 @@ fn label_local_name(raw_name: &str) -> String {
     format!("Label_{sanitized}")
 }
 
+/// Maps a raw Projects v2 `Status` field option name (as read live via
+/// [`crate::github::GitHubSource::project_status_by_number`]) to the
+/// matching `bl:WorkflowStatus` individual's local name, or `None` for any
+/// value this repo's board doesn't use (custom/renamed columns, etc. --
+/// silently ignored rather than erroring, since the Status field's option
+/// set is configured on the live GitHub project and could drift from this
+/// mapping without warning).
+fn map_project_status(raw_status_name: &str) -> Option<&'static str> {
+    match raw_status_name {
+        "Todo" => Some("Todo"),
+        "In Progress" => Some("InProgress"),
+        "Done" => Some("Done"),
+        _ => None,
+    }
+}
+
 fn closing_keyword_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -253,6 +269,10 @@ pub fn load_issues(
         }
     }
 
+    // Fetched once for the whole repo (batched/paginated over the Dagalog
+    // project's own items, not one call per issue) -- see #447.
+    let project_status = source.project_status_by_number()?;
+
     for issue in issues {
         let subj = iri(ds, &issue.html_url);
         add_label(ds, subj, &issue.title);
@@ -303,6 +323,24 @@ pub fn load_issues(
         if has_ready && !issue.is_pull_request() {
             let ready_id = iri(ds, &bl("Ready"));
             add_object(ds, subj, "status", ready_id);
+        }
+        // Projects v2 Status field -> bl:Todo/bl:InProgress/bl:Done. Unlike
+        // bl:Ready, none of these three has a corresponding GitHub label,
+        // so they're asserted directly rather than derived from
+        // bl:hasLabel. bl:status isn't declared functional/single-valued
+        // in vocabulary.ttl (no sh:maxCount in shapes.ttl either), so an
+        // issue that's both labeled "ready" AND has Project Status "In
+        // Progress" (the normal case once an agent picks up a ready issue,
+        // per CLAUDE.md's workflow) legitimately gets BOTH bl:status
+        // bl:Ready and bl:status bl:InProgress -- two true facts about the
+        // same issue, not a conflict to resolve. Domain bl:Issue only,
+        // same as the bl:Ready derivation above.
+        if !issue.is_pull_request()
+            && let Some(raw_status) = project_status.get(&issue.number)
+            && let Some(local) = map_project_status(raw_status)
+        {
+            let status_id = iri(ds, &bl(local));
+            add_object(ds, subj, "status", status_id);
         }
 
         if issue.is_pull_request() {
