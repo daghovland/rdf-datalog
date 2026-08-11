@@ -15,8 +15,68 @@ Contact: hovlanddag@gmail.com
 //! [`docs/plans/BACKLOG_GITHUB_LOADER_PLAN.md`](../../docs/plans/BACKLOG_GITHUB_LOADER_PLAN.md).
 
 use crate::model::RawIssue;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
+
+/// The "Dagalog" GitHub Project (v2)'s own node id -- see
+/// `scripts/set-issue-status.sh`, which writes to this same project (by
+/// number 11 there; here we address it directly by node id, since reading
+/// via `node(id:)` is simpler than re-deriving the id from `owner`/`repo`).
+const DAGALOG_PROJECT_ID: &str = "PVT_kwHOAAbH684BbhXV";
+
+/// One page of the Projects v2 `items` connection query used by
+/// [`GhCliSource::project_status_by_number`].
+#[derive(Debug, Deserialize)]
+struct ProjectItemsResponse {
+    data: ProjectItemsData,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectItemsData {
+    node: Option<ProjectNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectNode {
+    items: ProjectItemsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectItemsConnection {
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+    nodes: Vec<ProjectItemNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PageInfo {
+    #[serde(rename = "hasNextPage")]
+    has_next_page: bool,
+    #[serde(rename = "endCursor")]
+    end_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectItemNode {
+    /// `null` for a draft issue (no linked Issue/PullRequest), which this
+    /// repo's workflow never uses -- everything on the board is a real
+    /// issue or PR (CLAUDE.md's "All issues must be made under the Dagalog
+    /// project").
+    content: Option<ProjectItemContent>,
+    #[serde(rename = "fieldValueByName")]
+    field_value_by_name: Option<StatusFieldValue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectItemContent {
+    number: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatusFieldValue {
+    name: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct GitHubError(pub String);
@@ -36,6 +96,16 @@ pub trait GitHubSource {
 
     /// Filenames changed by pull request `pr_number`, for `bl:touchesCrate`.
     fn pr_changed_files(&self, pr_number: u64) -> Result<Vec<String>, GitHubError>;
+
+    /// Issue/PR number -> raw Projects v2 `Status` field option name
+    /// (`"Todo"`/`"In Progress"`/`"Done"`) for every item on the Dagalog
+    /// project (#11), fetched in one batched, paginated query rather than
+    /// one call per issue -- see
+    /// [#447](https://github.com/daghovland/rdf-datalog/issues/447).
+    /// Numbers absent from the returned map simply aren't on the project
+    /// (or have no Status value set) and get no `bl:status` triple from the
+    /// Project-Status derivation.
+    fn project_status_by_number(&self) -> Result<HashMap<u64, String>, GitHubError>;
 }
 
 /// Real source: shells out to the `gh` CLI, already authenticated in this
@@ -91,6 +161,81 @@ impl GitHubSource for GhCliSource {
         let stdout = self.run(&["api", "--paginate", "--jq", ".[].filename", &path])?;
         Ok(stdout.lines().map(|s| s.to_string()).collect())
     }
+
+    fn project_status_by_number(&self) -> Result<HashMap<u64, String>, GitHubError> {
+        // Same GraphQL shape scripts/set-issue-status.sh already uses to
+        // *write* the Status field, turned around to *read* it -- reusing
+        // the proven query shape rather than inventing a new one. Fetched
+        // directly off the project's own `items` connection (paginated 100
+        // at a time) instead of one query per issue/PR: with 400+ items in
+        // this repo this is a handful of requests total, not hundreds.
+        const QUERY: &str = r#"
+            query($project: ID!, $cursor: String) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  items(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      content {
+                        ... on Issue { number }
+                        ... on PullRequest { number }
+                      }
+                      fieldValueByName(name: "Status") {
+                        ... on ProjectV2ItemFieldSingleSelectValue { name }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        "#;
+
+        let mut status_by_number = HashMap::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut args = vec![
+                "api".to_string(),
+                "graphql".to_string(),
+                "-f".to_string(),
+                format!("query={QUERY}"),
+                "-f".to_string(),
+                format!("project={DAGALOG_PROJECT_ID}"),
+            ];
+            if let Some(c) = &cursor {
+                args.push("-f".to_string());
+                args.push(format!("cursor={c}"));
+            }
+            let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+            let stdout = self.run(&args_ref)?;
+            let parsed: ProjectItemsResponse = serde_json::from_str(&stdout).map_err(|e| {
+                GitHubError(format!(
+                    "failed to parse project items GraphQL response: {e}"
+                ))
+            })?;
+            let node = parsed.data.node.ok_or_else(|| {
+                GitHubError(format!(
+                    "Dagalog project {DAGALOG_PROJECT_ID} not found (or not visible to the authenticated `gh` user)"
+                ))
+            })?;
+
+            for item in node.items.nodes {
+                let Some(number) = item.content.and_then(|c| c.number) else {
+                    continue;
+                };
+                let Some(name) = item.field_value_by_name.and_then(|f| f.name) else {
+                    continue;
+                };
+                status_by_number.insert(number, name);
+            }
+
+            if node.items.page_info.has_next_page {
+                cursor = node.items.page_info.end_cursor;
+            } else {
+                break;
+            }
+        }
+        Ok(status_by_number)
+    }
 }
 
 fn parse_ndjson(stdout: &str) -> Result<Vec<RawIssue>, GitHubError> {
@@ -111,6 +256,12 @@ fn parse_ndjson(stdout: &str) -> Result<Vec<RawIssue>, GitHubError> {
 pub struct FixtureSource {
     pub issues: Vec<RawIssue>,
     pub pr_files: HashMap<u64, Vec<String>>,
+    /// Issue/PR number -> raw Projects v2 Status option name, as
+    /// [`GitHubSource::project_status_by_number`] would return from a live
+    /// call. Empty by default (set via [`FixtureSource::with_project_status`])
+    /// so existing fixture-based tests that don't care about Project Status
+    /// keep working unchanged.
+    pub project_status: HashMap<u64, String>,
 }
 
 impl FixtureSource {
@@ -120,7 +271,15 @@ impl FixtureSource {
         FixtureSource {
             issues: parse_ndjson(ndjson).expect("fixture NDJSON must parse"),
             pr_files,
+            project_status: HashMap::new(),
         }
+    }
+
+    /// Builder-style setter for [`FixtureSource::project_status`], for tests
+    /// exercising the Projects v2 Status -> `bl:status` derivation.
+    pub fn with_project_status(mut self, project_status: HashMap<u64, String>) -> Self {
+        self.project_status = project_status;
+        self
     }
 }
 
@@ -131,5 +290,9 @@ impl GitHubSource for FixtureSource {
 
     fn pr_changed_files(&self, pr_number: u64) -> Result<Vec<String>, GitHubError> {
         Ok(self.pr_files.get(&pr_number).cloned().unwrap_or_default())
+    }
+
+    fn project_status_by_number(&self) -> Result<HashMap<u64, String>, GitHubError> {
+        Ok(self.project_status.clone())
     }
 }
