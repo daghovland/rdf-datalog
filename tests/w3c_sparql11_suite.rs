@@ -1683,19 +1683,44 @@ fn w3c_sparql11_functions() {
         // functions must error when their first argument is anything other
         // than a *simple* literal (no language tag, no datatype — not even
         // `xsd:string`). The fixtures' error case uses a genuinely
-        // `"..."^^xsd:string`-typed input, but `turtle::convert_literal`
-        // (turtle_parser/src/lib.rs) deliberately collapses any
-        // `^^xsd:string` literal into the plain `RdfLiteral::LiteralString`
-        // variant at parse time (RDF 1.1 simple-literal/xsd:string
-        // equivalence) — so by the time STRDT/STRLANG see it, the datatype
-        // distinction the spec asks them to reject is already gone from the
-        // in-memory representation. Making STRDT/STRLANG spec-correct here
-        // would require *not* collapsing xsd:string at ingestion (a bigger,
-        // riskier representation change with its own blast radius across
-        // everything that currently relies on the collapsed form), so this
-        // is left as a known representation-level gap rather than patched
-        // narrowly. Tracked in #346; follow-up filed as #360 for the
-        // turtle-ingestion change specifically.
+        // `"..."^^xsd:string`-typed input in the underlying Turtle test data.
+        //
+        // #360 investigated whether `turtle::convert_literal`'s explicit
+        // `if datatype == xsd:string { collapse }` branch (which the issue
+        // as originally filed assumed was *the* cause) could simply be
+        // removed. It cannot fix this: `oxrdf::Literal::new_typed_literal`
+        // (the constructor `oxttl`'s Turtle grammar calls for every
+        // `"..."^^<iri>` literal, including explicit `^^xsd:string`) already
+        // collapses to its internal plain-string representation *before*
+        // `convert_literal` ever runs — verified directly by constructing
+        // `Literal::new_simple_literal("foo")` and
+        // `Literal::new_typed_literal("foo", xsd::STRING)` and observing
+        // `a == b` is `true` and both report `datatype() == xsd:string`.
+        // `oxttl` exposes no lower-level token/span API that would let a
+        // caller recover which form was written (`oxttl::lib`'s public
+        // surface is just the streaming triple/quad parsers plus
+        // `TextPosition` for error reporting). So the "explicit `^^xsd:string`
+        // vs. implicit/plain" distinction this fixture needs is not
+        // representable via the current `oxttl`/`oxrdf` parsing stack without
+        // hand-rolling a parallel Turtle literal tokenizer (quoted-string
+        // forms, escapes, comments, prefixed-vs-absolute datatype IRIs,
+        // ×4 for Turtle/TriG/N-Triples/N-Quads) kept in permanent lockstep
+        // with `oxttl`'s own grammar — assessed as materially riskier than
+        // the "quick fix" #346 already declined, not a narrow follow-up.
+        // Full writeup: `docs/plans/XSD_STRING_LITERAL_360_PLAN.md`.
+        //
+        // What #360 *did* fix: `sparql_parser`'s own query-text literal
+        // grammar was already keeping `"foo"^^xsd:string` distinct from
+        // `"foo"` (unlike Turtle ingestion), which meant `"foo" = "foo"^^xsd:string`
+        // inside a bare `FILTER` — no Turtle involved — incorrectly
+        // evaluated to `false`. `values_equal` (`sparql_parser/src/execute.rs`)
+        // now normalizes that split alongside its existing numeric/boolean
+        // cross-representation cases (#208); see
+        // `sparql_parser/tests/filter_eq_string_xsd_string_normalization_tests.rs`.
+        //
+        // These two entries stay skipped pending a maintainer decision on
+        // #360's scope (close as not-representable-by-this-parser-stack vs.
+        // retitle toward a value-based literal interning change).
         "STRDT() TypeErrors",
         "STRLANG() TypeErrors",
     ];
