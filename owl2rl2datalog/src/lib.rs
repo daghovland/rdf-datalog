@@ -181,8 +181,8 @@ fn transitive_object_property(
 /// a plain `P rdfs:subPropertyOf Q`) is implemented here. The
 /// `PropertyExpressionChain` variant is `prp-spo2` (property chains, e.g.
 /// `hasParent ∘ hasParent ⊑ hasGrandparent`) — a separate, more complex OWL 2
-/// RL rule, out of scope for
-/// [#451](https://github.com/daghovland/rdf-datalog/issues/451); it is
+/// RL rule, tracked as its own follow-up in
+/// [#456](https://github.com/daghovland/rdf-datalog/issues/456); it is
 /// skipped with a `log::warn!` rather than silently dropped with no signal.
 fn sub_object_property_of(
     resources: &mut GraphElementManager,
@@ -193,7 +193,7 @@ fn sub_object_property_of(
         SubPropertyExpression::SubObjectPropertyExpression(prop) => prop,
         SubPropertyExpression::PropertyExpressionChain(_) => {
             log::warn!(
-                "Property chain sub-property axioms (prp-spo2) not implemented yet, see #451"
+                "Property chain sub-property axioms (prp-spo2) not implemented yet, see #456"
             );
             return vec![];
         }
