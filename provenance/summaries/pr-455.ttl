@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, written under CLAUDE.md step 6b before merge.
+
+ghpull:455 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rl2datalog: implement prp-spo1 (rdfs:subPropertyOf propagation to ABox) (#451)" ;
+    bl:number 455 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:451 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr455 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:451 ;
+    prov:startedAtTime "2026-08-11T16:38:08Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-11T16:38:08Z"^^xsd:dateTime .
+
+session:pr455Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #451 reported that `P rdfs:subPropertyOf Q` axioms never propagated to the ABox: `object_property_axiom2datalog`'s match on `ObjectPropertyAxiom` had no arm at all for `SubObjectPropertyOf`, so the axiom variant was silently dropped rather than warned about. Fixed by adding `sub_object_property_of`, which emits the OWL 2 RL `prp-spo1` rule `Q[?x,?y] :- P[?x,?y]` directly (the subproperty pair is fixed TBox, so the rule is specialized per axiom rather than joining against a runtime rdfs:subPropertyOf triple, consistent with how the rest of this module compiles TBox axioms). While tracing the bug, found the same gap on the data-property side was worse: `data_property_axiom2datalog`'s `SubDataPropertyOf` arm existed and extracted both IRIs, but then discarded them and returned no rule — a silent no-op that issue #451 didn't name but is the identical defect. Fixed alongside with `sub_data_property_of` since it's the same root cause and trivial to cover once `sub_object_property_of` existed as a template. Added three tests to tests/owl_integration.rs: the exact reproducer from #451, a self-subproperty case (P subPropertyOf P) to check for infinite loops/panics, and the data-property variant." ;
+    agp:reasoningFor ghpull:455 ;
+    agp:decisionPoint session:pr455Decision ;
+    prov:wasGeneratedBy session:pr455 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr455Decision a agp:Decision ;
+    agp:summaryText "For SubPropertyExpression::PropertyExpressionChain (prp-spo2, e.g. hasParent∘hasParent ⊑ hasGrandparent), chose to match on it explicitly and emit a log::warn! naming the axiom and linking to #451, then return no rules — rather than either (a) silently falling through the way the pre-fix code did for SubObjectPropertyOf entirely, or (b) attempting a partial/incorrect compilation of chains using the existing two-variable rule shape." ;
+    agp:alternative "Implementing prp-spo2 in the same PR was rejected as scope creep: property chains need a rule body with as many joined atoms as the chain length, a materially different code shape from the single-atom-body rules the rest of object_property_axiom2datalog produces, and deserve their own test-first pass rather than being bolted onto a same-PR fix for a different, simpler rule." .
