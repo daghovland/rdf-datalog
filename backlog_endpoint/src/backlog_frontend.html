@@ -134,6 +134,19 @@
   .relevant-pr-card { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.6rem 0.8rem;
                        margin-bottom: 0.6rem; background: #fff; }
   .relevant-pr-text { margin: 0.35rem 0 0; font-size: 0.85rem; color: #333; line-height: 1.4; }
+  /* Item detail view (#443) */
+  .item-back-link { font-size: 0.85rem; color: #005a9c; text-decoration: none; display: inline-block; margin-bottom: 0.8rem; }
+  .item-back-link:hover { text-decoration: underline; }
+  .item-detail-title { margin: 0 0 0.3rem; font-size: 1.2rem; }
+  .item-detail-meta { font-size: 0.82rem; color: #555; margin-bottom: 0.6rem; }
+  .item-detail-meta .item-number { margin-right: 0.3rem; }
+  .item-rel-list { margin: 0.3rem 0 0.6rem; padding-left: 1.2rem; font-size: 0.85rem; }
+  .item-rel-list li { margin-bottom: 0.2rem; }
+  .item-detail-section-title { font-size: 0.85rem; color: #555; text-transform: uppercase;
+                                 letter-spacing: 0.02em; margin: 0.9rem 0 0.3rem; }
+  .item-github-footer { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid #e0e0e0;
+                          font-size: 0.82rem; }
+  .item-github-footer a { color: #005a9c; }
 </style>
 </head>
 <body>
@@ -247,6 +260,18 @@
       <div id="relevant-error"></div>
       <div id="relevant-results"></div>
     </section>
+
+    <!-- ── Item detail view (#443): a single bl:Issue/bl:PullRequest's own
+         metadata plus every agp:TranscriptSummary reasoning about it,
+         reached via clicking an in-dashboard reference rather than the nav
+         bar -- see #item=<url-encoded-iri> routing in the script below. ── -->
+    <section id="view-item" class="view">
+      <a href="#" id="item-back-link" class="item-back-link">&larr; Back</a>
+      <div id="item-error"></div>
+      <div id="item-content">
+        <div class="empty-note">Loading item&hellip;</div>
+      </div>
+    </section>
   </main>
 
 <script>
@@ -326,11 +351,47 @@
     return e;
   }
 
-  function iriLink(iri, text) {
+  // ── Item IRI validation (#443) — the item IRI now also arrives from the
+  //    URL (#item=<encoded-iri> hash routing below), not just from SPARQL
+  //    query results, so it's untrusted input. Gate both sinks that matter
+  //    (a raw <IRI> embedded in a SPARQL query, and an href assigned
+  //    without going through the browser's own URL parser) through this one
+  //    check: only a real https://github.com/... issue/PR URL is accepted,
+  //    with none of the characters SPARQL's IRIREF grammar disallows and no
+  //    javascript:/data:-style scheme confusion. ──
+  const ITEM_IRI_RE = /^https:\/\/github\.com\/[A-Za-z0-9._/-]+$/;
+  function isValidItemIri(iri) {
+    return typeof iri === 'string' && ITEM_IRI_RE.test(iri);
+  }
+
+  // githubLink: always an actual outbound link to the real GitHub page
+  // (opens in a new tab) -- used for the "escape hatch" footer link on the
+  // item detail page and the epics view's explicit "GitHub: <url>" line,
+  // where the visible text IS the GitHub URL so it would be misleading to
+  // route it in-page.
+  function githubLink(iri, text) {
     const a = document.createElement('a');
     a.href = iri;
     a.target = '_blank';
     a.rel = 'noopener';
+    a.className = 'title-link';
+    a.textContent = text;
+    return a;
+  }
+
+  // iriLink: the in-dashboard router (#443) -- issue/PR references
+  // throughout the Board/Crates/Provenance/Relevant views now open the
+  // item detail view instead of leaving the dashboard, via a plain
+  // '#item=<encoded-iri>' href (no click handler/preventDefault needed:
+  // the browser's own hashchange event drives handleHashRoute below, which
+  // keeps bookmarking and back/forward working for free). Invalid IRIs
+  // (shouldn't happen for SPARQL-sourced values, but defensive since this
+  // is shared code) fall back to githubLink rather than producing a
+  // dead '#item=' link.
+  function iriLink(iri, text) {
+    if (!isValidItemIri(iri)) return githubLink(iri, text);
+    const a = document.createElement('a');
+    a.href = '#item=' + encodeURIComponent(iri);
     a.className = 'title-link';
     a.textContent = text;
     return a;
@@ -544,7 +605,7 @@
         linkLine.style.fontSize = '0.78rem';
         linkLine.style.margin = '0.3rem 0';
         linkLine.appendChild(document.createTextNode('GitHub: '));
-        linkLine.appendChild(iriLink(iri, iri));
+        linkLine.appendChild(githubLink(iri, iri));
         details.appendChild(linkLine);
 
         renderLabelBadges(details, labelsByIssue.get(iri) || []);
@@ -1225,17 +1286,345 @@
     if (form) form.addEventListener('submit', handleRelevantSubmit);
   }
 
+  // ── Item detail view (#443): a single bl:Issue/bl:PullRequest's own
+  //    bl: metadata plus every agp:TranscriptSummary reasoning about it
+  //    (agp:reasoningFor), reached by clicking any iriLink-rendered
+  //    reference elsewhere in this page. Several small unparameterized-
+  //    *shape* queries (each VALUES-parameterized by the one clicked IRI),
+  //    joined client-side -- same pattern as loadBoard/loadEpics/
+  //    loadProvenance, not one giant join, so a PR with e.g. zero
+  //    bl:touchesFile still renders instead of vanishing from an inner
+  //    join. ──
+  const ITEM_PREFIXES =
+    'PREFIX bl: <' + BL + '> ' +
+    'PREFIX agp: <' + AGP + '> ' +
+    'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> ';
+
+  function valuesItem(iri) {
+    return 'VALUES ?item { <' + iri + '> } ';
+  }
+
+  async function loadItemCore(iri) {
+    const json = await sparqlFetch(
+      ITEM_PREFIXES +
+        'SELECT ?type ?title ?state ?status WHERE { ' +
+        valuesItem(iri) +
+        '?item a ?type . ' +
+        'OPTIONAL { ?item rdfs:label ?title } ' +
+        'OPTIONAL { ?item bl:state ?state } ' +
+        'OPTIONAL { ?item bl:status ?status } ' +
+        '}'
+    );
+    const rows = bindingsOf(json);
+    const types = new Set();
+    let title = null;
+    let state = null;
+    let status = null;
+    for (const row of rows) {
+      if (row.type) types.add(row.type.value);
+      if (row.title && !title) title = row.title.value;
+      if (row.state && !state) state = row.state.value;
+      if (row.status && !status) status = row.status.value;
+    }
+    return { types, title, state, status };
+  }
+
+  async function loadItemLabels(iri) {
+    const json = await sparqlFetch(
+      ITEM_PREFIXES +
+        'SELECT ?labelName WHERE { ' +
+        valuesItem(iri) +
+        '?item bl:hasLabel ?lbl . ?lbl rdfs:label ?labelName . ' +
+        '}'
+    );
+    return bindingsOf(json).map((row) => row.labelName.value);
+  }
+
+  // PR-only: files/crates touched, and issues this PR closes/relates to.
+  async function loadPrRelations(iri) {
+    const [filesJson, cratesJson, closesJson, relatesJson] = await Promise.all([
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?file WHERE { ' + valuesItem(iri) + '?item bl:touchesFile ?file . }'
+      ),
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?crate ?label WHERE { ' +
+          valuesItem(iri) +
+          '?item bl:touchesCrate ?crate . OPTIONAL { ?crate rdfs:label ?label } ' +
+          '}'
+      ),
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?issue ?title WHERE { ' +
+          valuesItem(iri) +
+          '?item bl:closesIssue ?issue . OPTIONAL { ?issue rdfs:label ?title } ' +
+          '}'
+      ),
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?issue ?title WHERE { ' +
+          valuesItem(iri) +
+          '?item bl:relatesToIssue ?issue . OPTIONAL { ?issue rdfs:label ?title } ' +
+          '}'
+      ),
+    ]);
+    return {
+      files: bindingsOf(filesJson).map((row) => row.file.value),
+      crates: bindingsOf(cratesJson).map((row) => ({
+        iri: row.crate.value,
+        label: row.label ? row.label.value : row.crate.value,
+      })),
+      closesIssues: bindingsOf(closesJson).map((row) => ({
+        iri: row.issue.value,
+        title: row.title ? row.title.value : row.issue.value,
+      })),
+      relatesToIssues: bindingsOf(relatesJson).map((row) => ({
+        iri: row.issue.value,
+        title: row.title ? row.title.value : row.issue.value,
+      })),
+    };
+  }
+
+  // Issue-only reverse direction: which PRs (already, or intend to) close
+  // or relate to this issue -- the join direction an issue-detail visitor
+  // actually wants (see #443's own scope note), not just the PR-side
+  // outgoing properties above.
+  async function loadIssueClosedBy(iri) {
+    const [closesJson, relatesJson] = await Promise.all([
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?pr ?title WHERE { ' +
+          valuesItem(iri) +
+          '?pr bl:closesIssue ?item . OPTIONAL { ?pr rdfs:label ?title } ' +
+          '}'
+      ),
+      sparqlFetch(
+        ITEM_PREFIXES +
+          'SELECT ?pr ?title WHERE { ' +
+          valuesItem(iri) +
+          '?pr bl:relatesToIssue ?item . OPTIONAL { ?pr rdfs:label ?title } ' +
+          '}'
+      ),
+    ]);
+    return {
+      closedBy: bindingsOf(closesJson).map((row) => ({
+        iri: row.pr.value,
+        title: row.title ? row.title.value : row.pr.value,
+      })),
+      relatedFrom: bindingsOf(relatesJson).map((row) => ({
+        iri: row.pr.value,
+        title: row.title ? row.title.value : row.pr.value,
+      })),
+    };
+  }
+
+  // agp:TranscriptSummary reasoning about this item -- deliberately a NEW
+  // query rather than adapting loadSummariesBySession: that query requires
+  // ?summary prov:wasGeneratedBy ?session, which would silently drop a
+  // summary that has agp:reasoningFor but whose session join fails for any
+  // reason. Here agp:reasoningFor <item> is the only required triple;
+  // everything else is OPTIONAL, matching how this page's other views
+  // treat sparse fields.
+  async function loadItemSummaries(iri) {
+    const json = await sparqlFetch(
+      ITEM_PREFIXES +
+        'SELECT ?summary ?summaryText ?abstractText WHERE { ' +
+        valuesItem(iri) +
+        '?summary a agp:TranscriptSummary ; agp:reasoningFor ?item . ' +
+        'OPTIONAL { ?summary agp:summaryText ?summaryText } ' +
+        'OPTIONAL { ?summary agp:abstractText ?abstractText } ' +
+        '}'
+    );
+    return bindingsOf(json).map((row) => ({
+      summary: row.summary.value,
+      summaryText: row.summaryText ? row.summaryText.value : '',
+      abstractText: row.abstractText ? row.abstractText.value : null,
+      reasoningFor: iri,
+    }));
+  }
+
+  function renderItemRelList(title, items, renderText) {
+    if (!items || items.length === 0) return null;
+    const wrap = el('div');
+    wrap.appendChild(el('div', 'item-detail-section-title', title));
+    const ul = el('ul', 'item-rel-list');
+    for (const item of items) {
+      const li = document.createElement('li');
+      if (item.iri) {
+        li.appendChild(el('span', 'item-number', issueNumber(item.iri)));
+        li.appendChild(iriLink(item.iri, item.title || item.iri));
+      } else {
+        li.appendChild(document.createTextNode(renderText ? renderText(item) : String(item)));
+      }
+      ul.appendChild(li);
+    }
+    wrap.appendChild(ul);
+    return wrap;
+  }
+
+  async function loadItem(iri) {
+    const contentEl = document.getElementById('item-content');
+    const errEl = document.getElementById('item-error');
+    contentEl.textContent = '';
+    errEl.textContent = '';
+
+    if (!isValidItemIri(iri)) {
+      errEl.appendChild(
+        el('div', 'msg err', 'Invalid item reference: not a recognised GitHub issue/PR URL.')
+      );
+      return;
+    }
+
+    contentEl.appendChild(el('div', 'empty-note', 'Loading item…'));
+
+    try {
+      const [core, labels, summaries, decisionsBySummary] = await Promise.all([
+        loadItemCore(iri),
+        loadItemLabels(iri),
+        loadItemSummaries(iri),
+        loadDecisionsBySummary(),
+      ]);
+
+      const isPr = core.types.has(BL + 'PullRequest');
+      const relations = isPr ? await loadPrRelations(iri) : await loadIssueClosedBy(iri);
+
+      contentEl.textContent = '';
+
+      if (!core.title && core.types.size === 0) {
+        contentEl.appendChild(
+          el('div', 'empty-note', 'No data found for this item in the current snapshot.')
+        );
+        return;
+      }
+
+      const card = el('div', 'card');
+      card.appendChild(
+        el('h2', 'item-detail-title', (issueNumber(iri) + ' ' + (core.title || iri)).trim())
+      );
+
+      const meta = el('div', 'item-detail-meta');
+      meta.appendChild(
+        document.createTextNode(
+          (isPr ? 'Pull request' : 'Issue') +
+            (core.state ? ' · ' + core.state.replace(BL, '') : '') +
+            (core.status ? ' · ' + core.status.replace(BL, '') : '')
+        )
+      );
+      card.appendChild(meta);
+
+      renderLabelBadges(card, labels);
+
+      if (isPr) {
+        const closes = renderItemRelList('Closes', relations.closesIssues);
+        if (closes) card.appendChild(closes);
+        const relates = renderItemRelList('Relates to', relations.relatesToIssues);
+        if (relates) card.appendChild(relates);
+        const crates = renderItemRelList(
+          'Touches crates',
+          relations.crates.map((c) => ({ title: c.label }))
+        );
+        if (crates) card.appendChild(crates);
+        if (relations.files.length > 0) {
+          const wrap = el('div');
+          wrap.appendChild(el('div', 'item-detail-section-title', 'Touches files'));
+          const ul = el('ul', 'item-rel-list');
+          for (const f of relations.files) ul.appendChild(el('li', null, f));
+          wrap.appendChild(ul);
+          card.appendChild(wrap);
+        }
+      } else {
+        const closedBy = renderItemRelList('Closed by', relations.closedBy);
+        if (closedBy) card.appendChild(closedBy);
+        const relatedFrom = renderItemRelList('Related PRs', relations.relatedFrom);
+        if (relatedFrom) card.appendChild(relatedFrom);
+      }
+
+      const footer = el('div', 'item-github-footer');
+      footer.appendChild(document.createTextNode('Full comments, diff, and CI status: '));
+      footer.appendChild(githubLink(iri, iri));
+      card.appendChild(footer);
+
+      contentEl.appendChild(card);
+
+      const reasoningCard = el('div', 'card');
+      reasoningCard.appendChild(el('h2', null, 'Reasoning'));
+      if (summaries.length === 0) {
+        reasoningCard.appendChild(
+          el('div', 'empty-note', 'No transcript summary reasoning recorded for this item.')
+        );
+      } else {
+        for (const summary of summaries) {
+          reasoningCard.appendChild(renderSummaryBlock(summary, decisionsBySummary));
+        }
+      }
+      contentEl.appendChild(reasoningCard);
+    } catch (e) {
+      contentEl.textContent = '';
+      errEl.appendChild(el('div', 'msg err', 'Failed to load item: ' + e.message));
+    }
+  }
+
+  // ── Hash-based routing (#443): '#item=<url-encoded-iri>' opens the item
+  //    detail view. initNav() (below) never touches location.hash, so
+  //    this is a parallel mechanism, not an extension of it -- nav clicks
+  //    explicitly clear the hash (see initNav) so a reload after clicking
+  //    "Board" doesn't silently bounce back to the last-viewed item. ──
+  let lastNonItemView = 'board';
+
+  function activateView(viewName) {
+    document.querySelectorAll('.nav-link').forEach((l) => {
+      l.classList.toggle('active', l.dataset.view === viewName);
+    });
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+    const target = document.getElementById('view-' + viewName);
+    if (target) target.classList.add('active');
+    if (viewName === 'crates') maybeRenderCrateGraph();
+  }
+
+  function handleHashRoute() {
+    const hash = location.hash;
+    const m = /^#item=(.+)$/.exec(hash);
+    if (!m) {
+      activateView(lastNonItemView);
+      return;
+    }
+    let iri;
+    try {
+      iri = decodeURIComponent(m[1]);
+    } catch {
+      iri = m[1];
+    }
+    activateView('item');
+    loadItem(iri);
+  }
+
+  function initItemRouting() {
+    window.addEventListener('hashchange', handleHashRoute);
+    const backLink = document.getElementById('item-back-link');
+    if (backLink) {
+      backLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        location.hash = '';
+      });
+    }
+  }
+
   // ── Nav (client-side view switch; no page reload — same page other
   //     sibling sub-issues, #382/#383/#384, will plug their views into) ──
   function initNav() {
     const links = document.querySelectorAll('.nav-link');
     links.forEach((link) => {
       link.addEventListener('click', () => {
-        links.forEach((l) => l.classList.remove('active'));
-        link.classList.add('active');
-        document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-        document.getElementById('view-' + link.dataset.view).classList.add('active');
-        if (link.dataset.view === 'crates') maybeRenderCrateGraph();
+        lastNonItemView = link.dataset.view;
+        // Clear any '#item=...' hash first so a later reload doesn't
+        // silently bounce back to the item detail view (see
+        // handleHashRoute above) -- location.hash = '' fires hashchange,
+        // which would re-run activateView(lastNonItemView) redundantly but
+        // harmlessly; activateView is also called directly here so the
+        // switch is synchronous even if hashchange is coalesced/delayed.
+        if (location.hash) location.hash = '';
+        activateView(link.dataset.view);
       });
     });
   }
@@ -1254,11 +1643,13 @@
   initNav();
   initRelevantPanel();
   initCrateGraphButtons();
+  initItemRouting();
   loadFreshness();
   loadBoard();
   loadEpics();
   loadCrates();
   loadProvenance();
+  handleHashRoute();
 })();
 </script>
 </body>

@@ -238,6 +238,48 @@ async fn root_route_serves_relevant_panel_markers() {
     );
 }
 
+/// The item detail view (#443) must be present in the served body: its
+/// section id, the `#item=` hash-routing scheme `iriLink` now emits instead
+/// of a raw GitHub URL, and the `agp:reasoningFor` join used by its
+/// per-item transcript-summary query. Same "assert markers in the static
+/// body" coverage level as the other views in this file -- this view's
+/// live query behavior (given a real item IRI) is verified by hand against
+/// the real corpus (see #443's PR description for that manual verification,
+/// since no headless browser is available in this environment).
+#[tokio::test]
+async fn root_route_serves_item_detail_view_markers() {
+    let server = TestServer::start(TEST_SPARQL_ENDPOINT).await;
+
+    let resp = server
+        .client
+        .get(&server.base_url)
+        .send()
+        .await
+        .expect("request failed");
+
+    let body = resp.text().await.expect("body");
+    assert!(
+        body.contains("id=\"view-item\""),
+        "expected the item detail view's section id in body"
+    );
+    assert!(
+        body.contains("id=\"item-back-link\""),
+        "expected the item detail view's back-navigation link in body"
+    );
+    assert!(
+        body.contains("'#item=' + encodeURIComponent(iri)"),
+        "expected iriLink to route through the '#item=' hash scheme"
+    );
+    assert!(
+        body.contains("agp:reasoningFor ?item"),
+        "expected the item detail view's own agp:reasoningFor query in body"
+    );
+    assert!(
+        body.contains("isValidItemIri"),
+        "expected item-IRI validation guarding the hash-routed IRI in body"
+    );
+}
+
 /// The configured `--sparql-endpoint` must actually be injected into the
 /// served page as `window.SPARQL_ENDPOINT`, proving the cross-process
 /// wiring the #381 restructuring depends on (the page's JS reads this
