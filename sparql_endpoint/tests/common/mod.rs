@@ -14,8 +14,10 @@ use ingress::NetworkPolicy;
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::path::Path;
 use std::sync::Arc;
+use jsonwebtoken::{Algorithm, Header};
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
+use crate::common;
 
 /// A running test server bound to a random loopback port.
 ///
@@ -31,7 +33,7 @@ pub struct TestServer {
     _handle: tokio::task::JoinHandle<()>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 impl TestServer {
     /// Start a read-only server pre-loaded with Turtle data.
     ///
@@ -623,12 +625,41 @@ impl TestServer {
 // oidc_auth.rs and any future test file that needs OIDC tokens.
 
 /// RSA key pair used by all OIDC integration tests.
-#[allow(dead_code)]
+#[cfg(test)]
 pub struct OidcTestKeys {
     pub encoding_key: jsonwebtoken::EncodingKey,
     pub public_key: rsa::RsaPublicKey,
     pub kid: String,
 }
+
+// ── Shared test RSA key pair (from common) ────────────────────────────────────
+
+#[cfg(test)]
+fn oidc_keys() -> &'static common::OidcTestKeys {
+    common::oidc_test_keys()
+}
+
+#[cfg(test)]
+#[derive(serde::Serialize)]
+struct TestClaims<'a> {
+    iss: &'a str,
+    aud: &'a str,
+    exp: u64,
+    roles: Vec<&'a str>,
+}
+fn make_token(iss: &str, aud: &str, exp: u64, roles: &[&str]) -> String {
+    let keys = oidc_keys();
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(keys.kid.clone());
+    let claims = TestClaims {
+        iss,
+        aud,
+        exp,
+        roles: roles.to_vec(),
+    };
+    jsonwebtoken::encode(&header, &claims, &keys.encoding_key).expect("encode token")
+}
+
 
 static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock::new();
 
@@ -636,7 +667,7 @@ static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock
 ///
 /// The RSA-2048 key is generated lazily on first call and reused for the
 /// lifetime of the test process.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn oidc_test_keys() -> &'static OidcTestKeys {
     SHARED_OIDC_KEYS.get_or_init(|| {
         use rsa::{
