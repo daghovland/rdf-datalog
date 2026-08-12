@@ -177,36 +177,72 @@ fn transitive_object_property(
 
 /// prp-spo1: T(?p1, rdfs:subPropertyOf, ?p2) T(?x, ?p1, ?y) -> T(?x, ?p2, ?y)
 ///
-/// Only the simple case (`SubPropertyExpression::SubObjectPropertyExpression`,
-/// a plain `P rdfs:subPropertyOf Q`) is implemented here. The
-/// `PropertyExpressionChain` variant is `prp-spo2` (property chains, e.g.
-/// `hasParent ∘ hasParent ⊑ hasGrandparent`) — a separate, more complex OWL 2
-/// RL rule, tracked as its own follow-up in
-/// [#456](https://github.com/daghovland/rdf-datalog/issues/456); it is
-/// skipped with a `log::warn!` rather than silently dropped with no signal.
+/// The simple case (`SubPropertyExpression::SubObjectPropertyExpression`, a
+/// plain `P rdfs:subPropertyOf Q`) compiles to the single-atom-body rule
+/// above. The `PropertyExpressionChain` variant is `prp-spo2` (property
+/// chains, e.g. `hasParent ∘ hasParent ⊑ hasGrandparent`) and is delegated to
+/// [`property_expression_chain_rule`]. See
+/// [#456](https://github.com/daghovland/rdf-datalog/issues/456).
 fn sub_object_property_of(
     resources: &mut GraphElementManager,
     sub_prop: &SubPropertyExpression,
     super_prop: &ObjectPropertyExpression,
 ) -> Vec<Rule> {
-    let sub_prop = match sub_prop {
-        SubPropertyExpression::SubObjectPropertyExpression(prop) => prop,
-        SubPropertyExpression::PropertyExpressionChain(_) => {
-            log::warn!(
-                "Property chain sub-property axioms (prp-spo2) not implemented yet, see #456"
-            );
-            return vec![];
+    match sub_prop {
+        SubPropertyExpression::SubObjectPropertyExpression(prop) => {
+            let Some(body_quad) = get_obj_prop_pattern(resources, prop, "x", "y") else {
+                return vec![];
+            };
+            let Some(head_quad) = get_obj_prop_pattern(resources, super_prop, "x", "y") else {
+                return vec![];
+            };
+            vec![Rule {
+                head: RuleHead::NormalHead(head_quad),
+                body: vec![RuleAtom::PositivePattern(body_quad)],
+            }]
         }
-    };
-    let Some(body_quad) = get_obj_prop_pattern(resources, sub_prop, "x", "y") else {
+        SubPropertyExpression::PropertyExpressionChain(chain) => {
+            property_expression_chain_rule(resources, chain, super_prop)
+        }
+    }
+}
+
+/// prp-spo2: `T(?x0,P1,?x1) T(?x1,P2,?x2) ... T(?x(n-1),Pn,?xn) -> T(?x0,Q,?xn)`
+/// for `SubPropertyExpression::PropertyExpressionChain(vec![P1, ..., Pn])`
+/// with superproperty `Q`.
+///
+/// Builds one body atom per chain link (`Pi` between `x(i-1)` and `xi`, via
+/// [`get_obj_prop_pattern`]) and a single head atom for `super_prop` spanning
+/// the whole chain (`x0` to `xn`). This naturally generalizes the simple
+/// `prp-spo1` case: a chain of length 1 degenerates to the same single-atom
+/// rule shape. An empty chain has no corresponding entailment (there is no
+/// `x0`/`xn` to relate) and yields no rule; a chain containing an
+/// `ObjectPropertyExpression` variant `get_obj_prop_pattern` can't turn into a
+/// pattern (currently only nested `ObjectPropertyChain`) causes the whole
+/// rule to be skipped rather than emitted with a missing/partial body.
+fn property_expression_chain_rule(
+    resources: &mut GraphElementManager,
+    chain: &[ObjectPropertyExpression],
+    super_prop: &ObjectPropertyExpression,
+) -> Vec<Rule> {
+    if chain.is_empty() {
         return vec![];
-    };
-    let Some(head_quad) = get_obj_prop_pattern(resources, super_prop, "x", "y") else {
+    }
+    let n = chain.len();
+    let var = |i: usize| format!("x{i}");
+    let mut body = Vec::with_capacity(n);
+    for (i, prop) in chain.iter().enumerate() {
+        let Some(atom) = get_obj_prop_pattern(resources, prop, &var(i), &var(i + 1)) else {
+            return vec![];
+        };
+        body.push(RuleAtom::PositivePattern(atom));
+    }
+    let Some(head_quad) = get_obj_prop_pattern(resources, super_prop, &var(0), &var(n)) else {
         return vec![];
     };
     vec![Rule {
         head: RuleHead::NormalHead(head_quad),
-        body: vec![RuleAtom::PositivePattern(body_quad)],
+        body,
     }]
 }
 
@@ -701,5 +737,82 @@ mod tbox_retraction_tests {
             ds.named_graphs.contains(&fact_y_b),
             "base ABox fact y a B must survive TBox retraction"
         );
+    }
+}
+
+#[cfg(test)]
+mod prp_spo2_tests {
+    //! Unit-level coverage for `prp-spo2` (property chain sub-property
+    //! axioms, [#456](https://github.com/daghovland/rdf-datalog/issues/456))
+    //! that isn't reachable end-to-end through Turtle, notably a chain
+    //! containing an `ObjectPropertyExpression` variant
+    //! `get_obj_prop_pattern` can't turn into a pattern
+    //! (`ObjectPropertyChain` nested inside another chain — not something
+    //! the OWL 2 spec's `owl:propertyChainAxiom` RDF mapping can even
+    //! produce, since chain list elements are simple property expressions,
+    //! but `property_expression_chain_rule` must still handle it defensively
+    //! since the type system allows it). End-to-end coverage of the normal
+    //! cases (empty/length-1/length-2/length-3 chains) lives in
+    //! `tests/owl_integration.rs`.
+    use super::*;
+    use dag_rdf::Datastore;
+
+    fn named_prop(iri: &str) -> ObjectPropertyExpression {
+        ObjectPropertyExpression::NamedObjectProperty(FullIri(IriReference(iri.to_string())))
+    }
+
+    /// A chain containing an unsupported property expression partway through
+    /// (here, a nested `ObjectPropertyChain`, which `get_obj_prop_pattern`
+    /// returns `None` for) must skip the whole rule, not emit a
+    /// partial/wrong one.
+    #[test]
+    fn chain_with_unsupported_link_skips_whole_rule() {
+        let mut ds = Datastore::new(10);
+        let chain = vec![
+            named_prop("http://example.org/p1"),
+            ObjectPropertyExpression::ObjectPropertyChain(vec![
+                named_prop("http://example.org/inner1"),
+                named_prop("http://example.org/inner2"),
+            ]),
+            named_prop("http://example.org/p3"),
+        ];
+        let super_prop = named_prop("http://example.org/q");
+
+        let rules = property_expression_chain_rule(&mut ds.resources, &chain, &super_prop);
+
+        assert!(
+            rules.is_empty(),
+            "a chain with any unsupported link must produce no rule at all"
+        );
+    }
+
+    /// Sanity check at the unit level: a well-formed 2-element chain
+    /// produces exactly one rule with a 2-atom body and a head spanning
+    /// `x0` to `x2`.
+    #[test]
+    fn well_formed_chain_produces_single_rule_with_n_atom_body() {
+        let mut ds = Datastore::new(10);
+        let chain = vec![
+            named_prop("http://example.org/hasParent"),
+            named_prop("http://example.org/hasParent"),
+        ];
+        let super_prop = named_prop("http://example.org/hasGrandparent");
+
+        let rules = property_expression_chain_rule(&mut ds.resources, &chain, &super_prop);
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].body.len(), 2);
+    }
+
+    /// An empty chain (`PropertyExpressionChain(vec![])`) has no
+    /// corresponding entailment and must produce no rule.
+    #[test]
+    fn empty_chain_produces_no_rule() {
+        let mut ds = Datastore::new(10);
+        let super_prop = named_prop("http://example.org/q");
+
+        let rules = property_expression_chain_rule(&mut ds.resources, &[], &super_prop);
+
+        assert!(rules.is_empty());
     }
 }
