@@ -299,9 +299,12 @@ impl DatalogProgram {
                         rule_id,
                         body_witnesses,
                     };
-                    let is_new = self.derived_from.record(derived, derivation.clone());
-                    if is_new && let Some(buf) = track.as_deref_mut() {
-                        buf.push((derived, derivation));
+                    if let Some(buf) = track.as_deref_mut() {
+                        if self.derived_from.record(derived, derivation.clone()) {
+                            buf.push((derived, derivation));
+                        }
+                    } else {
+                        self.derived_from.record(derived, derivation); // move — no clone
                     }
                 }
             }
