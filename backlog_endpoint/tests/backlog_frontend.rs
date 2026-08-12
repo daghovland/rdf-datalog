@@ -280,6 +280,56 @@ async fn root_route_serves_item_detail_view_markers() {
     );
 }
 
+/// The summary readability rework (#444) must be present in the served
+/// body: the shared `renderSummaryText` helper (used by `renderSummaryBlock`
+/// for the Provenance tab + item detail page, and by the "what's relevant"
+/// panel's `renderRelevantGroup`), its `.summary-content`/`.summary-details`
+/// CSS structure, and the "Full reasoning" disclosure label used to collapse
+/// the full `agp:summaryText` behind `agp:abstractText` when both are
+/// present. Same "assert markers in the static body" coverage level as the
+/// rest of this file -- no headless browser is available, so the actual
+/// rendered structure for real corpus data (e.g. `provenance/summaries/
+/// pr-434.ttl`'s ~1900-character summary) was verified by hand via
+/// `scripts/serve-backlog.sh` + curl (see #444's PR description).
+#[tokio::test]
+async fn root_route_serves_summary_readability_markers() {
+    let server = TestServer::start(TEST_SPARQL_ENDPOINT).await;
+
+    let resp = server
+        .client
+        .get(&server.base_url)
+        .send()
+        .await
+        .expect("request failed");
+
+    let body = resp.text().await.expect("body");
+    assert!(
+        body.contains("function renderSummaryText("),
+        "expected the shared renderSummaryText helper in body"
+    );
+    assert!(
+        body.contains("details.className = 'summary-details'"),
+        "expected details.className = 'summary-details' assignment in body"
+    );
+    assert!(
+        body.contains("'Full reasoning'"),
+        "expected the 'Full reasoning' disclosure label in body"
+    );
+    assert!(
+        body.contains(".summary-content {"),
+        "expected the narrower-measure .summary-content CSS rule in body"
+    );
+    assert!(
+        body.contains("renderSummaryText(card, row.abstractText, row.summaryText)"),
+        "expected the 'what's relevant' panel to reuse renderSummaryText"
+    );
+    assert!(
+        !body.contains("relevant-pr-text"),
+        "expected the old standalone .relevant-pr-text rule to be removed \
+         in favor of the shared summary-content structure"
+    );
+}
+
 /// The configured `--sparql-endpoint` must actually be injected into the
 /// served page as `window.SPARQL_ENDPOINT`, proving the cross-process
 /// wiring the #381 restructuring depends on (the page's JS reads this
