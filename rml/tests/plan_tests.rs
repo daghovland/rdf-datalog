@@ -48,7 +48,6 @@ fn simple_triples_map(source_file: &str, subject_template: &str) -> TriplesMap {
 // ── translate() ───────────────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn translate_one_predicate_object_map_yields_one_plan() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -58,7 +57,6 @@ fn translate_one_predicate_object_map_yields_one_plan() {
 }
 
 #[test]
-//#[ignore]
 fn translate_two_predicate_object_maps_yield_two_plans() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
     tm.predicate_object_maps.push(PredicateObjectMap {
@@ -86,7 +84,6 @@ fn translate_two_predicate_object_maps_yield_two_plans() {
 }
 
 #[test]
-//#[ignore]
 fn translate_class_shorthand_adds_extra_plan() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
     tm.subject_map
@@ -101,7 +98,6 @@ fn translate_class_shorthand_adds_extra_plan() {
 }
 
 #[test]
-//#[ignore]
 fn translate_class_plan_has_constant_rdf_type_predicate() {
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
     tm.subject_map
@@ -135,7 +131,6 @@ fn translate_class_plan_has_constant_rdf_type_predicate() {
 }
 
 #[test]
-//#[ignore]
 fn translate_subject_template_with_column_is_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -158,7 +153,6 @@ fn translate_subject_template_with_column_is_dynamic() {
 }
 
 #[test]
-//#[ignore]
 fn translate_constant_term_map_is_constant_in_plan() {
     // TermMap::Constant should translate directly to GenerationLogic::Constant
     let doc = MappingDocument {
@@ -183,7 +177,6 @@ fn translate_constant_term_map_is_constant_in_plan() {
 // ── constant_fold() ───────────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn constant_fold_leaves_column_template_dynamic() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -205,7 +198,6 @@ fn constant_fold_leaves_column_template_dynamic() {
 }
 
 #[test]
-//#[ignore]
 fn constant_fold_converts_no_placeholder_template_to_constant() {
     // A Template with no {…} is a constant and should be folded
     let mut tm = simple_triples_map("data.csv", "http://example.com/{id}");
@@ -238,7 +230,6 @@ fn constant_fold_converts_no_placeholder_template_to_constant() {
 }
 
 #[test]
-//#[ignore]
 fn constant_fold_already_constant_term_maps_unchanged() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map("data.csv", "http://example.com/{id}")],
@@ -260,7 +251,6 @@ fn constant_fold_already_constant_term_maps_unchanged() {
 }
 
 #[test]
-//#[ignore]
 fn translate_sets_scan_from_logical_source() {
     let doc = MappingDocument {
         triples_maps: vec![simple_triples_map(
