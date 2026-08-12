@@ -209,7 +209,8 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
                 .into_response();
         }
     }
-    let result = if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    let result = if let Some(ref reasoner_arc) = *reasoner_slot {
         let mut reasoner = reasoner_arc.lock().await;
         apply_prepared_update_with_options(
             &mut store,
@@ -227,6 +228,7 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
             state.allow_loopback_for_ssrf_tests,
         )
     };
+    drop(reasoner_slot);
     let (net_inserts, net_deletes) = match result {
         Ok(delta) => delta,
         // A genuine Contradiction (RuleHead::Contradiction rule fired) is a
@@ -253,7 +255,7 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
     // Without a reasoner there are no derived facts, so direct insertions of
     // owl:Nothing are not treated as constraint violations.
     // Related: https://github.com/daghovland/rdf-datalog/issues/127
-    if state.reasoner.is_some() {
+    if state.reasoner.read().await.is_some() {
         let violations = check_owl_nothing(&store, 10, 10);
         if !violations.is_empty() {
             // Roll back: remove what was inserted, restore what was deleted.
@@ -269,7 +271,8 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
             // Contradiction here would indicate a bug rather than bad client
             // data; surface it as a 500 rather than trying to be clever.
             // See https://github.com/daghovland/rdf-datalog/issues/301
-            if let Some(ref reasoner_arc) = state.reasoner {
+            let reasoner_slot = state.reasoner.read().await;
+            if let Some(ref reasoner_arc) = *reasoner_slot {
                 let mut reasoner = reasoner_arc.lock().await;
                 if let Err(e) =
                     apply_reasoner_delta(&mut reasoner, &mut store, &net_inserts, &net_deletes)

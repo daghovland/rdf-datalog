@@ -392,12 +392,24 @@ The server exposes a `default` dataset at `/ds`, plus any created via the admin 
 | `GET`/`POST` `/{name}/sparql` or `/{name}/query` | SPARQL SELECT |
 | `POST /{name}/update` | SPARQL Update |
 | `POST /{name}/rml` | Apply an RML mapping (`multipart/form-data`), merge into the dataset |
+| `POST /{name}/rules` (`text/x-datalog` or `text/plain`) | Load/replace the dataset's live Datalog ruleset |
 | `GET\|PUT\|POST\|DELETE\|HEAD /{name}/data` | GSP read-write |
 | `GET\|HEAD /{name}/get` | GSP read-only |
 
 `POST /rml/map` (root-level, not dataset-scoped) applies an RML mapping and returns the
 generated RDF directly, touching no dataset — see the
 [RML mapping guide](rml-mapping.md#applying-mappings-over-http).
+
+`POST /{name}/rules` parses the request body with the same Datalog parser used for
+`--rules`/`Config::initial_rules` at startup, then **replaces** the dataset's entire
+reasoner: any previously-loaded ruleset is discarded and the new one is fully
+re-materialised from the dataset's current base facts. Works for a dataset that never had
+a reasoner before (one is created lazily) as well as one that already has one, whether
+from startup config or an earlier call to this same endpoint. An empty body clears the
+ruleset entirely (unload). Returns `200` with `{"rules_loaded": N}` on success, `400` on a
+parse error (the dataset is left untouched), `404` if the dataset doesn't exist, `403` in
+read-only mode, and `409` if the new ruleset is contradictory over the existing data. See
+[#390](https://github.com/daghovland/rdf-datalog/issues/390).
 
 ### Admin API (`/$/…`)
 

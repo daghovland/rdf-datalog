@@ -124,7 +124,8 @@ pub async fn transaction_commit(
     // 409, matching the owl:Nothing convention below, instead of crashing or
     // committing an inconsistent transaction.
     // See https://github.com/daghovland/rdf-datalog/issues/301
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let mut reasoner = reasoner_arc.lock().await;
         if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &net_deletes, &net_inserts)
         {
@@ -133,7 +134,7 @@ pub async fn transaction_commit(
     }
 
     // Constraint check: roll back and return 409 if owl:Nothing is instantiated.
-    if state.reasoner.is_some() {
+    if state.reasoner.read().await.is_some() {
         let violations = constraints::check_owl_nothing(&store, 10, 10);
         if !violations.is_empty() {
             // Undo: reverse inserts and deletes.
@@ -146,7 +147,8 @@ pub async fn transaction_commit(
             // This reverts to a state that was already known-consistent (the
             // pre-commit snapshot), so a Contradiction here would indicate a
             // bug rather than bad client data; surface it as 500.
-            if let Some(ref reasoner_arc) = state.reasoner {
+            let reasoner_slot = state.reasoner.read().await;
+            if let Some(ref reasoner_arc) = *reasoner_slot {
                 let mut reasoner = reasoner_arc.lock().await;
                 if let Err(e) =
                     apply_reasoner_delta(&mut reasoner, &mut store, &net_inserts, &net_deletes)

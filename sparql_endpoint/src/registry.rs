@@ -8,22 +8,50 @@ Contact: hovlanddag@gmail.com
 
 //! In-memory dataset registry.
 //!
-//! Maps dataset names (e.g. `"ds"`) to their `Arc<RwLock<Datastore>>`.
+//! Maps dataset names (e.g. `"ds"`) to their [`DatasetEntry`] (store + reasoner slot).
 //! The default dataset is always `"ds"`.
 
 use dag_rdf::Datastore;
+use datalog::IncrementalReasoner;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+
+/// The runtime-mutable "does this dataset have a reasoner right now" cell.
+///
+/// Wrapped in an outer `RwLock` (rather than a bare `Option`) so that a
+/// dataset can go from "no reasoner" to "has a reasoner" (or have its
+/// reasoner's ruleset replaced) *after* server startup, via
+/// `POST /{dataset}/rules` — see
+/// [#390](https://github.com/daghovland/rdf-datalog/issues/390). The inner
+/// `Arc<Mutex<IncrementalReasoner>>` is the same type `AppState.reasoner`
+/// held directly before this change; existing call sites that lock and use
+/// the reasoner are unaffected once they've read through the outer cell.
+pub type ReasonerCell = Arc<RwLock<Option<Arc<Mutex<IncrementalReasoner>>>>>;
+
+/// One registered dataset: its store and its (possibly empty) reasoner slot.
+#[derive(Clone)]
+pub struct DatasetEntry {
+    pub store: Arc<RwLock<Datastore>>,
+    pub reasoner: ReasonerCell,
+}
 
 pub struct DatasetRegistry {
-    datasets: HashMap<String, Arc<RwLock<Datastore>>>,
+    datasets: HashMap<String, DatasetEntry>,
 }
 
 impl DatasetRegistry {
-    /// Create a registry with a single default `"ds"` dataset.
-    pub fn new_with_default(store: Arc<RwLock<Datastore>>) -> Self {
+    /// Create a registry with a single default `"ds"` dataset, using
+    /// `reasoner` as its (possibly already-populated, from `--rules`)
+    /// reasoner cell. This must be the *same* `ReasonerCell` instance the
+    /// caller also threads into `AppState.reasoner`, so that the two stay
+    /// aliased: replacing `"ds"`'s ruleset via the registry is visible to
+    /// the root `/sparql` route, which reads `AppState.reasoner` directly
+    /// rather than going through the registry. See
+    /// [#457](https://github.com/daghovland/rdf-datalog/issues/457) for the
+    /// aliasing bug this pattern was introduced to avoid re-creating.
+    pub fn new_with_default(store: Arc<RwLock<Datastore>>, reasoner: ReasonerCell) -> Self {
         let mut datasets = HashMap::new();
-        datasets.insert("ds".to_string(), store);
+        datasets.insert("ds".to_string(), DatasetEntry { store, reasoner });
         Self { datasets }
     }
 
@@ -32,6 +60,13 @@ impl DatasetRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<RwLock<Datastore>>> {
+        self.datasets
+            .get(Self::canonical(name))
+            .map(|e| e.store.clone())
+    }
+
+    /// Look up the full entry (store + reasoner cell) for a dataset.
+    pub fn get_entry(&self, name: &str) -> Option<DatasetEntry> {
         self.datasets.get(Self::canonical(name)).cloned()
     }
 
@@ -39,9 +74,16 @@ impl DatasetRegistry {
         self.datasets.contains_key(Self::canonical(name))
     }
 
+    /// Register a new dataset with an empty (no-reasoner) slot. Use
+    /// [`Self::get_entry`] + `POST /{name}/rules` to give it one later.
     pub fn insert(&mut self, name: &str, store: Arc<RwLock<Datastore>>) {
-        self.datasets
-            .insert(Self::canonical(name).to_string(), store);
+        self.datasets.insert(
+            Self::canonical(name).to_string(),
+            DatasetEntry {
+                store,
+                reasoner: Arc::new(RwLock::new(None)),
+            },
+        );
     }
 
     /// Returns `true` if the dataset was present.
