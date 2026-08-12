@@ -22,6 +22,7 @@ pub mod query_builder;
 pub mod reasoner_delta;
 pub mod registry;
 pub mod rml_endpoint;
+pub mod rules_endpoint;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
@@ -307,15 +308,30 @@ pub struct AppState {
     /// Cached VQS productive-extension index (navigation graph + Wld configuration
     /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
     pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
-    /// Incremental Datalog reasoner.  `Some` when `Config::initial_rules` is non-empty;
-    /// `None` when no rules are configured (the default).
+    /// Incremental Datalog reasoner slot for the default (`"ds"`) dataset.
+    /// The inner `Option` is `Some` when a ruleset is currently loaded —
+    /// initially populated when `Config::initial_rules` is non-empty, and
+    /// mutable afterwards via `POST /{dataset}/rules` (see
+    /// [#390](https://github.com/daghovland/rdf-datalog/issues/390)), which
+    /// is why this is wrapped in an outer `RwLock` rather than a bare
+    /// `Option`: a request can flip it from `None` to `Some` (or replace an
+    /// existing reasoner's ruleset) after server startup, and that must be
+    /// visible to subsequent requests, including this crate's own root
+    /// `/sparql` route which reads this field directly rather than through
+    /// `DatasetRegistry`.
     ///
-    /// Handlers that mutate the store lock this mutex and call
+    /// This is the *same* cell instance as the `"ds"` entry's reasoner slot
+    /// in `AppState.registry` (see `DatasetRegistry::new_with_default`), so
+    /// the two never drift out of sync — see
+    /// [#457](https://github.com/daghovland/rdf-datalog/issues/457).
+    ///
+    /// Handlers that mutate the store take a read lock on this cell, then
+    /// (if `Some`) lock the inner mutex and call
     /// [`IncrementalReasoner::apply_insertions`] / [`IncrementalReasoner::apply_deletions`]
     /// so that inferred triples are updated after every write.
     ///
     /// Related: [#110](https://github.com/daghovland/rdf-datalog/issues/110)
-    pub reasoner: Option<Arc<Mutex<IncrementalReasoner>>>,
+    pub reasoner: registry::ReasonerCell,
     /// Network access policy for SPARQL `LOAD`, `SERVICE`, and JSON-LD external `@context` URLs.
     ///
     /// Related: [#118](https://github.com/daghovland/rdf-datalog/issues/118)
@@ -373,21 +389,28 @@ pub async fn serve_on_listener(
     // Build the incremental reasoner (if rules are configured) BEFORE handing
     // the store to axum.  `IncrementalReasoner::new` runs full initial
     // materialisation, so the store is fully derived before the first request.
-    let reasoner: Option<Arc<Mutex<IncrementalReasoner>>> = if config.initial_rules.is_empty() {
-        None
-    } else {
-        let rules = config.initial_rules.clone();
-        let reasoner = IncrementalReasoner::new(rules, &mut *store.write().await).map_err(|e| {
-            std::io::Error::other(format!(
-                "initial rules + data are contradictory, refusing to start: {e}"
-            ))
-        })?;
-        Some(Arc::new(Mutex::new(reasoner)))
-    };
+    let initial_reasoner: Option<Arc<Mutex<IncrementalReasoner>>> =
+        if config.initial_rules.is_empty() {
+            None
+        } else {
+            let rules = config.initial_rules.clone();
+            let reasoner =
+                IncrementalReasoner::new(rules, &mut *store.write().await).map_err(|e| {
+                    std::io::Error::other(format!(
+                        "initial rules + data are contradictory, refusing to start: {e}"
+                    ))
+                })?;
+            Some(Arc::new(Mutex::new(reasoner)))
+        };
+    // Shared, runtime-mutable cell — see the doc comment on `AppState::reasoner`
+    // and `registry::ReasonerCell` for why this is `Arc<RwLock<Option<..>>>`
+    // rather than a bare `Option`. The same `Arc` is registered under `"ds"`
+    // in the `DatasetRegistry` below, so the two stay aliased.
+    let reasoner: registry::ReasonerCell = Arc::new(RwLock::new(initial_reasoner));
 
     let network_policy = config.network_policy.clone();
     let allow_loopback_for_ssrf_tests = config.allow_loopback_for_ssrf_tests;
-    let registry = DatasetRegistry::new_with_default(store.clone());
+    let registry = DatasetRegistry::new_with_default(store.clone(), reasoner.clone());
     let state = AppState {
         store,
         registry: Arc::new(RwLock::new(registry)),

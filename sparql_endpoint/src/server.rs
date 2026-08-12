@@ -229,6 +229,11 @@ pub fn build_router(state: AppState) -> Router {
             "/{name}/ottr",
             post(crate::ottr_endpoint::dataset_ottr_post),
         )
+        // ── Per-dataset runtime ruleset (`/{name}/rules`) ────────────────────
+        .route(
+            "/{name}/rules",
+            post(crate::rules_endpoint::dataset_rules_post),
+        )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",

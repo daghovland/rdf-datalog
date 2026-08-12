@@ -14,49 +14,40 @@ Contact: hovlanddag@gmail.com
 //! Groups A, B, F (Fuseki compatibility).
 //! Spec: <https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html>
 
-use crate::{AppState, constraints, graph_store, query, sparql_update};
+use crate::{AppState, constraints, graph_store, query, registry::DatasetEntry, sparql_update};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use dag_rdf::Datastore;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async fn get_dataset_store(state: &AppState, name: &str) -> Option<Arc<RwLock<Datastore>>> {
-    state.registry.read().await.get(name)
+async fn get_dataset_entry(state: &AppState, name: &str) -> Option<DatasetEntry> {
+    state.registry.read().await.get_entry(name)
 }
 
-fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState {
-    // Genuinely separate per-dataset stores (created via the `/$/datasets`
-    // admin API) have no ruleset of their own yet, so they get no reasoner
-    // — that gap is real feature work, tracked in
-    // https://github.com/daghovland/rdf-datalog/issues/110.
-    //
-    // But the registry's default `"ds"` entry is not a separate dataset: it
-    // is literally the same `Arc<RwLock<Datastore>>` as `state.store` (see
-    // `DatasetRegistry::new_with_default`), and `state.reasoner` was built
-    // against that exact store at startup. Routing writes to it through
-    // `/{name}/...` must not silently bypass the reasoner that the
-    // top-level `/sparql` route already threads through correctly — see
-    // https://github.com/daghovland/rdf-datalog/issues/457.
-    let reasoner = if Arc::ptr_eq(&ds_store, &state.store) {
-        state.reasoner.clone()
-    } else {
-        None
-    };
+/// Build a dataset-scoped `AppState` from a full registry `DatasetEntry`,
+/// threading that dataset's *own* reasoner cell through — correct for every
+/// dataset, not just `"ds"`. Supersedes the old `Arc::ptr_eq`-based
+/// aliasing hack (see [#457](https://github.com/daghovland/rdf-datalog/issues/457)):
+/// since `DatasetRegistry::new_with_default` registers `"ds"` with the
+/// *same* `ReasonerCell` instance as `AppState.reasoner`, pulling the
+/// reasoner from the entry is correct-by-construction for `"ds"` too, no
+/// special-casing needed. Related: [#390](https://github.com/daghovland/rdf-datalog/issues/390),
+/// [#469](https://github.com/daghovland/rdf-datalog/issues/469).
+fn dataset_state(state: &AppState, entry: DatasetEntry) -> AppState {
     AppState {
-        store: ds_store,
+        store: entry.store,
         registry: state.registry.clone(),
         config: state.config.clone(),
         jwks_cache: state.jwks_cache.clone(),
         changelog: state.changelog.clone(),
         // Each dataset has its own store, hence its own VQS index cache.
         vqs_cache: Arc::new(RwLock::new(None)),
-        reasoner,
+        reasoner: entry.reasoner,
         network_policy: state.network_policy.clone(),
         allow_loopback_for_ssrf_tests: state.allow_loopback_for_ssrf_tests,
         // Transactions are server-wide; per-dataset transactions are not yet supported.
@@ -73,7 +64,7 @@ pub async fn dataset_sparql_get(
     params: Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     query::sparql_get_with_state(dataset_state(&state, ds), params, headers).await
@@ -86,7 +77,7 @@ pub async fn dataset_sparql_post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     query::sparql_post_with_state(dataset_state(&state, ds), params, headers, body).await
@@ -100,7 +91,7 @@ pub async fn dataset_data_get(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     graph_store::gsp_get_inner(dataset_state(&state, ds), params, headers).await
@@ -112,7 +103,7 @@ pub async fn dataset_data_head(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     graph_store::gsp_head_inner(dataset_state(&state, ds), params, headers).await
@@ -125,7 +116,7 @@ pub async fn dataset_data_put(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     graph_store::gsp_put_inner(dataset_state(&state, ds), params, headers, body).await
@@ -138,7 +129,7 @@ pub async fn dataset_data_post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     // Fuseki /{name}/data creates named graphs on POST even when they don't
@@ -151,7 +142,7 @@ pub async fn dataset_data_delete(
     Path(name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
     graph_store::gsp_delete_inner(dataset_state(&state, ds), params).await
@@ -165,13 +156,15 @@ pub async fn dataset_update_post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    let Some(ds) = get_dataset_store(&state, &name).await else {
+    let Some(entry) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    // Threads state.reasoner through when `ds` aliases the default store
-    // (the `"ds"` dataset) — see the comment on `dataset_state()`.
-    // Related: https://github.com/daghovland/rdf-datalog/issues/457
-    let ds_state = dataset_state(&state, ds.clone());
+    let ds = entry.store.clone();
+    // Threads this dataset's own reasoner cell through, correct for every
+    // dataset (not just `"ds"`) — see the comment on `dataset_state()`.
+    // Related: https://github.com/daghovland/rdf-datalog/issues/457,
+    // https://github.com/daghovland/rdf-datalog/issues/390
+    let ds_state = dataset_state(&state, entry);
 
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -261,11 +254,11 @@ pub async fn dataset_update_post(
         }
     }
 
-    // Genuinely separate per-dataset stores have no reasoner of their own
-    // yet (see issue #110); `ds_state.reasoner` is `Some` exactly when this
-    // request targets the default `"ds"` dataset, which aliases the
-    // top-level store and its reasoner (see dataset_state(), issue #457).
-    let update_result = if let Some(ref reasoner_arc) = ds_state.reasoner {
+    // Per-dataset stores now each have their own reasoner slot (see
+    // issue #390 / #469), which is `Some` when a ruleset is currently
+    // loaded for this dataset, `None` otherwise.
+    let reasoner_slot = ds_state.reasoner.read().await;
+    let update_result = if let Some(ref reasoner_arc) = *reasoner_slot {
         let mut reasoner = reasoner_arc.lock().await;
         sparql_update::apply_prepared_update_with_options(
             &mut store,
@@ -283,12 +276,14 @@ pub async fn dataset_update_post(
             state.allow_loopback_for_ssrf_tests,
         )
     };
+    let has_reasoner = reasoner_slot.is_some();
+    drop(reasoner_slot);
     match update_result {
         Ok((net_inserts, net_deletes)) => {
             // Check for owl:Nothing violations. Only meaningful when this
             // request's store has a reasoner (see above).
             // Related: https://github.com/daghovland/rdf-datalog/issues/127
-            if ds_state.reasoner.is_some() {
+            if has_reasoner {
                 let violations = constraints::check_owl_nothing(&store, 10, 10);
                 if !violations.is_empty() {
                     for &q in &net_inserts {

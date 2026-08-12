@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 datalog = { path = "../datalog" }
+datalog-parser = { path = "../datalog_parser" }
 ingress = { path = "../ingress" }
 shacl = { path = "../shacl" }
 sparql-parser = { path = "../sparql_parser" }
@@ -30,7 +31,6 @@ tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-datalog-parser = { path = "../datalog_parser" }
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
 reqwest = { version = "0.13", features = ["json", "multipart"] }

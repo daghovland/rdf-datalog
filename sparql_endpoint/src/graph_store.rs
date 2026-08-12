@@ -555,7 +555,8 @@ pub async fn gsp_put_inner(
         }
     }
 
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let old_quads = collect_graph_quads(&store, graph_id);
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let mut reasoner = reasoner_arc.lock().await;
@@ -635,7 +636,8 @@ pub async fn gsp_delete_inner(
         }
     }
 
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let old_quads = collect_graph_quads(&store, graph_id);
         let existing: Vec<_> = old_quads
             .into_iter()
@@ -725,7 +727,8 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        if let Some(ref reasoner_arc) = state.reasoner {
+        let reasoner_slot = state.reasoner.read().await;
+        if let Some(ref reasoner_arc) = *reasoner_slot {
             let new_quads =
                 translate_default_graph_quads(&tmp, &mut store, DEFAULT_GRAPH_ELEMENT_ID);
             let mut reasoner = reasoner_arc.lock().await;
@@ -777,7 +780,8 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        if let Some(ref reasoner_arc) = state.reasoner {
+        let reasoner_slot = state.reasoner.read().await;
+        if let Some(ref reasoner_arc) = *reasoner_slot {
             let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
             let mut reasoner = reasoner_arc.lock().await;
             // See https://github.com/daghovland/rdf-datalog/issues/301.
@@ -819,7 +823,8 @@ pub async fn gsp_post_inner(
                     .into_response();
             }
         }
-        if let Some(ref reasoner_arc) = state.reasoner {
+        let reasoner_slot = state.reasoner.read().await;
+        if let Some(ref reasoner_arc) = *reasoner_slot {
             // Translate all quads across all graphs, then feed to reasoner.
             let new_quads: Vec<_> = tmp
                 .named_graphs
@@ -883,7 +888,8 @@ pub async fn gsp_post_inner(
     }
     let elem = GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(new_iri.clone())));
     let graph_id = store.resources.add_resource(elem);
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let mut reasoner = reasoner_arc.lock().await;
         // See https://github.com/daghovland/rdf-datalog/issues/301.
@@ -989,7 +995,8 @@ pub async fn direct_gsp_put(
         }
     }
 
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let old_quads = collect_graph_quads(&store, graph_id);
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let existing_old: Vec<_> = old_quads
@@ -1040,7 +1047,8 @@ pub async fn direct_gsp_delete(
         }
     }
 
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let old_quads = collect_graph_quads(&store, graph_id);
         let existing: Vec<_> = old_quads
             .into_iter()
@@ -1134,7 +1142,8 @@ pub async fn direct_gsp_post(
         }
     }
 
-    if let Some(ref reasoner_arc) = state.reasoner {
+    let reasoner_slot = state.reasoner.read().await;
+    if let Some(ref reasoner_arc) = *reasoner_slot {
         let new_quads = translate_default_graph_quads(&tmp, &mut store, graph_id);
         let mut reasoner = reasoner_arc.lock().await;
         // See https://github.com/daghovland/rdf-datalog/issues/301.
