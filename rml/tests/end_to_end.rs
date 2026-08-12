@@ -31,7 +31,6 @@ macro_rules! intern {
 // ── RMLTC0001a: simple template IRI subject + reference literal object ─────────
 
 #[test]
-//#[ignore]
 fn rmltc0001a_basic_template_iri_and_reference_literal() {
     let dir = fixture("rmltc0001a");
     let mut ds = Datastore::new(100);
@@ -49,7 +48,6 @@ fn rmltc0001a_basic_template_iri_and_reference_literal() {
 }
 
 #[test]
-//#[ignore]
 fn rmltc0001a_produces_exactly_one_triple() {
     let dir = fixture("rmltc0001a");
     let mut ds = Datastore::new(100);
@@ -63,7 +61,6 @@ fn rmltc0001a_produces_exactly_one_triple() {
 // ── RMLTC0002a: multiple predicates, two rows ──────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0002a_all_four_triples_present() {
     let dir = fixture("rmltc0002a");
     let mut ds = Datastore::new(100);
@@ -105,7 +102,6 @@ fn rmltc0002a_all_four_triples_present() {
 // ── RMLTC0003a: blank node subject ────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0003a_blank_node_subject_has_correct_object() {
     let dir = fixture("rmltc0003a");
     let mut ds = Datastore::new(100);
@@ -126,7 +122,6 @@ fn rmltc0003a_blank_node_subject_has_correct_object() {
 }
 
 #[test]
-//#[ignore]
 fn rmltc0003a_subject_is_blank_node() {
     let dir = fixture("rmltc0003a");
     let mut ds = Datastore::new(100);
@@ -152,7 +147,6 @@ fn rmltc0003a_subject_is_blank_node() {
 // ── RMLTC0007a: language-tagged literal ───────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0007a_language_tagged_literal() {
     let dir = fixture("rmltc0007a");
     let mut ds = Datastore::new(100);
@@ -175,7 +169,6 @@ fn rmltc0007a_language_tagged_literal() {
 // ── RMLTC0007b: datatype literal ──────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0007b_datatype_literal_stored_as_typed_literal() {
     let dir = fixture("rmltc0007b");
     let mut ds = Datastore::new(100);
@@ -198,7 +191,6 @@ fn rmltc0007b_datatype_literal_stored_as_typed_literal() {
 // ── RMLTC0009a: named graph ────────────────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0009a_triple_placed_in_named_graph() {
     let dir = fixture("rmltc0009a");
     let mut ds = Datastore::new(100);
@@ -218,7 +210,6 @@ fn rmltc0009a_triple_placed_in_named_graph() {
 }
 
 #[test]
-//#[ignore]
 fn rmltc0009a_triple_not_in_default_graph() {
     let dir = fixture("rmltc0009a");
     let mut ds = Datastore::new(100);
@@ -239,7 +230,6 @@ fn rmltc0009a_triple_not_in_default_graph() {
 // ── RMLTC0010a: rml:class shorthand ───────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn rmltc0010a_class_shorthand_emits_rdf_type_triple() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -257,7 +247,6 @@ fn rmltc0010a_class_shorthand_emits_rdf_type_triple() {
 }
 
 #[test]
-//#[ignore]
 fn rmltc0010a_data_triple_also_present() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -275,7 +264,6 @@ fn rmltc0010a_data_triple_also_present() {
 }
 
 #[test]
-//#[ignore]
 fn rmltc0010a_produces_exactly_two_triples() {
     let dir = fixture("rmltc0010a");
     let mut ds = Datastore::new(100);
@@ -289,7 +277,6 @@ fn rmltc0010a_produces_exactly_two_triples() {
 // ── IRI percent-encoding in templates ─────────────────────────────────────────
 
 #[test]
-//#[ignore]
 fn spaces_in_csv_values_are_percent_encoded_in_iri_subjects() {
     let dir = fixture("encoding");
     let mut ds = Datastore::new(100);
@@ -306,7 +293,6 @@ fn spaces_in_csv_values_are_percent_encoded_in_iri_subjects() {
 }
 
 #[test]
-//#[ignore]
 fn spaces_in_csv_values_are_not_encoded_in_literal_objects() {
     let dir = fixture("encoding");
     let mut ds = Datastore::new(100);
