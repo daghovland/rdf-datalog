@@ -571,14 +571,9 @@ ex:block1 ex:hasTerminal ex:terminal1 .
     );
 }
 
-/// A `PropertyExpressionChain` sub-property axiom (`prp-spo2`, e.g.
-/// `hasParent ∘ hasParent ⊑ hasGrandparent`) is out of scope for #451 — it
-/// must be safely skipped (warn, not panic, not silently produce a wrong
-/// rule) rather than implemented here. This test only exercises the simple
-/// `SubObjectPropertyExpression` case above; there is no parser path from
-/// Turtle to a `PropertyExpressionChain` axiom to exercise the skip branch
-/// end-to-end, so that branch is covered at the `owl2rl2datalog` unit-test
-/// level instead (see `owl2rl2datalog/src/lib.rs`).
+/// This test exercises only the simple `SubObjectPropertyExpression` case
+/// (`P rdfs:subPropertyOf Q`); `PropertyExpressionChain` sub-property axioms
+/// (`prp-spo2`) are exercised separately below.
 #[test]
 fn sub_object_property_expression_does_not_regress_plain_case() {
     // Sanity check: a *reflexive-looking* but otherwise ordinary hierarchy
@@ -653,6 +648,159 @@ ex:person1 ex:hasNickname "Al" .
         !ds.quads_matching(None, Some(s), Some(p), None).is_empty(),
         "expected :person1 :hasName \"Al\" to be derived via prp-spo1 (data property variant)"
     );
+}
+
+// ── OWL 2 RL prp-spo2: property chain sub-property propagation ──────────────
+//
+// See <https://github.com/daghovland/rdf-datalog/issues/456>. Follow-up from
+// #451/#455 above, which left `SubPropertyExpression::PropertyExpressionChain`
+// unimplemented. `owl:propertyChainAxiom` (backed by an `rdf:List`) is the RDF
+// syntax for a `PropertyExpressionChain` axiom, so these are genuine
+// end-to-end Turtle tests, unlike the #455-era comment claiming no such
+// parser path existed.
+
+/// The issue's own worked example: `hasParent ∘ hasParent ⊑ hasGrandparent`
+/// (chain length 2, same property repeated). `:a hasParent :b`, `:b hasParent
+/// :c` must entail `:a hasGrandparent :c`.
+#[test]
+fn property_chain_of_length_two_propagates_to_abox() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+ex:hasGrandparent a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( ex:hasParent ex:hasParent ) .
+ex:hasParent a owl:ObjectProperty .
+
+ex:a ex:hasParent ex:b .
+ex:b ex:hasParent ex:c .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(
+        has_triple(
+            &ds,
+            "http://example.org/a",
+            "http://example.org/hasGrandparent",
+            "http://example.org/c",
+        ),
+        "expected :a :hasGrandparent :c to be derived via prp-spo2"
+    );
+    // The two-hop intermediate should not itself satisfy the grandparent
+    // relation directly from :a (sanity check the join isn't accidentally
+    // matching a single hop).
+    assert!(!has_triple(
+        &ds,
+        "http://example.org/a",
+        "http://example.org/hasGrandparent",
+        "http://example.org/b",
+    ));
+}
+
+/// A chain of length 1 (`PropertyExpressionChain(vec![P])`) degenerates to
+/// the same shape as prp-spo1's simple case; the general n-ary loop must
+/// handle n=1 correctly without special-casing.
+#[test]
+fn property_chain_of_length_one_degenerates_to_simple_subproperty() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+ex:adjacentTo a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( ex:hasTerminal ) .
+ex:hasTerminal a owl:ObjectProperty .
+
+ex:block1 ex:hasTerminal ex:terminal1 .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(
+        has_triple(
+            &ds,
+            "http://example.org/block1",
+            "http://example.org/adjacentTo",
+            "http://example.org/terminal1",
+        ),
+        "expected a length-1 chain to behave like plain prp-spo1"
+    );
+}
+
+/// A longer chain (length 3) with three distinct properties, to confirm
+/// variable naming (`x0..xn`) doesn't collide across chain positions and the
+/// join is a genuine multi-atom join, not just two hops.
+#[test]
+fn property_chain_of_length_three_with_distinct_properties() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+ex:connectsTo a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( ex:p1 ex:p2 ex:p3 ) .
+ex:p1 a owl:ObjectProperty .
+ex:p2 a owl:ObjectProperty .
+ex:p3 a owl:ObjectProperty .
+
+ex:n0 ex:p1 ex:n1 .
+ex:n1 ex:p2 ex:n2 .
+ex:n2 ex:p3 ex:n3 .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(
+        has_triple(
+            &ds,
+            "http://example.org/n0",
+            "http://example.org/connectsTo",
+            "http://example.org/n3",
+        ),
+        "expected :n0 :connectsTo :n3 to be derived via a 3-atom prp-spo2 join"
+    );
+}
+
+/// An empty chain (`owl:propertyChainAxiom ()`, i.e. the list is `rdf:nil`)
+/// has no corresponding entailment (there is no `x0`/`xn` pair to relate) and
+/// must not derive anything or panic.
+#[test]
+fn property_chain_empty_list_derives_nothing() {
+    let ttl = r#"
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+ex:hasGrandparent a owl:ObjectProperty ;
+    owl:propertyChainAxiom () .
+ex:hasParent a owl:ObjectProperty .
+
+ex:a ex:hasParent ex:b .
+ex:b ex:hasParent ex:c .
+"#;
+    let mut ds = Datastore::new(1_000);
+    parse_turtle(&mut ds, ttl.as_bytes()).expect("Turtle parse should succeed");
+
+    let ontology_doc = rdf2owl(&mut ds).unwrap();
+    let rules = owl2datalog(&mut ds.resources, &ontology_doc.ontology);
+    evaluate_rules(rules, &mut ds).unwrap();
+
+    assert!(!has_triple(
+        &ds,
+        "http://example.org/a",
+        "http://example.org/hasGrandparent",
+        "http://example.org/c",
+    ));
 }
 
 // ── Tests that cannot be translated (not implemented) ────────────────────────

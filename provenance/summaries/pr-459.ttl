@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:459 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rl2datalog: implement prp-spo2 (property chain sub-property axioms) (#456)" ;
+    bl:number 459 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:456 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr459 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:456 ;
+    prov:startedAtTime "2026-08-12T17:47:46Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-12T17:47:46Z"^^xsd:dateTime .
+
+session:pr459Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #456 asked for OWL 2 RL prp-spo2 (property chain sub-property axioms), left as a log::warn!-and-skip stub by #451/#455. Generalized the existing single-atom prp-spo1 rule builder into an n-ary join: for chain [P1..Pn] with superproperty Q, generate variables x0..xn, one body atom per link via the pre-existing get_obj_prop_pattern helper, and one head atom for Q spanning x0 to xn. Deliberately reused get_obj_prop_pattern rather than duplicating pattern-construction logic, and verified the n=1 case degenerates to prp-spo1's exact rule shape via a dedicated test rather than assuming it. Investigated whether PropertyExpressionChain has a real Turtle parser path before writing tests, since a comment left by #455 claimed there wasn't one; found owl:propertyChainAxiom does round-trip through rdf_owl_translator's rdf:List handling, so wrote genuine end-to-end tests (lengths 1/2/3, plus an empty-chain case via owl:propertyChainAxiom ()) instead of only unit-level ones, and corrected the stale comment. Confirmed red retroactively by reverting the implementation and re-running the new tests: three failed as expected, but the empty-chain test passed unchanged before and after, since both old and new code return no rule for it — flagged in the PR body as a regression guard rather than proof of correct empty-chain handling, with a separate focused unit test covering that behavior for real. A mid-chain unsupported property expression (nested ObjectPropertyChain) has no Turtle construction path, so that skip-the-whole-rule behavior is covered by a direct unit test against property_expression_chain_rule instead." ;
+    agp:reasoningFor ghpull:459 ;
+    agp:decisionPoint session:pr459Decision ;
+    prov:wasGeneratedBy session:pr459 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr459Decision a agp:Decision ;
+    agp:summaryText "Wrote real Turtle end-to-end tests for the PropertyExpressionChain cases (via owl:propertyChainAxiom's rdf:List mapping) rather than relying only on owl2rl2datalog-level unit tests, after checking the parser path actually exists." ;
+    agp:alternative "Could have trusted #455's test-file comment claiming no Turtle path to PropertyExpressionChain existed and written unit tests only, matching that comment's stated coverage strategy; rejected after finding rdf_owl_translator's axiom_parser.rs does handle owl:propertyChainAxiom end-to-end, which gives stronger, more representative coverage of the actual entailment behavior." .
