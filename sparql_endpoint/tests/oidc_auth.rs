@@ -23,12 +23,6 @@ use sparql_endpoint::OidcConfig;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
-// ── Shared test RSA key pair (from common) ────────────────────────────────────
-
-fn oidc_keys() -> &'static common::OidcTestKeys {
-    common::oidc_test_keys()
-}
-
 fn make_jwks_response() -> serde_json::Value {
     common::shared_jwks_response()
 }
@@ -50,26 +44,6 @@ fn past_exp() -> u64 {
         - 3600
 }
 
-#[derive(serde::Serialize)]
-struct TestClaims<'a> {
-    iss: &'a str,
-    aud: &'a str,
-    exp: u64,
-    roles: Vec<&'a str>,
-}
-
-fn make_token(iss: &str, aud: &str, exp: u64, roles: &[&str]) -> String {
-    let keys = oidc_keys();
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(keys.kid.clone());
-    let claims = TestClaims {
-        iss,
-        aud,
-        exp,
-        roles: roles.to_vec(),
-    };
-    jsonwebtoken::encode(&header, &claims, &keys.encoding_key).expect("encode token")
-}
 
 // ── Mock OIDC provider setup ──────────────────────────────────────────────────
 
@@ -134,6 +108,7 @@ async fn oidc_no_token_returns_401() {
 
 /// A valid token with the Read role allows GET /sparql.
 #[tokio::test]
+#[cfg(test)]
 async fn oidc_valid_read_role_allows_query() {
     let mock = start_oidc_mock().await;
     let server = start_oidc_server(&mock).await;
