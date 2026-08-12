@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #468, distilling the reasoning behind the fix
+# for issue #457. See docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md.
+# Timestamps below are real (from `git log main..HEAD` on branch
+# fix/457-incremental-update-reasoning).
+
+ghpull:468 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: fix incremental reasoning not triggering after SPARQL Update (#457)" ;
+    bl:number 468 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:457 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr468 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:457 ;
+    prov:startedAtTime "2026-08-12T20:32:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-12T20:32:42Z"^^xsd:dateTime .
+
+session:pr468Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #457 reported that INSERT/DELETE DATA sent via SPARQL Update did not trigger incremental OWL-RL reasoning in some cases. Two hypotheses were on the table going in: (a) the top-level default-store path (POST /sparql) itself was broken, or (b) the per-dataset Fuseki-compatible path (POST /{name}/update) was the culprit. Reproduction confirmed (b): dataset_routes::dataset_state() unconditionally set reasoner: None on every AppState it built for a /{name}/... request, with a comment stating per-dataset reasoning was out of scope (issue #110). That comment was correct for genuinely separate per-dataset stores created via the /$/datasets admin API, which really do lack their own reasoner and ruleset. But it was wrong for the registry's default \"ds\" dataset: DatasetRegistry::new_with_default aliases that entry to the exact same Arc<RwLock<Datastore>> as state.store, and state.reasoner was built against that same store at server startup. So writes to /ds/update were silently skipping reasoning that the identical write via /sparql would have triggered. The fix makes dataset_state() compare Arc::ptr_eq(&ds_store, &state.store): when true, it threads state.reasoner.clone() through instead of hardcoding None; genuinely separate per-dataset stores still get None, preserving the #110 boundary. dataset_update_post() was updated to branch on ds_state.reasoner being Some, locking it and calling apply_prepared_update_with_options exactly as the top-level path does, and the owl:Nothing constraint check now gates on ds_state.reasoner (the per-request state) rather than the outer state.reasoner, since those can now legitimately differ. A new test, test_dataset_update_triggers_inference, reproduces the issue's Case B exactly (server started with --rules and no preloaded --data, INSERT DATA via POST /ds/update) and fails before the fix, passes after." ;
+    agp:reasoningFor ghpull:468 ;
+    agp:decisionPoint session:pr468Decision ;
+    prov:wasGeneratedBy session:pr468 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr468Decision a agp:Decision ;
+    agp:summaryText "Scoped the fix to the aliasing case only, using Arc::ptr_eq to distinguish the default \"ds\" dataset (same store as state.store) from genuinely separate per-dataset stores, rather than building out full per-dataset reasoning (separate reasoner/ruleset per dataset)." ;
+    agp:alternative "Considered giving every per-dataset store its own reasoner and ruleset so /{name}/update always reasons regardless of which dataset is targeted. Rejected for this PR: that is substantial new feature work already tracked separately in issue #110 (per-dataset rulesets, per-dataset reasoner state, likely per-dataset admin API surface for loading rules) and issue #457's reported bug was specifically about the default dataset silently losing reasoning it used to get through /sparql, not about wanting reasoning on newly created named datasets." .
