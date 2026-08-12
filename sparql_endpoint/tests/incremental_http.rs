@@ -426,3 +426,92 @@ async fn test_delete_then_insert_different_type_atomic() {
         "Alice must still be an Employee (inferred via Director→Employee rule)"
     );
 }
+
+// ── Test 3: per-dataset `/ds/update` triggers inference (#457) ────────────────
+
+/// Reproduces the exact scenario reported in
+/// [#457](https://github.com/daghovland/rdf-datalog/issues/457): a server
+/// started with `--rules` and no preloaded `--data`, then an `INSERT DATA`
+/// sent via the per-dataset Fuseki-compatible route `POST /{name}/update`
+/// (here the default dataset `"ds"`, which the registry aliases 1:1 to
+/// `state.store`) must trigger the same incremental reasoning as the
+/// top-level `POST /sparql` route does.
+///
+/// Before the fix, `dataset_routes::dataset_state()` unconditionally built a
+/// dataset-scoped `AppState` with `reasoner: None`, so rule-derived facts
+/// were never (re-)computed for writes made through `/{name}/...` routes —
+/// even for `"ds"`, which is not really a separate dataset but the same
+/// store as the default one.
+#[tokio::test]
+async fn test_dataset_update_triggers_inference() {
+    // No preloaded data at all — matches issue #457's Case B exactly.
+    let mut ds = Datastore::new(1024);
+    let rule = make_manager_implies_employee_rule(&mut ds);
+    let store = Arc::new(RwLock::new(ds));
+
+    let server = server_start_with_store_and_rules_no_data(store, vec![rule]).await;
+
+    // Sanity: nothing is an Employee yet.
+    let ask_employee = format!("ASK {{ ?s <{RDF_TYPE}> <{EX_EMPLOYEE}> . }}");
+    let dataset_query_url = |sparql: &str| {
+        format!(
+            "{}?query={}",
+            server.dataset_query_url("ds"),
+            urlencoding::encode(sparql)
+        )
+    };
+    let resp = server
+        .client
+        .get(dataset_query_url(&ask_employee))
+        .header("accept", "application/sparql-results+json")
+        .send()
+        .await
+        .expect("GET ASK failed");
+    let body: serde_json::Value = resp.json().await.expect("JSON");
+    assert!(
+        !body["boolean"].as_bool().unwrap_or(true),
+        "no Employee should exist before any data is inserted"
+    );
+
+    // INSERT DATA via the per-dataset route `/ds/update`, exactly matching
+    // the issue's reported request shape.
+    let update = format!("INSERT DATA {{ <{EX_ALICE}> <{RDF_TYPE}> <{EX_MANAGER}> . }}");
+    let resp = server
+        .client
+        .post(server.dataset_update_url("ds"))
+        .header("content-type", "application/sparql-update")
+        .body(update)
+        .send()
+        .await
+        .expect("POST update failed");
+    assert!(
+        resp.status().is_success(),
+        "INSERT DATA via /ds/update must succeed, got {}",
+        resp.status()
+    );
+
+    // Alice must now be inferred as an Employee, queryable through either
+    // the per-dataset route or the top-level route (same underlying store).
+    let resp = server
+        .client
+        .get(dataset_query_url(&ask_employee))
+        .header("accept", "application/sparql-results+json")
+        .send()
+        .await
+        .expect("GET ASK failed");
+    let body: serde_json::Value = resp.json().await.expect("JSON");
+    assert!(
+        body["boolean"].as_bool().unwrap_or(false),
+        "Alice must be inferred as an Employee after INSERT DATA via /ds/update (#457)"
+    );
+}
+
+/// Same server-startup shape as `TestServer::start_with_store_and_rules`,
+/// but named to make explicit that no `--data` is preloaded, matching
+/// issue #457's Case B exactly.
+async fn server_start_with_store_and_rules_no_data(
+    store: Arc<RwLock<Datastore>>,
+    rules: Vec<Rule>,
+) -> common::TestServer {
+    common::TestServer::start_with_store_and_rules(store, rules, false).await
+}

@@ -31,6 +31,23 @@ async fn get_dataset_store(state: &AppState, name: &str) -> Option<Arc<RwLock<Da
 }
 
 fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState {
+    // Genuinely separate per-dataset stores (created via the `/$/datasets`
+    // admin API) have no ruleset of their own yet, so they get no reasoner
+    // — that gap is real feature work, tracked in
+    // https://github.com/daghovland/rdf-datalog/issues/110.
+    //
+    // But the registry's default `"ds"` entry is not a separate dataset: it
+    // is literally the same `Arc<RwLock<Datastore>>` as `state.store` (see
+    // `DatasetRegistry::new_with_default`), and `state.reasoner` was built
+    // against that exact store at startup. Routing writes to it through
+    // `/{name}/...` must not silently bypass the reasoner that the
+    // top-level `/sparql` route already threads through correctly — see
+    // https://github.com/daghovland/rdf-datalog/issues/457.
+    let reasoner = if Arc::ptr_eq(&ds_store, &state.store) {
+        state.reasoner.clone()
+    } else {
+        None
+    };
     AppState {
         store: ds_store,
         registry: state.registry.clone(),
@@ -39,9 +56,7 @@ fn dataset_state(state: &AppState, ds_store: Arc<RwLock<Datastore>>) -> AppState
         changelog: state.changelog.clone(),
         // Each dataset has its own store, hence its own VQS index cache.
         vqs_cache: Arc::new(RwLock::new(None)),
-        // Per-dataset incremental reasoning is not yet supported (D6 scope).
-        // See: https://github.com/daghovland/rdf-datalog/issues/110
-        reasoner: None,
+        reasoner,
         network_policy: state.network_policy.clone(),
         allow_loopback_for_ssrf_tests: state.allow_loopback_for_ssrf_tests,
         // Transactions are server-wide; per-dataset transactions are not yet supported.
@@ -153,6 +168,10 @@ pub async fn dataset_update_post(
     let Some(ds) = get_dataset_store(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
+    // Threads state.reasoner through when `ds` aliases the default store
+    // (the `"ds"` dataset) — see the comment on `dataset_state()`.
+    // Related: https://github.com/daghovland/rdf-datalog/issues/457
+    let ds_state = dataset_state(&state, ds.clone());
 
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -242,22 +261,34 @@ pub async fn dataset_update_post(
         }
     }
 
-    // Per-dataset incremental reasoning is not yet supported; see issue #110.
-    // Constraint checking (owl:Nothing) is also skipped here since dataset
-    // stores have no reasoner.  See query.rs for the main-store implementation.
-    match sparql_update::apply_prepared_update_with_options(
-        &mut store,
-        prepared,
-        None,
-        state.network_policy.clone(),
-        state.allow_loopback_for_ssrf_tests,
-    ) {
+    // Genuinely separate per-dataset stores have no reasoner of their own
+    // yet (see issue #110); `ds_state.reasoner` is `Some` exactly when this
+    // request targets the default `"ds"` dataset, which aliases the
+    // top-level store and its reasoner (see dataset_state(), issue #457).
+    let update_result = if let Some(ref reasoner_arc) = ds_state.reasoner {
+        let mut reasoner = reasoner_arc.lock().await;
+        sparql_update::apply_prepared_update_with_options(
+            &mut store,
+            prepared,
+            Some(&mut *reasoner),
+            state.network_policy.clone(),
+            state.allow_loopback_for_ssrf_tests,
+        )
+    } else {
+        sparql_update::apply_prepared_update_with_options(
+            &mut store,
+            prepared,
+            None,
+            state.network_policy.clone(),
+            state.allow_loopback_for_ssrf_tests,
+        )
+    };
+    match update_result {
         Ok((net_inserts, net_deletes)) => {
-            // Check for owl:Nothing violations.  The dataset AppState always has
-            // reasoner=None (see dataset_state()), but we call check_owl_nothing
-            // anyway in case per-dataset reasoning is added in the future.
+            // Check for owl:Nothing violations. Only meaningful when this
+            // request's store has a reasoner (see above).
             // Related: https://github.com/daghovland/rdf-datalog/issues/127
-            if state.reasoner.is_some() {
+            if ds_state.reasoner.is_some() {
                 let violations = constraints::check_owl_nothing(&store, 10, 10);
                 if !violations.is_empty() {
                     for &q in &net_inserts {
