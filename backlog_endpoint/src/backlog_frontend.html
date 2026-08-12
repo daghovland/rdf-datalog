@@ -109,8 +109,27 @@
   .session-body { margin: 0.6rem 0 0.2rem 1.1rem; padding-left: 0.8rem; border-left: 2px solid #eee; }
   .summary-block { margin-bottom: 0.9rem; font-size: 0.85rem; }
   .summary-block:last-child { margin-bottom: 0; }
-  .abstract-text { font-weight: 600; margin: 0 0 0.3rem; }
-  .summary-text { margin: 0 0 0.4rem; color: #333; line-height: 1.4; }
+  /* Readable-prose wrapper for agp:abstractText/agp:summaryText (#444) --
+     narrower measure (~62ch) than the surrounding card, plus a roomier
+     line-height/font-size than the UI chrome around it, since this is the
+     one place on the page holding dense free-text prose (summaries are
+     genuinely single unbroken paragraphs, often 500-2000+ characters --
+     see #444's issue body) rather than short structured labels. */
+  .summary-content { max-width: 62ch; }
+  .abstract-text { font-weight: 600; margin: 0 0 0.35rem; font-size: 0.92rem;
+                    line-height: 1.5; color: #1a1a1a; }
+  .summary-text { margin: 0; color: #333; line-height: 1.6; font-size: 0.88rem; }
+  /* Full summaryText collapsed behind a disclosure when an abstractText is
+     available to show prominently instead (#444) -- when abstractText is
+     absent (summaries predating that field), renderSummaryText renders
+     summary-text directly with no wrapping <details>, since there is
+     nothing shorter to show in its place. */
+  details.summary-details { margin: 0 0 0.2rem; }
+  details.summary-details summary { cursor: pointer; font-size: 0.8rem; color: #005a9c; }
+  details.summary-details summary::-webkit-details-marker { display: none; }
+  details.summary-details summary::before { content: '\25B6\00A0'; font-size: 0.6rem; opacity: 0.6; }
+  details.summary-details[open] > summary::before { content: '\25BC\00A0'; }
+  details.summary-details .summary-text { margin-top: 0.4rem; }
   .reasoning-for { font-size: 0.8rem; color: #666; }
   .decisions { margin-top: 0.5rem; }
   .decisions h4 { margin: 0 0 0.3rem; font-size: 0.78rem; color: #555; text-transform: uppercase; letter-spacing: 0.02em; }
@@ -133,7 +152,13 @@
   .relevant-result-group h3 { font-size: 0.9rem; margin: 0 0 0.5rem; }
   .relevant-pr-card { border: 1px solid #e2e2e2; border-radius: 5px; padding: 0.6rem 0.8rem;
                        margin-bottom: 0.6rem; background: #fff; }
-  .relevant-pr-text { margin: 0.35rem 0 0; font-size: 0.85rem; color: #333; line-height: 1.4; }
+  /* Summary prose here now reuses .summary-content/.abstract-text/
+     .summary-text (#444) instead of a standalone per-panel rule, so the
+     card gets the same narrower measure/collapsed-full-text treatment as
+     the Provenance tab and item detail page; the previous single-purpose
+     CSS rule for this panel's summary text was removed entirely rather
+     than left unused. */
+  .relevant-pr-card .summary-content { margin-top: 0.35rem; }
   /* Item detail view (#443) */
   .item-back-link { font-size: 0.85rem; color: #005a9c; text-decoration: none; display: inline-block; margin-bottom: 0.8rem; }
   .item-back-link:hover { text-decoration: underline; }
@@ -1064,12 +1089,42 @@
     return details;
   }
 
+  // ── Shared abstract/full-text rendering (#444) — used by
+  //    renderSummaryBlock (Provenance tab + item detail page, both of
+  //    which already funnel through renderSummaryBlock) and by the
+  //    "what's relevant" panel's renderRelevantGroup below, so all three
+  //    places agp:summaryText/agp:abstractText appear share one structure:
+  //    when an abstractText exists, show it prominently and collapse the
+  //    (often 500-2000+ character, single-paragraph) full summaryText
+  //    behind a "Full reasoning" <details>; when it doesn't (summaries
+  //    predating the abstractText field), show summaryText directly since
+  //    there's nothing shorter to lead with. No render-time
+  //    paragraph-splitting heuristic -- the source text has no embedded
+  //    structure to key off, and a sentence-boundary guess risks looking
+  //    arbitrary (see #444's own discussion of this tradeoff). ──
+  function renderSummaryText(container, abstractText, summaryText) {
+    const wrap = el('div', 'summary-content');
+    if (abstractText) {
+      wrap.appendChild(el('p', 'abstract-text', abstractText));
+      if (summaryText) {
+        const details = document.createElement('details');
+        details.className = 'summary-details';
+        const detailsSummary = document.createElement('summary');
+        detailsSummary.textContent = 'Full reasoning';
+        details.appendChild(detailsSummary);
+        details.appendChild(el('p', 'summary-text', summaryText));
+        wrap.appendChild(details);
+      }
+    } else if (summaryText) {
+      wrap.appendChild(el('p', 'summary-text', summaryText));
+    }
+    container.appendChild(wrap);
+    return wrap;
+  }
+
   function renderSummaryBlock(summary, decisionsBySummary) {
     const block = el('div', 'summary-block');
-    if (summary.abstractText) {
-      block.appendChild(el('p', 'abstract-text', summary.abstractText));
-    }
-    block.appendChild(el('p', 'summary-text', summary.summaryText));
+    renderSummaryText(block, summary.abstractText, summary.summaryText);
     if (summary.reasoningFor) {
       const line = el('div', 'reasoning-for');
       line.appendChild(document.createTextNode('Reasoning for: '));
@@ -1192,9 +1247,14 @@
   }
 
   function buildRelevantQuery(valuesClause, touchesTriple) {
+    // Selects ?summaryText and ?abstractText separately (rather than the
+    // pre-#444 BIND(COALESCE(...) AS ?text)) so renderRelevantGroup can
+    // hand both to the shared renderSummaryText helper and get the same
+    // abstract-prominent/collapsed-full-text structure as the Provenance
+    // tab and item detail page (#444).
     return (
       RELEVANT_PREFIXES +
-      'SELECT ?summary ?pr ?text WHERE { ' +
+      'SELECT ?summary ?pr ?summaryText ?abstractText WHERE { ' +
       valuesClause + ' ' +
       '?summary a agp:TranscriptSummary ; ' +
       '  agp:reasoningFor ?pr ; ' +
@@ -1202,7 +1262,6 @@
       '?pr a bl:PullRequest ; ' +
       touchesTriple + ' ' +
       'OPTIONAL { ?summary agp:abstractText ?abstractText } ' +
-      'BIND(COALESCE(?abstractText, ?summaryText) AS ?text) ' +
       '}'
     );
   }
@@ -1232,7 +1291,7 @@
     for (const row of rows) {
       const card = el('div', 'relevant-pr-card');
       card.appendChild(iriLink(row.pr, issueNumber(row.pr) || row.pr));
-      card.appendChild(el('p', 'relevant-pr-text', row.text));
+      renderSummaryText(card, row.abstractText, row.summaryText);
       group.appendChild(card);
     }
     container.appendChild(group);
@@ -1242,7 +1301,8 @@
     const json = await sparqlFetch(query);
     return bindingsOf(json).map((row) => ({
       pr: row.pr.value,
-      text: row.text.value,
+      summaryText: row.summaryText.value,
+      abstractText: row.abstractText ? row.abstractText.value : null,
     }));
   }
 
