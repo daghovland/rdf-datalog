@@ -365,53 +365,6 @@ impl DatalogProgram {
         Ok(())
     }
 
-    /// Naive materialisation kept for regression comparison.
-    #[allow(dead_code)]
-    fn materialise_naive(&self, datastore: &mut Datastore) -> Result<(), ReasoningError> {
-        for quad in self.get_facts()? {
-            datastore.named_graphs.add_quad(quad);
-        }
-        let mut changed = true;
-        while changed {
-            changed = false;
-            let quads: Vec<dag_rdf::Quad> = datastore.named_graphs.get_all_quads().collect();
-            let mut new_quads: Vec<dag_rdf::Quad> = Vec::new();
-            for quad in &quads {
-                for rule_match in self.get_rules_for_fact(quad) {
-                    // See the matching comment in `materialise_one_iteration`:
-                    // the triggering-atom match alone does not prove the full
-                    // rule body holds, so a `Contradiction` head must be
-                    // re-checked via a full `evaluate()` join first.
-                    let head_pattern = match &rule_match.partial_rule.rule.head {
-                        RuleHead::Contradiction => {
-                            if !evaluate(datastore, &rule_match).is_empty() {
-                                return Err(ReasoningError::Contradiction(format!(
-                                    "{}",
-                                    rule_match.partial_rule.rule
-                                )));
-                            }
-                            continue;
-                        }
-                        RuleHead::NormalHead(h) => h.clone(),
-                    };
-                    let subs = evaluate(datastore, &rule_match);
-                    for sub in subs {
-                        let new_quad = apply_substitution_quad(&sub, &head_pattern);
-                        if !datastore.named_graphs.contains(&new_quad) {
-                            new_quads.push(new_quad);
-                        }
-                    }
-                }
-            }
-            for q in new_quads {
-                if !datastore.named_graphs.contains(&q) {
-                    datastore.named_graphs.add_quad(q);
-                    changed = true;
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 // ── Top-level evaluate ────────────────────────────────────────────────────────

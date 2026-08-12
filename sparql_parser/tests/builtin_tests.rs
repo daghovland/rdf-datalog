@@ -53,8 +53,6 @@ fn iri_node(s: &str) -> GraphElement {
 }
 
 const XSD_INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
-#[allow(dead_code)]
-const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 const XSD_BOOLEAN: &str = "http://www.w3.org/2001/XMLSchema#boolean";
 const XSD_DECIMAL: &str = "http://www.w3.org/2001/XMLSchema#decimal";
 const XSD_DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
