@@ -41,6 +41,19 @@
 			uri /oauth2/auth
 			copy_headers X-Auth-Request-User X-Auth-Request-Email
 			trusted_proxies private_ranges
+
+			# forward_auth proxies oauth2-proxy's /oauth2/auth response
+			# through as-is on failure -- oauth2-proxy deliberately returns a
+			# bare 401 from this check endpoint rather than a redirect (it's
+			# designed for auth-subrequest use, not direct browser access).
+			# Translate that 401 into a redirect to oauth2-proxy's own
+			# /oauth2/start sign-in flow here, preserving the originally
+			# requested URI via ?rd= so sign-in lands back where the user
+			# meant to go.
+			@error status 401
+			handle_response @error {
+				redir * /oauth2/start?rd={http.request.orig_uri} 302
+			}
 		}
 
 		handle /backlog* {
