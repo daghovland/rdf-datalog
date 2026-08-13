@@ -137,13 +137,7 @@ leave running unattended.
 
 ## Notes
 
-- **This has not been live-tested against a real domain** as of writing —
-  no domain was available for this server at the time these config
-  templates were prepared (see the discussion this doc originated from).
-  The Caddyfile and compose file have been reviewed for Caddyfile syntax
-  correctness and standard oauth2-proxy/Caddy integration patterns, but
-  treat the first real deployment as the actual test, and re-check Step 4
-  carefully.
+- **Live-tested against `dagalog.no`** (see [#477](https://github.com/daghovland/rdf-datalog/issues/477)): the deny path in Step 4 initially returned a bare `401` instead of redirecting to Google sign-in — `forward_auth` proxies oauth2-proxy's `/oauth2/auth` check response through as-is, so an explicit `@error status 401` / `handle_response` redirect to `/oauth2/start` is required inside the `forward_auth` block (see `deploy/Caddyfile`). With that fix, the full chain (deny → `/oauth2/start` → Google consent screen) works end-to-end.
 - `dagalog` runs with `--read-only` in `docker-compose.public.yml` as a
   second layer of caution — even if the edge gate were somehow
   misconfigured, an authenticated-but-unintended requester still can't
