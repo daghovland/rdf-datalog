@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #212's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 212 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:212 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(dagalog-kernel): retry test harness spawn with fresh ports on bind race" ;
+    bl:number 212 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:211 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr212 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:211 ;
+    prov:startedAtTime "2026-07-20T23:12:51Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T07:12:24Z"^^xsd:dateTime .
+
+session:pr212Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #211. dagalog-kernel's integration tests (tests/notebook_e2e.rs) have intermittently failed CI throughout this project's history, across many unrelated PRs — most recently #210. Root-caused (not previously identified precisely — treated as generic flakiness before this): dagalog-kernel/tests/support/mod.rs::free_port() picks a port via the classic \"bind to 127.0.0.1:0, ask the OS which port it got, then immediately close the listener\" trick — a time-of-check-to-time-of-use race. KernelHarness::start() calls this 5 times, writes the results into a Jupyter connection file, then spawns the real dagalog-kernel binary, which binds its own ZeroMQ sockets to those exact ports (dagalog-kernel/src/sockets.rs::run_kernel). Between the probe listener closing and the kernel process's real bind moments later, anything else on the machine — a concurrent test, another job on a shared CI runner, ordinary ephemeral-port churn — can grab the same port first. When that happens, run_kernel returns Err(\"... bind: Address already in use ...\") and the kernel process exits; the test's own socket .connect() calls don't require a live peer to succeed (ZeroMQ connects lazily), so the test instead hangs until its own timeout and panics with something like connect shell socket: ConnectTimeout(30s)." ;
+    agp:reasoningFor ghpull:212 ;
+    prov:wasGeneratedBy session:pr212 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #188's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 188 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:188 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(sparql): join reordering Phase C-2 — hoist independent conjuncts before OPTIONAL/MINUS" ;
+    bl:number 188 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:174 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr188 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:174 ;
+    prov:startedAtTime "2026-07-19T21:21:09Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T21:45:09Z"^^xsd:dateTime .
+
+session:pr188Summary a agp:TranscriptSummary ;
+    agp:summaryText "Phase C-2 of the join-reordering epic. Closes #174. Follow-up to #38/PR #173, which introduced sparql_parser::component_ordering and treated OPTIONAL/MINUS/FILTER/BIND/SERVICE all as unconditional barriers — nothing was ever reordered across any of them. This extends reordering to OPTIONAL and MINUS specifically (FILTER/BIND/SERVICE stay hard barriers, unchanged, per the issue's scope): a later conjunct that's independent of the barrier's internal-only variables can be hoisted to run before it, shrinking what the OPTIONAL/MINUS has to process. Correctness conditions OPTIONAL — the standard outer-join-pushdown rewrite: `` (Ω1 OPT Ω2) ⋈ Ω3 = (Ω1 ⋈ Ω3) OPT Ω2 iff vars(Ω3) ∩ vars(Ω2) ⊆ vars(Ω1) ` i.e. the later conjunct must not touch a variable bound *exclusively* inside the OPTIONAL body. MINUS — derived independently, not copied from OPTIONAL (SPARQL's MINUS has a domain-disjointness quirk where a row sharing no variable at all with a MINUS solution is never excluded). Turns out this codebase's actual Minus evaluation (eval_component in execute.rs) threads the outer row into the inner body and only ever extends it, so compatible() is effectively always true given a non-empty inner result — the domain-disjointness escape hatch isn't actually exercised, and the current behavior is equivalent to FILTER NOT EXISTS { inner }." ;
+    agp:reasoningFor ghpull:188 ;
+    prov:wasGeneratedBy session:pr188 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
