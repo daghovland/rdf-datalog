@@ -12,7 +12,9 @@ use std::fmt;
 /// A term in a query pattern — either a concrete resource ID or a named variable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Term {
+    /// A concrete, bound resource ID.
     Resource(GraphElementId),
+    /// A named, unbound variable.
     Variable(String),
 }
 
@@ -29,13 +31,18 @@ impl fmt::Display for Term {
 /// is either a concrete resource or a variable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QuadPattern {
+    /// Graph position.
     pub graph: Term,
+    /// Subject position.
     pub subject: Term,
+    /// Predicate position.
     pub predicate: Term,
+    /// Object position.
     pub object: Term,
 }
 
 impl QuadPattern {
+    /// Returns the names of all variables used in this pattern.
     pub fn get_variables(&self) -> Vec<&str> {
         [&self.graph, &self.subject, &self.predicate, &self.object]
             .iter()
@@ -74,20 +81,26 @@ pub fn get_default_graph_pattern(subject: Term, predicate: Term, object: Term) -
 use crate::datastore::Datastore;
 use std::collections::HashMap;
 
+/// Evaluates basic graph patterns against a `Datastore` by naive join.
 pub struct QueryExecutor<'a> {
+    /// The datastore being queried.
     pub datastore: &'a Datastore,
 }
 
+/// A variable → resource ID binding produced by pattern matching.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
+    /// Variable name to bound resource ID.
     pub map: HashMap<String, GraphElementId>,
 }
 
 impl<'a> QueryExecutor<'a> {
+    /// Creates an executor over `datastore`.
     pub fn new(datastore: &'a Datastore) -> Self {
         QueryExecutor { datastore }
     }
 
+    /// Evaluates `patterns` as a basic graph pattern and projects `projection` variables.
     pub fn execute_select(
         &self,
         patterns: &[QuadPattern],
@@ -108,6 +121,7 @@ impl<'a> QueryExecutor<'a> {
             .collect()
     }
 
+    /// Evaluates `patterns` as a basic graph pattern, returning all matching bindings.
     pub fn execute_bgp(&self, patterns: &[QuadPattern]) -> Vec<Binding> {
         let mut results = vec![Binding {
             map: HashMap::new(),
