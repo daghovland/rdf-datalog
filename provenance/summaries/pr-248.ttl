@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #248's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 248 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:248 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Wire stOTTR expansion into the CLI binary (--ottr flag)" ;
+    bl:number 248 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:247 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr248 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:247 ;
+    prov:startedAtTime "2026-07-22T23:38:50Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T23:46:19Z"^^xsd:dateTime .
+
+session:pr248Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds a repeatable --ottr <FILE> CLI flag, mirroring the existing -m/--mapping, -o/--ontology, -r/--rules flags. New apply_ottr_templates(datastore, paths) helper in src/lib.rs (same shape as apply_rml_mappings), loading each file via ottr::load_stottr_file and pooling all documents through ottr::expand_documents — so templates and instances can be split across --ottr files or combined in one. Pipeline order in src/main.rs: --data → --mapping → --ottr → --ontology/--rules, so OTTR-expanded triples participate in OWL-RL reasoning and Datalog rule evaluation. Moves the ottr crate from [dev-dependencies] to [dependencies] in the root Cargo.toml since it's now used by the library, not just tests/doctests. Updates README's CLI usage section and docs/user/ottr-templates.md with a new CLI subsection. New tests in tests/cli_integration.rs: templates+instances split across files, a single combined file, combining with a preloaded ontology (verifying OTTR output is inferred over via rdfs:subClassOf), and a nonexistent-file error case. New fixtures under tests/testdata/ottr_*." ;
+    agp:reasoningFor ghpull:248 ;
+    prov:wasGeneratedBy session:pr248 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

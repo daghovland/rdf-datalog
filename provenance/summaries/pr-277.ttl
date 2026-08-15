@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #277's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 277 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:277 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Add --max-rml-upload-bytes CLI flag / env var for RML upload limit" ;
+    bl:number 277 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:257 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr277 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:257 ;
+    prov:startedAtTime "2026-07-24T12:14:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T14:58:59Z"^^xsd:dateTime .
+
+session:pr277Summary a agp:TranscriptSummary ;
+    agp:summaryText "Config::max_rml_upload_bytes (the body-size limit for POST /{dataset}/rml and POST /rml/map) was hardcoded to 64 MiB with no way to override it. Adds --max-rml-upload-bytes / DAGALOG_MAX_RML_UPLOAD_BYTES to the CLI, mirroring the pattern used for the sibling --max-rdf-upload-bytes flag added by #275, threaded through to sparql_endpoint::Config::max_rml_upload_bytes. Default remains 64 MiB when unset. Adds a start_writable_with_rml_limit test helper (mirroring start_writable_with_rdf_limit) and two new integration tests in sparql_endpoint/tests/rml.rs: one confirming an over-limit source file is rejected, one confirming a normal-sized upload still succeeds under a smaller-but-sufficient configured limit. Note on status code Unlike the raw-body RDF write routes (which reject with 413 directly from axum's DefaultBodyLimit layer), the RML routes read their body via axum's Multipart extractor. A body-limit violation there surfaces as a MultipartError while reading a field, which the existing handler (materialize_multipart in rml_endpoint.rs) maps to 400, not 413. This is pre-existing behavior, unrelated to this change — the new test asserts 400 to match reality rather than assume 413. Changing that status-code mapping is out of scope for this issue (which is only about making the limit configurable) and can be filed as a separate follow-up if a 413 there is desired." ;
+    agp:reasoningFor ghpull:277 ;
+    prov:wasGeneratedBy session:pr277 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

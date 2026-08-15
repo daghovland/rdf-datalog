@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #303's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 303 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:303 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "SHACL: verify languageIn/lessThan suspicions, equals report-detail (#266)" ;
+    bl:number 303 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:266 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr303 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:266 ;
+    prov:startedAtTime "2026-07-30T16:39:58Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-30T17:30:01Z"^^xsd:dateTime .
+
+session:pr303Summary a agp:TranscriptSummary ;
+    agp:summaryText "Plan doc: docs/plans/ISSUE_266_SHACL_SUSPICIONS_PLAN.md Findings Confirmed bugs (fixed) 1. sh:languageIn on a non-literal value node — spec §4.4.4 normative text (\"For each value node that is either not a literal or that does not have a language tag matching ...\") has no out-of-scope carve-out for non-literals; they must violate. Previously conformed. Fixed in both eval_prop_constraint and the inner-shape conforms checker (shacl/src/evaluate.rs). 2. sh:lessThan / sh:lessThanOrEquals on incomparable pairs — spec §4.5.3/§4.5.4 explicitly say \"... or where the two values cannot be compared, there is a validation result.\" Previously silently skipped (conformed) via lit_comparable returning None. Replaced with a new sparql_compare/SparqlCmpValue helper implementing the SPARQL 1.1 §17.3 operator-mapping comparability rules (numeric-numeric, string/simple-literal, boolean-boolean, date-date, dateTime-dateTime); anything else — including cross-type pairs (e.g. numeric vs. date) and language-tagged literals — is \"cannot be compared\" ⇒ violation. A second, independent bug was found in the same area: Comparable's Ord impl fell through mismatched variants (e.g. Numeric vs. Date) to Ordering::Equal, silently treating a type-incomparable pair as equal. Fixed for sh:lessThan/sh:lessThanOrEquals by routing through sparql_compare instead." ;
+    agp:reasoningFor ghpull:303 ;
+    prov:wasGeneratedBy session:pr303 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

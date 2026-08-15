@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #338's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 338 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:338 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: undo-log fast path for IncrementalReasoner rollback" ;
+    bl:number 338 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:320 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr338 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:320 ;
+    prov:startedAtTime "2026-08-01T12:39:51Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T14:57:09Z"^^xsd:dateTime .
+
+session:pr338Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements the fast-rollback mechanism proposed in #320: instead of rebuild_from_base's full wipe + full re-materialisation whenever apply_insertions/apply_deletions hits a Contradiction partway through, this tracks exactly what the current call changed and undoes only that. apply_insertions: quad_start captured before insertion; DatalogProgram::materialise_seminaive_tracked records every genuinely-new (quad, Derivation) entry into a buffer per program. On Err, undo_insertions removes those entries via the new DerivedFromIndex::unrecord, then truncates the quad table back to quad_start via the new QuadTable::truncate_to (cheap: add_quad/add_intensional_quad only ever append, so truncation is exact and requires no rule re-evaluation). apply_deletions: forward_phase now snapshots each PD quad's pre-removal derivation list per program before wiping it, tracks new derivations produced by the re-derivation pass, and on Err (e.g. a negation-triggered contradiction the BF backward phase can't see, since it only traces positive witnesses) restores the PD quads (intensional), the originally-deleted base facts (extensional), and every snapshotted derivation entry. rebuild_from_base is untouched and remains available as the slower fallback." ;
+    agp:reasoningFor ghpull:338 ;
+    prov:wasGeneratedBy session:pr338 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -7,6 +7,13 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix session: <https://dagalog.no/ns/agentprov/session#> .
 
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #478's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 478 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
 ghpull:478 a bl:PullRequest, bl:WorkItem ;
     rdfs:label "deploy: fix Caddyfile forward_auth 401 not redirecting to Google sign-in" ;
     bl:number 478 ;

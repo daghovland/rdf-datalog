@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #156's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 156 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:156 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(#154): BIND-computed unbound values resolve to MatchTerm::Never, not Wildcard" ;
+    bl:number 156 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:154 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr156 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:154 ;
+    prov:startedAtTime "2026-07-15T11:48:59Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-15T17:01:50Z"^^xsd:dateTime .
+
+session:pr156Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes the same root-cause bug class as #146/#153 (MatchTerm collapsing \"unconstrained wildcard\" and \"structurally cannot match\" into the same case), triggered here by BIND instead of an unsupported term shape. resolve_match_term's Term::Variable arm: when a variable is bound to a computed value that was never interned into the datastore (e.g. the result of BIND(?x + 1000000 AS ?y)), it previously resolved to MatchTerm::Wildcard. That value structurally cannot appear in any stored quad, so it should resolve to MatchTerm::Never. Corrected framing vs. the original issue Issue #154 as filed described this as an observable \"silently returns wrong query results\" bug, by analogy with the triple-term bug in #146. Investigation while implementing this fix showed that's not accurate for any call site that exists today: every current caller (the bind! macro, the graph-variable recheck, and PropertyPath::NegatedSet's equivalent logic) re-verifies the variable's binding against the matched quad afterwards, so the Wildcard-induced unconstrained scan was already filtered back down to zero rows before reaching the user. This PR fixes a latent defensive-correctness and performance issue (an avoidable full scan, and a landmine for any future call site added without that recheck) rather than a live query-correctness bug. I'll update the issue description to reflect this." ;
+    agp:reasoningFor ghpull:156 ;
+    prov:wasGeneratedBy session:pr156 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

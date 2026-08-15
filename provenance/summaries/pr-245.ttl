@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #245's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 245 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:245 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): implement SPARQL 1.1 §18.2.2.8 group-graph-pattern scoping (#198)" ;
+    bl:number 245 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:198 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr245 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:198 ;
+    prov:startedAtTime "2026-07-22T22:27:08Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T22:32:19Z"^^xsd:dateTime .
+
+session:pr245Summary a agp:TranscriptSummary ;
+    agp:summaryText "Resolves the remaining scope of #198 — the last three W3C SPARQL 1.1 bind conformance entries (bind07, bind08, bind10), previously skip-listed in tests/w3c_sparql11_suite.rs::w3c_sparql11_bind. All three shared one root cause: this engine did not implement SPARQL 1.1 §18.2.2.8's group-graph-pattern scoping rules. A bare nested { ... } group was flattened into its parent's component list at parse time with no scope boundary at all — a variable bound only inside the group incorrectly appeared \"in scope\" to expressions outside it (and vice versa). UNION arms were evaluated with the outer solutions threaded straight into the arm's own evaluation, rather than independently-then-joined. FILTER was treated as a position-fixed \"hard barrier\" instead of being deferred to the end of its enclosing group, as the SPARQL algebra requires. Changes Added QueryComponent::Group(Vec<QueryComponent>) (sparql_parser/src/ast.rs) and stopped flattening a bare nested { ... } at parse time (parse_group_graph_pattern_contents in sparql_parser/src/lib.rs). Introduced eval_independent_then_join (sparql_parser/src/execute.rs): evaluates a component list from a fresh, unseeded solution set and only afterwards joins the result back against the outer solutions via compatibility-checked merge (mirroring the existing Subquery nested-loop join)." ;
+    agp:reasoningFor ghpull:245 ;
+    prov:wasGeneratedBy session:pr245 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

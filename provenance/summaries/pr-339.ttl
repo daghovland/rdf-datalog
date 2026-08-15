@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #339's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 339 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:339 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: serialize compound sh:resultPath as real RDF path expressions" ;
+    bl:number 339 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:335 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr339 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:335 ;
+    prov:startedAtTime "2026-08-01T12:40:18Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T15:18:17Z"^^xsd:dateTime .
+
+session:pr339Summary a agp:TranscriptSummary ;
+    agp:summaryText "ValidationResult::result_path / ViolMeta::path now carry the structured path::ShPath AST instead of a flattened display string. report_to_datastore serializes a compound path (sequence/alternative/inverse/zeroOrMore/oneOrMore/zeroOrOne) back into its full SHACL-spec RDF encoding (sh:alternativePath/sh:inversePath/.../RDF list) via new path::to_datastore, instead of an opaque triple-less blank node. A simple Predicate(iri) path still serializes as the bare IRI (no blank node) — matching how a real shapes graph writes sh:path ex:foo; every compound variant gets a fresh, per-call blank node (never shared/deduplicated across calls). report_to_turtle gets an equivalent path::to_turtle inline-Turtle serializer; the now-redundant path_display/display_label placeholder is removed. Un-skips the 7 core/path fixtures in w3c_shacl_core_path (tests/w3c_shacl_suite.rs) — the test loader now parses the expected side's sh:resultPath object into the same ShPath AST via path::parse_path, so both sides of compare_report only need to be RDFC-1.0 graph-isomorphic, not textually identical. All 7 previously-skipped entries now pass; the skip list for this test is empty." ;
+    agp:reasoningFor ghpull:339 ;
+    prov:wasGeneratedBy session:pr339 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

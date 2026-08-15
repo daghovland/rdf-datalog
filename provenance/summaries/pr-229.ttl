@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #229's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 229 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:229 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(rml): make security_tests.rs temp_dir() paths unique per call" ;
+    bl:number 229 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:226 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr229 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:226 ;
+    prov:startedAtTime "2026-07-21T14:32:17Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T17:59:50Z"^^xsd:dateTime .
+
+session:pr229Summary a agp:TranscriptSummary ;
+    agp:summaryText "rml/tests/security_tests.rs's temp_dir(label) helper built a fixed path from only the caller-supplied label, so every invocation of a given test across the whole machine wrote to the same path — concurrent cargo test --workspace runs across multiple git worktree checkouts (this project's normal workflow) could race on it. Incorporated uuid::Uuid::new_v4() into the directory name, mirroring the connection-file naming pattern already established in dagalog-kernel/tests/support/mod.rs (fixed for the identical reason in #211). Added temp_dir_is_unique_across_calls_with_same_label asserting two calls with the same label now produce different, existing directories. Added uuid (with v4 feature) as a dev-dependency of the rml crate, matching the version already used elsewhere in the workspace (dagalog-kernel, sparql_parser, sparql_endpoint). Cleanup (remove_dir_all per test) was left out per the issue's guidance — not forcing it since it would touch the structure of all 18 call sites for a hygiene-only benefit; the uniqueness fix alone eliminates the race." ;
+    agp:reasoningFor ghpull:229 ;
+    prov:wasGeneratedBy session:pr229 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

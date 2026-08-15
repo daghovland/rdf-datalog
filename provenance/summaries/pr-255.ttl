@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #255's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 255 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:255 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Graph view: persist and restore node layout (localStorage)" ;
+    bl:number 255 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:46 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr255 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:46 ;
+    prov:startedAtTime "2026-07-23T14:39:56Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-23T14:48:57Z"^^xsd:dateTime .
+
+session:pr255Summary a agp:TranscriptSummary ;
+    agp:summaryText "After dragging a node in the query-result graph view, persist {id, x, y} for every node to localStorage, keyed by an FNV-1a hash of the query text that produced the graph (so different queries don't clobber each other's layouts). renderGraph restores the saved positions (via Cytoscape's preset layout) when every current node has a saved position; falls back to the existing cose force-directed layout otherwise (e.g. new nodes appeared since the layout was saved). Adds a \"Reset layout\" button next to the existing \"Fullscreen\" control that clears the saved layout and re-runs cose. Adds a \"Save PNG\" button (cyInstance.png({output:'blob'}) + the existing triggerDownload helper) as the nice-to-have mentioned in the issue. cyInstance is now also mirrored to window.cyInstance so WebDriver-driven tests (which execute scripts against the window global, not the page's lexical scope) can reach it." ;
+    agp:reasoningFor ghpull:255 ;
+    prov:wasGeneratedBy session:pr255 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

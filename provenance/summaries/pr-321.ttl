@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #321's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 321 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:321 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): sh:deactivated/severity literal targetNode + implicit-shape + subclass-closure targetClass gaps" ;
+    bl:number 321 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:312 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr321 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:312 ;
+    prov:startedAtTime "2026-07-31T15:38:39Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T18:50:02Z"^^xsd:dateTime .
+
+session:pr321Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixed all four scoped false negatives from #312 (core/misc and core/targets in the W3C SHACL test suite). Verified by reverting just shacl/src/ back to the pre-fix commit (un-skips applied, no src changes) in an isolated worktree: w3c_shacl_core_misc and w3c_shacl_core_targets both genuinely fail there (3 + 1 mismatches) — confirming these are real fixes, not entries that already passed on main. deactivated-002 / severity-001: literal-valued sh:targetNode (e.g. sh:targetNode 32) was silently dropped by target resolution — lookup_elem_value now resolves literal ElemValues the same way as IRIs/blank nodes (shacl/src/lib.rs, shacl/src/evaluate.rs). severity-002: a shape recognised only via a target-declaring predicate (sh:targetNode/sh:targetClass/…) with no explicit rdf:type sh:NodeShape/sh:PropertyShape triple was never picked up by shape discovery (SHACL spec §3.1) — shapes::parse_shapes now also scans for target-predicate subjects (shacl/src/shapes.rs). targetClassImplicit-001: sh:targetClass/implicit-class target resolution now applies the rdfs:subClassOf* closure required by spec §2.1.3.1 (?this rdf:type/rdfs:subClassOf* $class), shared between the direct-evaluation path and the Datalog rule-generation path via class_target_instances (shacl/src/lib.rs, shacl/src/translate.rs)." ;
+    agp:reasoningFor ghpull:321 ;
+    prov:wasGeneratedBy session:pr321 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

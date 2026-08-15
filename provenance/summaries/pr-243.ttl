@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #243's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 243 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:243 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): resolve most W3C functions-suite builtin gaps (#205)" ;
+    bl:number 243 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr243 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-22T21:05:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T21:48:43Z"^^xsd:dateTime .
+
+session:pr243Summary a agp:TranscriptSummary ;
+    agp:summaryText "Resolves 35 of 40 previously-skipped entries in the W3C SPARQL 1.1 functions-suite conformance test (tests/w3c_sparql11_suite.rs::w3c_sparql11_functions). Nondeterministic-group triage (done first, per the task): NOW()/UUID()/STRUUID() pattern-match entries turned out not to need pattern-based comparison at all — they use exact FILTER/DATATYPE/REGEX/STRLEN checks the query itself computes. They failed for two unrelated reasons fixed below (a DATATYPE() gap and a REGEX gap), not a harness limitation. RAND()/IN/NOT IN were already passing (stale skip-list comment). Fixed: REGEX now performs real regular-expression matching (was a plain .contains() substring check) — fixes UUID()/STRUUID() pattern-match tests and any FILTER(REGEX(...)) use of anchors/character-classes/flags. DATATYPE() recognises native DateTimeLiteral/DateLiteral/TimeLiteral — fixes NOW()'s DATATYPE(?n) = xsd:dateTime check. eval_function_bool falls back to eval_function_value for any function without a dedicated boolean-context arm — fixes FILTER isNumeric(?x). CEIL/FLOOR/ROUND preserve the operand's numeric type (integer stays integer, decimal stays decimal) instead of always promoting to xsd:integer; ROUND's tie-break direction corrected to \"toward positive infinity\" (ROUND(-2.5) = -2, not -3)." ;
+    agp:reasoningFor ghpull:243 ;
+    prov:wasGeneratedBy session:pr243 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

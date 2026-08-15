@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #357's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 357 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:357 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "provenance: representative-sample summaries for prior merged PRs (#352)" ;
+    bl:number 357 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:352 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr357 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:352 ;
+    prov:startedAtTime "2026-08-03T05:22:48Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-03T15:12:51Z"^^xsd:dateTime .
+
+session:pr357Summary a agp:TranscriptSummary ;
+    agp:summaryText "Representative sample (not full backfill -- see repo owner's scope decision on #352: full backfill split to follow-up #355) of provenance/summaries/pr-<N>.ttl files for prior merged PRs, per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's retrospective authoring mode. Picked for variety across kinds of work, not just repeated SHACL fixes: #317 -- reasoner: panic-to-Result Contradiction handling (architectural) #332 -- reasoner: unify OWL2RL/.datalog rules into one tracked pass (architectural, itself a follow-up #317 filed) #336 -- test-infrastructure: canonicalization-based comparator for w3c_shacl_suite #329 -- new-feature: agentprov vocabulary itself #347 -- new-feature, different crate: GitHub API backlog loader #297 -- SHACL correctness fix with a genuine decision-point (runtime visited-set redesigned to a static shape-graph cycle check after review feedback) This is a work-in-progress draft; pushing early per CLAUDE.md's workflow guidance while more files land." ;
+    agp:reasoningFor ghpull:357 ;
+    prov:wasGeneratedBy session:pr357 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

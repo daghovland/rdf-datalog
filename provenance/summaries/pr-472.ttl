@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #472's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 472 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:472 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Removed commented out test-ignore attributes" ;
+    bl:number 472 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr472 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-08-12T21:03:29Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-12T21:42:36Z"^^xsd:dateTime .
+
+session:pr472Summary a agp:TranscriptSummary ;
+    agp:summaryText "Historical PR titled \"Removed commented out test-ignore attributes\", merged 2026-08-12. No PR description was recorded at the time, and it predates this repo's per-PR provenance-summary convention (issue #334), so this entry is an honest mechanical record of what the title states rather than a reconstructed account of reasoning that was never written down." ;
+    agp:reasoningFor ghpull:472 ;
+    prov:wasGeneratedBy session:pr472 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

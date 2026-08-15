@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #132's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 132 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:132 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#125): proprietary HTTP transaction API with BEGIN/COMMIT/ROLLBACK" ;
+    bl:number 132 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:125 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr132 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:125 ;
+    prov:startedAtTime "2026-07-05T22:51:31Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-06T11:07:31Z"^^xsd:dateTime .
+
+session:pr132Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds a multi-request transaction API to the SPARQL endpoint. Clients can group several reads and writes into a single atomic unit that commits or rolls back as a whole. API `` POST /transaction/begin → 200 { \"txId\": \"<uuid>\" } GET /sparql?txId=<id>&query=… → snapshot read (sees pending delta) POST /sparql?txId=<id> → buffers update inside the transaction POST /transaction/<txId>/commit → 204 No Content 409 Conflict (generation mismatch) POST /transaction/<txId>/rollback → 204 No Content ` Semantics Each transaction captures store.generation at begin time. Buffered updates are never applied to the live store until commit. Reads within the transaction see the committed store plus the pending delta (via a cheap clone-and-apply). commit checks that store.generation still matches the snapshot; if another writer committed in the meantime → 409 Conflict (client must re-read and retry). rollback discards the pending delta with no store mutation. Transactions idle for > 60 s are evicted lazily on the next begin. owl:Nothing constraint check runs at commit time; violation → 409 + rollback. New files | File | Purpose | |---|---| | src/transactions.rs | OpenTransaction, TransactionRegistry | | src/transaction_routes.rs | transaction_begin, transaction_commit, transaction_rollback handlers | | tests/transactions.rs` | 7 integration tests |" ;
+    agp:reasoningFor ghpull:132 ;
+    prov:wasGeneratedBy session:pr132 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

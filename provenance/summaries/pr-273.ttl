@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #273's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 273 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:273 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): honor sh:severity instead of hardcoding Violation" ;
+    bl:number 273 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:263 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr273 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:263 ;
+    prov:startedAtTime "2026-07-24T06:22:05Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T07:04:52Z"^^xsd:dateTime .
+
+session:pr273Summary a agp:TranscriptSummary ;
+    agp:summaryText "sh:severity was ignored entirely — shacl/src/lib.rs::collect_violations hardcoded Severity::Violation for every result, and report_to_turtle hardcoded sh:resultSeverity sh:Violation, regardless of what a shape actually declared. The real fix required threading severity from each shape all the way through what was previously a flat, shape-agnostic Vec<GraphElementId> of violation predicates: ParsedShape gains a severity: Severity field (parsed from sh:severity, defaulting to Severity::Violation when unset). shapes_to_rules, eval_all, and pre_compute_violations now return Vec<(GraphElementId, Severity)> instead of Vec<GraphElementId> — pairing each violation predicate with its producing shape's severity at the point where it's already known. collect_violations looks up the paired severity per predicate (via a HashMap) instead of hardcoding Violation. report_to_turtle emits the actual sh:resultSeverity per result. sh:conforms computation (results.is_empty()) was verified correct already (per a prior audit) and left untouched — this fix only corrects the severity *value* attached to results." ;
+    agp:reasoningFor ghpull:273 ;
+    prov:wasGeneratedBy session:pr273 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

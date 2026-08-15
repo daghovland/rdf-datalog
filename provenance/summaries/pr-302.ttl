@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #302's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 302 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:302 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(eli): ObjectMaxCardinality(0, prop) discards prop unconditionally, plus a reasoner join bug it exposed" ;
+    bl:number 302 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr302 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-26T14:11:58Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-30T13:43:34Z"^^xsd:dateTime .
+
+session:pr302Summary a agp:TranscriptSummary ;
+    agp:summaryText "Addresses the correctness half of #298 (the ObjectMaxCardinality(0, prop) bug). Bug 2 from #298 (reasoner panic! on genuine contradiction instead of Result::Err) is deferred to #301 — see rationale below. This PR does not close #298; #298 should stay open (or be re-scoped) to track #301, or be closed manually once #301's decision is made. This PR closes the correctness bug on its own. Bug 1 (fixed): ObjectMaxCardinality(0, prop) discarded prop and mapped unconditionally to owl:Nothing eli/src/extractor.rs's super-concept match for ObjectMaxCardinality(0, _prop) discarded _prop entirely and emitted NormalizedConcept::Bottom — translating \"C has at most 0 R-successors\" as \"C is empty\" unconditionally, rather than the correct \"instances of C may not have any R-edge\". This crashed the whole reasoning pipeline the instant *any* instance of such a class was asserted, even one with zero R-edges that trivially satisfies the restriction. Fix, mirroring the existing AtMostOneValueFrom (cardinality-1) handling: eli/src/axioms.rs: new NormalizedConcept::AtMostZeroValueFrom(ObjectPropertyExpression) variant. eli/src/extractor.rs: the ObjectMaxCardinality(0, prop) arm now threads prop into this variant instead of discarding it." ;
+    agp:reasoningFor ghpull:302 ;
+    prov:wasGeneratedBy session:pr302 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

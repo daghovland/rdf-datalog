@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #324's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 324 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:324 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): sh:closed violations now populate sh:resultPath" ;
+    bl:number 324 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:308 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr324 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:308 ;
+    prov:startedAtTime "2026-07-31T19:00:19Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T20:56:50Z"^^xsd:dateTime .
+
+session:pr324Summary a agp:TranscriptSummary ;
+    agp:summaryText "closed_violations shared a single synthetic violation predicate per shape across every offending predicate, and discarded the actual triple value (it stored obj = triple.predicate, not triple.obj). Per spec, a ClosedConstraintComponent result needs sh:resultPath = the offending predicate and sh:value = the actual offending value -- two different things, contradicting #308's original premise that they're \"the same value.\" Fix: closed_violations now interns one synthetic violation predicate per distinct offending predicate encountered per shape (vocab::viol_closed takes the offending predicate's GraphElementId as a disambiguator, since which predicates are forbidden is data-driven and unknown at shapes-parse time). Each gets its own ViolMeta with path = that predicate's IRI, and the violation triple's object is now the real triple value. Behavior change beyond the original issue text: result cardinality changes from one-per-(focusNode, predicate) to one-per-(focusNode, predicate, value) -- multiple offending values for the same forbidden predicate on one node now each produce their own result, which is spec-correct. Fixtures unskipped core/node/closed-001.ttl core/node/closed-002.ttl core/complex/personexample.ttl Tests Added regression_308_closed_populates_result_path in tests/shacl_suite.rs (asserts both sh:resultPath and sh:value are populated correctly and distinctly)." ;
+    agp:reasoningFor ghpull:324 ;
+    prov:wasGeneratedBy session:pr324 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

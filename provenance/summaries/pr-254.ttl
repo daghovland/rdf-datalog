@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #254's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 254 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:254 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "RML: FunctionMap (FNML) support" ;
+    bl:number 254 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:27 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr254 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:27 ;
+    prov:startedAtTime "2026-07-23T14:27:12Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-23T14:48:53Z"^^xsd:dateTime .
+
+session:pr254Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds fnml:functionValue/fno:executes support to the RML mapping engine: an ObjectMap can invoke a named function against a parameter value sourced from an ordinary rml:template/rml:reference/rml:constant term map. Full design rationale in docs/plans/RML_FNML_PLAN.md, notably: Spec grounding: FNML's vocabulary landscape is fragmented — a legacy, widely-implemented shape (fnml:/fno: from rmlmapper-java and every real-world fixture) vs. an unstable, still-drafting \"rml-core\" rewrite whose own docs returned inconsistent property names across two fetches. This implements the legacy shape, matching issue #27's own quoted example and the reference implementation. Scope: a closed built-in registry of three unary GREL string functions (grel:toUpperCase, grel:toLowerCase, grel:string_trim), verified against the published grel.ttl vocabulary — not a fully generic FnO dispatcher. grel:array_join was considered and dropped (its real signature needs an array parameter, out of scope for the per-row scalar term-map model). The AST is already N-ary, so adding more built-ins later is a registry addition, not a redesign. translate() now returns Result<Vec<LogicalPlan>, RmlError> to propagate RmlError::UnknownFunction for an unresolvable function IRI, instead of silently producing wrong output." ;
+    agp:reasoningFor ghpull:254 ;
+    prov:wasGeneratedBy session:pr254 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

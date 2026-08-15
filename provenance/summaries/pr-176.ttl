@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #176's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 176 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:176 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): apply ORDER BY at the top-level SELECT" ;
+    bl:number 176 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:170 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr176 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:170 ;
+    prov:startedAtTime "2026-07-19T17:26:01Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T17:48:52Z"^^xsd:dateTime .
+
+session:pr176Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #170. sparql_parser::execute's Query::Select arm computed solutions and applied DISTINCT/OFFSET/LIMIT but never called sort_solutions — so a top-level SELECT ... ORDER BY silently returned rows in storage/enumeration order. Only execute_select_inner (used for subqueries) actually sorted. This escaped the existing test suite because most result-set assertions compare as unordered bags rather than checking row order. Bridges the resolved SolutionRow rows to PartialSub via solution_row_to_partial, runs the same sort_solutions subqueries already use, then resolves back — placed after projection, before DISTINCT/OFFSET/LIMIT, mirroring execute_select_inner's existing ordering. Confirmed independent of #165's LIMIT short-circuit, which already disables its row-budget whenever ORDER BY is present (since sorting requires the full solution set) — no interaction to resolve here. Test New regression test (spec_s13_order_by_top_level_sorts_rows) asserts *exact row order*, not just membership, against a dataset where insertion order differs from sorted order — so a reordering regression can't pass by coincidence." ;
+    agp:reasoningFor ghpull:176 ;
+    prov:wasGeneratedBy session:pr176 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #345's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 345 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:345 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): blank-node isomorphism harness fix unblocks BNODE()/plus-1/plus-2 (#205 partial)" ;
+    bl:number 345 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr345 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-08-02T10:00:18Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-02T11:48:28Z"^^xsd:dateTime .
+
+session:pr345Summary a agp:TranscriptSummary ;
+    agp:summaryText "Context Most of #205 was already resolved in prior merged work (PR #243, then #245): 35 of 40 originally skip-listed W3C functions-suite entries. This PR is not that work — it's a follow-up harness fix for one of the remaining groups the prior session identified as blocked and deferred. What this PR does The remaining BNODE(), plus-1, plus-2 entries were failing purely because the test harness's SRX comparator (compare_with_srx in tests/w3c_sparql11_suite.rs) matched blank nodes by their exact numeric label instead of up to isomorphism — which is what RDF/SPARQL result equivalence actually requires (blank node labels are arbitrary, per spec). Added bnode_isomorphic_multiset_match: a bounded backtracking search over bijections between the actual and expected blank-node label sets, used only when either side of a comparison has blank nodes at all (a fast, unchanged exact-match path with detailed \"missing rows\" diagnostics still handles the common non-bnode case). Capped at 8 distinct labels to bound the O(n!) search — the W3C suite's own bnode-bearing entries never come close to that." ;
+    agp:reasoningFor ghpull:345 ;
+    prov:wasGeneratedBy session:pr345 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

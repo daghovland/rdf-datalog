@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #231's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 231 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:231 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): parse and evaluate post-query/post-subquery VALUES clause" ;
+    bl:number 231 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:200 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr231 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:200 ;
+    prov:startedAtTime "2026-07-21T15:12:38Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T17:55:31Z"^^xsd:dateTime .
+
+session:pr231Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds parsing for the SPARQL grammar's trailing ValuesClause — a VALUES { ... } block placed *after* a query's (or subquery's) solution modifiers — which was previously never parsed at all: the unconsumed text was silently dropped by run_sparql_query's let (_, query) = parse_query(...), so the clause had no effect on results. New Query::Select::values_clause field, populated at the end of parse_query_body (shared by both top-level SelectQuery and nested SubSelect, which is why \"Post-subquery VALUES\" needed no separate parser fix — { SELECT ... } VALUES ... } is the same SubSelect production per the SPARQL grammar). Joined into the solution set as the *final* step, after group_by/having/order_by/distinct/offset/limit, via a shared join_solutions_with_values helper (refactored out of the existing inline-VALUES evaluator, so both code paths now share one implementation of the join/UNDEF semantics). Also fixes a latent, previously-untriggered bug in parse_values_row: it inferred the parenthesised-row-vs-bare-value grammar choice from vars.len() == 1 rather than from whether the var list itself used InlineDataFull's parens, which broke VALUES (?x) { (v) } (single var, still parenthesised) — surfaced by values07." ;
+    agp:reasoningFor ghpull:231 ;
+    prov:wasGeneratedBy session:pr231 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
