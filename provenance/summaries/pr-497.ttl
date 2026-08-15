@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Prospective summary (see docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md,
+# "Session window", prospective case): written on the branch right after
+# opening PR #497, before it has merged. ghpull:497's bl:state is bl:Open,
+# the real state at authoring time. session:pr497's endedAtTime is the real
+# wall-clock time this file was written, not a guessed mergedAt.
+# startedAtTime is the authoredDate of the branch's first commit
+# (`git log refactor/465-split-execute-rs --format=%aI` -> 957d35b, the
+# commit that performed the actual module split).
+
+ghpull:497 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: split execute.rs (5,420 lines) into submodules" ;
+    bl:number 497 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:465 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr497 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:465 ;
+    prov:startedAtTime "2026-08-15T10:14:56Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T10:18:15Z"^^xsd:dateTime .
+
+session:pr497Summary a agp:TranscriptSummary ;
+    agp:summaryText "sparql_parser/src/execute.rs had grown to 5,420 lines, part of epic #453's 2026-08 code-quality self-review. Split it into execute/mod.rs plus 9 submodules grouped by evaluation concern (solutions, components, bgp, expressions, functions, casts, paths, aggregates), with mod.rs retaining the entry points and shared row/substitution types. The largest single extraction was eval_function_value, a ~700-line match over roughly 40 SPARQL built-ins, broken into one eval_fn_<name> helper per function so the dispatcher itself becomes a thin lookup; each arm's original logic and comments were preserved verbatim rather than rewritten, keeping this a pure refactor with zero behavior change and zero test edits. Splitting surfaced one cross-module visibility gap: BgpMatch::into_query_arg (defined in bgp.rs) is called from paths.rs's property-path evaluation, so it needed pub(crate) rather than the private visibility it had as a same-file helper before the split -- fixed by widening it to match the pub(crate) convention already used for the other cross-submodule helpers. cargo fmt also reordered several use-statement blocks in mod.rs, paths.rs, and solutions.rs once imports were spread across files instead of one; those reorderings were applied as a follow-up commit after the initial split commit rather than folded in, since fmt's rewrite only became visible once all nine files existed together." ;
+    agp:abstractText "Split sparql_parser's 5,420-line execute.rs into 9 concern-grouped submodules; pure refactor, one visibility fix, no behavior change." ;
+    agp:reasoningFor ghpull:497 ;
+    prov:wasGeneratedBy session:pr497 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
