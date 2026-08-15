@@ -27,7 +27,7 @@ session:pr484 a agp:AgentSession ;
     prov:wasAssociatedWith session:claudeSonnet5 ;
     prov:used ghissues:461 ;
     prov:startedAtTime "2026-08-15T07:44:56Z"^^xsd:dateTime ;
-    prov:endedAtTime "2026-08-15T07:44:56Z"^^xsd:dateTime .
+    prov:endedAtTime "2026-08-15T07:48:25Z"^^xsd:dateTime .
 
 session:pr484Summary a agp:TranscriptSummary ;
     agp:summaryText "Issue #461 (part of the 2026-08 code-quality self-review, epic #453) flagged the one naked production unwrap() in sparql_endpoint: Config::default()'s bind_addr field parsed the literal \"0.0.0.0:3030\" with .parse().unwrap(). Before fixing, grepped sparql_endpoint/src for every remaining .unwrap() not already wrapped in .expect() to confirm the issue's premise still held after other recent PRs — all hits were confined to #[cfg(test)] modules (auth.rs, persistence.rs, sparql_update.rs, query_builder.rs), so the framing was accurate. Fixed by switching to .expect(\"hardcoded bind address is valid\"), matching the .expect(...) convention already used for infallible-in-practice values elsewhere in the crate, and added a small unit test (config_tests::default_bind_addr_parses) so a future edit to the literal that broke parsing would fail loudly at test time rather than only at process startup. While running the full workspace quality gate, hit two unrelated flakes caused by other agents' worktrees building/testing concurrently on the same machine: a SIGBUS linker crash from a nearly-full shared CARGO_TARGET_DIR, and an rml json_tests failure from a fixture collision on a fixed /tmp path — both confirmed as environment noise (re-running in isolation passed) rather than caused by this change; the fixture-collision one was filed as a standalone follow-up, issue #487." ;
