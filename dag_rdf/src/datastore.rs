@@ -20,8 +20,11 @@ use crate::{
 /// - `resources`: the interning store mapping GraphElement ↔ GraphElementId.
 #[derive(Clone)]
 pub struct Datastore {
+    /// Quads for RDF reification (triple IDs as graph component).
     pub reified_triples: QuadTable,
+    /// The main quad store for all named and default-graph triples.
     pub named_graphs: QuadTable,
+    /// The interning store mapping `GraphElement` ↔ `GraphElementId`.
     pub resources: GraphElementManager,
     /// Monotonically increasing write counter.  Incremented on every mutating
     /// operation.  Used as an ETag value so HTTP clients can detect stale caches.
@@ -29,6 +32,7 @@ pub struct Datastore {
 }
 
 impl Datastore {
+    /// Creates an empty `Datastore`, sizing internal capacity from `init_rdf_size`.
     pub fn new(init_rdf_size: u32) -> Self {
         let init_triples = std::cmp::max(10, (init_rdf_size / 60) as usize) as u32;
         Datastore {
@@ -41,18 +45,22 @@ impl Datastore {
 
     // ── Resource management ──────────────────────────────────────────────────
 
+    /// Interns `resource` and returns its `GraphElementId`.
     pub fn add_resource(&mut self, resource: GraphElement) -> GraphElementId {
         self.resources.add_resource(resource)
     }
 
+    /// Interns an RDF literal and returns its `GraphElementId`.
     pub fn add_literal_resource(&mut self, literal: RdfLiteral) -> GraphElementId {
         self.resources.add_literal_resource(literal)
     }
 
+    /// Interns an RDF node or edge resource and returns its `GraphElementId`.
     pub fn add_node_resource(&mut self, node: RdfResource) -> GraphElementId {
         self.resources.add_node_resource(node)
     }
 
+    /// Creates and interns a fresh, uniquely-numbered anonymous blank node.
     pub fn new_anonymous_blank_node(&mut self) -> GraphElementId {
         self.resources.create_unnamed_anon_resource()
     }
@@ -71,11 +79,13 @@ impl Datastore {
         self.generation += 1;
     }
 
+    /// Add a quad to `named_graphs`.
     pub fn add_quad(&mut self, quad: Quad) {
         self.named_graphs.add_quad(quad);
         self.generation += 1;
     }
 
+    /// Add a triple to the named graph identified by `graph`.
     pub fn add_named_graph_triple(&mut self, graph: GraphElementId, triple: Triple) {
         self.named_graphs.add_quad(Quad {
             triple_id: graph,
@@ -86,6 +96,7 @@ impl Datastore {
         self.generation += 1;
     }
 
+    /// Add a triple to `reified_triples` under reification ID `id`.
     pub fn add_reified_triple(&mut self, triple: Triple, id: GraphElementId) {
         self.reified_triples.add_quad(Quad {
             triple_id: id,
@@ -132,6 +143,7 @@ impl Datastore {
 
     // ── Quad queries (default graph) ─────────────────────────────────────────
 
+    /// Iterate over default-graph triples with the given subject.
     pub fn get_triples_with_subject(
         &self,
         subject: GraphElementId,
@@ -145,6 +157,7 @@ impl Datastore {
             })
     }
 
+    /// Iterate over default-graph triples with the given object.
     pub fn get_triples_with_object(
         &self,
         object: GraphElementId,
@@ -158,6 +171,7 @@ impl Datastore {
             })
     }
 
+    /// Iterate over default-graph triples with the given predicate.
     pub fn get_triples_with_predicate(
         &self,
         predicate: GraphElementId,
@@ -171,6 +185,7 @@ impl Datastore {
             })
     }
 
+    /// Iterate over default-graph triples with the given subject and predicate.
     pub fn get_triples_with_subject_predicate(
         &self,
         subject: GraphElementId,
@@ -185,6 +200,7 @@ impl Datastore {
             })
     }
 
+    /// Iterate over default-graph triples with the given object and predicate.
     pub fn get_triples_with_object_predicate(
         &self,
         object: GraphElementId,
@@ -199,6 +215,7 @@ impl Datastore {
             })
     }
 
+    /// Returns `true` if `triple` exists in the default graph.
     pub fn contains_triple(&self, triple: &Triple) -> bool {
         self.named_graphs.contains(&Quad {
             triple_id: DEFAULT_GRAPH_ELEMENT_ID,
@@ -208,6 +225,7 @@ impl Datastore {
         })
     }
 
+    /// Returns `true` if `quad` exists in `named_graphs`.
     pub fn contains_quad(&self, quad: &Quad) -> bool {
         self.named_graphs.contains(quad)
     }
@@ -248,6 +266,7 @@ impl Datastore {
 
     // ── Reified triple queries ────────────────────────────────────────────────
 
+    /// Iterate over reified triples stored under reification ID `id`.
     pub fn get_reified_triples_with_id(
         &self,
         id: GraphElementId,
@@ -259,6 +278,7 @@ impl Datastore {
         })
     }
 
+    /// Iterate over reified-triple quads with the given subject.
     pub fn get_reified_triples_with_subject(
         &self,
         subject: GraphElementId,
@@ -266,6 +286,7 @@ impl Datastore {
         self.reified_triples.get_quads_with_subject(subject)
     }
 
+    /// Iterate over reified-triple quads with the given predicate.
     pub fn get_reified_triples_with_predicate(
         &self,
         predicate: GraphElementId,
@@ -273,6 +294,7 @@ impl Datastore {
         self.reified_triples.get_quads_with_predicate(predicate)
     }
 
+    /// Return all quads matching the given (optional) graph/subject/predicate/object.
     pub fn quads_matching(
         &self,
         graph: Option<GraphElementId>,
