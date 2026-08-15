@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:486 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "dag_rdf: add one-line /// docs to public API, enforce with #![warn(missing_docs)]" ;
+    bl:number 486 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:467 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr486 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:467 ;
+    prov:startedAtTime "2026-08-15T07:45:45Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T07:48:51Z"^^xsd:dateTime .
+
+session:pr486Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #467 asked for one-line /// docs on dag_rdf's public API and, if feasible, #![warn(missing_docs)] to keep it that way. dag_rdf is the storage layer (GraphElementManager, Datastore, QuadTable, Term, QuadPattern, QueryExecutor, Binding and their public methods/fields), so every public item across datastore.rs, ingress.rs, lib.rs, quadtable.rs and query.rs got a doc comment. warn rather than deny was chosen deliberately: the crate already builds cleanly under CI's existing RUSTDOCFLAGS=\"-D warnings\" cargo doc job, which turns any missing_docs warning into a hard doc-build failure -- that gate is the actual enforcement mechanism. A local #![deny(missing_docs)] would duplicate that enforcement at compile time for no added benefit while adding a second place drift could reintroduce the lint config. The issue's scope was explicitly limited to dag_rdf; ingress and owl_ontology have their own public surfaces needing the same treatment and were filed as a separate unlabeled follow-up (#485, awaiting ready review) rather than folded into this PR, keeping the diff to the five dag_rdf source files." ;
+    agp:reasoningFor ghpull:486 ;
+    prov:wasGeneratedBy session:pr486 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
