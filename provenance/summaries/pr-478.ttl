@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #478's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 478 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:478 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "deploy: fix Caddyfile forward_auth 401 not redirecting to Google sign-in" ;
+    bl:number 478 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:477 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr478 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:477 ;
+    prov:startedAtTime "2026-08-13T20:12:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-13T20:23:27Z"^^xsd:dateTime .
+
+session:pr478Summary a agp:TranscriptSummary ;
+    agp:summaryText "forward_auth's call to oauth2-proxy's /oauth2/auth check endpoint returns a bare 401 for unauthenticated requests (by design — that endpoint is meant for auth-subrequest use). Without an explicit response matcher, Caddy proxies that 401 straight to the browser instead of redirecting to Google sign-in. A top-level handle_errors block does not fix this: the 401 is a normal proxied response, not something that goes through Caddy's internal HTTP-error pipeline. Fix: add @error status 401 + handle_response { redir ... /oauth2/start } *inside* the forward_auth block — Caddy's documented pattern for this exact oauth2-proxy integration. Also updates docs/deploy/PUBLIC_DEPLOYMENT.md's stale \"not yet live-tested\" note now that this has actually been deployed and verified against dagalog.no. Found and fixed live during the first real deployment against dagalog.no (epic #378)." ;
+    agp:reasoningFor ghpull:478 ;
+    prov:wasGeneratedBy session:pr478 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
