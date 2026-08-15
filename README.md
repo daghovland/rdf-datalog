@@ -411,6 +411,11 @@ JSON/XML, CSV, Turtle, N-Quads, JSON-LD, …) are negotiated via `Accept`. See
 curl "http://localhost:3030/sparql?query=SELECT+*+WHERE+%7B%3Fs+%3Fp+%3Fo%7D"
 ```
 
+An interactive, generated **Swagger UI** for the core SPARQL/Graph Store/admin routes is
+served at `http://localhost:3030/swagger-ui/` (spec: `GET /api-docs/openapi.json`), aimed
+at developers integrating over HTTP rather than the browser-facing Web UI below — see
+[#386](https://github.com/daghovland/rdf-datalog/issues/386).
+
 ---
 
 ## Web UI

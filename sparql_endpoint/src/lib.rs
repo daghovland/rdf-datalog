@@ -15,6 +15,7 @@ pub mod dataset_routes;
 pub mod frontend;
 pub mod graph_store;
 pub mod negotiate;
+pub mod openapi;
 pub mod ottr_endpoint;
 pub mod persistence;
 pub mod query;
