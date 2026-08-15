@@ -32,6 +32,7 @@ regex = "1"
 chrono = "0.4"
 log = "0.4"
 env_logger = "0.10"
+thiserror = "2"
 
 [dev-dependencies]
 shacl = { path = "../shacl" }

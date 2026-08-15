@@ -264,6 +264,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shacl",
+ "thiserror 2.0.18",
  "toml",
  "turtle",
 ]
@@ -843,6 +844,7 @@ dependencies = [
  "dag-rdf",
  "log",
  "sparql-parser",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1724,6 +1726,7 @@ dependencies = [
  "ingress",
  "log",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2651,6 +2654,7 @@ dependencies = [
  "log",
  "num-bigint",
  "owl-ontology",
+ "thiserror 2.0.18",
  "turtle",
 ]
 
