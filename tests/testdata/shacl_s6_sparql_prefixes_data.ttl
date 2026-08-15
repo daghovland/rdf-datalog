@@ -1,0 +1,4 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:Widget a ex:Product ; ex:price 10 .
+ex:Gadget a ex:Product ; ex:price -3 .

@@ -1,0 +1,16 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:CategoryShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Item ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "value must be a known category" ;
+        sh:select """
+            SELECT $this $value WHERE {
+                $this ex:category $value .
+                FILTER NOT EXISTS { ex:categories ex:member $value }
+            }
+        """ ;
+    ] .

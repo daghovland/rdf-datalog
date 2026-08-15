@@ -98,6 +98,37 @@ pub enum Target {
     ObjectsOf(String),
     /// Shape node is also `rdfs:Class` → implicit class target.
     ImplicitClass(String),
+    /// SHACL-AF §5 `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` — the
+    /// query's own `?this`/`$this` projection *is* the target-node list (no
+    /// external pre-binding, unlike `sh:sparql` constraints). See
+    /// [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+    Sparql(SparqlQuery),
+}
+
+/// A `sh:select`/`sh:ask` query string plus its `sh:prefixes` declarations,
+/// shared by `sh:sparql` constraints (§6) and `sh:target`
+/// `sh:SPARQLTarget`s (§5).
+#[derive(Debug, Clone)]
+pub struct SparqlQuery {
+    pub query: String,
+    pub prefixes: Vec<(String, String)>,
+}
+
+/// A SHACL-AF §6.1 `sh:sparql [ a sh:SPARQLConstraint ; ... ]` custom
+/// constraint: a SPARQL ASK or SELECT query with `$this` pre-bound to the
+/// focus node.
+///
+/// Spec: <https://www.w3.org/TR/shacl-af/#SPARQLConstraintComponent>. See
+/// [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+#[derive(Debug, Clone)]
+pub struct SparqlConstraint {
+    pub query: SparqlQuery,
+    pub is_ask: bool,
+    pub message: Option<String>,
+    /// `sh:severity` declared directly on the `sh:SPARQLConstraint` node,
+    /// overriding the parent shape's severity for violations it produces
+    /// (mirrors `ParsedPropShape::severity`, #312).
+    pub severity: Option<crate::Severity>,
 }
 
 /// Node-kind values from `sh:nodeKind`.
@@ -266,6 +297,9 @@ pub struct ParsedShape {
     /// and skip constraint generation/evaluation entirely when set. See
     /// [#262](https://github.com/daghovland/rdf-datalog/issues/262).
     pub deactivated: bool,
+    /// SHACL-AF §6.1 `sh:sparql` custom constraints declared directly on this
+    /// shape node. See [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+    pub sparql_constraints: Vec<SparqlConstraint>,
 }
 
 /// Return `true` if the shape-graph node `shape_id` carries `sh:deactivated true`.
@@ -419,6 +453,8 @@ pub(crate) fn parse_one_shape(
     let message =
         graph::get_object(shapes, shape_id, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
 
+    let sparql_constraints = parse_sparql_constraints(shapes, shape_id);
+
     ParsedShape {
         idx,
         shapes_id: shape_id,
@@ -435,7 +471,71 @@ pub(crate) fn parse_one_shape(
         severity,
         message,
         deactivated,
+        sparql_constraints,
     }
+}
+
+// ── §5–6 SHACL-AF: SPARQL-based targets/constraints ────────────────────────────
+
+/// Collect `sh:prefixes` declarations for a `sh:SPARQLConstraint`/`sh:SPARQLTarget`
+/// node: every `(prefix, namespace)` pair reachable via
+/// `node sh:prefixes ?ont . ?ont sh:declare [ sh:prefix "p" ; sh:namespace "ns" ] .`
+///
+/// `sh:namespace`'s value is typically a `"..."^^xsd:anyURI` typed literal (not a
+/// bare IRI node), so this reads it as a literal string first and only falls back
+/// to treating it as an IRI resource.
+fn parse_sparql_prefixes(shapes: &Datastore, node: GraphElementId) -> Vec<(String, String)> {
+    let mut prefixes = Vec::new();
+    for ont in graph::get_objects(shapes, node, SH_PREFIXES) {
+        for decl in graph::get_objects(shapes, ont, SH_DECLARE) {
+            let Some(prefix_id) = graph::get_object(shapes, decl, SH_PREFIX_NAME) else {
+                continue;
+            };
+            let Some(ns_id) = graph::get_object(shapes, decl, SH_NAMESPACE) else {
+                continue;
+            };
+            let Some(prefix) = literal_string(shapes, prefix_id) else {
+                continue;
+            };
+            let namespace = literal_string(shapes, ns_id)
+                .or_else(|| graph::iri_string(shapes, ns_id));
+            if let Some(namespace) = namespace {
+                prefixes.push((prefix, namespace));
+            }
+        }
+    }
+    prefixes
+}
+
+/// Parse every `sh:sparql [ a sh:SPARQLConstraint ; ... ]` declared directly on
+/// `shape_id`. A malformed entry (neither `sh:select` nor `sh:ask` present) is
+/// skipped — `crate::sparql_constraints`'s evaluator only ever sees well-formed
+/// entries.
+fn parse_sparql_constraints(shapes: &Datastore, shape_id: GraphElementId) -> Vec<SparqlConstraint> {
+    graph::get_objects(shapes, shape_id, SH_SPARQL)
+        .into_iter()
+        .filter_map(|node| {
+            let (query, is_ask) = if let Some(id) = graph::get_object(shapes, node, SH_SELECT) {
+                (literal_string(shapes, id)?, false)
+            } else if let Some(id) = graph::get_object(shapes, node, SH_ASK) {
+                (literal_string(shapes, id)?, true)
+            } else {
+                return None;
+            };
+            let message =
+                graph::get_object(shapes, node, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
+            let severity = graph::get_object(shapes, node, SH_SEVERITY)
+                .and_then(|id| graph::iri_string(shapes, id))
+                .and_then(|iri| crate::Severity::from_iri(&iri));
+            let prefixes = parse_sparql_prefixes(shapes, node);
+            Some(SparqlConstraint {
+                query: SparqlQuery { query, prefixes },
+                is_ask,
+                message,
+                severity,
+            })
+        })
+        .collect()
 }
 
 fn parse_targets(
@@ -463,6 +563,18 @@ fn parse_targets(
     for id in graph::get_objects(shapes, shape_id, SH_TARGET_OBJECTS_OF) {
         if let Some(iri) = graph::iri_string(shapes, id) {
             targets.push(Target::ObjectsOf(iri));
+        }
+    }
+
+    // SHACL-AF §5 sh:target [ a sh:SPARQLTarget ; sh:select "..." ]. A
+    // sh:target node without a sh:select is skipped (not a SPARQLTarget this
+    // implementation recognises — see #54).
+    for id in graph::get_objects(shapes, shape_id, SH_TARGET) {
+        if let Some(sel_id) = graph::get_object(shapes, id, SH_SELECT)
+            && let Some(query) = literal_string(shapes, sel_id)
+        {
+            let prefixes = parse_sparql_prefixes(shapes, id);
+            targets.push(Target::Sparql(SparqlQuery { query, prefixes }));
         }
     }
 

@@ -25,6 +25,7 @@ pub mod evaluate;
 pub mod graph;
 pub mod path;
 pub mod shapes;
+pub mod sparql_constraints;
 pub mod translate;
 pub mod vocab;
 
@@ -266,7 +267,7 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
     let mut all_viol_preds = pre_compute_violations(&parsed, data, shapes, &mut work);
 
     // Translate remaining constraints to Datalog rules and materialise.
-    let (rules, rule_viols) = translate::shapes_to_rules(&parsed, shapes, &mut work);
+    let (rules, rule_viols) = translate::shapes_to_rules(&parsed, shapes, data, &mut work);
     // A SHACL constraint should never compile to a Datalog Contradiction rule
     // (SHACL violations are represented as synthetic marker predicates, not
     // via RuleHead::Contradiction), so this should not fail in practice. See
@@ -275,7 +276,16 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         .map_err(|e| format!("unexpected contradiction while validating SHACL shapes: {e}"))?;
     all_viol_preds.extend(rule_viols);
 
-    let results = collect_violations(&work, &all_viol_preds);
+    let mut results = collect_violations(&work, &all_viol_preds);
+
+    // SHACL-AF §6 sh:sparql constraints — a completely separate pass, evaluated
+    // directly by the SPARQL engine against the original (un-materialised) `data`
+    // graph. See `docs/plans/SHACL_PLAN.md`'s "SHACL-SPARQL (§5–6 of SHACL-AF)"
+    // section and [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+    results.extend(sparql_constraints::eval_all(&parsed, shapes, data, |shape| {
+        data_targets(shape, data)
+    })?);
+
     Ok(ValidationReport {
         conforms: results.is_empty(),
         results,
@@ -615,7 +625,7 @@ fn closed_violations(
 // ── Target computation from original data ─────────────────────────────────────
 
 /// Compute the focus nodes for `shape` directly from the `data` store.
-fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphElementId> {
+pub(crate) fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphElementId> {
     let mut nodes: Vec<GraphElementId> = Vec::new();
 
     for target in &shape.targets {
@@ -644,6 +654,32 @@ fn data_targets(shape: &shapes::ParsedShape, data: &Datastore) -> Vec<GraphEleme
                 if let Some(pred_id) = graph::lookup_iri(data, pred_iri) {
                     for t in data.get_triples_with_predicate(pred_id) {
                         push_unique(&mut nodes, t.obj);
+                    }
+                }
+            }
+            shapes::Target::Sparql(sq) => {
+                // A malformed/failing SPARQLTarget query contributes no focus
+                // nodes rather than failing the whole validation run (unlike a
+                // `sh:sparql` *constraint*'s query, which is a hard `Err` — see
+                // `sparql_constraints::eval_all`): this function has no
+                // `Result` return, and is shared by several Core-constraint
+                // evaluation paths (`closed_violations`, `evaluate::eval_all`)
+                // that would all need converting to thread one through. Scoped
+                // this way for the first landing — see
+                // [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+                match sparql_constraints::eval_sparql_target(sq, data) {
+                    Ok(elems) => {
+                        for elem in elems {
+                            if let Some(id) = data.resources.resource_map.get(&elem).copied() {
+                                push_unique(&mut nodes, id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "sh:target SPARQLTarget query failed for shape {:?}, contributing no focus nodes: {e}",
+                            shape.iri
+                        );
                     }
                 }
             }

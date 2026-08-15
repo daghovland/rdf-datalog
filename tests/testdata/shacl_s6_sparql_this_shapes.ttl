@@ -1,0 +1,13 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:OkShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "ex:ok must be true" ;
+        sh:ask """
+            ASK { $this ex:ok true }
+        """ ;
+    ] .
