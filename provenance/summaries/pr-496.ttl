@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/462-thiserror-standardize).
+
+ghpull:496 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Standardize hand-rolled error enums on thiserror" ;
+    bl:number 496 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:462 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr496 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:462 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T10:06:01Z"^^xsd:dateTime .
+
+session:pr496Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #462 asked to standardize hand-rolled error enums on thiserror, matching the convention already used by ottr::OttrError and dagalog-kernel. Three files were named explicitly: datalog::ReasoningError, rdf_owl_translator::TranslatorError, and jsonld_parser::JsonLdError, each of which had a manual impl Display plus impl std::error::Error. All three were converted to #[derive(thiserror::Error)] with #[error(\"...\")] attributes copied verbatim from the original Display match arms/format strings, so user-visible error text is byte-for-byte unchanged — this was scoped as a pure mechanical refactor, not a rewrite. While auditing the codebase for the same hand-rolled shape, backlog::GitHubError (a single-field String wrapper, structurally identical to JsonLdError) was found and converted too, as a natural extension beyond the three files literally named in the issue. rml::RmlError was deliberately left out of scope: it has 11 variants, several wrapping #[source]-carrying errors (csv::Error, rusqlite::Error, postgres::Error) and an existing impl From<std::io::Error>, making it a materially bigger conversion than the mechanical rename done here — filed as follow-up issue #495 rather than folded into this PR. None of the converted types had From impls or source() chains to preserve, so the conversion reduced to deleting the manual Display/Error impls and adding thiserror derive attributes." ;
+    agp:reasoningFor ghpull:496 ;
+    prov:wasGeneratedBy session:pr496 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
