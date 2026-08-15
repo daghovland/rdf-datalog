@@ -78,6 +78,10 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Vocabulary/ontology Turtle files, served directly at their own
+      # namespace IRIs (/ns/backlog, /ns/agentprov) -- see #441 and
+      # docs/plans/DEREFERENCEABLE_URIS_441_PLAN.md.
+      - ../backlog/ontology:/srv/vocab:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
