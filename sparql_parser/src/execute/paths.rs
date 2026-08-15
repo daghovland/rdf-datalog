@@ -21,7 +21,7 @@ use super::*;
 /// [`graph_nodes`]. When the active graph is itself an unbound `GRAPH ?g`
 /// variable, this also enumerates every named graph, binding `?g` per node
 /// (mirroring the non-path-pattern `GRAPH ?g` binding behaviour in
-/// [`eval_triple_pattern_core`]). See
+/// `eval_triple_pattern_core`). See
 /// <https://github.com/daghovland/rdf-datalog/issues/203>.
 pub(crate) fn zero_hop_solutions(
     subject_term: &Term,
@@ -90,7 +90,7 @@ pub(crate) fn graph_nodes(
 /// Every distinct graph id that owns at least one quad (used to enumerate an
 /// unbound `GRAPH ?g` variable). Includes the default graph id if it holds
 /// any quads, matching the existing (non-path-pattern) `GRAPH ?g` binding
-/// behaviour in [`eval_triple_pattern_core`], which likewise scans with an
+/// behaviour in `eval_triple_pattern_core`, which likewise scans with an
 /// unconstrained graph argument.
 pub(crate) fn distinct_graph_ids(datastore: &Datastore) -> HashSet<GraphElementId> {
     datastore

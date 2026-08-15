@@ -13,14 +13,14 @@ Contact: hovlanddag@gmail.com
 //! MIN, MAX, SAMPLE, GROUP_CONCAT).
 //!
 //! Split into submodules by evaluation concern (see issue #465):
-//! - [`solutions`] — [`PartialSub`]/[`SolutionRow`] projection & join helpers
-//! - [`components`] — top-level query component evaluation (BGP/OPTIONAL/UNION/MINUS/GRAPH)
-//! - [`bgp`] — basic graph pattern / triple pattern matching
-//! - [`expressions`] — FILTER/BIND expression evaluation, arithmetic
-//! - [`functions`] — built-in SPARQL function dispatch (`eval_function_value`/`eval_function_bool`)
-//! - [`casts`] — `xsd:*` cast functions
-//! - [`paths`] — property path evaluation
-//! - [`aggregates`] — GROUP BY / aggregate evaluation
+//! - `solutions` — `PartialSub`/`SolutionRow` projection & join helpers
+//! - `components` — top-level query component evaluation (BGP/OPTIONAL/UNION/MINUS/GRAPH)
+//! - `bgp` — basic graph pattern / triple pattern matching
+//! - `expressions` — FILTER/BIND expression evaluation, arithmetic
+//! - `functions` — built-in SPARQL function dispatch (`eval_function_value`/`eval_function_bool`)
+//! - `casts` — `xsd:*` cast functions
+//! - `paths` — property path evaluation
+//! - `aggregates` — GROUP BY / aggregate evaluation
 
 mod aggregates;
 mod bgp;

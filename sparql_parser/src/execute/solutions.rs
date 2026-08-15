@@ -133,7 +133,7 @@ pub(crate) fn solution_row_to_partial(row: &SolutionRow) -> PartialSub {
 /// — it neither introduces a new binding nor conflicts with an existing one
 /// — per SPARQL 1.1 §10.2's inline-data-as-join semantics.
 ///
-/// Backs [`QueryComponent::Values`] (evaluated in [`eval_component`]), which
+/// Backs [`QueryComponent::Values`] (evaluated in `eval_component`), which
 /// is *also* how a trailing post-query / post-subquery `ValuesClause` is
 /// represented: `sparql_parser::parse_query_body` appends the parsed
 /// `ValuesClause` directly onto the query's (or subquery's) `where_clause`
