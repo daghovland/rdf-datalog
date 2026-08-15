@@ -122,9 +122,13 @@ impl OidcConfig {
     /// Convenience constructor for Azure Entra ID.
     ///
     /// Builds the **v2.0** issuer form (`.../v2.0`). This matches tokens
-    /// issued for `audience` only if that app's Entra ID manifest has
-    /// `"accessTokenAcceptedVersion": 2` set. Without that setting — the
-    /// default for most app registrations — tokens obtained via the classic
+    /// issued for `audience` only if that app's Entra ID manifest requests
+    /// v2.0 access tokens — `api.requestedAccessTokenVersion: 2` in the
+    /// current Microsoft Graph manifest format, or the legacy
+    /// `accessTokenAcceptedVersion: 2` on older portal views (same
+    /// property, set on the *resource* app, not the caller). Without that
+    /// setting — the default for most app registrations — tokens obtained
+    /// via the classic
     /// Managed Identity / IMDS flow (`resource=` query param, not `scope=`)
     /// carry the **v1.0** issuer `https://sts.windows.net/{tenant_id}/`
     /// instead, and validation against this config's issuer will fail with

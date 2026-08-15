@@ -341,9 +341,14 @@ which token endpoint the caller used.**
 Classic IMDS (`api-version=2018-02-01&resource=...`, shown above) issues a
 **v1.0-format** access token — `iss: https://sts.windows.net/{tenant_id}/` —
 *unless* the target resource app (dagalog's own app registration, the one
-with the `api://dagalog` Application ID URI) has
-`"accessTokenAcceptedVersion": 2` set in its Entra ID app manifest. Without
-that setting, a token minted for `--oidc-issuer
+with the `api://dagalog` Application ID URI) requests v2.0-format tokens.
+That setting has two names depending on which manifest editor the portal
+shows you: `api.requestedAccessTokenVersion` in the current Microsoft Graph
+app-manifest format (the default since January 2025), or the older
+`accessTokenAcceptedVersion` in the legacy Azure AD Graph manifest format —
+same property, set it to `2`. It must be set on the **resource** app
+(dagalog's registration), not on any client/caller app — setting it on the
+caller has no effect. Without it, a token minted for `--oidc-issuer
 https://login.microsoftonline.com/{tenant}/v2.0` (the format
 `OidcConfig::azure()` — see below — builds and the format used throughout
 this doc) will be rejected: real IMDS tokens will carry the v1.0 issuer
@@ -352,19 +357,25 @@ string instead, and validation fails with 401 (`InvalidIssuer`).
 Two ways to make this work, pick one:
 
 - **Preferred:** in the Entra portal, go to the dagalog app registration →
-  *Manifest* → set `"accessTokenAcceptedVersion": 2`, save. All tokens
-  issued for `api://dagalog` (IMDS or otherwise) then carry the v2.0 issuer
-  and `--oidc-issuer https://login.microsoftonline.com/{tenant}/v2.0` works
-  as documented.
+  *Manifest* → set `api.requestedAccessTokenVersion` (or
+  `accessTokenAcceptedVersion` on older portal views) to `2`, save. All
+  tokens issued for `api://dagalog` (IMDS or otherwise) then carry the
+  v2.0 issuer and `--oidc-issuer https://login.microsoftonline.com/{tenant}/v2.0`
+  works as documented.
 - **Alternative** (if you can't touch the manifest, e.g. a shared/multi-tenant
   app): point dagalog at the v1.0 issuer instead —
-  `--oidc-issuer https://sts.windows.net/{tenant_id}/`. The rest of the OIDC
-  config (audience, roles claim, JWKS discovery) is unaffected; only the
-  issuer string changes.
+  `--oidc-issuer https://sts.windows.net/{tenant_id}/`. OIDC discovery
+  works against this issuer too (verified against a real tenant:
+  `https://sts.windows.net/{tenant_id}/.well-known/openid-configuration`
+  exists and self-describes with a matching `issuer` field), so no
+  `--oidc-jwks-uri` override is needed — the rest of the OIDC config
+  (audience, roles claim) is unaffected; only the issuer string changes.
 
 `OidcConfig::azure()`'s doc comment states which token version it expects;
-`tests/entra_managed_identity.rs` pins both the accepted (v2.0-issuer) and
-rejected (v1.0-issuer, wrong-issuer-configured) cases so this isn't just prose.
+`sparql_endpoint/tests/entra_managed_identity.rs` pins both the accepted
+(v2.0-issuer) and rejected (v1.0-issuer, wrong-issuer-configured) cases —
+against a mocked JWKS endpoint, since CI can't depend on live Entra ID — so
+this isn't just prose.
 
 **2. Assigning the app role to a Managed Identity does not go through *App
 registrations* — a Managed Identity has no app registration entry.**
@@ -735,16 +746,19 @@ Then `curl -H "Authorization: Bearer $(gcloud auth print-identity-token ...)"`.
 
 Since Tier 3-incoming reuses Tier 2's validation code unmodified, the
 Tier 3-specific risk isn't the validator — it's the two Entra ID setup
-details called out above (issuer version, role-assignment path). Tests in
-`sparql_endpoint/tests/entra_managed_identity.rs` pin exactly those:
+details called out above (issuer version, role-assignment path). Tests pin
+exactly those, split across `sparql_endpoint/src/lib.rs` (the
+issuer-format-string unit test, next to `OidcConfig` itself) and the
+integration tests in `sparql_endpoint/tests/entra_managed_identity.rs`
+(everything that needs a running server + mocked JWKS endpoint):
 
-| Test | What it proves |
-|------|-----------------|
-| `azure_v2_issuer_format_is_pinned` | `OidcConfig::azure()` builds `https://login.microsoftonline.com/{tenant}/v2.0`, not some other shape |
-| `entra_mi_token_with_v2_issuer_and_role_is_accepted` | A token shaped like a real Managed-Identity-issued token (extra `idtyp`/`appid`/`oid` claims, no `upn`/`unique_name`) authenticates when the app manifest is set to `accessTokenAcceptedVersion: 2`, i.e. issuer matches `OidcConfig::azure()` |
-| `entra_mi_token_with_v1_issuer_is_rejected_by_v2_config` | The *same* token shape, but with the v1.0 issuer (`https://sts.windows.net/{tenant}/`) that classic IMDS actually issues absent the manifest change, is rejected (401) against a server configured with `OidcConfig::azure()` — this is the failure mode documented above, made executable |
-| `entra_mi_token_with_v1_issuer_accepted_when_configured_for_v1` | The alternative fix (`--oidc-issuer https://sts.windows.net/{tenant}/`) works |
-| `entra_mi_token_without_roles_claim_returns_403` | A structurally valid MI token with no `roles` claim (the "forgot to assign the app role via Graph" failure mode) gets 403, not a silent pass |
+| Test | Location | What it proves |
+|------|----------|-----------------|
+| `oidc_config_tests::azure_v2_issuer_format_is_pinned` | `src/lib.rs` | `OidcConfig::azure()` builds `https://login.microsoftonline.com/{tenant}/v2.0`, not some other shape |
+| `entra_mi_token_with_v2_issuer_and_role_is_accepted` | `tests/entra_managed_identity.rs` | A token shaped like a real Managed-Identity-issued token (extra `idtyp`/`appid`/`oid` claims, no `upn`/`unique_name`) authenticates when the app manifest requests v2.0 tokens, i.e. issuer matches `OidcConfig::azure()` |
+| `entra_mi_token_with_v1_issuer_is_rejected_by_v2_config` | `tests/entra_managed_identity.rs` | The *same* token shape, but with the v1.0 issuer (`https://sts.windows.net/{tenant}/`) that classic IMDS actually issues absent the manifest change, is rejected (401) against a server configured with `OidcConfig::azure()` — this is the failure mode documented above, made executable |
+| `entra_mi_token_with_v1_issuer_accepted_when_configured_for_v1` | `tests/entra_managed_identity.rs` | The alternative fix (`--oidc-issuer https://sts.windows.net/{tenant}/`) works |
+| `entra_mi_token_without_roles_claim_returns_403` | `tests/entra_managed_identity.rs` | A structurally valid MI token with no `roles` claim (the "forgot to assign the app role via Graph" failure mode) gets 403, not a silent pass |
 
 These reuse the same wiremock-based `TestServer::start_with_oidc` harness as
 `tests/oidc_auth.rs` — only the token shape and configured issuer change.
