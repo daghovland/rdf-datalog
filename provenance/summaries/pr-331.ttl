@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #331's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 331 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:331 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "provenance: worked grounding example + SPARQL query library" ;
+    bl:number 331 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:327 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr331 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:327 ;
+    prov:startedAtTime "2026-08-01T04:32:14Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T05:12:57Z"^^xsd:dateTime .
+
+session:pr331Summary a agp:TranscriptSummary ;
+    agp:summaryText "Second slice of #306, depends on #326 (agp: vocabulary/shapes, merged). Implements the deliverables in docs/plans/AGENT_PROVENANCE_PLAN.md: provenance/summaries/pr-300.ttl — a real agp:TranscriptSummary distilling PR #300's actual reasoning (the review-driven sh:sourceShape resolution fix and the sh:qualifiedMinCount/sh:qualifiedMaxCount independent-component split), with agp:reasoningFor the real PR URL, prov:wasGeneratedBy/prov:wasAttributedTo populated, two agp:Decision forks recorded, and real session timestamps + agp:transcriptRef sourced from gh pr view 300 (commit/merge timestamps, the Claude-Session URL from the merged PR body) rather than invented values. provenance/queries/ — run.sh (mirrors backlog/queries/run.sh's --data/-Q/--format table pattern against the dagalog binary) plus four canned queries: reasoning_for_pr, reasoned_about_by_agent, sessions_for_issue, all_decision_points. tests/provenance_queries.rs — mirrors tests/backlog_queries.rs: validates pr-300.ttl against both agentprov-shapes.ttl and the relevant bl: shapes (it asserts a real bl:PullRequest/bl:WorkItem), and exercises each query for correct results. Verification provenance/queries/run.sh was run for real against all four queries (not just exercised via the test's in-process run_sparql_query path) to confirm the CLI wrapper actually works against the dagalog binary." ;
+    agp:reasoningFor ghpull:331 ;
+    prov:wasGeneratedBy session:pr331 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

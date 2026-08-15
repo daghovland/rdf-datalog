@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #316's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 316 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:316 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): sh:and/or/not/xone violation metadata at node-shape scope" ;
+    bl:number 316 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:309 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr316 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:309 ;
+    prov:startedAtTime "2026-07-31T09:26:43Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T15:27:40Z"^^xsd:dateTime .
+
+session:pr316Summary a agp:TranscriptSummary ;
+    agp:summaryText "sh:and at node-shape (pathless) scope no longer leaks the failing inner branch's own constraint component (e.g. MinCountConstraintComponent); it now reports exactly one sh:AndConstraintComponent violation sourced from the enclosing sh:and shape, evaluated the same way sh:or/sh:not/sh:xone already are (via shape_conforms_for_node per inner branch). This also removes the now-dead, leaky Datalog rule generation for sh:and in translate.rs. sh:or/sh:not/sh:xone at node-shape (pathless) scope now populate sh:value = focus node (previously always None). Tests Unskipped 7 W3C SHACL suite entries in tests/w3c_shacl_suite.rs: and-001, and-002, not-001, not-002, or-001, xone-001, xone-duplicate. Added 4 new regression tests in tests/shacl_suite.rs (regression_309_*) covering both bugs directly with the existing §4.6 spec fixtures. Quality gate cargo fmt --all -- --check — clean cargo clippy --workspace --all-targets -- -D warnings — clean cargo test --workspace — in progress, will report" ;
+    agp:reasoningFor ghpull:316 ;
+    prov:wasGeneratedBy session:pr316 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
