@@ -78,15 +78,9 @@ struct StatusFieldValue {
     name: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 pub struct GitHubError(pub String);
-
-impl std::fmt::Display for GitHubError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for GitHubError {}
 
 /// Everything the loader needs to fetch from GitHub, abstracted so tests can
 /// substitute recorded fixture data for a live `gh api` call.
