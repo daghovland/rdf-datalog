@@ -120,6 +120,23 @@ pub struct OidcConfig {
 
 impl OidcConfig {
     /// Convenience constructor for Azure Entra ID.
+    ///
+    /// Builds the **v2.0** issuer form (`.../v2.0`). This matches tokens
+    /// issued for `audience` only if that app's Entra ID manifest requests
+    /// v2.0 access tokens — `api.requestedAccessTokenVersion: 2` in the
+    /// current Microsoft Graph manifest format, or the legacy
+    /// `accessTokenAcceptedVersion: 2` on older portal views (same
+    /// property, set on the *resource* app, not the caller). Without that
+    /// setting — the default for most app registrations — tokens obtained
+    /// via the classic
+    /// Managed Identity / IMDS flow (`resource=` query param, not `scope=`)
+    /// carry the **v1.0** issuer `https://sts.windows.net/{tenant_id}/`
+    /// instead, and validation against this config's issuer will fail with
+    /// `AuthError::InvalidIssuer`. If you can't change the manifest, build
+    /// `OidcConfig` manually with `issuer:
+    /// format!("https://sts.windows.net/{tenant_id}/")` instead of calling
+    /// this constructor. See `docs/plans/AUTH.md` §Tier 3 for the full
+    /// explanation and the Managed-Identity app-role-assignment caveat.
     pub fn azure(tenant_id: &str, audience: &str) -> Self {
         Self {
             issuer: format!("https://login.microsoftonline.com/{}/v2.0", tenant_id),
@@ -145,6 +162,30 @@ impl OidcConfig {
             admin_role: "dagalog.Admin".to_owned(),
             browser_client_id: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod oidc_config_tests {
+    use super::OidcConfig;
+
+    /// `OidcConfig::azure()` must build the v2.0 issuer form, not the
+    /// `sts.windows.net` (v1.0) form — see the doc comment on `azure()` and
+    /// `docs/plans/AUTH.md` §Tier 3 for why this specific string matters:
+    /// classic Managed-Identity/IMDS tokens only carry this issuer when the
+    /// target app's manifest sets `accessTokenAcceptedVersion: 2`.
+    #[test]
+    fn azure_v2_issuer_format_is_pinned() {
+        let cfg = OidcConfig::azure("11111111-2222-3333-4444-555555555555", "api://dagalog");
+        assert_eq!(
+            cfg.issuer,
+            "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0"
+        );
+        assert_eq!(cfg.audience, "api://dagalog");
+        assert_eq!(cfg.roles_claim, "roles");
+        assert_eq!(cfg.read_role, "dagalog.Read");
+        assert_eq!(cfg.write_role, "dagalog.Write");
+        assert_eq!(cfg.admin_role, "dagalog.Admin");
     }
 }
 
