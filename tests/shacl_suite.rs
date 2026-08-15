@@ -3613,7 +3613,6 @@ fn report_to_datastore_nested_compound_path_shape() {
 /// `ex:Bob` has `ex:age -5` → ASK is false → 1 violation, carrying the shape's
 /// `sh:message` and `sh:sourceConstraintComponent sh:SPARQLConstraintComponent`.
 #[test]
-#[ignore = "Phase 4: SHACL-SPARQL — see #54"]
 fn spec_s6_1_sparql_ask() {
     let data = load("shacl_s6_sparql_ask_data.ttl");
     let shapes = load("shacl_s6_sparql_ask_shapes.ttl");
@@ -3625,10 +3624,7 @@ fn spec_s6_1_sparql_ask() {
         result.focus_node.as_deref(),
         Some("http://example.org/ns#Bob")
     );
-    assert_eq!(
-        result.message.as_deref(),
-        Some("age must be non-negative")
-    );
+    assert_eq!(result.message.as_deref(), Some("age must be non-negative"));
     assert_eq!(
         result.source_constraint.as_deref(),
         Some(shacl::vocab::CC_SPARQL)
@@ -3643,22 +3639,22 @@ fn spec_s6_1_sparql_ask() {
 /// conforms. `ex:Item2`'s category (`ex:Green`) is not → 1 violation with
 /// `sh:value` set to `ex:Green`.
 #[test]
-#[ignore = "Phase 4: SHACL-SPARQL — see #54"]
 fn spec_s6_1_sparql_select() {
     let data = load("shacl_s6_sparql_select_data.ttl");
     let shapes = load("shacl_s6_sparql_select_shapes.ttl");
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert!(!report.conforms);
-    assert_eq!(report.results.len(), 1, "only ex:Item2's category is unknown");
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Item2's category is unknown"
+    );
     let result = &report.results[0];
     assert_eq!(
         result.focus_node.as_deref(),
         Some("http://example.org/ns#Item2")
     );
-    assert_eq!(
-        result.value.as_deref(),
-        Some("http://example.org/ns#Green")
-    );
+    assert_eq!(result.value.as_deref(), Some("http://example.org/ns#Green"));
     assert_eq!(
         result.message.as_deref(),
         Some("value must be a known category")
@@ -3672,7 +3668,6 @@ fn spec_s6_1_sparql_select() {
 /// `docs/plans/SHACL_PLAN.md`'s note on why this fixture needs >=2 nodes to be
 /// discriminating.
 #[test]
-#[ignore = "Phase 4: SHACL-SPARQL — see #54"]
 fn spec_s6_1_sparql_this_binding() {
     let data = load("shacl_s6_sparql_this_data.ttl");
     let shapes = load("shacl_s6_sparql_this_shapes.ttl");
@@ -3681,7 +3676,7 @@ fn spec_s6_1_sparql_this_binding() {
     assert_eq!(
         report.results.len(),
         1,
-        "$this must be pre-bound per-node: only ex:N2 (ex:ok false) should violate"
+        "$this must be pre-bound per-node: only ex:N2 (ex:score 0) should violate"
     );
     assert_eq!(
         report.results[0].focus_node.as_deref(),
@@ -3698,13 +3693,16 @@ fn spec_s6_1_sparql_this_binding() {
 /// `ex:Widget` has `ex:price 10` (positive) → conforms.
 /// `ex:Gadget` has `ex:price -3` (not positive) → 1 violation.
 #[test]
-#[ignore = "Phase 4: SHACL-SPARQL — see #54"]
 fn spec_s6_1_sparql_prefixes() {
     let data = load("shacl_s6_sparql_prefixes_data.ttl");
     let shapes = load("shacl_s6_sparql_prefixes_shapes.ttl");
     let report = shacl::validate(&data, &shapes).expect("validation must not error");
     assert!(!report.conforms);
-    assert_eq!(report.results.len(), 1, "only ex:Gadget's price is non-positive");
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Gadget's price is non-positive"
+    );
     assert_eq!(
         report.results[0].focus_node.as_deref(),
         Some("http://example.org/ns#Gadget")
@@ -3721,7 +3719,6 @@ fn spec_s6_1_sparql_prefixes() {
 /// requires `sh:minCount 1` on `ex:name`. `ex:Alice` has a name → conforms.
 /// `ex:Bob` has none → 1 violation.
 #[test]
-#[ignore = "Phase 4: SHACL-SPARQL — see #54"]
 fn spec_s5_sparql_target() {
     let data = load("shacl_s5_sparql_target_data.ttl");
     let shapes = load("shacl_s5_sparql_target_shapes.ttl");

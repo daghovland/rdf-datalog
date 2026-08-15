@@ -497,8 +497,8 @@ fn parse_sparql_prefixes(shapes: &Datastore, node: GraphElementId) -> Vec<(Strin
             let Some(prefix) = literal_string(shapes, prefix_id) else {
                 continue;
             };
-            let namespace = literal_string(shapes, ns_id)
-                .or_else(|| graph::iri_string(shapes, ns_id));
+            let namespace =
+                literal_string(shapes, ns_id).or_else(|| graph::iri_string(shapes, ns_id));
             if let Some(namespace) = namespace {
                 prefixes.push((prefix, namespace));
             }
@@ -522,8 +522,8 @@ fn parse_sparql_constraints(shapes: &Datastore, shape_id: GraphElementId) -> Vec
             } else {
                 return None;
             };
-            let message =
-                graph::get_object(shapes, node, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
+            let message = graph::get_object(shapes, node, SH_MESSAGE)
+                .and_then(|id| literal_string(shapes, id));
             let severity = graph::get_object(shapes, node, SH_SEVERITY)
                 .and_then(|id| graph::iri_string(shapes, id))
                 .and_then(|iri| crate::Severity::from_iri(&iri));

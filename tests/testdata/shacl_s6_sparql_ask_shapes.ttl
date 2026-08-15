@@ -8,6 +8,6 @@ ex:AgeShape
         a sh:SPARQLConstraint ;
         sh:message "age must be non-negative" ;
         sh:ask """
-            ASK { $this ex:age ?age . FILTER (?age >= 0) }
+            ASK { $this <http://example.org/ns#age> ?age . FILTER (?age >= 0) }
         """ ;
     ] .

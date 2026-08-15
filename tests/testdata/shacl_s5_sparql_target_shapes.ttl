@@ -6,7 +6,7 @@ ex:ActiveShape
     sh:target [
         a sh:SPARQLTarget ;
         sh:select """
-            SELECT ?this WHERE { ?this ex:status ex:Active }
+            SELECT ?this WHERE { ?this <http://example.org/ns#status> <http://example.org/ns#Active> }
         """
     ] ;
     sh:property [

@@ -19,9 +19,9 @@ Contact: hovlanddag@gmail.com
 //! than batched, and why a malformed/failing embedded query is a hard `Err` rather
 //! than a silently-skipped constraint).
 
+use crate::ValidationResult;
 use crate::graph;
 use crate::path::ShPath;
-use crate::ValidationResult;
 use crate::shapes::{ParsedShape, SparqlConstraint, SparqlQuery};
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
 use ingress::NetworkPolicy;
@@ -108,12 +108,29 @@ fn ge_display(e: &GraphElement) -> String {
     }
 }
 
+/// Parse-check `sq`'s query text without executing it, surfacing a malformed
+/// `sh:target`/`sh:sparql` query as a loud `Err` up front (called from
+/// `validate()` before any data-dependent work) rather than only at the point
+/// a shape happens to have focus nodes — see `data_targets`'s `Target::Sparql`
+/// arm and `translate::target_rules`'s `Target::Sparql` arm, both of which
+/// warn-and-skip an *execution*-time failure rather than hard-failing (since
+/// neither has a `Result` return threaded through this far). This pre-flight
+/// check at least catches a typo'd/unsupported query unconditionally, rather
+/// than only when the target happens to be non-empty. See
+/// [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+pub(crate) fn check_query_syntax(sq: &SparqlQuery) -> Result<(), String> {
+    parse(&build_query_text(sq)).map(|_| ())
+}
+
 /// Run every `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` query on
 /// `sq` against `store`, returning the bound `?this`/`$this` values as raw
 /// `GraphElement`s (caller interns them into whichever store it's building
 /// facts against). No `$this` pre-binding: the query's own `this` projection
 /// *is* the target-node list, per SHACL-AF §5.
-pub(crate) fn eval_sparql_target(sq: &SparqlQuery, store: &Datastore) -> Result<Vec<GraphElement>, String> {
+pub(crate) fn eval_sparql_target(
+    sq: &SparqlQuery,
+    store: &Datastore,
+) -> Result<Vec<GraphElement>, String> {
     let query = parse(&build_query_text(sq))?;
     let rows = run_select(&query, store)?;
     Ok(rows
@@ -168,7 +185,15 @@ fn eval_one_constraint(
 
         if constraint.is_ask {
             if !run_ask(&query, data)? {
-                results.push(make_result(shape, constraint, shapes_store, data, node_id, None, None));
+                results.push(make_result(
+                    shape,
+                    constraint,
+                    shapes_store,
+                    data,
+                    node_id,
+                    None,
+                    None,
+                ));
             }
         } else {
             for row in run_select(&query, data)? {

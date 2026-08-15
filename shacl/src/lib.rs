@@ -222,6 +222,29 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         return Err(shapes::describe_shape_cycle(shapes, &cycle));
     }
 
+    // Pre-flight parse-check every SHACL-AF §5/§6 embedded SPARQL query up front,
+    // unconditionally — rather than only when a shape happens to have a non-empty
+    // focus-node set at evaluation time (`sparql_constraints::eval_all` already
+    // hard-fails on a query it does execute, but a shape with zero targets would
+    // otherwise never execute its query at all and a typo'd/unsupported one would
+    // go unnoticed). See [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+    for shape in &parsed {
+        // A deactivated shape produces no results at all (SHACL §3, #262) —
+        // including from a malformed embedded query, which `eval_all`/
+        // `target_rules` both already skip entirely for such a shape.
+        if shape.deactivated {
+            continue;
+        }
+        for target in &shape.targets {
+            if let shapes::Target::Sparql(sq) = target {
+                sparql_constraints::check_query_syntax(sq)?;
+            }
+        }
+        for constraint in &shape.sparql_constraints {
+            sparql_constraints::check_query_syntax(&constraint.query)?;
+        }
+    }
+
     // A literal `sh:targetNode` value is a focus node regardless of whether
     // it independently occurs anywhere in the data graph — the shapes graph
     // and data graph are ordinarily different documents. IRI/blank-node
@@ -282,9 +305,12 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
     // directly by the SPARQL engine against the original (un-materialised) `data`
     // graph. See `docs/plans/SHACL_PLAN.md`'s "SHACL-SPARQL (§5–6 of SHACL-AF)"
     // section and [#54](https://github.com/daghovland/rdf-datalog/issues/54).
-    results.extend(sparql_constraints::eval_all(&parsed, shapes, data, |shape| {
-        data_targets(shape, data)
-    })?);
+    results.extend(sparql_constraints::eval_all(
+        &parsed,
+        shapes,
+        data,
+        |shape| data_targets(shape, data),
+    )?);
 
     Ok(ValidationReport {
         conforms: results.is_empty(),

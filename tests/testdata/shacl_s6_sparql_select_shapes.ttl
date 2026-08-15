@@ -9,8 +9,8 @@ ex:CategoryShape
         sh:message "value must be a known category" ;
         sh:select """
             SELECT $this $value WHERE {
-                $this ex:category $value .
-                FILTER NOT EXISTS { ex:categories ex:member $value }
+                $this <http://example.org/ns#category> $value .
+                FILTER NOT EXISTS { <http://example.org/ns#categories> <http://example.org/ns#member> $value }
             }
         """ ;
     ] .
