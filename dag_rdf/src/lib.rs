@@ -5,9 +5,16 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
+//! RDF storage layer: resource interning, quad indexing, and the `Datastore` container.
+#![warn(missing_docs)]
+
+/// The top-level `Datastore` container and its quad/resource operations.
 pub mod datastore;
+/// Core RDF ID/triple/quad types built on `GraphElementId`.
 pub mod ingress;
+/// The `QuadTable` multi-index quad store.
 pub mod quadtable;
+/// Query terms/patterns and a simple basic-graph-pattern executor.
 pub mod query;
 
 pub use crate::datastore::Datastore;
@@ -18,12 +25,18 @@ pub use ::ingress::{GraphElement, IriReference, RdfLiteral, RdfResource, TripleT
 
 use std::collections::HashMap;
 
+/// Interning store mapping `GraphElement` values to compact `GraphElementId`s.
 #[derive(Clone)]
 pub struct GraphElementManager {
+    /// Maps each interned `GraphElement` to its assigned ID.
     pub resource_map: HashMap<GraphElement, GraphElementId>,
+    /// Interned elements indexed by `GraphElementId`.
     pub resource_list: Vec<GraphElement>,
+    /// Number of elements interned so far, including the default graph.
     pub resource_count: u32,
+    /// Number of anonymous (blank node) resources created so far.
     pub anon_resource_count: u32,
+    /// Maps a namespaced blank-node name to its assigned `GraphElementId`.
     pub anon_resource_map: HashMap<String, GraphElementId>,
 }
 
@@ -48,6 +61,7 @@ impl GraphElementManager {
         }
     }
 
+    /// Resolves a `GraphElementId` back to its `GraphElement`. Panics if out of range.
     pub fn get_graph_element(&self, resource_id: GraphElementId) -> &GraphElement {
         if resource_id >= self.resource_count {
             panic!("Resource Id out of range");
@@ -55,6 +69,7 @@ impl GraphElementManager {
         &self.resource_list[resource_id as usize]
     }
 
+    /// Resolves an ID to its `RdfResource`, or `None` if it is a literal/triple term.
     pub fn get_resource(&self, resource_id: GraphElementId) -> Option<&RdfResource> {
         match self.get_graph_element(resource_id) {
             GraphElement::NodeOrEdge(r) => Some(r),
@@ -62,6 +77,7 @@ impl GraphElementManager {
         }
     }
 
+    /// Resolves an ID to its `IriReference`, or `None` if it is not a named IRI resource.
     pub fn get_named_resource(&self, resource_id: GraphElementId) -> Option<&IriReference> {
         match self.get_resource(resource_id) {
             Some(RdfResource::Iri(i)) => Some(i),
@@ -69,10 +85,12 @@ impl GraphElementManager {
         }
     }
 
+    /// Clears the blank-node name → ID map, so subsequent parses start a fresh scope.
     pub fn reset_blank_nodes_map(&mut self) {
         self.anon_resource_map.clear();
     }
 
+    /// Returns the IDs of all interned resources that are named IRIs.
     pub fn get_iri_resource_ids(&self) -> Vec<GraphElementId> {
         self.resource_map
             .iter()
@@ -86,6 +104,7 @@ impl GraphElementManager {
             .collect()
     }
 
+    /// Interns `resource`, returning its existing ID if already present or a fresh one otherwise.
     pub fn add_resource(&mut self, resource: GraphElement) -> GraphElementId {
         if let Some(&id) = self.resource_map.get(&resource) {
             id
@@ -98,20 +117,24 @@ impl GraphElementManager {
         }
     }
 
+    /// Interns an RDF literal, returning its `GraphElementId`.
     pub fn add_literal_resource(&mut self, literal_resource: RdfLiteral) -> GraphElementId {
         self.add_resource(GraphElement::GraphLiteral(literal_resource))
     }
 
+    /// Interns an RDF node or edge resource (IRI or blank node), returning its `GraphElementId`.
     pub fn add_node_resource(&mut self, node_resource: RdfResource) -> GraphElementId {
         self.add_resource(GraphElement::NodeOrEdge(node_resource))
     }
 
+    /// Creates and interns a fresh, uniquely-numbered anonymous blank node.
     pub fn create_unnamed_anon_resource(&mut self) -> GraphElementId {
         self.anon_resource_count += 1;
         let new_anon_resource = RdfResource::AnonymousBlankNode(self.anon_resource_count);
         self.add_node_resource(new_anon_resource)
     }
 
+    /// Returns the ID for the blank node named `name`, creating one if it does not yet exist.
     pub fn get_or_create_named_anon_resource(&mut self, name: String) -> GraphElementId {
         if let Some(&id) = self.anon_resource_map.get(&name) {
             id
@@ -122,6 +145,7 @@ impl GraphElementManager {
         }
     }
 
+    /// Resolves a `Triple` of IDs to a `TripleResource` of full `GraphElement`s.
     pub fn get_resource_triple(&self, triple: Triple) -> TripleResource {
         TripleResource {
             subject: self.resource_list[triple.subject as usize].clone(),
@@ -130,6 +154,7 @@ impl GraphElementManager {
         }
     }
 
+    /// Resolves a `Quad` of IDs to a `QuadResource` of full `GraphElement`s.
     pub fn get_resource_quad(&self, quad: Quad) -> QuadResource {
         QuadResource {
             triple_id: self.resource_list[quad.triple_id as usize].clone(),

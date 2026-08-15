@@ -12,8 +12,11 @@ pub use ::ingress::{IriReference, RdfResource};
 use num_bigint::BigInt;
 use std::fmt;
 
+/// Compact ID for an interned `GraphElement`.
 pub type GraphElementId = u32;
+/// Index into a triple list.
 pub type TripleListIndex = usize;
+/// Index into a quad list.
 pub type QuadListIndex = usize;
 
 /// The IRI used for the default (unnamed) graph, matching DagSemTools convention.
@@ -22,10 +25,14 @@ pub const DEFAULT_GRAPH_IRI: &str = "urn:x-arq:DefaultGraph";
 /// The element ID reserved for the default graph. Always 0, pre-populated in GraphElementManager.
 pub const DEFAULT_GRAPH_ELEMENT_ID: GraphElementId = 0;
 
+/// A subject-predicate-object triple of interned resource IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Triple {
+    /// Subject resource ID.
     pub subject: GraphElementId,
+    /// Predicate resource ID.
     pub predicate: GraphElementId,
+    /// Object resource ID.
     pub obj: GraphElementId,
 }
 
@@ -35,15 +42,21 @@ impl fmt::Display for Triple {
     }
 }
 
+/// A triple tagged with a graph/reification ID, all as interned resource IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Quad {
+    /// ID of the containing graph (or reification ID for `reified_triples`).
     pub triple_id: GraphElementId,
+    /// Subject resource ID.
     pub subject: GraphElementId,
+    /// Predicate resource ID.
     pub predicate: GraphElementId,
+    /// Object resource ID.
     pub obj: GraphElementId,
 }
 
 impl Quad {
+    /// Drops the graph/reification ID, returning the underlying `Triple`.
     pub fn get_triple(&self) -> Triple {
         Triple {
             subject: self.subject,
@@ -63,10 +76,14 @@ impl fmt::Display for Quad {
     }
 }
 
+/// A subject-predicate-object triple of resolved `GraphElement`s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TripleResource {
+    /// Subject.
     pub subject: GraphElement,
+    /// Predicate.
     pub predicate: GraphElement,
+    /// Object.
     pub obj: GraphElement,
 }
 
@@ -76,15 +93,21 @@ impl fmt::Display for TripleResource {
     }
 }
 
+/// A `Quad` resolved to full `GraphElement`s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QuadResource {
+    /// Containing graph or reification element.
     pub triple_id: GraphElement,
+    /// Subject.
     pub subject: GraphElement,
+    /// Predicate.
     pub predicate: GraphElement,
+    /// Object.
     pub obj: GraphElement,
 }
 
 impl QuadResource {
+    /// Drops the graph/reification element, returning the underlying `TripleResource`.
     pub fn get_triple_resource(&self) -> TripleResource {
         TripleResource {
             subject: self.subject.clone(),
