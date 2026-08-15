@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #102's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 102 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:102 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Security: path sandbox, size limits, constant-time HMAC, XPath/JSONPath complexity guards" ;
+    bl:number 102 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:86 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr102 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:86 ;
+    prov:startedAtTime "2026-06-28T21:12:29Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-06-29T09:10:44Z"^^xsd:dateTime .
+
+session:pr102Summary a agp:TranscriptSummary ;
+    agp:summaryText "#84: Wire confine_path into engine::scan_rows (replaces inline copy). Add validate_mapping_sources upfront check so absolute/../ paths are rejected even from mappings with no predicate-object maps. Add parse_turtle_with_base to the turtle crate so mapping files with <#fragment> subjects parse correctly. #86: Enforce MAX_SOURCE_BYTES file-size limit in CSV/JSON/XML sources via metadata().len() check before reading; enforce MAX_SOURCE_ROWS row-count limit in CsvSource. #87: Add subtle = \"2\" dependency; replace got != expected string comparison with ConstantTimeEq bytes comparison in parse_message to eliminate timing side-channel. #88: Reject JSONPath iterators containing .. (recursive descent) and XPath iterators with nested predicates (//a[//a[//a]]) as UnsafeExpression errors. All 18 rml/tests/security_tests.rs and all 4 dagalog-kernel/tests/protocol_security_tests.rs tests unignored and green." ;
+    agp:reasoningFor ghpull:102 ;
+    prov:wasGeneratedBy session:pr102 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
