@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #269's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 269 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:269 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): generalize sh:maxCount/minCount to arbitrary N" ;
+    bl:number 269 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:256 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr269 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:256 ;
+    prov:startedAtTime "2026-07-23T19:51:16Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-23T20:19:12Z"^^xsd:dateTime .
+
+session:pr269Summary a agp:TranscriptSummary ;
+    agp:summaryText "sh:maxCount N (N > 1) previously hardcoded a 2-distinct-value check regardless of N, so it fired as soon as 2 values existed — ignoring N above 1. Fixed: violation now fires iff N+1 pairwise-distinct values co-occur on the target's path. sh:minCount N (N > 1) previously emitted zero rules (a log::warn! no-op), silently never violating. Fixed: an \"N distinct values co-occur\" ok-predicate is built with the same N-ary mechanism, and violation fires via stratified negation when the target does NOT satisfy it (mirroring the existing minCount 1 pattern). Both share a new n_distinct_values_body helper in shacl/src/translate.rs that generates N (or N+1) fresh variables bound to path values plus all pairwise != atoms — no hardcoding for small N." ;
+    agp:reasoningFor ghpull:269 ;
+    prov:wasGeneratedBy session:pr269 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

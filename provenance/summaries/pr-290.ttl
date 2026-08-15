@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #290's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 290 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:290 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): sh:class follows rdfs:subClassOf transitivity" ;
+    bl:number 290 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:265 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr290 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:265 ;
+    prov:startedAtTime "2026-07-24T18:54:50Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T21:19:10Z"^^xsd:dateTime .
+
+session:pr290Summary a agp:TranscriptSummary ;
+    agp:summaryText "sh:class checking only checked direct rdf:type — it did not follow rdfs:subClassOf edges already present in the data graph. Per SHACL's \"SHACL instance\" definition, a value node conforms to sh:class C if it has rdf:type C or any (transitive) subclass of C — no external OWL-RL/RDFS reasoner required, just the subclass edges already asserted in the data. Fixed independently in both evaluation paths (they don't share logic): translate.rs (Datalog rule-generation path): adds a reflexive-transitive subclass_star(X, true) predicate per sh:class constraint occurrence — the reflexive base case (subclass_star(C, true), so direct rdf:type C still conforms exactly as before) plus a recursive rule walking rdfs:subClassOf edges — then joins rdf:type against it instead of against class_id directly. evaluate.rs (direct-evaluation path): a BFS walk (is_instance_of_class_or_subclass) over rdfs:subClassOf edges outward from each of a value's asserted types, with a visited set guarding against cycles in malformed subclass data." ;
+    agp:reasoningFor ghpull:290 ;
+    prov:wasGeneratedBy session:pr290 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

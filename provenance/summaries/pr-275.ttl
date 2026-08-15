@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #275's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 275 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:275 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql_endpoint): raise body-size limit on RDF write routes" ;
+    bl:number 275 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:274 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr275 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:274 ;
+    prov:startedAtTime "2026-07-24T09:59:21Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T10:12:05Z"^^xsd:dateTime .
+
+session:pr275Summary a agp:TranscriptSummary ;
+    agp:summaryText "RDF write routes fell back to axum's server-wide ~2 MiB DefaultBodyLimit, so realistic RDF/SHACL payloads were rejected with RequestEntityTooLarge even though parsing was otherwise fine. Added Config::max_rdf_upload_bytes (default 64 MiB), mirroring the existing Config::max_rml_upload_bytes precedent (sparql_endpoint/src/lib.rs). Added CLI flag --max-rdf-upload-bytes / env var DAGALOG_MAX_RDF_UPLOAD_BYTES (src/main.rs), following the pattern of the other Cli fields (e.g. --query-timeout / DAGALOG_QUERY_TIMEOUT). Note: max_rml_upload_bytes itself has no CLI/env plumbing today — it's only a hardcoded Config default reached via ..Default::default(). The issue's premise that RML plumbing existed to mirror was incorrect; I built the new flag from the general clap pattern instead. Adding CLI/env for the RML field too would be unrelated scope creep, so I left it as-is (could be a small follow-up)." ;
+    agp:reasoningFor ghpull:275 ;
+    prov:wasGeneratedBy session:pr275 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
