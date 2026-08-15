@@ -275,7 +275,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            bind_addr: "0.0.0.0:3030".parse().unwrap(),
+            bind_addr: "0.0.0.0:3030"
+                .parse()
+                .expect("hardcoded bind address is valid"),
             base_iri: "http://localhost:3030".to_string(),
             read_only: true,
             max_query_timeout_secs: 30,
@@ -425,4 +427,22 @@ pub async fn serve_on_listener(
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// The hardcoded default bind address must stay parseable — this exercises
+    /// `Config::default()`'s `.expect(...)` call, which would panic at process
+    /// startup (and at test-collection time here) if the literal ever became
+    /// malformed. See https://github.com/daghovland/rdf-datalog/issues/461.
+    #[test]
+    fn default_bind_addr_parses() {
+        let config = Config::default();
+        assert_eq!(
+            config.bind_addr,
+            "0.0.0.0:3030".parse::<SocketAddr>().unwrap()
+        );
+    }
 }
