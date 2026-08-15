@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #227's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 227 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:227 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): resolve BIND arithmetic/type-coercion gaps (bind03/bind04)" ;
+    bl:number 227 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:198 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr227 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:198 ;
+    prov:startedAtTime "2026-07-21T14:04:31Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T14:27:44Z"^^xsd:dateTime .
+
+session:pr227Summary a agp:TranscriptSummary ;
+    agp:summaryText "Re-checked the W3C bind suite skip-list in tests/w3c_sparql11_suite.rs::w3c_sparql11_bind against the current tree before doing any investigation, per #198's guidance. Result: bind01, bind02, bind05, bind06 — already fixed as a side effect of #220's eval_arithmetic type-promotion fix. Un-skipped, no code changes needed. bind03, bind04 — fixed in this PR (see below). bind07, bind08, bind10 — still skip-listed; see \"What's left\" below. bind03 — BIND-computed value must join back against real data eval_arithmetic's integer fast path emitted the canonical RdfLiteral::IntegerLiteral variant, which never structurally equals the RdfLiteral::TypedLiteral { type_iri: xsd:integer, .. } shape the Turtle parser and SPARQL numeric-literal parser always produce for real data. A BIND-computed value used in a later triple-pattern position (BIND(?o+1 AS ?z) . ?s1 ?p1 ?z) is looked up in resource_map by structural equality, so the lookup silently failed and the join always produced zero rows — regardless of whether the value was genuinely present in the store. Fixed by emitting the same TypedLiteral shape real parsed data uses. bind04 — BIND with an unbound variable must not drop the row BIND(?nova AS ?z) with ?nova never bound dropped the whole solution row (via filter_map in the Bind arm of eval_component)." ;
+    agp:reasoningFor ghpull:227 ;
+    prov:wasGeneratedBy session:pr227 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

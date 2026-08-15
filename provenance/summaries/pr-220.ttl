@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #220's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 220 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:220 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): projected-expression equality/reuse gaps (#207)" ;
+    bl:number 220 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:207 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr220 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:207 ;
+    prov:startedAtTime "2026-07-21T08:52:33Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T13:38:26Z"^^xsd:dateTime .
+
+session:pr220Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes all 4 skip-listed W3C project-expression conformance entries (tests/testdata/w3c_sparql11/project-expression/projexp01..04, exercised by tests/w3c_sparql11_suite.rs::w3c_sparql11_project_expression, whose skip-list is now empty). Three independent root causes, all in sparql_parser/src/execute.rs: 1. eval_expression_value_inner never handled comparison/logical operators (=, !=, <, >, <=, >=, &&, ||, !) — only arithmetic — so a projected equality like (?y = ?z AS ?eq) silently evaluated to nothing instead of an xsd:boolean. Now delegates to eval_expression_bool and wraps the result, matching the existing eval_bind_expr/eval_expression_bool_filter convention for value contexts with no ActiveGraph in scope. Fixes \"Expression is equality\". 2. eval_arithmetic's exact-integer/decimal fast path only matched the canonical RdfLiteral::IntegerLiteral/DecimalLiteral variants, but both the Turtle parser (turtle::convert_literal) and the SPARQL numeric-literal parser (parse_numeric_literal, which deliberately mirrors it) always produce the generic RdfLiteral::TypedLiteral { type_iri, literal } shape for numeric data. Arithmetic on any real data therefore always fell through to xsd:double promotion (1 + 1 became 2.0e0)." ;
+    agp:reasoningFor ghpull:220 ;
+    prov:wasGeneratedBy session:pr220 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

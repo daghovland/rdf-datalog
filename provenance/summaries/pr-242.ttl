@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #242's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 242 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:242 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): resolve remaining W3C property-path gaps (#203)" ;
+    bl:number 242 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:203 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr242 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:203 ;
+    prov:startedAtTime "2026-07-22T20:56:21Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T21:22:18Z"^^xsd:dateTime .
+
+session:pr242Summary a agp:TranscriptSummary ;
+    agp:summaryText "Clears every entry in the w3c_sparql11_property_path skip-list (was 8 entries, now 0): pp04, pp05, pp13, pp15 (zero-length-path identity semantics): these are actually commented out of the upstream manifest's own mf:entries list (\"removed by 3LC\") so they never ran through this suite regardless of the skip-list. Fixed the underlying gap anyway — zero_hop_solutions now enumerates subject = object = x for every node x in the active graph when both path endpoints are unbound (the {0} bound and the zero-hop case of */?/{0,m}), instead of returning no solutions. New helpers: graph_nodes, distinct_graph_ids, zero_hop_all_nodes. pp07, pp34 (GRAPH <fixed-iri> scoping): already passed, no engine change needed. pp35 (GRAPH ?g with an *unbound* graph variable over a property path): real gap. transitive_closure's both-endpoints-unbound branch collapsed the active-graph lookup to an unconstrained scan and never bound ?g, so a downstream FILTER (?g = <iri>) always dropped every row. Fixed by enumerating every named graph and binding ?g per graph. pp08 (reverse path ^path as ASK): already passed — the skip-list comment's claim that run_sparql_query doesn't support ASK is true of that helper specifically, but the harness's compare_ask_with_srx already calls sparql_parser::execute directly, which has always supported Query::Ask." ;
+    agp:reasoningFor ghpull:242 ;
+    prov:wasGeneratedBy session:pr242 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

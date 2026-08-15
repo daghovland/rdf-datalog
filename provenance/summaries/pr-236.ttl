@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #236's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 236 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:236 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): fix VALUES-clause variable visibility in output header" ;
+    bl:number 236 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:235 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr236 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:235 ;
+    prov:startedAtTime "2026-07-22T19:22:48Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T19:37:04Z"^^xsd:dateTime .
+
+session:pr236Summary a agp:TranscriptSummary ;
+    agp:summaryText "PR #231 (closing #200) added trailing-ValuesClause support, but merged before a requested review fix landed: it was force-adding every ValuesClause variable name to the output header regardless of the SELECT projection, violating SPARQL 1.1 §18.2.4.3's join-before-Project semantics. Fixes it by representing the trailing ValuesClause as an ordinary QueryComponent::Values appended onto the WHERE clause (instead of a separate post-projection field), so the existing SELECT/SELECT * projection logic handles visibility for free. Adds regression tests: unselected VALUES var hidden from header but still filters/joins solutions; SELECT * projects it; equivalent subquery-boundary cases (non-leak vs. crosses-boundary under SELECT *)." ;
+    agp:reasoningFor ghpull:236 ;
+    prov:wasGeneratedBy session:pr236 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #214's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 214 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:214 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Implement xsd:dateTime cast function (SPARQL 1.1 §17.4.2)" ;
+    bl:number 214 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:194 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr214 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:194 ;
+    prov:startedAtTime "2026-07-20T23:20:50Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T07:05:00Z"^^xsd:dateTime .
+
+session:pr214Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements xsd:dateTime(v) casting per SPARQL 1.1 §17.4.2, deferred from #190 (which covered xsd:integer/xsd:decimal/xsd:double/xsd:float/xsd:string/xsd:boolean). Valid xsd:dateTime lexical forms (with or without a timezone) → RdfLiteral::DateTimeLiteral. xsd:date (YYYY-MM-DD) → midnight UTC on that date. Invalid lexical forms → cast result is unbound (None), matching the convention already established for the other XSD casts. Casting an already-native DateTimeLiteral (e.g. xsd:dateTime(NOW())) is identity. No boolean-context wiring: a dateTime has no EBV, so eval_function_bool correctly falls through to unbound rather than needing special-casing. Implementation notes Reused the lexical parsing behind parse_xsd_datetime (the helper already used by NOW/YEAR/MONTH/DAY/etc.), but factored the RFC 3339 + xsd:date parsing out into a new shared parse_datetime_or_date_lexical. parse_xsd_datetime keeps its bare-xsd:gYear fallback (needed for YEAR/MONTH/DAY on gYear-typed literals); the cast does not get that fallback, since a bare year is not a valid xsd:dateTime/xsd:date lexical form and must stay unbound per the XPath casting rules — covered by a dedicated test (test_xsd_cast_datetime_bare_year_is_unbound). Added a naive/no-timezone xsd:dateTime fallback to the shared parser, since chrono::DateTime::parse_from_rfc3339 alone rejects a timezone-less xsd:dateTime lexical form (e.g." ;
+    agp:reasoningFor ghpull:214 ;
+    prov:wasGeneratedBy session:pr214 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #216's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 216 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:216 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "test(w3c_sparql11): CONSTRUCT WHERE shorthand — un-skip via harness fix" ;
+    bl:number 216 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:204 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr216 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:204 ;
+    prov:startedAtTime "2026-07-21T07:38:37Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T08:35:01Z"^^xsd:dateTime .
+
+session:pr216Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #204. Investigation showed the parser/executor gap described in the issue title didn't actually exist: sparql_parser already parses and executes CONSTRUCT WHERE { ... } correctly (construct_short_form_parses / construct_short_form_returns_all_triples in sparql_parser/tests/parser_tests.rs already cover and pass this). The real, and only, gap was in tests/w3c_sparql11_suite.rs's harness: run_eval_test could only compare SELECT/ASK results against a .srx file via run_sparql_query, which explicitly rejects CONSTRUCT queries. That's why constructwhere01-04 were skip-listed — they failed with \"CONSTRUCT queries are not supported via run_sparql_query\", not a parse error. Confirmed empirically before writing any fix: temporarily clearing the skip list reproduced exactly that error for all four entries. What was added compare_construct_with_ttl: dispatched whenever an entry's mf:result file ends in .ttl (CONSTRUCT/DESCRIBE tests compare against an expected RDF graph, not SPARQL Results XML). Executes the query directly via sparql_parser::execute, loads the expected .ttl into a datastore, and compares both graphs via RDFC-1.0 canonicalization (rdf_canon::canonicalize_graph, already vendored in this repo for issues #69-#71) so blank-node relabelling differences can't cause false mismatches." ;
+    agp:reasoningFor ghpull:216 ;
+    prov:wasGeneratedBy session:pr216 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

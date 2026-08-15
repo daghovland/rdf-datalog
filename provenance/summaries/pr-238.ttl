@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #238's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 238 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:238 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): support blank-node property lists in object position (#201)" ;
+    bl:number 238 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr238 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-22T19:47:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T20:39:54Z"^^xsd:dateTime .
+
+session:pr238Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes 4 of the 14 failing entries in the W3C SPARQL 1.1 subquery-suite (w3c_sparql11_subquery, part of epic #197): sq11 (\"Subquery limit per resource\") and sq13 (\"Subqueries don't inject bindings\") failed to parse at all: ?O :hasItem [ rdfs:label ?L ] . uses a blank-node property list ([ pred obj ; ... ] / its empty [] form) in *object* position. parse_term never handled this — only bare _:label blank nodes and a subject-position [...]/[] shorthand (handled inline in parse_group_graph_pattern_contents) were supported. Added parse_object_term in sparql_parser/src/lib.rs, used everywhere an object term is parsed (parse_triple_pattern_statement, parse_predobj_pairs), which recognizes the shorthand in object position and rewrites it to a fresh internal blank-node variable plus extra triples for the nested pred-obj pairs, recursing for nested property lists. Also added __bn_ to is_internal_variable in sparql_parser/src/execute.rs so SELECT * doesn't leak this fresh internal variable name into projected output (object-position blank nodes are common, so this closes a gap that would otherwise have gotten much more exposure)." ;
+    agp:reasoningFor ghpull:238 ;
+    prov:wasGeneratedBy session:pr238 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
