@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #134's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 134 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:134 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#119): implement SPARQL LOAD with NetworkPolicy::Allow" ;
+    bl:number 134 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:119 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr134 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:119 ;
+    prov:startedAtTime "2026-07-06T11:36:30Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-06T22:24:00Z"^^xsd:dateTime .
+
+session:pr134Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements SPARQL LOAD <url> when the server is started with NetworkPolicy::Allow. Previously this returned a \"not yet implemented\" error; now it performs an actual HTTP GET and loads the parsed triples into the store. Behaviour ``sparql LOAD <https://example.org/data.ttl> LOAD SILENT <https://example.org/data.ttl> LOAD <https://example.org/data.ttl> INTO GRAPH <http://local/g> ` 1. reqwest::blocking::Client (30 s timeout) GETs the URL with Accept: text/turtle, application/n-triples, application/ld+json, */* 2. Format detected from Content-Type header: Turtle/N3/N-Triples → parse_turtle_with_base; JSON-LD → parse_jsonld; RDF/XML → error 3. Triples loaded into the default graph (no INTO GRAPH) or the specified named graph 4. LOAD SILENT suppresses both network and parse errors 5. NetworkPolicy::Deny (default) still rejects with the existing error message > Security note: NetworkPolicy::Allow exposes the server to SSRF if URLs come from untrusted input. Restrict to trusted sources or use a firewall." ;
+    agp:reasoningFor ghpull:134 ;
+    prov:wasGeneratedBy session:pr134 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

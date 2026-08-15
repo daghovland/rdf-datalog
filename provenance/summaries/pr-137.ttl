@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #137's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 137 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:137 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#135): SSRF hardening for NetworkPolicy::Allow" ;
+    bl:number 137 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:135 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr137 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:135 ;
+    prov:startedAtTime "2026-07-07T15:36:24Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-07T19:49:44Z"^^xsd:dateTime .
+
+session:pr137Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds three layers of SSRF protection to the SPARQL LOAD fetch path (fetch_rdf in sparql_endpoint/src/sparql_update.rs), activated whenever NetworkPolicy::Allow is in use. 1. Private/link-local IP blocking (ssrf_preflight) Before any HTTP connection is made, the URL's hostname is resolved via DNS and every resulting IP address is checked against blocked ranges: | Range | What it protects | |---|---| | RFC 1918: 10/8, 172.16/12, 192.168/16 | Internal corporate networks | | Link-local: 169.254.0.0/16 | AWS/GCP/Azure instance metadata endpoint | | Unspecified: 0.0.0.0 | Invalid targets | | IPv6 loopback: ::1 | IPv6 local | IPv4 loopback (127.0.0.0/8) is intentionally not blocked — wiremock integration tests bind to 127.0.0.1 and blocking it would break them. This trade-off is documented in a code comment. 2. Cross-host redirect blocking The reqwest::blocking::Client is built with a custom redirect::Policy that rejects any 3xx response whose Location header changes the hostname. This prevents open-redirect SSRF chains (e.g. a public URL redirecting to http://10.0.0.1/admin). 3. 64 MiB response body cap Content-Length header is checked first: if it exceeds 64 MiB the request is rejected immediately (no bytes transferred from the body). The body is then read with Read::take(limit + 1) to also catch streaming responses that exceed the limit without advertising it upfront." ;
+    agp:reasoningFor ghpull:137 ;
+    prov:wasGeneratedBy session:pr137 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

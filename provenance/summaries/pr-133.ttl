@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #133's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 133 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:133 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#69): add rdf-canonicalization crate (RDFC-1.0/URDNA2015)" ;
+    bl:number 133 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:69 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr133 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:69 ;
+    prov:startedAtTime "2026-07-06T11:25:25Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-06T21:09:50Z"^^xsd:dateTime .
+
+session:pr133Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds a new rdf_canon workspace crate that wraps the rdf-canon library (v0.15, RDFC-1.0 / URDNA2015) to provide deterministic canonicalization of Dagalog Datastore datasets. Implements Option A from docs/plans/CANON_PLAN.md — using the existing rdf-canon crate rather than a hand-rolled implementation, so all three canonicalization phases (#69, #70, #71) are delivered in a single PR. Public API ``rust /// Canonicalize the full dataset to N-Quads (RDFC-1.0). pub fn canonicalize_dataset(store: &Datastore) -> Result<String, String> /// Canonicalize a single named graph (or default graph when graph_id == 0). pub fn canonicalize_graph(store: &Datastore, graph_id: GraphElementId) -> Result<String, String> ` canonicalize_graph is what the records backend needs for per-content-graph checksumming (IRecordBackend.ToCanonString()). Details Converts Datastore quads → oxrdf::Dataset → rdf-canon → sorted N-Quads string Blank nodes get canonical labels _:c14n0, _:c14n1, … Isomorphic datasets (same structure, different blank node names) produce identical output rdf-canon uses oxrdf 0.2 (the existing turtle crate uses 0.3`) — they coexist without conflict" ;
+    agp:reasoningFor ghpull:133 ;
+    prov:wasGeneratedBy session:pr133 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

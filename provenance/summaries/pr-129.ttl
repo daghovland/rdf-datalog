@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #129's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 129 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:129 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "test(#123): isolation and intra-request visibility tests for SPARQL Update" ;
+    bl:number 129 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:123 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr129 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:123 ;
+    prov:startedAtTime "2026-07-05T17:52:50Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-05T21:14:26Z"^^xsd:dateTime .
+
+session:pr129Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds sparql_endpoint/tests/isolation.rs with 4 integration tests documenting Dagalog's transaction isolation and intra-request visibility guarantees. Tests test_concurrent_read_sees_pre_or_post_write — races a 2-triple INSERT against a COUNT(*) query 10 times; asserts the count is always 0 or 2, never 1. Verifies that RwLock provides serializable isolation. test_intra_request_pattern_update_sees_preceding_insert — single request with INSERT DATA { a p b } ; INSERT { b q c } WHERE { a p ?x }; asserts b q c is present. Confirms PatternUpdate WHERE sees preceding INSERT DATA (SPARQL 1.1 Update §3.1.3, implemented in #114). test_intra_request_delete_hides_triple_from_where — INSERT DATA { s p o } ; DELETE { s p ?o } WHERE { s p ?o } in one request; asserts the triple is absent afterwards. test_failed_update_leaves_store_unchanged — #[ignore = \"requires #126 rollback fix\"]. Documents that a multi-statement request where a later op fails must roll back earlier ops. Will be un-ignored when #126 is implemented." ;
+    agp:reasoningFor ghpull:129 ;
+    prov:wasGeneratedBy session:pr129 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

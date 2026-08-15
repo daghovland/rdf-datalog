@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #115's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 115 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:115 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(D7): LUBM-scale benchmark for BF incremental vs full re-materialisation" ;
+    bl:number 115 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:111 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr115 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:111 ;
+    prov:startedAtTime "2026-07-03T12:28:04Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-03T14:30:45Z"^^xsd:dateTime .
+
+session:pr115Summary a agp:TranscriptSummary ;
+    agp:summaryText "Add benches/lubm.rs: Criterion benchmark suite for BF incremental maintenance at LUBM scale Synthetic LUBM-scale ABox generator (no external download needed); ~37k extensional quads at scale=1 Benchmarks: bf_vs_full_remat at 1/5/10/20% delete, memory_overhead, bf_single_delete, insert_seminaive Add [[bench]] name = \"lubm\" to root Cargo.toml Update scripts/download_test_ontologies.sh with LUBM synthetic data explanation and run instructions Running the benchmarks ``bash Compile + run test mode (fast, no panics check): cargo bench --bench lubm -- --test Full benchmarks at scale=1 (default): cargo bench --bench lubm Specific groups: cargo bench --bench lubm -- bf_vs_full_remat cargo bench --bench lubm -- memory_overhead Larger scale (5× or 10× data): LUBM_BENCH_SCALE=5 cargo bench --bench lubm LUBM_BENCH_SCALE=10 cargo bench --bench lubm All delete percentages for tipping-point study: LUBM_BENCH_PCTS=1,5,10,20 cargo bench --bench lubm -- bf_vs_full_remat ``" ;
+    agp:reasoningFor ghpull:115 ;
+    prov:wasGeneratedBy session:pr115 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
