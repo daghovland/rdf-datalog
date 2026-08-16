@@ -3391,6 +3391,7 @@ dependencies = [
  "num-traits",
  "regex",
  "rust_decimal",
+ "sparql-parser",
  "turtle",
 ]
 

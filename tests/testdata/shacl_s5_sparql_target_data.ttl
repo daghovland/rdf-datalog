@@ -1,0 +1,5 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:Alice ex:status ex:Active ; ex:name "Alice" .
+ex:Bob ex:status ex:Active .
+ex:Carol ex:status ex:Inactive .

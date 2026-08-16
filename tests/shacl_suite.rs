@@ -212,6 +212,16 @@ fn shacl_testdata_parses() {
         "shacl_s318_range_datetime_tz_shapes.ttl",
         "shacl_s318_datatype_date_tz_data.ttl",
         "shacl_s318_datatype_date_tz_shapes.ttl",
+        "shacl_s6_sparql_ask_data.ttl",
+        "shacl_s6_sparql_ask_shapes.ttl",
+        "shacl_s6_sparql_select_data.ttl",
+        "shacl_s6_sparql_select_shapes.ttl",
+        "shacl_s6_sparql_this_data.ttl",
+        "shacl_s6_sparql_this_shapes.ttl",
+        "shacl_s6_sparql_prefixes_data.ttl",
+        "shacl_s6_sparql_prefixes_shapes.ttl",
+        "shacl_s5_sparql_target_data.ttl",
+        "shacl_s5_sparql_target_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -3588,4 +3598,139 @@ fn report_to_datastore_nested_compound_path_shape() {
     );
     assert_eq!(as_iri_str(&row["inv"]), "http://example.org/childOf");
     assert_eq!(as_iri_str(&row["f2"]), "http://example.org/hasParent");
+}
+
+// ── §5–6 SHACL-AF: SPARQL-based targets/constraints ────────────────────────────
+//
+// Spec: <https://www.w3.org/TR/shacl-af/#sparql-based-constraints>
+// See `docs/plans/SHACL_PLAN.md`'s "SHACL-SPARQL (§5–6 of SHACL-AF)" section and
+// [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+
+/// SHACL-AF §6.1 `sh:sparql` with `sh:ask` — a passing and a failing focus node.
+///
+/// `ex:AgeShape` requires `ex:age >= 0` via a SPARQL ASK constraint.
+/// `ex:Alice` has `ex:age 30` → ASK is true → conforms.
+/// `ex:Bob` has `ex:age -5` → ASK is false → 1 violation, carrying the shape's
+/// `sh:message` and `sh:sourceConstraintComponent sh:SPARQLConstraintComponent`.
+#[test]
+fn spec_s6_1_sparql_ask() {
+    let data = load("shacl_s6_sparql_ask_data.ttl");
+    let shapes = load("shacl_s6_sparql_ask_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(report.results.len(), 1, "only ex:Bob should violate");
+    let result = &report.results[0];
+    assert_eq!(
+        result.focus_node.as_deref(),
+        Some("http://example.org/ns#Bob")
+    );
+    assert_eq!(result.message.as_deref(), Some("age must be non-negative"));
+    assert_eq!(
+        result.source_constraint.as_deref(),
+        Some(shacl::vocab::CC_SPARQL)
+    );
+}
+
+/// SHACL-AF §6.1 `sh:sparql` with `sh:select` — each solution row is one
+/// `ValidationResult`, with `$value` read from the query's own projection.
+///
+/// `ex:CategoryShape` requires `ex:category`'s value to be a known
+/// `ex:categories ex:member`. `ex:Item1`'s category (`ex:Red`) is a member →
+/// conforms. `ex:Item2`'s category (`ex:Green`) is not → 1 violation with
+/// `sh:value` set to `ex:Green`.
+#[test]
+fn spec_s6_1_sparql_select() {
+    let data = load("shacl_s6_sparql_select_data.ttl");
+    let shapes = load("shacl_s6_sparql_select_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Item2's category is unknown"
+    );
+    let result = &report.results[0];
+    assert_eq!(
+        result.focus_node.as_deref(),
+        Some("http://example.org/ns#Item2")
+    );
+    assert_eq!(result.value.as_deref(), Some("http://example.org/ns#Green"));
+    assert_eq!(
+        result.message.as_deref(),
+        Some("value must be a known category")
+    );
+}
+
+/// Regression test for `$this` pre-binding correctness: three focus nodes,
+/// exactly one violating. A broken/no-op `$this` join (e.g. injecting VALUES
+/// that doesn't actually restrict the query, or attributing every result to
+/// every node) would produce 0 or 3 results here instead of exactly 1 — see
+/// `docs/plans/SHACL_PLAN.md`'s note on why this fixture needs >=2 nodes to be
+/// discriminating.
+#[test]
+fn spec_s6_1_sparql_this_binding() {
+    let data = load("shacl_s6_sparql_this_data.ttl");
+    let shapes = load("shacl_s6_sparql_this_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "$this must be pre-bound per-node: only ex:N2 (ex:score 0) should violate"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.org/ns#N2")
+    );
+}
+
+/// SHACL-AF §6.1 `sh:prefixes` — prefix declarations from a `sh:declare`
+/// block are prepended to the embedded query as `PREFIX` lines. The query
+/// body uses `ex2:price`, a prefix that exists *only* via `sh:prefixes` (the
+/// shapes graph's own Turtle prefixes never declare `ex2:`), so this fails to
+/// parse/resolve entirely unless the injection actually happens.
+///
+/// `ex:Widget` has `ex:price 10` (positive) → conforms.
+/// `ex:Gadget` has `ex:price -3` (not positive) → 1 violation.
+#[test]
+fn spec_s6_1_sparql_prefixes() {
+    let data = load("shacl_s6_sparql_prefixes_data.ttl");
+    let shapes = load("shacl_s6_sparql_prefixes_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Gadget's price is non-positive"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.org/ns#Gadget")
+    );
+}
+
+/// SHACL-AF §5 `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` — the
+/// query's own `?this` projection supplies the focus-node set, which then
+/// participates in ordinary SHACL Core constraint evaluation (`sh:minCount`
+/// here) exactly like any other target kind.
+///
+/// `ex:ActiveShape` targets everything with `ex:status ex:Active`
+/// (`ex:Alice`, `ex:Bob` — `ex:Carol` is `ex:Inactive` and excluded) and
+/// requires `sh:minCount 1` on `ex:name`. `ex:Alice` has a name → conforms.
+/// `ex:Bob` has none → 1 violation.
+#[test]
+fn spec_s5_sparql_target() {
+    let data = load("shacl_s5_sparql_target_data.ttl");
+    let shapes = load("shacl_s5_sparql_target_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Bob (targeted via SPARQLTarget, missing ex:name) should violate"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.org/ns#Bob")
+    );
 }

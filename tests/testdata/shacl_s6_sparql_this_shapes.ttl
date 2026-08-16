@@ -1,0 +1,13 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:ScoreShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "ex:score must be positive" ;
+        sh:ask """
+            ASK { $this <http://example.org/ns#score> ?s . FILTER (?s > 0) }
+        """ ;
+    ] .

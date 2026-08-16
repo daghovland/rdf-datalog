@@ -1,0 +1,23 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.org/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:MyPrefixes
+    a owl:Ontology ;
+    sh:declare [
+        sh:prefix "ex2" ;
+        sh:namespace "http://example.org/ns#"^^xsd:anyURI ;
+    ] .
+
+ex:PriceShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Product ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:prefixes ex:MyPrefixes ;
+        sh:message "price must be positive" ;
+        sh:ask """
+            ASK { $this ex2:price ?p . FILTER (?p > 0) }
+        """ ;
+    ] .
