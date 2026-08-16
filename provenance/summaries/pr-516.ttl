@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/373-owl2rdf-disjoint-union).
+
+ghpull:516 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rl2datalog: encode DisjointUnionOf as owl:disjointUnionOf/rdf:List" ;
+    bl:number 516 ;
+    bl:state bl:Open ;
+    bl:relatesToIssue ghissues:373 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr516 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:373 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T19:32:00Z"^^xsd:dateTime .
+
+session:pr516Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #373 bundles eight deferred owl2rdf slices (complex class-expression blank-node encoding, property chains, HasKey, DisjointUnionOf, DatatypeDefinition, n-ary disjoint/different constructs, annotation axioms, ontology header triples) behind one title. The task brief explicitly scoped this session to DisjointUnionOf only, so the first move was reading owl2rl2datalog/src/owl_to_rdf.rs (from #177/PR #370) to learn the module's existing pattern: a Translator struct with named_class()/named_classes() resolvers that return None for any non-atomic class expression, causing the caller to fall back to RdfTranslationReport::skipped instead of guessing at an encoding. DisjointUnion's member list is exactly the same shape as EquivalentClasses/DisjointClasses's class lists, so named_classes() could be reused unchanged to detect the all-atomic case. Confirmed ClassAxiom::DisjointUnion's field shape in owl_ontology/src/axioms.rs (Vec<Annotation>, Class, Vec<ClassExpression>; Class = FullIri, so the LHS is always named -- no complex-expression branch needed there). The list encoding itself needed a new helper: no rdf:List builder existed yet in owl_to_rdf.rs (rdf_owl_translator only reads lists, doesn't write them), so Translator::rdf_list was added as a small reusable primitive (fresh blank node per cell, rdf:first/rdf:rest, terminating at rdf:nil) rather than inlining the loop into the DisjointUnion arm, since #510/#513 will need identical list-building logic for property chains and n-ary AllDisjoint constructs and would otherwise duplicate it." ;
+    agp:decisionPoint session:pr516Decision ;
+    agp:reasoningFor ghpull:516 ;
+    prov:wasGeneratedBy session:pr516 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr516Decision a agp:Decision ;
+    agp:summaryText "Scoped DisjointUnionOf translation to the case where every disjoint-union member is a named/atomic class expression, using the existing named_classes() resolver's None return as the complex-expression detector. A DisjointUnion axiom whose members include a complex expression (e.g. ObjectUnionOf) is reported via RdfTranslationReport::skipped, matching the established pattern for SubClassOf/EquivalentClasses/DisjointClasses in the same file, rather than being partially emitted or silently dropped." ;
+    agp:alternative "Considered implementing full complex-class-expression support (issue #373's item 1) as a prerequisite, since a fully general DisjointUnionOf mapping needs it for the uncommon case of non-atomic members. Rejected: item 1 is the general blank-node structural encoding (owl:unionOf/intersectionOf/complementOf/oneOf, owl:Restriction nodes) needed by several other deferred items too, not something to build incidentally inside a DisjointUnionOf-scoped PR. Filed as its own follow-up issue (#509) instead, and the atomic-only slice lands here as a useful, independently-testable increment -- matching how the rest of owl_to_rdf.rs already treats the complex-expression boundary as a reporting seam, not a blocker." .
