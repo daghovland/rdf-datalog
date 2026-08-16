@@ -8,6 +8,7 @@ dag-rdf = { path = "../dag_rdf" }
 datalog = { path = "../datalog" }
 ingress = { path = "../ingress" }
 turtle = { path = "../turtle" }
+sparql-parser = { path = "../sparql_parser" }
 log = "0.4"
 regex = "1"
 chrono = "0.4"

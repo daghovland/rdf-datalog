@@ -30,19 +30,38 @@ Contact: hovlanddag@gmail.com
 //! `ObjectSomeValuesFrom`, cardinality restrictions, …) need the spec's
 //! blank-node structural encoding (`rdf:List`s, `owl:Restriction` nodes) and are
 //! **not** translated here; they are recorded in
-//! [`RdfTranslationReport::skipped`] rather than silently dropped. That encoding
-//! is deferred to a follow-up phase (see the module's issue links in the crate
-//! README/issue tracker).
+//! [`RdfTranslationReport::skipped`] rather than silently dropped. That general
+//! encoding is deferred to
+//! [#509](https://github.com/daghovland/rdf-datalog/issues/509), split out of
+//! the still-open parent tracking issue
+//! [#373](https://github.com/daghovland/rdf-datalog/issues/373) (see that
+//! issue's other follow-ups too: property chains
+//! [#510](https://github.com/daghovland/rdf-datalog/issues/510), `HasKey`
+//! [#511](https://github.com/daghovland/rdf-datalog/issues/511),
+//! `DatatypeDefinition`
+//! [#512](https://github.com/daghovland/rdf-datalog/issues/512), n-ary
+//! disjoint/different constructs
+//! [#513](https://github.com/daghovland/rdf-datalog/issues/513), annotation
+//! axioms [#514](https://github.com/daghovland/rdf-datalog/issues/514), and
+//! ontology header triples
+//! [#515](https://github.com/daghovland/rdf-datalog/issues/515)).
+//!
+//! `DisjointUnionOf` over atomic (named) class-expression members *is*
+//! translated in this pass — the `owl:disjointUnionOf`/`rdf:List` encoding
+//! doesn't need the general complex-class-expression machinery when every
+//! member is a plain named class, which is the common case. A `DisjointUnion`
+//! whose members include a genuinely complex class expression still falls
+//! back to [#509](https://github.com/daghovland/rdf-datalog/issues/509).
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
     IriReference, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_CLASS,
-    OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
-    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_INVERSE_FUNCTIONAL_PROPERTY,
-    OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY,
-    OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY, OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY,
-    OWL_TRANSITIVE_PROPERTY, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF,
-    RDFS_SUB_PROPERTY_OF,
+    OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH,
+    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY,
+    OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL,
+    OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY,
+    OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST,
+    RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
 };
 use owl_ontology::{
     Assertion, Axiom, ClassAxiom, ClassExpression, DataPropertyAxiom, DataRange, Entity, FullIri,
@@ -249,6 +268,24 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Build an `rdf:List` structural encoding of `items` and return the id of
+    /// its head node (`rdf:nil` for an empty list, per the spec's `T(SEQ ...)`
+    /// mapping).
+    ///
+    /// Each list cell is a fresh blank node with `rdf:first` pointing at the
+    /// element and `rdf:rest` at the next cell (or `rdf:nil` for the last).
+    fn rdf_list(&mut self, items: &[GraphElementId]) -> GraphElementId {
+        let nil = self.iri(RDF_NIL);
+        let mut tail = nil;
+        for item in items.iter().rev() {
+            let cell = self.datastore.new_anonymous_blank_node();
+            self.triple_p(cell, RDF_FIRST, *item);
+            self.triple_p(cell, RDF_REST, tail);
+            tail = cell;
+        }
+        tail
+    }
+
     /// Resolve every element of a list of class expressions, or `None` if any
     /// of them is complex.
     fn named_classes(&mut self, exprs: &[ClassExpression]) -> Option<Vec<GraphElementId>> {
@@ -319,7 +356,21 @@ impl<'a> Translator<'a> {
                 }
             }
             // n > 2 needs an `owl:AllDisjointClasses` blank node with an
-            // `owl:members` rdf:List — part of the deferred blank-node encoding.
+            // `owl:members` rdf:List — deferred to
+            // https://github.com/daghovland/rdf-datalog/issues/513.
+            ClassAxiom::DisjointUnion(_, class, members) => match self.named_classes(members) {
+                Some(ids) => {
+                    let class_id = self.full_iri(class);
+                    self.type_triple(class_id, OWL_CLASS);
+                    let list_head = self.rdf_list(&ids);
+                    self.triple_p(class_id, OWL_DISJOINT_UNION_OF, list_head);
+                }
+                // The disjoint union's members are themselves complex class
+                // expressions — needs the general blank-node structural
+                // encoding, deferred to
+                // https://github.com/daghovland/rdf-datalog/issues/509.
+                None => self.skip("DisjointUnion with complex class expression member", axiom),
+            },
             other => self.skip("class axiom", other),
         }
     }
@@ -523,6 +574,102 @@ mod tests {
         let mut ds = Datastore::new(100);
         let report = owl2rdf(&mut ds, &ontology_of(axioms));
         (ds, report)
+    }
+
+    /// Follow an `rdf:List` starting at `head`, returning the resolved IRIs
+    /// of its `rdf:first` elements in order. Panics on a malformed list
+    /// (missing `rdf:first`/`rdf:rest`) since tests only feed well-formed
+    /// output of [`Translator::rdf_list`].
+    fn read_rdf_list(ds: &Datastore, head: GraphElementId) -> Vec<IriReference> {
+        let nil = id_of(ds, &IriReference(RDF_NIL.to_owned())).expect("rdf:nil interned");
+        let first_pred = id_of(ds, &IriReference(RDF_FIRST.to_owned())).expect("rdf:first");
+        let rest_pred = id_of(ds, &IriReference(RDF_REST.to_owned())).expect("rdf:rest");
+        let mut items = Vec::new();
+        let mut node = head;
+        while node != nil {
+            let first_quads = ds.quads_matching(None, Some(node), Some(first_pred), None);
+            assert_eq!(first_quads.len(), 1, "each list cell has one rdf:first");
+            let elem_id = first_quads[0].obj;
+            let elem = ds.resources.get_graph_element(elem_id);
+            match elem {
+                GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => items.push(iri.clone()),
+                other => panic!("expected an IRI list element, got {other:?}"),
+            }
+            let rest_quads = ds.quads_matching(None, Some(node), Some(rest_pred), None);
+            assert_eq!(rest_quads.len(), 1, "each list cell has one rdf:rest");
+            node = rest_quads[0].obj;
+        }
+        items
+    }
+
+    /// The head-node id of `<subject-iri> <predicate-iri> ?object`, assuming
+    /// exactly one such triple.
+    fn object_of(
+        ds: &Datastore,
+        subject: &IriReference,
+        predicate_iri: &str,
+    ) -> Option<GraphElementId> {
+        let predicate = IriReference(predicate_iri.to_owned());
+        let (s, p) = (id_of(ds, subject)?, id_of(ds, &predicate)?);
+        let quads = ds.quads_matching(None, Some(s), Some(p), None);
+        assert!(quads.len() <= 1, "expected at most one match");
+        quads.first().map(|q| q.obj)
+    }
+
+    #[test]
+    fn disjoint_union_of_two_named_classes_becomes_disjoint_union_of_list() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+            vec![],
+            full("Pet"),
+            vec![class("Dog"), class("Cat")],
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(
+            &ds,
+            &ex("Pet"),
+            RDF_TYPE,
+            &IriReference(OWL_CLASS.to_owned())
+        ));
+        let list_head = object_of(&ds, &ex("Pet"), OWL_DISJOINT_UNION_OF)
+            .expect("owl:disjointUnionOf triple must exist");
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("Dog"), ex("Cat")]);
+        // rdf:type owl:Class + owl:disjointUnionOf + 2 list cells * 2 triples
+        assert_eq!(report.triples_added, 6);
+    }
+
+    #[test]
+    fn disjoint_union_of_three_or_more_named_classes_preserves_list_order() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+            vec![],
+            full("Pet"),
+            vec![class("Dog"), class("Cat"), class("Bird"), class("Fish")],
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head = object_of(&ds, &ex("Pet"), OWL_DISJOINT_UNION_OF)
+            .expect("owl:disjointUnionOf triple must exist");
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("Dog"), ex("Cat"), ex("Bird"), ex("Fish")]
+        );
+    }
+
+    /// A `DisjointUnion` whose members include a complex (non-atomic) class
+    /// expression cannot be encoded without the general blank-node structural
+    /// mapping — deferred to
+    /// [#509](https://github.com/daghovland/rdf-datalog/issues/509) — and
+    /// must be reported as skipped rather than partially/incorrectly emitted.
+    #[test]
+    fn disjoint_union_with_complex_member_is_reported_not_silently_dropped() {
+        let (_ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+            vec![],
+            full("Pet"),
+            vec![
+                class("Dog"),
+                ClassExpression::ObjectUnionOf(vec![class("Cat"), class("Bird")]),
+            ],
+        ))]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
     }
 
     #[test]

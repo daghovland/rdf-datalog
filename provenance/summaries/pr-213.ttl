@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #213's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 213 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:213 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(sparql): bounded/unbounded property-path repetition {n},{n,m},{n,},{,m}" ;
+    bl:number 213 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:203 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr213 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:203 ;
+    prov:startedAtTime "2026-07-20T23:15:11Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T07:10:50Z"^^xsd:dateTime .
+
+session:pr213Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements the highest-leverage item from #203: SPARQL 1.1 bounded/unbounded property-path repetition syntax — path{n} (exact), path{n,m} (range), path{n,} (unbounded lower bound), path{,m} (up to m, from zero). Added PropertyPath::Repeat(inner, min, max) to the AST (sparql_parser/src/ast.rs). Added the {n}/{n,m}/{n,}/{,m} grammar production to parse_path_elt (sparql_parser/src/lib.rs). Added an evaluator (eval_repeat_path/eval_exact_repeat in sparql_parser/src/execute.rs) using sequence (join) semantics, not the arbitrary-length-path/fixed-point semantics used by */+. Confirmed against the W3C .srx fixtures that bounded repetition is expected to produce one solution per distinct walk (duplicates allowed on diamond-shaped graphs), unlike */+'s deduplicated reachability semantics. {n,} is evaluated as p{n} followed by p*, so it stays finite/terminating on cyclic data (the p* tail uses fixed-point reachability, not walk enumeration). Factored the zero-hop identity-match logic (previously inline in ZeroOrOne) into a shared zero_hop_solutions helper, reused by the {0} case of bounded repetition. This fixes W3C property-path entries pp20, pp22, pp24, pp26, pp27, pp29 (all 6 bounded-repetition entries listed in #203) — un-skipped in tests/w3c_sparql11_suite.rs::w3c_sparql11_property_path." ;
+    agp:reasoningFor ghpull:213 ;
+    prov:wasGeneratedBy session:pr213 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

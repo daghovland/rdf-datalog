@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #101's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 101 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:101 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Close #52: unignore all SPARQL scalar builtin tests" ;
+    bl:number 101 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:52 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr101 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:52 ;
+    prov:startedAtTime "2026-06-28T21:08:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-06-29T09:09:45Z"^^xsd:dateTime .
+
+session:pr101Summary a agp:TranscriptSummary ;
+    agp:summaryText "Removes all 21 #[ignore] attributes from sparql_parser/tests/builtin_tests.rs; all functions (BNODE, ENCODE_FOR_URI, REPLACE, RAND, NOW, YEAR/MONTH/DAY/HOURS/MINUTES/SECONDS, TZ, MD5, SHA1, SHA256, SHA384, SHA512, UUID, STRUUID) were already implemented in execute.rs Corrects the SHA256(\"abc\") expected value — the original used an incorrect hash; the correct value (ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) is verified by sha256sum, Python hashlib, and the sha2 crate All 46 tests in builtin_tests now pass with 0 ignored; full workspace tests clean" ;
+    agp:reasoningFor ghpull:101 ;
+    prov:wasGeneratedBy session:pr101 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

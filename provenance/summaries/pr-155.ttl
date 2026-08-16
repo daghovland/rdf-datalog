@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #155's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 155 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:155 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#147): Turtle 1.2 serialisation for triple terms" ;
+    bl:number 155 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:147 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr155 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:147 ;
+    prov:startedAtTime "2026-07-14T21:47:01Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-15T17:00:48Z"^^xsd:dateTime .
+
+session:pr155Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements Phase R4 of the RDF 1.2 plan (docs/plans/RDF12_PLAN.md), epic #143. All three sub-tasks from the issue are done: turtle/src/serialize.rs: GraphElement::TripleTerm arm — emits <<( s p o )>> in Turtle, N-Quads, TriG, and SPARQL CONSTRUCT output (sparql_endpoint/src/serialize/construct.rs). Recurses through the Datastore to resolve a triple term's own subject/predicate/object, so triple terms nested in subject position (buildable directly via add_triple_term, though not yet producible by the parser — see below) serialize correctly too, e.g. <<( <<( … )>> p o )>>. SPARQL 1.2 result-format encoding — SPARQL JSON and XML result bindings encode triple terms recursively, verified against the current W3C working drafts: JSON: {\"type\": \"triple\", \"value\": {\"subject\": S, \"predicate\": P, \"object\": O}} — matches SPARQL 1.2 Query Results JSON Format §3.2.2 / §5.2. XML: <triple><subject>S</subject><predicate>P</predicate><object>O</object></triple> — matches SPARQL 1.2 Query Results XML Format (this replaces the previous ad hoc <s>/<p>/<o> shape, which predated the spec check). Content-Type negotiation — Turtle, N-Triples, N-Quads and TriG responses from the Graph Store HTTP Protocol endpoint now advertise version=1.2 per the RDF 1.2 Turtle working draft §2.4 (Version Announcement); requests sending a versioned Accept header (e.g." ;
+    agp:reasoningFor ghpull:155 ;
+    prov:wasGeneratedBy session:pr155 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

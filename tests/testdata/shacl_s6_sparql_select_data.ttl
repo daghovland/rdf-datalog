@@ -1,0 +1,6 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:categories ex:member ex:Red, ex:Blue .
+
+ex:Item1 a ex:Item ; ex:category ex:Red .
+ex:Item2 a ex:Item ; ex:category ex:Green .

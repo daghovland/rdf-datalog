@@ -30,15 +30,10 @@ const RDF_JSON: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#JSON";
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 pub struct JsonLdError(pub String);
 
-impl std::fmt::Display for JsonLdError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for JsonLdError {}
 fn err(msg: impl Into<String>) -> JsonLdError {
     JsonLdError(msg.into())
 }

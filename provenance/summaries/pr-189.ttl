@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #189's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 189 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:189 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): parse prefixed-name function calls (xsd:integer(...) casts)" ;
+    bl:number 189 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:186 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr189 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:186 ;
+    prov:startedAtTime "2026-07-19T21:27:39Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T21:45:06Z"^^xsd:dateTime .
+
+session:pr189Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #186. parse_function_call (sparql_parser/src/lib.rs) parsed a function call's name via: ``rust let (input, fname) = alt(( map(take_while1(|c: char| c.is_alphanumeric() || c == '_'), |s| s.to_string()), map(parse_iri_ref, |iri| iri.0), map(parse_prefixed_name(ctx), |iri| iri.0), ))(input)?; ` For input like xsd:integer(?o), the first alternative (bare alphanumeric word) greedily matches just xsd (: isn't in the allowed charset) and *succeeds* — so nom's alt commits to that branch and never backtracks into parse_prefixed_name. The parser then expects ( right after xsd, sees : instead, and the whole parse_function_call fails. This broke any function call using a prefixed-name IRI as the function name (xsd:integer, xsd:string, xsd:double, xsd:dateTime, or any other prefix:localname(...) call) while leaving bare-word builtins (ABS, SUM, STRSTARTS, aggregate keywords, ...) unaffected, since those names never contain a :. Reordered the alt so parse_iri_ref and parse_prefixed_name are tried before the bare-word fallback (matching the reorder suggested in the issue)." ;
+    agp:reasoningFor ghpull:189 ;
+    prov:wasGeneratedBy session:pr189 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

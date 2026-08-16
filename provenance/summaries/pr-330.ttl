@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #330's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 330 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:330 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: report_to_datastore (Datastore-native SHACL validation report)" ;
+    bl:number 330 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:314 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr330 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:314 ;
+    prov:startedAtTime "2026-08-01T04:29:46Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T05:10:57Z"^^xsd:dateTime .
+
+session:pr330Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds shacl::report_to_datastore(report: &ValidationReport) -> Datastore, building the SHACL validation-report graph (sh:conforms, sh:result, sh:focusNode, sh:resultSeverity, sh:sourceConstraintComponent, sh:sourceShape, sh:resultPath, sh:resultMessage) directly as RDF quads, mirroring report_to_turtle field-for-field without a stringify/reparse round trip. Unblocks #313 (comparing W3C SHACL reports via graph canonicalization). Status [x] Vocabulary constants + stubbed report_to_datastore + ignored TDD tests (this commit) [ ] Implementation, tests green [ ] Full quality gate (fmt/clippy/test/doc) verified" ;
+    agp:reasoningFor ghpull:330 ;
+    prov:wasGeneratedBy session:pr330 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

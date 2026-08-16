@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #299's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 299 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:299 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog: canned SPARQL query library for common backlog views" ;
+    bl:number 299 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:286 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr299 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:286 ;
+    prov:startedAtTime "2026-07-26T13:45:41Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-30T13:56:11Z"^^xsd:dateTime .
+
+session:pr299Summary a agp:TranscriptSummary ;
+    agp:summaryText "Six named SPARQL queries under backlog/queries/, answering the questions issue #286 asked for, backed by the real ontology/shapes from #283/#285: ready_not_started.sparql — ready-labeled issues still open epics_with_no_subissues.sparql — epics with zero children (freshly-created or possibly stalled) epics_all_children_closed_but_open.sparql — epics needing only a close-out pass crates_with_open_bugs.sparql — joins ticket data against the dependency graph crate_dependents.sparql *(parameterized via a VALUES line)* — what directly depends on a given crate work_items_touching_crate.sparql *(parameterized via a VALUES line)* — every issue/PR touching a given crate Exposed as a small CLI per the issue's request: backlog/queries/run.sh <name> reuses the existing dagalog binary's --query/--format table path directly — no new Rust CLI surface needed, nothing to build. Run with no args to list available queries. Two items deliberately not implemented, same pattern as #285: \"open longer than N days with no activity\" is skipped entirely — no timestamp property exists in the ontology yet (documented in queries/README.md and MODELING_NOTES.md's \"still open\" list, rather than inventing one speculatively just to check the box)." ;
+    agp:reasoningFor ghpull:299 ;
+    prov:wasGeneratedBy session:pr299 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

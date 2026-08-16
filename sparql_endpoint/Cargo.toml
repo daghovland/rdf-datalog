@@ -29,6 +29,8 @@ url = "2"
 redb = "4"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+utoipa = "5.5"
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
 [dev-dependencies]
 owl2rl2datalog = { path = "../owl2rl2datalog" }

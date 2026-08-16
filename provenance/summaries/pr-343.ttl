@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #343's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 343 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:343 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: fix sh:lessThan violation-multiplicity undercount (lessThan-002)" ;
+    bl:number 343 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:341 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr343 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:341 ;
+    prov:startedAtTime "2026-08-01T17:47:23Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T22:17:46Z"^^xsd:dateTime .
+
+session:pr343Summary a agp:TranscriptSummary ;
+    agp:summaryText "add_viol (shacl/src/evaluate.rs) records violations as (focus, viol_pred, value) quads in a full-quad-dedup QuadTable. Two genuinely distinct derivations that happen to produce the identical triple collapse into one before collect_violations builds ValidationResults. vocab::viol_discriminated(base, disc) suffixes the violation predicate IRI with a per-derivation counter, so each failing (value, otherValue) comparison pair in the sh:lessThan/sh:lessThanOrEquals arms gets its own quad instead of colliding. Every discriminated predicate id is returned from the constraint arm and gets the identical ViolMeta at the eval_all call site, so the resulting ValidationResults are content-identical (as the spec requires) - report_to_datastore's existing per-result fresh-blank-node minting then produces two isomorphic-but-distinct blank-node subtrees, which RDFC-1.0 canonicalization compares correctly. Also removed the continue 'outer short-circuit so every failing pair is reported, matching the spec's per-pair SPARQL-based validator semantics. Scoped narrowly to the LessThan/LessThanOrEquals arms only - the shared add_viol helper and every other constraint component are untouched, so no other violation counts change. Results lessThan-002.ttl: fixed (2 to 4 results), unskipped in w3c_shacl_core_property, passing via the real canonicalization-based comparator." ;
+    agp:reasoningFor ghpull:343 ;
+    prov:wasGeneratedBy session:pr343 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

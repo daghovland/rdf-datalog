@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #239's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 239 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:239 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): resolve W3C aggregates suite gaps" ;
+    bl:number 239 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:202 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr239 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:202 ;
+    prov:startedAtTime "2026-07-22T20:13:46Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T20:43:07Z"^^xsd:dateTime .
+
+session:pr239Summary a agp:TranscriptSummary ;
+    agp:summaryText "Clears all 14 previously skip-listed entries in w3c_sparql11_suite::w3c_sparql11_aggregates (epic #197): AVG, AVG with GROUP BY, SUM, SUM with GROUP BY, COUNT 8b, MIN with GROUP BY: Aggregate::Avg and eval_binary_value now apply the same integer/decimal/float/double type-promotion rules eval_arithmetic already uses (via classify_numeric/numeric_lit_to_element), instead of unconditionally promoting to xsd:double (which lost xsd:decimal typing/precision). The test harness's normalise_srx also gained numeric-value (not just integer) normalization so lexical-form differences (\"3.21E4\" vs \"32100\") don't cause false mismatches — datatype is still compared exactly. GROUP_CONCAT 1, GROUP_CONCAT with SEPARATOR, SAMPLE: compare_with_srx now dispatches ASK queries to a new compare_ask_with_srx helper (calls execute() directly, mirroring compare_construct_with_ttl), since run_sparql_query only supports SELECT. GROUP_CONCAT 2: parse_predobj_pairs (the []/blank-node-property-list parser) gained the same variable-predicate special case parse_triple_pattern_statement already had, fixing [] ?p ?o. Error in AVG, Protect from error in AVG: Aggregate::Min/Max now treat an incomparable pair (e.g. numeric literal vs." ;
+    agp:reasoningFor ghpull:239 ;
+    prov:wasGeneratedBy session:pr239 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

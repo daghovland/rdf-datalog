@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #315's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 315 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:315 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): resolve literal sh:targetNode values as node-shape focus nodes" ;
+    bl:number 315 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:310 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr315 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:310 ;
+    prov:startedAtTime "2026-07-31T09:24:40Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T16:36:04Z"^^xsd:dateTime .
+
+session:pr315Summary a agp:TranscriptSummary ;
+    agp:summaryText "data_targets()'s lookup_elem() silently dropped ElemValue::Literal, so a node shape's literal-valued sh:targetNode (e.g. sh:targetNode \"aldi\"^^xsd:integer) never became a focus node. This under-counted (or, when the literal was the only nonconforming target, false-negatived) node-shape-scoped (pathless) value constraints. Fixed by delegating lib.rs::lookup_elem to evaluate::lookup_elem_value (already correct, from #260), plus interning every Target::Node literal into the data view validate() reads from (needed because the W3C fixtures load one file as both shapes+data graph, which coincidentally hides this gap — a genuinely separate shapes/data pair does not). A related fix: node-shape-scoped sh:nodeKind violations reported sh:value as nil instead of the focus node itself (same pattern already fixed for sh:and/sh:or/sh:not/sh:xone by #309/#316). Correction to earlier scope claim An earlier revision of this PR claimed \"single root cause, not per-component: fixes all 15 core/node W3C SHACL suite entries previously skip-listed under 310.\" That claim was wrong — it was never verified against actual CI output. Proper triage (starting with datatype-001, as #310 asked) found the literal-sh:targetNode bug only accounts for 8 of the 15 listed entries." ;
+    agp:reasoningFor ghpull:315 ;
+    prov:wasGeneratedBy session:pr315 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

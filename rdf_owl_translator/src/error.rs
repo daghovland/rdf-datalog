@@ -14,51 +14,32 @@ Contact: hovlanddag@gmail.com
 //! <https://github.com/daghovland/rdf-datalog/issues/363>. `try_get_literal`
 //! was deleted outright (dead code, zero call sites) rather than converted.
 
-use std::fmt;
-
 /// Errors that can occur while translating RDF triples into an OWL 2
 /// ontology.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TranslatorError {
     /// The RDF encoding of an `rdf:List` structure (used for
     /// `owl:intersectionOf`, `owl:unionOf`, `owl:members`, property chains,
     /// etc.) is malformed: a cycle, or a node with the wrong number of
     /// `rdf:first`/`rdf:rest` triples.
+    #[error("malformed rdf:List: {0}")]
     MalformedRdfList(String),
     /// The dependency graph among anonymous (blank-node) OWL class
     /// expressions contains a cycle — e.g. two blank-node
     /// `owl:intersectionOf`/`owl:unionOf` expressions whose member lists
     /// reference each other — so no topological order exists.
+    #[error("cyclic dependency: {0}")]
     CyclicDependency(String),
     /// A subject of `rdf:type owl:AllDisjointClasses` or
     /// `rdf:type owl:AllDisjointProperties` has more than one `owl:members`
     /// triple, so which list to use is ambiguous.
+    #[error("multiple owl:members: {0}")]
     MultipleOwlMembers(String),
     /// A graph element that was expected to denote an OWL individual (an
     /// IRI resource or a blank node) turned out to be a literal, or an RDF
     /// 1.2 triple term (which cannot be an OWL individual at all — full RDF
     /// 1.2 support is tracked in
     /// <https://github.com/daghovland/rdf-datalog/issues/143>).
+    #[error("invalid OWL individual: {0}")]
     InvalidIndividual(String),
 }
-
-impl fmt::Display for TranslatorError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TranslatorError::MalformedRdfList(msg) => {
-                write!(f, "malformed rdf:List: {msg}")
-            }
-            TranslatorError::CyclicDependency(msg) => {
-                write!(f, "cyclic dependency: {msg}")
-            }
-            TranslatorError::MultipleOwlMembers(msg) => {
-                write!(f, "multiple owl:members: {msg}")
-            }
-            TranslatorError::InvalidIndividual(msg) => {
-                write!(f, "invalid OWL individual: {msg}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for TranslatorError {}

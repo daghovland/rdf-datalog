@@ -55,6 +55,18 @@
       background: #f8f8f8;
     }
     textarea:focus { outline: 2px solid #445; background: #fff; }
+    /* CodeMirror 6 query editor (issue #42) — mimics the textarea it replaces */
+    .query-editor-wrap { position: relative; }
+    .cm-mount .cm-editor {
+      font-family: "Fira Mono", "Consolas", monospace;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f8f8f8;
+    }
+    .cm-mount .cm-editor.cm-focused { outline: 2px solid #445; background: #fff; }
+    .cm-mount .cm-scroller { min-height: 8.5rem; }
+    .cm-mount .cm-content { padding: 0.6rem 0; }
     .actions { margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
     button {
       padding: 0.4rem 1.1rem;
@@ -335,7 +347,10 @@
           <option value="instances">Instances of owl:Class</option>
         </select>
       </div>
-      <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
+      <div class="query-editor-wrap">
+        <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
+        <div id="query-cm" class="cm-mount" style="display:none"></div>
+      </div>
       <div class="actions">
         <button id="run-btn" onclick="runQuery()">Run Query</button>
         <button class="help-btn" onclick="document.getElementById('sparql-help-modal').classList.add('open')" title="SPARQL quick reference" aria-label="SPARQL quick reference">?</button>
@@ -725,7 +740,7 @@
     // ── Query templates ────────────────────────────────────────────────────────
     function applyTemplate(sel) {
       if (!sel.value) return;
-      document.getElementById('query').value = TEMPLATES[sel.value] || '';
+      setQueryValue(TEMPLATES[sel.value] || '');
       sel.value = '';
     }
 
@@ -765,7 +780,7 @@
         code.textContent = entry.query;
         row.append(time, code);
         row.addEventListener('click', () => {
-          document.getElementById('query').value = entry.query;
+          setQueryValue(entry.query);
         });
         list.appendChild(row);
       }
@@ -1285,7 +1300,7 @@
     async function runQuery() { return runQueryPage(0); }
 
     async function runQueryPage(offset) {
-      const rawQuery = document.getElementById('query').value.trim();
+      const rawQuery = getQueryValue().trim();
       if (!rawQuery) return;
       // Paginate only SELECT queries with no explicit LIMIT/OFFSET; anything
       // else runs verbatim (issue #165).
@@ -1548,6 +1563,10 @@
     }
 
     // ── Keyboard shortcut ──────────────────────────────────────────────────────
+    // NB: this listens on the fallback <textarea id="query">. When CodeMirror 6
+    // is active (see the <script type="module"> block below) the textarea is
+    // hidden and doesn't receive keyboard events, so the equivalent Ctrl/Cmd+Enter
+    // binding is registered there too, as a CodeMirror keymap extension.
     function initKeyboardShortcuts() {
       document.getElementById('query').addEventListener('keydown', e => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -1555,6 +1574,24 @@
           runQuery();
         }
       });
+    }
+
+    // ── CodeMirror <-> plain-textarea shim ───────────────────────────────────────
+    // Every other call site reads/writes the query through these two helpers so
+    // it works identically whether CodeMirror 6 loaded successfully (see the
+    // module script near the end of this file) or the plain <textarea id="query">
+    // fallback is still active (CDN unreachable, JS module load failure, etc).
+    function getQueryValue() {
+      if (window.dagalogQueryEditor) return window.dagalogQueryEditor.state.doc.toString();
+      return document.getElementById('query').value;
+    }
+    function setQueryValue(text) {
+      const editor = window.dagalogQueryEditor;
+      if (editor) {
+        editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } });
+      } else {
+        document.getElementById('query').value = text;
+      }
     }
 
     // ── Query builder — SPARQL generation ─────────────────────────────────────
@@ -2124,7 +2161,7 @@
     function editInSparql() {
       const sparql = document.getElementById('qb-generated').textContent.trim();
       if (!sparql) return;
-      document.getElementById('query').value = sparql;
+      setQueryValue(sparql);
       document.getElementById('build-view').style.display  = 'none';
       document.getElementById('query-view').style.display  = '';
       document.getElementById('nav-build').classList.remove('active');
@@ -2351,7 +2388,7 @@
       } else {
         document.getElementById('nav-query').classList.add('active');
         if (query) {
-          document.getElementById('query').value = query;
+          setQueryValue(query);
           runQuery();
         }
       }
@@ -2396,7 +2433,7 @@ SELECT ?person ?label ?age WHERE {
 
     function loadSampleData() {
       document.getElementById('turtle').value = SAMPLE_TURTLE;
-      document.getElementById('query').value  = SAMPLE_QUERY;
+      setQueryValue(SAMPLE_QUERY);
       document.getElementById('turtle').focus();
     }
 
@@ -2457,5 +2494,62 @@ SELECT ?contact WHERE {
       </p>
     </div>
   </div>
+
+  <!-- ── CodeMirror 6 SPARQL editor (issue #42) ─────────────────────────────────
+       Loaded as ES modules straight from a CDN (esm.sh) — no build step. If the
+       CDN is unreachable or the module fails to load/instantiate for any reason,
+       the catch block below leaves the plain <textarea id="query"> visible and
+       functional; every other part of the app talks to the query editor only
+       through getQueryValue()/setQueryValue() (defined in the classic script
+       above), so nothing else needs to know which one is active. -->
+  <script type="module">
+    import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.2';
+    import { EditorState } from 'https://esm.sh/@codemirror/state@6.7.1';
+    import { keymap } from 'https://esm.sh/@codemirror/view@6.43.8';
+    import { sparql as sparqlLanguage } from 'https://esm.sh/codemirror-lang-sparql@2.1.0';
+
+    function initQueryEditor() {
+      const textarea = document.getElementById('query');
+      const mount    = document.getElementById('query-cm');
+      if (!textarea || !mount) return;
+
+      try {
+        const runQueryKeymap = keymap.of([
+          {
+            key: 'Ctrl-Enter', mac: 'Cmd-Enter',
+            run: () => { if (typeof window.runQuery === 'function') window.runQuery(); return true; },
+          },
+        ]);
+
+        const view = new EditorView({
+          state: EditorState.create({
+            doc: textarea.value,
+            extensions: [
+              basicSetup,           // line numbers, bracket matching, history, default keymap, ...
+              sparqlLanguage(),     // SPARQL keyword/variable/literal highlighting
+              runQueryKeymap,
+              EditorView.lineWrapping,
+              EditorView.updateListener.of(update => {
+                if (update.docChanged) textarea.value = update.state.doc.toString();
+              }),
+            ],
+          }),
+          parent: mount,
+        });
+
+        window.dagalogQueryEditor = view;
+        textarea.style.display = 'none';
+        mount.style.display = '';
+      } catch (err) {
+        console.warn('CodeMirror 6 failed to initialise; falling back to plain textarea.', err);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initQueryEditor);
+    } else {
+      initQueryEditor();
+    }
+  </script>
 </body>
 </html>

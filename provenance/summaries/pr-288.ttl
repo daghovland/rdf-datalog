@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #288's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 288 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:288 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Add Manchester Syntax serializer (manchester_parser::serialize)" ;
+    bl:number 288 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:160 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr288 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:160 ;
+    prov:startedAtTime "2026-07-24T18:00:18Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T18:41:31Z"^^xsd:dateTime .
+
+session:pr288Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds manchester_parser::serialize(&Ontology) -> String, the reverse direction of the existing manchester_parser::parse (#139 / PR #158), mirroring its grammar scope. Groups axioms by frame subject (Class/ObjectProperty/DataProperty/AnnotationProperty/Individual) in first-occurrence order, emitting one frame per entity with one section line per axiom. Grouping (rather than one frame per axiom) is what makes declaration Annotations: round-trip correctly, since the parser folds a frame's Annotations: section into that entity's single AxiomDeclaration. No Prefix: declarations are emitted — Ontology carries no prefix map, so every IRI is written in full <...> form, which the parser accepts everywhere a Manchester IRI can appear. Falls back to top-level misc forms (EquivalentClasses:, DisjointClasses:, SameIndividual:, DifferentIndividuals:, EquivalentProperties:, DisjointProperties:) for genuinely n-ary axioms and for binary axioms whose members can't head a frame (e.g. one side of an equivalence is inverse P). Constructs deferred by #157 (DisjointUnionOf:, HasKey:, property chains, compound data ranges, the Datatype: frame) and a couple of serialization-specific gaps (standalone AnnotationAssertion about an arbitrary subject; class/property-expression variants the parser itself never produces) are skipped with log::warn!, never emitted as invalid syntax." ;
+    agp:reasoningFor ghpull:288 ;
+    prov:wasGeneratedBy session:pr288 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,33 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Summary of PR #503 (feat/157-manchester-disjoint-union), part of #157.
+# See docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md for the format this
+# follows. Timestamps below are real (from `git log` on the branch).
+
+ghpull:503 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "manchester_parser: implement DisjointUnionOf: class frame section" ;
+    bl:number 503 ;
+    bl:state bl:Open ;
+    bl:relatesToIssue ghissues:157 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr503 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:157 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T12:55:05Z"^^xsd:dateTime .
+
+session:pr503Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #157 originally bundled six deferred Manchester Syntax grammar productions (SWRL Rule: frames, DisjointUnionOf:/HasKey:, SubPropertyChain:, compound data ranges, Datatype: frame) as one follow-up to #139. That's too much for a single PR to review meaningfully, so the work was scoped down to DisjointUnionOf: only -- chosen first because ClassAxiom::DisjointUnion(Vec<Annotation>, Class, Vec<ClassExpression>) already existed in owl_ontology::axioms (confirmed by reading axioms.rs before writing any tests against it), so no data-model design was needed, only grammar/parser work. The parser change mirrors the existing Class: frame section pattern (SubClassOf:/EquivalentTo:/DisjointWith: in frame.rs's class_section), but the W3C grammar for DisjointUnionOf: is 'annotations description2List' -- a single leading Annotations: block followed by a plain comma list, not the per-item-annotated list form SubClassOf:/EquivalentTo:/DisjointWith: use. That matches the shape misc's EquivalentClasses:/DisjointClasses: already used, so the existing opt_annotations helper was reused rather than annotated_list, keeping the new section consistent with sibling code instead of inventing a third annotation-handling pattern. serialize.rs's prior log_skip(\"DisjointUnionOf: (#157)\") was replaced with real emission, verified via a round-trip test. The other five deferred items were each filed as independent GitHub issues (#498-#502, with #502 noted as depending on #501) rather than left as prose in this issue, per this repo's CLAUDE.md rule that deferred scope must become real trackable issues." ;
+    agp:reasoningFor ghpull:503 ;
+    prov:wasGeneratedBy session:pr503 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

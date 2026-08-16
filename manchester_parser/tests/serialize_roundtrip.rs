@@ -97,6 +97,18 @@ fn roundtrips_class_equivalentto_and_disjointwith() {
 }
 
 #[test]
+fn roundtrips_class_disjointunionof() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        Class: :Topping
+            DisjointUnionOf: :Mozzarella, :Tomato, :Basil
+        "#,
+    );
+}
+
+#[test]
 fn roundtrips_bare_class_declaration_with_no_axioms() {
     assert_roundtrip(
         r#"

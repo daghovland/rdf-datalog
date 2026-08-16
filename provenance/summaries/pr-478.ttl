@@ -1,0 +1,41 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #478's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 478 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:478 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "deploy: fix Caddyfile forward_auth 401 not redirecting to Google sign-in" ;
+    bl:number 478 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:477 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr478 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:477 ;
+    prov:startedAtTime "2026-08-13T20:12:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-13T20:12:36Z"^^xsd:dateTime .
+
+session:pr478Summary a agp:TranscriptSummary ;
+    agp:summaryText "Found during the first live deployment of the public Google-sign-in gate against the real dagalog.no domain (epic #378): curl against the deployed site returned a bare 401 instead of redirecting to Google sign-in, failing PUBLIC_DEPLOYMENT.md's Step 4 deny-path check. Root cause: Caddy's forward_auth directive calls oauth2-proxy's /oauth2/auth check endpoint, which by design returns a plain 401 for unauthenticated requests (it's meant for auth-subrequest use by a reverse proxy, not direct browser access) -- forward_auth proxies that 401 straight through to the client unless told otherwise. Fixed live on the server, then formalized through the standard worktree+PR flow rather than left as an uncommitted edit." ;
+    agp:reasoningFor ghpull:478 ;
+    prov:wasGeneratedBy session:pr478 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr478Decision .
+
+session:pr478Decision a agp:Decision ;
+    agp:summaryText "Used the @error status 401 matcher with a nested handle_response block placed inside the forward_auth directive itself (redirecting to /oauth2/start?rd={http.request.orig_uri}), which is Caddy's own documented integration pattern for oauth2-proxy." ;
+    agp:alternative "First tried a top-level handle_errors block at the site level, reasoning the 401 would flow through Caddy's HTTP-error pipeline like a normal upstream error. Inspecting the adapted JSON config (caddy adapt) showed this was wrong: forward_auth's reverse_proxy only intercepts and rewrites 2xx responses (for header copying); anything else, including a 401, is proxied through as an ordinary response body, never entering the errors route at all -- so handle_errors never fired." .

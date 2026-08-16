@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #293's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 293 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:293 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog: grounding Turtle examples for ontology/SHACL/SPARQL work" ;
+    bl:number 293 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr293 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-24T21:35:20Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T23:17:17Z"^^xsd:dateTime .
+
+session:pr293Summary a agp:TranscriptSummary ;
+    agp:summaryText "First step on #283 (per direct instruction): concrete Turtle fixtures to ground the ontology design, SHACL shapes (#285), and SPARQL query library (#286), before finalizing the vocabulary itself. backlog/examples/valid_backlog_snapshot.ttl — a real, accurate slice of this repo's actual backlog: the SHACL correctness-audit epic (#267) with all nine sub-issues (seven closed with their closing PRs linked, two still open), the dagalog-on-dagalog epic (#282) with its six sub-issues, and a partial #178 slice illustrating a real subtlety: PR #292 references issue #161 without closing it (modeled via a separate bl:relatesToIssue predicate, distinct from bl:closesIssue). backlog/examples/invalid_orphan_issue.ttl — a deliberately non-conforming, clearly-fictional fixture (issue 999999, which doesn't exist) for #285's SHACL shapes to reject: an issue that's neither an epic nor a sub-issue of one. backlog/examples/README.md — explains the provisional status of the bl: vocabulary used here (not #283's final answer) and flags one open modeling question left for #283 to actually decide: whether \"epic\" should be a first-class rdf:type or a purely structural role (no bl:subIssueOf + at least one other issue points at it). These fixtures take the structural-role approach as a starting proposal." ;
+    agp:reasoningFor ghpull:293 ;
+    prov:wasGeneratedBy session:pr293 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

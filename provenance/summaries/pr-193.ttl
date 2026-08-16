@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #193's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 193 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:193 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): implement MINUS domain-disjointness escape per SPARQL 1.1 §18.3" ;
+    bl:number 193 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:187 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr193 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:187 ;
+    prov:startedAtTime "2026-07-20T06:06:09Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-20T17:18:58Z"^^xsd:dateTime .
+
+session:pr193Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #187. sparql_parser::execute::eval_component's QueryComponent::Minus arm threaded the outer row into the inner body's evaluation (eval_components(inner, vec![sub.clone()], ...)), so every produced inner solution was a trivial extension of the outer row and therefore always \"compatible\" with it (compatible() agrees on shared vars — trivially true when one is a superset of the other) and its domain always a superset of the outer row's domain. The SPARQL 1.1 §18.3 escape hatch, `` minus(Ω1, Ω2) = { μ1 ∈ Ω1 | ∀ μ2 ∈ Ω2, μ1 and μ2 are not compatible, OR dom(μ1) ∩ dom(μ2) = ∅ } ` never actually fired — MINUS behaved exactly like FILTER NOT EXISTS { inner }. Evaluate the MINUS body's Ω2 independently of the outer solutions (an unseeded start), once, memoised across outer rows — its result doesn't depend on the outer row, so the old per-row seeded re-evaluation was pure waste. A new pub(crate) variables_in_components() helper (component_ordering.rs) computes a static, safe-to-over-approximate set of every variable the body could ever bind; used only to cheaply short-circuit rows that share no variable with the body at all (the escape applies unconditionally, no need to even evaluate Ω2)." ;
+    agp:reasoningFor ghpull:193 ;
+    prov:wasGeneratedBy session:pr193 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -366,6 +366,8 @@ dagalog --serve --data data.ttl --read-only
 | `GET /sparql` (no `query=`) | SPARQL 1.1 Service Description (Turtle) |
 | `GET /.well-known/void`, `GET /void` | VoID dataset description |
 | `POST /upload` | Load Turtle data into the default graph (legacy alias) |
+| `GET /swagger-ui/` | Interactive OpenAPI docs (developer-facing, distinct from the browser UI at `/`) — see [#386](https://github.com/daghovland/rdf-datalog/issues/386) |
+| `GET /api-docs/openapi.json` | Generated OpenAPI 3 spec covering the SPARQL Protocol, Graph Store Protocol, and admin routes below |
 
 Response format for SELECT/ASK is negotiated via `Accept`: `application/sparql-results+json`
 (default), `application/sparql-results+xml`, or `text/csv`; unrecognised formats get

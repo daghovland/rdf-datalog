@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #121's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 121 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:121 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(#114): batch incremental reasoning across multi-statement SPARQL Update" ;
+    bl:number 121 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:114 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr121 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:114 ;
+    prov:startedAtTime "2026-07-04T11:47:44Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-05T18:52:42Z"^^xsd:dateTime .
+
+session:pr121Summary a agp:TranscriptSummary ;
+    agp:summaryText "Problem IncrementalReasoner was called once per InsertData/DeleteData statement inside apply_prepared_update. A single SPARQL Update request with multiple ;-separated statements caused the reasoner to fire on each intermediate store state, which could produce transient wrong inferences and was N× slower than necessary. Example: ``sparql DELETE DATA { ex:Alice a ex:Manager . }; INSERT DATA { ex:Alice a ex:Director . } ` Previously: reasoner ran after DELETE (Alice has no type → transient wrong inferences), then again after INSERT. apply_prepared_update now accumulates all raw quad changes into batch_inserts and batch_deletes vectors across the full request. Raw store mutations are pre-applied in order (so PatternUpdate WHERE clauses see correct intermediate state), but reasoning is deferred to a single apply_deletions + apply_insertions call at the end. This is safe because QuadTable::add_quad and remove_quad` are idempotent — the reasoner's internal re-add/re-remove calls are no-ops when quads are already present/absent." ;
+    agp:reasoningFor ghpull:121 ;
+    prov:wasGeneratedBy session:pr121 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

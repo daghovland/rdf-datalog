@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #249's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 249 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:249 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Add named-graph target to frontend upload panel" ;
+    bl:number 249 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:44 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr249 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:44 ;
+    prov:startedAtTime "2026-07-22T23:58:28Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-23T08:49:10Z"^^xsd:dateTime .
+
+session:pr249Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds a \"Target graph (optional)\" text input to the Upload RDF Data panel in sparql_endpoint/src/frontend.html; uploadData() appends ?graph=<encoded-iri> to the /upload request when the field is filled in, leaving the request unchanged (default graph) when empty. POST /upload (sparql_endpoint/src/upload.rs) now reads the graph query parameter, interning the named graph if new and merging the uploaded triples into it. An absent/empty graph value preserves prior default-graph behavior. A non-absolute graph IRI is rejected with 400, matching the Graph Store Protocol's existing is_absolute_iri validation in graph_store.rs." ;
+    agp:reasoningFor ghpull:249 ;
+    prov:wasGeneratedBy session:pr249 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

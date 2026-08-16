@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #305's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 305 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:305 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Adopt the W3C SHACL test suite for conformance coverage" ;
+    bl:number 305 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:268 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr305 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:268 ;
+    prov:startedAtTime "2026-07-30T17:36:20Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T08:32:53Z"^^xsd:dateTime .
+
+session:pr305Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds tests/w3c_shacl_suite.rs: the official W3C SHACL 1.0 conformance test suite (data-shapes-test-suite/tests/core/, vendored under tests/testdata/w3c_shacl/core/), wired up per this repo's established pattern (real Turtle + real SPARQL manifest walking, per #192) rather than hand-rolled parsing. See docs/plans/W3C_SHACL_SUITE_PLAN.md for full design rationale, in particular why report comparison uses a tiered field-by-field comparator instead of full graph isomorphism (SHACL's ValidationResult fields are already-flattened strings, and some expected sh:resultPath values are RDF-list-valued property-path expressions this crate doesn't represent yet). Scope Vendored core/{complex,misc,node,path,property,targets,validation-reports} (98 test entries across 7 directories). core/sparql/ intentionally not vendored — SHACL-SPARQL constraints are out of scope per #54. One #[test] per directory (matching w3c_sparql11_suite.rs's loop-with-collected-failures idiom), each asserting a minimum entry count so a manifest-discovery regression can't silently pass vacuously. Merged in origin/main's #300/#303 (ValidationResult detail-field population) since this harness depends on source_shape/result_path/source_constraint being populated to do meaningful comparison." ;
+    agp:reasoningFor ghpull:305 ;
+    prov:wasGeneratedBy session:pr305 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

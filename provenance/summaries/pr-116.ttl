@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #116's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 116 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:116 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#53): SPARQL Update WHERE forms + W3C syntax conformance" ;
+    bl:number 116 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:53 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr116 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:53 ;
+    prov:startedAtTime "2026-07-03T12:28:04Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-04T10:13:36Z"^^xsd:dateTime .
+
+session:pr116Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements missing SPARQL Update parser features so all W3C SPARQL 1.1 Update syntax tests pass Removes #[ignore] from w3c_sparql11_update_syntax_positive and w3c_sparql11_update_syntax_negative Parser additions (sparql_endpoint/src/sparql_update.rs) Comment stripping in skip_ws — handles # comment lines between tokens Prologue parsing (BASE/PREFIX declarations) between ;-separated operations and in standalone prologue-only files LOAD [SILENT] <url> [INTO GRAPH <g>] — parsed as UpdateOp::LoadGraph; no-op during execution (network fetch not implemented) DELETE WHERE { pattern } short form — pattern serves as both template and WHERE clause **WITH <graph> (DELETE {})? (INSERT {})? (USING ...)* WHERE {} — WITH graph IRI parsed but ignored during execution Content validation** — rejects variables in INSERT/DELETE DATA and blank nodes in DELETE DATA/DELETE WHERE/DELETE templates (as required by the W3C spec) Test changes (tests/w3c_sparql11_suite.rs) try_parse_query now dispatches .ru files to parse_update instead of the SELECT parser Both W3C update syntax test functions un-ignored; skip list of 2 edge cases: syntax-update-bad-05.ru — nested GRAPH inside DELETE DATA (requires full Turtle-level validation) syntax-update-54.ru — blank-node label reuse across ;-separated operations (requires cross-op tracking)" ;
+    agp:reasoningFor ghpull:116 ;
+    prov:wasGeneratedBy session:pr116 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

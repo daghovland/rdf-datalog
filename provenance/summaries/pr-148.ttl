@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #148's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 148 --json
+# commits,mergedAt`: startedAtTime is the closing session's first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:148 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#144): GraphElement::TripleTerm data model for RDF 1.2" ;
+    bl:number 148 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:144 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr148 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:144 ;
+    prov:startedAtTime "2026-07-10T07:43:09Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-10T16:03:48Z"^^xsd:dateTime .
+
+session:pr148Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds TripleTermKey { subject, predicate, obj: u32 } to ingress crate — three interned GraphElementId fields identifying an embedded triple Adds GraphElement::TripleTerm(TripleTermKey) variant with Display impl emitting <<( s p o )>> using raw IDs Adds Datastore::add_triple_term(s, p, o) -> GraphElementId — interns by structural equality (idempotent), records exactly one row in reified_triples Exhaustive match arms updated across 18 files in the workspace; TripleTerm arms use None / placeholder where full serialisation/reasoning is deferred to #143" ;
+    agp:reasoningFor ghpull:148 ;
+    prov:wasGeneratedBy session:pr148 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

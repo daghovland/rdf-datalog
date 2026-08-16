@@ -34,9 +34,15 @@ services:
       dockerfile: backlog_endpoint/Dockerfile
     environment:
       BACKLOG_ENDPOINT_PORT: "3031"
-      # Same-origin via Caddy (see Caddyfile) once deployed, so this can stay
-      # the in-cluster service name -- no public dagalog origin needed here.
-      BACKLOG_ENDPOINT_SPARQL_ENDPOINT: "http://dagalog:3030/sparql"
+      # This value is templated verbatim into window.SPARQL_ENDPOINT and
+      # fetch()'d directly by the browser (see backlog_endpoint/src/lib.rs
+      # and backlog_frontend.html's sparqlFetch) -- it is NOT server-side
+      # only. It must therefore be a relative, same-origin path the browser
+      # can actually reach: the in-cluster hostname "dagalog" only resolves
+      # inside the Docker network, never from a real browser. Caddy's
+      # catch-all route already forwards /sparql to dagalog:3030 behind the
+      # same forward_auth gate (see Caddyfile).
+      BACKLOG_ENDPOINT_SPARQL_ENDPOINT: "/sparql"
     networks: [edge]
     restart: unless-stopped
 
@@ -72,6 +78,10 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Vocabulary/ontology Turtle files, served directly at their own
+      # namespace IRIs (/ns/backlog, /ns/agentprov) -- see #441 and
+      # docs/plans/DEREFERENCEABLE_URIS_441_PLAN.md.
+      - ../backlog/ontology:/srv/vocab:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:

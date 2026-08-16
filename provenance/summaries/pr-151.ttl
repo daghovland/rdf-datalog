@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #151's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 151 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:151 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#146): SPARQL 1.2 triple term patterns in WHERE clauses" ;
+    bl:number 151 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:146 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr151 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:146 ;
+    prov:startedAtTime "2026-07-12T07:49:40Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-13T23:44:02Z"^^xsd:dateTime .
+
+session:pr151Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds Term::TripleTerm(Box<TriplePattern>) to the SPARQL AST (sparql_parser/src/ast.rs) and a nom grammar rule (sparql_parser/src/lib.rs) for <<( subject predicate object )>>, recursively parsing the embedded pattern. Executor support (sparql_parser/src/execute.rs) for triple terms in the subject position of the outer triple pattern, per the \"Named-graph semantics for triple terms\" section of the plan doc: Fully-ground <<( :s :p :o )>> — exact structural lookup in reified_triples, no scan. Partially-variable <<( ?s :p ?o )>> — candidates enumerated from reified_triples via the most selective available index, binding inner variables, then cross-checked against named_graphs. Cross-graph GRAPH ?g { <<( ... )>> :ann ?v } — falls out of the above unchanged. Un-ignores and adapts the 3 TDD tests added in #149 (tests/sparql12_suite.rs). Scope / deviations from the plan doc Turtle parsing dependency removed from test setup: the tests as written in #149 used parse_inline_ttl/parse_inline_trig, which requires Turtle 1.2 <<( ... )>> syntax support — that's phase R2 (#145), being implemented independently and was not yet available in this worktree. Per this issue's instructions, the test datasets are now built directly via Datastore::add_triple_term instead. This phase (R3, SPARQL querying) does not depend on R2 (Turtle parsing) being complete." ;
+    agp:reasoningFor ghpull:151 ;
+    prov:wasGeneratedBy session:pr151 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #221's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 221 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:221 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql_parser): support GROUP BY with an expression grouping key" ;
+    bl:number 221 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:206 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr221 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:206 ;
+    prov:startedAtTime "2026-07-21T08:58:15Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T13:36:12Z"^^xsd:dateTime .
+
+session:pr221Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes the W3C SPARQL 1.1 grouping suite's Group-4 entry: GROUP BY using an expression as the grouping key via the (Expression AS ?Var) form (e.g. GROUP BY (COALESCE(?w, \"1605-11-05\"^^xsd:date) AS ?X)), which was previously skip-listed in tests/w3c_sparql11_suite.rs::w3c_sparql11_grouping. Root cause was in both the parser and the evaluator: Parser gap: parse_group_by only accepted a bare Expression per condition. The (expr AS ?var) suffix had no parse path, so the whole condition failed to parse; because the surrounding combinator was wrapped in opt(...), the failure was swallowed silently and GROUP BY fell back to zero conditions (one implicit group over everything), rather than surfacing a parse error. Evaluator gap: even with the alias parsed, group_by_solutions never bound the computed key value back to its alias variable in the group's solutions, so ?X would still come out unbound in the projection. Fix: added ast::GroupCondition { expr, alias }, a parse_group_condition that tries the bracketted (expr (AS var)?) form before falling back to a bare expression, and bind_group_aliases in the evaluator, which binds each aliased condition's computed key value into every solution of its group — making it visible to the projection, HAVING, and ORDER BY like any other bound variable." ;
+    agp:reasoningFor ghpull:221 ;
+    prov:wasGeneratedBy session:pr221 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #138's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 138 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:138 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#136): NetworkPolicy::AllowList URL prefix filtering for SPARQL LOAD" ;
+    bl:number 138 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:136 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr138 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:136 ;
+    prov:startedAtTime "2026-07-07T21:01:47Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-08T19:59:42Z"^^xsd:dateTime .
+
+session:pr138Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds NetworkPolicy::AllowList(Vec<String>) variant to ingress::NetworkPolicy that permits SPARQL LOAD only when the URL string starts with one of the configured prefixes SSRF hardening from #135 (IP blocking, cross-host redirect policy, 64 MiB cap) still applies on top of the prefix check Removes Copy from NetworkPolicy (required by Vec<String>); all implicit copy sites updated to .clone() Extends parse_network_policy in src/main.rs to accept allow:<prefix1>[,<prefix2>…] syntax All existing match arms on NetworkPolicy updated to handle the new variant Changed files | File | Change | |---|---| | ingress/src/network_policy.rs | Add AllowList variant; remove Copy | | sparql_endpoint/src/sparql_update.rs | fetch_rdf(url, policy) signature; prefix check; merge Allow\\|AllowList arm | | sparql_parser/src/execute.rs | Add AllowList arm for SERVICE handling | | jsonld_parser/src/lib.rs | Add AllowList arm for @context URL handling | | src/main.rs | parse_network_policy supports allow:<prefixes>; updated doc-comment | | sparql_endpoint/src/query.rs, dataset_routes.rs, graph_store.rs, lib.rs | Add .clone() at all network_policy usage sites | | sparql_endpoint/tests/allowlist.rs | New integration test file (6 tests) | | sparql_endpoint/src/sparql_update.rs (tests) | 3 new unit tests for fetch_rdf prefix logic |" ;
+    agp:reasoningFor ghpull:138 ;
+    prov:wasGeneratedBy session:pr138 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

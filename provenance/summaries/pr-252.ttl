@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #252's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 252 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:252 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(tests): remove stale #[ignore] leaking 21 tests out of CI coverage" ;
+    bl:number 252 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:250 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr252 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:250 ;
+    prov:startedAtTime "2026-07-23T09:26:12Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-23T09:30:40Z"^^xsd:dateTime .
+
+session:pr252Summary a agp:TranscriptSummary ;
+    agp:summaryText "Three test files in sparql_endpoint/tests/ had every test marked #[ignore] since their initial TDD red-phase scaffolding — but the underlying features were fully implemented since, and every test passes when run explicitly. Because cargo test --workspace skips #[ignore]d tests by default, these 21 tests provided zero CI coverage, silently: select_content_negotiation.rs — 8 tests jsonld_gsp_output.rs — 5 tests void_endpoint.rs — 8 tests None had a reason string or issue link, violating this repo's CLAUDE.md convention. Fix: remove the stale #[ignore] attributes. Also corrects two misleading-but-harmless module doc comments (graph_store.rs, describe_from_tests.rs) that claimed \"all tests are #[ignore]'d\" when the actual attributes had already been removed correctly." ;
+    agp:reasoningFor ghpull:252 ;
+    prov:wasGeneratedBy session:pr252 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

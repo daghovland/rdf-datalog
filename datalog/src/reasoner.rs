@@ -16,7 +16,6 @@ use crate::types::{
 };
 use dag_rdf::Datastore;
 use std::collections::HashMap;
-use std::fmt;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -28,44 +27,27 @@ use std::fmt;
 /// that cannot be stratified; and a rule that is unsafe (head variable not
 /// bound in its body). All previously crashed the whole process via
 /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReasoningError {
     /// A `RuleHead::Contradiction` rule fired. The `String` describes the
     /// triggering rule (its `Display` output).
+    #[error("Contradiction during reasoning: {0}")]
     Contradiction(String),
     /// A negative dependency edge sits on a cycle, so the program cannot be
     /// stratified. The `String` describes a rule on the offending cycle
     /// (its `Display` output). Previously this crashed the whole process via
     /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    #[error(
+        "Datalog program has a cycle with negation — not stratifiable! Cycle includes rule: {0}"
+    )]
     NotStratifiable(String),
     /// A rule's head references a variable not bound by any body atom. The
     /// `String` describes the unsafe variables and the offending rule (its
     /// `Display` output). Previously this crashed the whole process via
     /// `panic!`; see [#363](https://github.com/daghovland/rdf-datalog/issues/363).
+    #[error("Unsafe Datalog rule: {0}")]
     UnsafeRule(String),
 }
-
-impl fmt::Display for ReasoningError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ReasoningError::Contradiction(rule) => {
-                write!(f, "Contradiction during reasoning: {rule}")
-            }
-            ReasoningError::NotStratifiable(rule) => {
-                write!(
-                    f,
-                    "Datalog program has a cycle with negation — not stratifiable! \
-                     Cycle includes rule: {rule}"
-                )
-            }
-            ReasoningError::UnsafeRule(msg) => {
-                write!(f, "Unsafe Datalog rule: {msg}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ReasoningError {}
 
 // ── DatalogProgram ────────────────────────────────────────────────────────────
 

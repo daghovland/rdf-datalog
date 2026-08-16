@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #225's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 225 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:225 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Fix projected-expression alias reuse in subquery SELECT lists" ;
+    bl:number 225 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:223 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr225 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:223 ;
+    prov:startedAtTime "2026-07-21T13:52:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T14:28:37Z"^^xsd:dateTime .
+
+session:pr225Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #223 asked to verify whether the (expr AS ?alias) alias-reuse fix from #207 / PR #220 (which only touched project_with_exprs, the top-level SELECT projection path) also holds inside a subquery's own SELECT list, since subquery projection goes through a separate path (execute_select_inner). Wrote a regression test first (spec_project_expression_reuse_alias_in_subquery_select in tests/sparql12_suite.rs) reproducing SELECT ?sum ?twice WHERE { { SELECT ((?y + ?z) AS ?sum) ((2 * ?sum) AS ?twice) WHERE { ... } } } and confirmed it failed before any fix — ?sum itself came back unbound, not just ?twice. The non-aggregate branch of execute_select_inner never evaluated ProjectionElement::Expression at all; it only extracted pre-existing bindings by name. So the gap was broader than \"reuse\": any projected expression inside a non-aggregate subquery silently dropped its alias. Fix: extracted the accumulating-substitution logic already in project_with_exprs into a new project_with_exprs_partial (returns PartialSub instead of a resolved SolutionRow), shared by both the top-level path (project_with_exprs now just resolves its output) and the subquery path (execute_select_inner's non-aggregate branch now calls it directly instead of doing plain-vars extraction). This is the unification the issue floated as a \"nice to have if small and safe\" — it was." ;
+    agp:reasoningFor ghpull:225 ;
+    prov:wasGeneratedBy session:pr225 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #150's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 150 --json
+# commits,mergedAt`: startedAtTime is the closing session's first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:150 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#149): vendor W3C RDF 1.2 test suites and add ignored TDD tests" ;
+    bl:number 150 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:149 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr150 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:149 ;
+    prov:startedAtTime "2026-07-10T15:58:18Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-10T16:29:19Z"^^xsd:dateTime .
+
+session:pr150Summary a agp:TranscriptSummary ;
+    agp:summaryText "Vendors W3C RDF 1.2 conformance test suites (Turtle, N-Triples, N-Quads, TriG) into tests/testdata/ Adds tests/w3c_rdf12_conformance.rs running all conformance tests (all #[ignore] until R2/R3) Adds turtle/tests/rdf12.rs with inline TDD tests for triple term parsing (all #[ignore] until #145) Adds SPARQL 1.2 triple term query tests to tests/sparql12_suite.rs (all #[ignore] until #146)" ;
+    agp:reasoningFor ghpull:150 ;
+    prov:wasGeneratedBy session:pr150 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

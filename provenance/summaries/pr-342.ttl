@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #342's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 342 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:342 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: locate #323 multiplicity root cause; nodeKind item already fixed on main" ;
+    bl:number 342 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:323 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr342 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:323 ;
+    prov:startedAtTime "2026-08-01T15:22:58Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T17:58:05Z"^^xsd:dateTime .
+
+session:pr342Summary a agp:TranscriptSummary ;
+    agp:summaryText "Investigated the three W3C SHACL core/property conformance gaps tracked in #323. nodeKind undercounting (item 3): already fixed on main. Unskipping \"Test of sh:nodeKind at property shape 001\" in tests/w3c_shacl_suite.rs and running w3c_shacl_core_property passes green — the #313/#336 canonicalization-based comparator switch already resolved this (the skip-list comment in the tree documents this, but #323 hadn't been closed for it). No code change needed for this item. Nested sh:property (item 1) and sh:lessThan multiplicity (item 2): investigated, root cause precisely located, NOT fixed in this PR. Split to follow-up #341 with the full writeup. Summary: report_to_datastore (shacl/src/lib.rs:360) already mints a fresh blank node per Vec<ValidationResult> entry — it is not the bug. The dedup happens upstream: add_viol (shacl/src/evaluate.rs:1389) records violations as quads in a full-quad-dedup QuadTable, and collect_violations (shacl/src/lib.rs:698) reconstructs one ValidationResult per unique triple, collapsing distinct derivations that happen to produce the same (focus, viol_pred, value) triple. Confirmed empirically: property-001 currently returns zero results (nested sh:property isn't implemented at all — ParsedPropShape has no field for it), and lessThan-002 returns 2 results where 4 are expected, exactly the predicted collapse." ;
+    agp:reasoningFor ghpull:342 ;
+    prov:wasGeneratedBy session:pr342 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

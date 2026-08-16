@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #128's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 128 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:128 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#124): enforce If-Match ETag on SPARQL Update for optimistic concurrency" ;
+    bl:number 128 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:124 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr128 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:124 ;
+    prov:startedAtTime "2026-07-05T17:51:30Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-05T21:14:24Z"^^xsd:dateTime .
+
+session:pr128Summary a agp:TranscriptSummary ;
+    agp:summaryText "run_update now reads the If-Match request header after acquiring the write lock If the header is present and does not match store.generation, returns HTTP 412 Precondition Failed — store unchanged If the header is absent, proceeds unconditionally (existing behaviour preserved) Applied consistently to both the /sparql endpoint (query.rs) and the Fuseki-compat /{name}/update endpoint (dataset_routes.rs) How to use ``bash Capture ETag curl -s http://localhost:8080/sparql?query=SELECT+*+WHERE+{+?s+?p+?o+} -I | grep etag Compare-and-swap update curl -X POST http://localhost:8080/sparql \\ -H 'Content-Type: application/sparql-update' \\ -H 'If-Match: \"42\"' \\ --data 'INSERT DATA { <http://example.org/s> <http://example.org/p> <http://example.org/o> . }' → 204 if generation is still 42, 412 if another writer committed in the meantime ``" ;
+    agp:reasoningFor ghpull:128 ;
+    prov:wasGeneratedBy session:pr128 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

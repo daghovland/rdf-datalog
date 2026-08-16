@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #292's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 292 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:292 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Wire Manchester Syntax (.omn) into CLI and notebook kernel" ;
+    bl:number 292 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr292 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-24T19:06:04Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T21:18:22Z"^^xsd:dateTime .
+
+session:pr292Summary a agp:TranscriptSummary ;
+    agp:summaryText "Wires manchester_parser (parse + serialize, from #139/#160) into the places that previously only knew Turtle/RDF-XML/JSON-LD, per #161: dagalog::load_file: .omn files are parsed and their ABox is materialised via owl2rl2datalog::assert_abox. No TBox rule compilation here — load_file's contract elsewhere is \"add quads,\" and a .omn arriving via --data gets the same tier of support as any RDF file loaded without -o. dagalog::apply_ontologies: .omn paths are parsed once, ABox asserted, and TBox compiled via owl2datalog into a rule set that's *accumulated* alongside rules derived from every RDF-native ontology source (via rdf2owl), then evaluated together in a single batch after all paths are processed. This ordering is required: a Manchester TBox axiom never becomes an RDF triple (that's #177, not yet done), so rdf2owl can never recover it from the store after the fact — it must be compiled to rules at parse time or it's lost for good. dagalog-kernel: new %%manchester <path> cell magic (mirrors %%rml/%%ottr's file-path form), which parses + asserts the ABox + compiles/evaluates the TBox all at once, for the same reason as above — a later %%reason cell can't recover a Manchester TBox the way it can re-derive axioms from Turtle-sourced triples." ;
+    agp:reasoningFor ghpull:292 ;
+    prov:wasGeneratedBy session:pr292 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

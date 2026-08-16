@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:523 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: OpenAPI 3 spec + interactive Swagger UI for the REST API" ;
+    bl:number 523 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:386 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr523 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:386 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T19:49:26Z"^^xsd:dateTime .
+
+session:pr523Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #386 asked for standardized, generated API documentation over sparql_endpoint's REST surface, aimed at developers integrating over HTTP rather than the existing browser-facing query-UI frontend -- explicitly not a hand-written docs page. utoipa + utoipa-swagger-ui were chosen over hand-rolling an OpenAPI spec since both are actively-maintained, widely-used axum-ecosystem crates that derive the spec from route/handler annotations rather than requiring a parallel hand-maintained document that would drift from the real routes. Scope was deliberately limited to the core SPARQL Protocol / Graph Store Protocol / admin routes with clean, stable request/response shapes, rather than annotating every route in this session -- some routes (particularly content-negotiated multi-format bodies) don't map cleanly onto OpenAPI's schema model and were left uncovered rather than forced into an awkward description. The docs routes were made unauthenticated, mirroring how the existing query-UI frontend is exempted from AuthConfig, since API documentation shouldn't itself require credentials to view. README.md and docs/user/deployment.md were updated in the same PR specifically to avoid repeating a documentation-discoverability gap found earlier in this same work session on issue #58 (Azure Managed Identity auth shipped without being linked from README/deployment.md, filed as follow-up #508) -- a new capability that isn't linked from the README is effectively undiscoverable to a first-time reader." ;
+    agp:reasoningFor ghpull:523 ;
+    prov:wasGeneratedBy session:pr523 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
