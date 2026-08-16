@@ -44,7 +44,6 @@ fn past_exp() -> u64 {
         - 3600
 }
 
-
 // ── Mock OIDC provider setup ──────────────────────────────────────────────────
 
 async fn start_oidc_mock() -> MockServer {

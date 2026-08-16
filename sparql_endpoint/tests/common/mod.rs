@@ -8,16 +8,16 @@ Contact: hovlanddag@gmail.com
 
 //! Shared helpers for sparql_endpoint integration tests.
 
+use crate::common;
 use dag_rdf::datastore::Datastore;
 use datalog::Rule;
 use ingress::NetworkPolicy;
+use jsonwebtoken::{Algorithm, Header};
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::path::Path;
 use std::sync::Arc;
-use jsonwebtoken::{Algorithm, Header};
 use tokio::sync::RwLock;
 use turtle::{parse_trig, parse_turtle};
-use crate::common;
 
 /// A running test server bound to a random loopback port.
 ///
@@ -656,7 +656,6 @@ fn make_token(iss: &str, aud: &str, exp: u64, roles: &[&str]) -> String {
     };
     jsonwebtoken::encode(&header, &claims, &keys.encoding_key).expect("encode token")
 }
-
 
 static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock::new();
 
