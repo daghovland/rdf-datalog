@@ -846,7 +846,9 @@ async fn class_hierarchy_view_renders_subclass_tree() {
         .map(|v| v.as_str().unwrap_or("").to_string())
         .collect::<Vec<_>>();
     assert!(
-        labels.iter().any(|l| l.contains("Animal") || l.contains("Person")),
+        labels
+            .iter()
+            .any(|l| l.contains("Animal") || l.contains("Person")),
         "expected Animal or Person among class node labels, got: {labels:?}"
     );
     driver.quit().await.unwrap();
