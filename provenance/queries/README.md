@@ -10,7 +10,7 @@ asked for. Part of the agent-provenance epic
 ## Running a query
 
 ```
-provenance/queries/run.sh <query-name>
+provenance/queries/run.sh <query-name> [<values-replacement>]
 ```
 
 Reuses the `dagalog` binary's own `--query`/`--format table` path (see
@@ -18,6 +18,22 @@ Reuses the `dagalog` binary's own `--query`/`--format table` path (see
 arguments to list available query names. By default, runs against the
 worked grounding example(s) in `../summaries/`; pass `-D <dir>` to point at
 a different set of `.ttl` files.
+
+The optional second positional argument re-parameterizes a query with a
+`VALUES ?var { ... }` line (`related_to_file`, `related_to_crate` — see
+below) without hand-editing the checked-in `.sparql` file: it's substituted
+verbatim into that line's braces in a scratch copy (`mktemp`, cleaned up on
+exit; the file on disk is never touched). Quoting is the caller's
+responsibility — pass the whole `VALUES` content exactly as SPARQL expects
+it:
+
+```
+provenance/queries/run.sh related_to_file '"sparql_parser/src/lib.rs"'
+provenance/queries/run.sh related_to_crate crate:sparql_parser
+```
+
+(`related_to_file` binds a plain string literal — keep the double quotes;
+`related_to_crate` binds a `crate:`-prefixed resource — no quotes.)
 
 ## Queries
 

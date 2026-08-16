@@ -13,9 +13,12 @@
 # consistent -- see docs/plans/RELATED_TO_QUERIES_PLAN.md.
 #
 # Parameterized via the VALUES line below -- edit ?crate to a different
-# bl:Crate resource to ask about a different one. Shipped pointing at
-# crate:shacl, the crate PR #300 (see ../summaries/pr-300.ttl and
-# backlog/examples/snapshot.ttl) actually touched.
+# bl:Crate resource to ask about a different one, or pass it on the
+# command line without editing this file:
+#   provenance/queries/run.sh related_to_crate crate:other_crate
+# Shipped pointing at crate:shacl, the crate PR #300 (see
+# ../summaries/pr-300.ttl and backlog/examples/snapshot.ttl) actually
+# touched.
 
 PREFIX agp: <https://dagalog.no/ns/agentprov#>
 PREFIX bl: <https://dagalog.no/ns/backlog#>
