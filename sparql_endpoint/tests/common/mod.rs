@@ -27,7 +27,6 @@ use crate::common;
 /// any file locks before starting a second instance.
 pub struct TestServer {
     pub base_url: String,
-    #[allow(dead_code)]
     pub client: reqwest::Client,
     // Kept alive so the server task runs for the duration of the test.
     _handle: tokio::task::JoinHandle<()>,
@@ -234,7 +233,6 @@ impl TestServer {
     /// (the default, production behavior) must use
     /// [`Self::start_writable_with_network_policy_strict`] instead.
     /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
-    #[allow(dead_code)]
     pub async fn start_writable_with_network_policy(
         turtle: &str,
         network_policy: NetworkPolicy,
@@ -247,7 +245,6 @@ impl TestServer {
     /// stays at its production default (`false`). Use this for tests that
     /// specifically assert loopback addresses are blocked by default.
     /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
-    #[allow(dead_code)]
     pub async fn start_writable_with_network_policy_strict(
         turtle: &str,
         network_policy: NetworkPolicy,
