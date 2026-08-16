@@ -806,6 +806,11 @@ async fn pagination_next_advances_offset() {
 
 // ── Class hierarchy view ──────────────────────────────────────────────────────
 
+// The class hierarchy view (issue #43) renders with Cytoscape + dagre, same as
+// the query-result graph tab, so node labels are drawn on a <canvas> rather
+// than as DOM text — `driver.find(...).text()` can't see them. Poll the
+// `window.classCyInstance` mirror instead, following the same pattern
+// `graph_layout_persists_across_reload` uses for `window.cyInstance` above.
 #[tokio::test]
 async fn class_hierarchy_view_renders_subclass_tree() {
     let driver = match connect_driver().await {
@@ -817,25 +822,32 @@ async fn class_hierarchy_view_renders_subclass_tree() {
         .goto(&format!("{}/?view=classes", server.base_url))
         .await
         .unwrap();
-    // The tree should not say "No rdfs:subClassOf triples found"
     assert!(
-        wait_for_text(&driver, "#class-tree", 4000).await,
-        "class-tree never populated"
+        wait_for_js(
+            &driver,
+            "return !!(window.classCyInstance && window.classCyInstance.nodes().length > 0);",
+            8000
+        )
+        .await,
+        "class hierarchy cytoscape graph never populated (CDN load or showClassesView regression?)"
     );
-    let text = driver
-        .find(By::Css("#class-tree"))
+
+    let labels = driver
+        .execute(
+            "return window.classCyInstance.nodes().map(n => n.data('label'));",
+            Vec::new(),
+        )
         .await
         .unwrap()
-        .text()
-        .await
-        .unwrap();
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap_or("").to_string())
+        .collect::<Vec<_>>();
     assert!(
-        !text.contains("No rdfs:subClassOf triples found"),
-        "class hierarchy reported no subClassOf triples, got: {text}"
-    );
-    assert!(
-        text.contains("Animal") || text.contains("Person"),
-        "expected Animal or Person in class tree, got: {text}"
+        labels.iter().any(|l| l.contains("Animal") || l.contains("Person")),
+        "expected Animal or Person among class node labels, got: {labels:?}"
     );
     driver.quit().await.unwrap();
 }
