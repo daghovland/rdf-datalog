@@ -17,8 +17,10 @@ pub struct QuadTable {
     pub quad_list: Vec<Quad>,
     /// Number of quads stored (equals `quad_list.len()`).
     pub quad_count: TripleListIndex,
-    /// Full-quad membership set, used for dedup and `contains`.
-    pub four_keys_index: HashSet<Quad>,
+    /// Full-quad dedup index, doubling as a `Quad -> QuadListIndex` reverse
+    /// lookup so `remove_quad` can locate a quad's own position without
+    /// scanning `quad_list`.
+    pub four_keys_index: HashMap<Quad, QuadListIndex>,
     /// Index from graph/reification ID to quad-list indexes.
     pub triple_id_index: HashMap<GraphElementId, Vec<QuadListIndex>>,
     /// Index from predicate ID to quad-list indexes.
@@ -40,7 +42,7 @@ impl QuadTable {
         QuadTable {
             quad_list: Vec::with_capacity(init_triples),
             quad_count: 0,
-            four_keys_index: HashSet::with_capacity(init_triples),
+            four_keys_index: HashMap::with_capacity(init_triples),
             triple_id_index: HashMap::new(),
             predicate_index: HashMap::new(),
             subject_predicate_index: HashMap::new(),
@@ -102,8 +104,9 @@ impl QuadTable {
 
     /// Inserts `quad` and updates all indexes; no-op if already present.
     pub fn add_quad(&mut self, quad: Quad) {
-        if self.four_keys_index.insert(quad) {
+        if !self.four_keys_index.contains_key(&quad) {
             let current_index = self.quad_count;
+            self.four_keys_index.insert(quad, current_index);
             self.add_subject_predicate_index(quad.subject, quad.predicate, current_index);
             self.add_object_predicate_index(quad.obj, quad.predicate, current_index);
             self.add_predicate_index(quad.predicate, current_index);
@@ -115,34 +118,148 @@ impl QuadTable {
 
     /// Returns `true` if `q` is present.
     pub fn contains(&self, q: &Quad) -> bool {
-        self.four_keys_index.contains(q)
+        self.four_keys_index.contains_key(q)
+    }
+
+    /// Remove the entry equal to `old` from `map[key]`, pruning the outer
+    /// key if its `Vec` becomes empty. Order among the remaining entries is
+    /// not preserved (uses `swap_remove`) since none of the index consumers
+    /// rely on it.
+    fn remove_flat_index_entry(
+        map: &mut HashMap<GraphElementId, Vec<QuadListIndex>>,
+        key: GraphElementId,
+        old: QuadListIndex,
+    ) {
+        if let Some(vec) = map.get_mut(&key) {
+            if let Some(pos) = vec.iter().position(|&v| v == old) {
+                vec.swap_remove(pos);
+            }
+            if vec.is_empty() {
+                map.remove(&key);
+            }
+        }
+    }
+
+    /// Same as [`Self::remove_flat_index_entry`] but for the two-level
+    /// subject/object-then-predicate indexes, pruning both the inner and
+    /// (if now empty) the outer key.
+    fn remove_nested_index_entry(
+        map: &mut HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
+        outer: GraphElementId,
+        inner: GraphElementId,
+        old: QuadListIndex,
+    ) {
+        if let Some(inner_map) = map.get_mut(&outer) {
+            Self::remove_flat_index_entry(inner_map, inner, old);
+            if inner_map.is_empty() {
+                map.remove(&outer);
+            }
+        }
+    }
+
+    /// Rewrite the entry equal to `old` to `new` in `map[key]`. Used when a
+    /// quad's `QuadListIndex` changes because `remove_quad`'s swap-removal
+    /// relocated it.
+    fn relocate_flat_index_entry(
+        map: &mut HashMap<GraphElementId, Vec<QuadListIndex>>,
+        key: GraphElementId,
+        old: QuadListIndex,
+        new: QuadListIndex,
+    ) {
+        if let Some(vec) = map.get_mut(&key)
+            && let Some(pos) = vec.iter().position(|&v| v == old)
+        {
+            vec[pos] = new;
+        }
+    }
+
+    /// Same as [`Self::relocate_flat_index_entry`] but for the two-level
+    /// indexes.
+    fn relocate_nested_index_entry(
+        map: &mut HashMap<GraphElementId, HashMap<GraphElementId, Vec<QuadListIndex>>>,
+        outer: GraphElementId,
+        inner: GraphElementId,
+        old: QuadListIndex,
+        new: QuadListIndex,
+    ) {
+        if let Some(inner_map) = map.get_mut(&outer) {
+            Self::relocate_flat_index_entry(inner_map, inner, old, new);
+        }
     }
 
     /// Remove a single quad.  No-op if the quad is not present.
     ///
-    /// Rebuilds all indexes; O(n) in the number of quads.
+    /// Removes `target`'s own entries directly from every index, then fixes
+    /// up (rather than rebuilds) the rest: `quad_list` is compacted via a
+    /// swap-removal (the previously-last quad is moved into `target`'s old
+    /// slot), so the only other index entries that change are the four
+    /// belonging to that relocated quad. Cost is proportional to the size of
+    /// the (small) index buckets `target` and the relocated quad belong to,
+    /// not to the total number of quads in the store — see
+    /// [#535](https://github.com/daghovland/rdf-datalog/issues/535).
+    ///
+    /// Note this means `quad_list`/`get_all_quads` no longer reflect pure
+    /// insertion order once any `remove_quad` call has happened; nothing in
+    /// this crate or its callers relies on that beyond the point a deletion
+    /// occurs.
     pub fn remove_quad(&mut self, target: Quad) {
-        if !self.four_keys_index.contains(&target) {
+        let Some(target_index) = self.four_keys_index.remove(&target) else {
             return;
+        };
+        self.intensional_quads.remove(&target);
+
+        Self::remove_nested_index_entry(
+            &mut self.subject_predicate_index,
+            target.subject,
+            target.predicate,
+            target_index,
+        );
+        Self::remove_nested_index_entry(
+            &mut self.object_predicate_index,
+            target.obj,
+            target.predicate,
+            target_index,
+        );
+        Self::remove_flat_index_entry(&mut self.predicate_index, target.predicate, target_index);
+        Self::remove_flat_index_entry(&mut self.triple_id_index, target.triple_id, target_index);
+
+        let last_index = self.quad_count - 1;
+        if target_index != last_index {
+            let moved_quad = self.quad_list[last_index];
+
+            Self::relocate_nested_index_entry(
+                &mut self.subject_predicate_index,
+                moved_quad.subject,
+                moved_quad.predicate,
+                last_index,
+                target_index,
+            );
+            Self::relocate_nested_index_entry(
+                &mut self.object_predicate_index,
+                moved_quad.obj,
+                moved_quad.predicate,
+                last_index,
+                target_index,
+            );
+            Self::relocate_flat_index_entry(
+                &mut self.predicate_index,
+                moved_quad.predicate,
+                last_index,
+                target_index,
+            );
+            Self::relocate_flat_index_entry(
+                &mut self.triple_id_index,
+                moved_quad.triple_id,
+                last_index,
+                target_index,
+            );
+
+            self.quad_list[target_index] = moved_quad;
+            self.four_keys_index.insert(moved_quad, target_index);
         }
-        let kept: Vec<Quad> = self
-            .quad_list
-            .iter()
-            .copied()
-            .filter(|q| *q != target)
-            .collect();
-        // Preserve which of the kept quads were intensional (IDB) before we reset.
-        let kept_intensional: HashSet<Quad> = kept
-            .iter()
-            .copied()
-            .filter(|q| self.intensional_quads.contains(q))
-            .collect();
-        let hint = kept.len() as u32;
-        *self = QuadTable::new(hint);
-        for q in kept {
-            self.add_quad(q);
-        }
-        self.intensional_quads = kept_intensional;
+
+        self.quad_list.pop();
+        self.quad_count -= 1;
     }
 
     /// Truncate the table back to its first `len` quads (in insertion order),
@@ -356,7 +473,11 @@ impl QuadTable {
         self.intensional_quads = kept_intensional;
     }
 
-    /// Iterate over all quads in insertion order.
+    /// Iterate over all quads. Reflects insertion order only if no
+    /// `remove_quad` call has happened yet: `remove_quad` compacts
+    /// `quad_list` via swap-removal, which relocates the previously-last
+    /// quad into the removed slot rather than preserving relative order.
+    /// See [`Self::remove_quad`].
     pub fn get_all_quads(&self) -> impl Iterator<Item = Quad> + '_ {
         self.quad_list.iter().copied()
     }
@@ -488,6 +609,101 @@ mod tests {
     /// `rebuild_from_base` treat as the authoritative base-fact set to
     /// rebuild the closure from. See
     /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    /// After removing a quad, every index must still correctly resolve the
+    /// *remaining* quads — including a quad that shares an index bucket
+    /// (same subject+predicate / object+predicate / predicate / graph) with
+    /// the removed one, and the quad that `remove_quad`'s internal
+    /// swap-removal relocates (the previously-last quad in `quad_list`).
+    /// Guards against the point-removal implementation leaving stale or
+    /// mis-pointed index entries. See
+    /// [#535](https://github.com/daghovland/rdf-datalog/issues/535).
+    #[test]
+    fn test_remove_quad_keeps_indexes_consistent_for_shared_bucket_and_relocated_quad() {
+        let mut table = QuadTable::new(10);
+        // q1, q2 share subject+predicate (1,2) and predicate 2 and graph 0.
+        let q1 = make_quad(0, 1, 2, 3);
+        let q2 = make_quad(0, 1, 2, 4);
+        // q3 is unrelated, added last -> it's the "moved" quad when q1
+        // (not last) is removed via swap-based point removal.
+        let q3 = make_quad(0, 5, 6, 7);
+        table.add_quad(q1);
+        table.add_quad(q2);
+        table.add_quad(q3);
+
+        table.remove_quad(q1);
+
+        assert!(!table.contains(&q1), "q1 should be gone");
+        assert!(table.contains(&q2), "q2 (bucket sibling) should remain");
+        assert!(table.contains(&q3), "q3 (relocated quad) should remain");
+
+        let subj1: Vec<Quad> = table.get_quads_with_subject(1).collect();
+        assert_eq!(subj1, vec![q2], "subject index must drop q1 but keep q2");
+
+        let pred2: Vec<Quad> = table.get_quads_with_predicate(2).collect();
+        assert_eq!(pred2, vec![q2], "predicate index must drop q1 but keep q2");
+
+        let subj5: Vec<Quad> = table.get_quads_with_subject(5).collect();
+        assert_eq!(
+            subj5,
+            vec![q3],
+            "relocated quad q3 must still be found via subject index"
+        );
+
+        let pred6: Vec<Quad> = table.get_quads_with_predicate(6).collect();
+        assert_eq!(
+            pred6,
+            vec![q3],
+            "relocated quad q3 must still be found via predicate index"
+        );
+
+        let graph0: HashSet<Quad> = table.get_graph(0).collect();
+        assert_eq!(
+            graph0,
+            HashSet::from([q2, q3]),
+            "graph index must reflect exactly the remaining quads"
+        );
+
+        assert_eq!(table.get_all_quads().count(), 2);
+    }
+
+    /// Removing a quad that was never present is a documented no-op: it
+    /// must not panic, must not alter existing indexes, and repeated calls
+    /// remain no-ops. See [#535](https://github.com/daghovland/rdf-datalog/issues/535).
+    #[test]
+    fn test_remove_quad_missing_quad_is_noop() {
+        let mut table = QuadTable::new(10);
+        let q1 = make_quad(0, 1, 2, 3);
+        table.add_quad(q1);
+
+        let absent = make_quad(0, 9, 9, 9);
+        table.remove_quad(absent);
+
+        assert!(table.contains(&q1), "existing quad must be unaffected");
+        assert_eq!(table.get_all_quads().count(), 1);
+
+        // Removing the same absent quad again is still a no-op.
+        table.remove_quad(absent);
+        assert!(table.contains(&q1));
+        assert_eq!(table.get_all_quads().count(), 1);
+    }
+
+    /// Removing the single last-remaining quad must not underflow any
+    /// bookkeeping (`quad_count`, `quad_list`) — the swap-based point
+    /// removal has a degenerate case when the removed quad's own index
+    /// equals the last index. See
+    /// [#535](https://github.com/daghovland/rdf-datalog/issues/535).
+    #[test]
+    fn test_remove_quad_last_remaining_quad() {
+        let mut table = QuadTable::new(10);
+        let q1 = make_quad(0, 1, 2, 3);
+        table.add_quad(q1);
+        table.remove_quad(q1);
+        assert!(!table.contains(&q1));
+        assert_eq!(table.get_all_quads().count(), 0);
+        assert_eq!(table.quad_count, 0);
+        assert!(table.quad_list.is_empty());
+    }
+
     #[test]
     fn test_asserted_then_derived_quad_stays_extensional() {
         let mut table = QuadTable::new(10);
