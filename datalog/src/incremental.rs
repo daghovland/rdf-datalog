@@ -202,6 +202,22 @@ impl IncrementalReasoner {
     /// Inserts the quads into the store and re-runs semi-naive evaluation so that
     /// only quads triggered by the new base facts produce new inferences.
     ///
+    /// **Seeds semi-naive with a true delta**, not the whole store: each
+    /// stratum's first iteration only matches rules against `inserts` (plus
+    /// whatever an earlier stratum in this same call derived from them), via
+    /// [`DatalogProgram::materialise_seminaive_tracked_from_facts`] — see
+    /// that method's doc for why this doesn't need a separate "rotate which
+    /// body atom is the delta" step, and [#534](https://github.com/daghovland/rdf-datalog/issues/534)
+    /// for the before/after cost. The delta is passed as an **explicit fact
+    /// list** rather than a `quad_list` position, specifically because some
+    /// callers (`sparql_endpoint`) add `inserts` to `base` themselves before
+    /// calling this method (for their no-reasoner-configured code path) — a
+    /// position-based seed would then see `quad_start == quad_count` (the
+    /// quads already appended) and silently derive nothing. `delta_facts`
+    /// accumulates across the per-stratum loop below: each later stratum
+    /// sees the original `inserts` *plus* every earlier stratum's
+    /// newly-derived output as its own delta, not just its own predecessor's.
+    ///
     /// Returns `Err(ReasoningError::Contradiction)` on a genuine, correctly-derived
     /// inconsistency instead of panicking — see
     /// [#301](https://github.com/daghovland/rdf-datalog/issues/301). Unlike the
@@ -230,10 +246,19 @@ impl IncrementalReasoner {
         // check in `add_intensional_quad`, so only genuinely new inferences are added.
         // Track every genuinely new derivation entry per program so a
         // contradiction can be undone exactly, without a full rebuild.
+        //
+        // `delta_facts` starts as `inserts` and accumulates each stratum's
+        // own newly-derived output, so the next stratum's delta is "the
+        // original inserts plus everything derived so far this call" — see
+        // this method's doc comment for why the delta must be an explicit
+        // fact list rather than a `quad_list` position here.
         let mut tracked: Vec<Vec<(Quad, Derivation)>> = Vec::with_capacity(self.programs.len());
+        let mut delta_facts: Vec<Quad> = inserts.to_vec();
         for program in &mut self.programs {
             let mut buf = Vec::new();
-            let result = program.materialise_seminaive_tracked(base, &mut buf);
+            let result =
+                program.materialise_seminaive_tracked_from_facts(base, &mut buf, &delta_facts);
+            delta_facts.extend(buf.iter().map(|(q, _)| *q));
             tracked.push(buf);
             if let Err(e) = result {
                 self.undo_insertions(base, quad_start, &tracked);
@@ -2742,4 +2767,437 @@ mod tests {
     // `apply_rule_deletions` test lives in `owl2rl2datalog` (which already
     // depends on `datalog`, avoiding a dev-dependency cycle) — see
     // `owl2rl2datalog/src/lib.rs`'s test module, `test_remove_axiom_end_to_end_retracts_derived_type_assertions`.
+
+    // ── Delta-seeding regression tests (#534) ──────────────────────────────
+    //
+    // `apply_insertions` used to call `materialise_seminaive_tracked`, which
+    // always seeds its first semi-naive iteration with `delta_start = 0` —
+    // i.e. the *entire* current store, not just the newly-inserted fact(s).
+    // The fix seeds with a true delta (`materialise_seminaive_tracked_from`,
+    // `initial_delta_start = quad_start`). The tests below are the
+    // regression coverage for that change: they must fail against a
+    // (hypothetical) "single fixed body-atom position" seeding as described
+    // in the issue, and must keep passing against the real fix, which
+    // relies on `DatalogProgram`'s existing per-atom `rule_map` indexing to
+    // get the rotation for free (see `materialise_seminaive_tracked_from`'s
+    // doc comment in `reasoner.rs`).
+
+    /// Two-different-predicate rule, so the two body atoms do NOT share a
+    /// `rule_map` wildcard key (unlike transitivity, where both atoms have
+    /// the same `(g, *, p, *)` shape and a lookup would find both even under
+    /// a broken single-position seed). This is the test that actually pins
+    /// the "delta seeded into the wrong body-atom position" trap described
+    /// in the issue:
+    ///
+    ///   uncle(x, z) :- parent(x, y), brother(y, z)
+    ///
+    /// Pre-load only `parent(a, b)`. Materialise (no derivations yet — no
+    /// `brother` facts exist). Then `apply_insertions([brother(b, c)])`: the
+    /// newly-inserted fact can *only* bind the rule's SECOND body atom
+    /// (`brother`), never the first (`parent`). A seeding scheme that only
+    /// tries the delta fact against "the first body atom" would silently
+    /// find zero matches and never derive `uncle(a, c)`.
+    #[test]
+    fn test_apply_insertions_derives_via_non_first_body_atom() {
+        let (mut ds, g, a, _p, b, c) = setup_store();
+        let parent = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/parent".to_string(),
+            )));
+        let brother = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/brother".to_string(),
+            )));
+        let uncle = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/uncle".to_string(),
+            )));
+
+        // uncle(x, z) :- parent(x, y), brother(y, z)
+        let uncle_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(uncle),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(parent),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("y".to_string()),
+                    predicate: Term::Resource(brother),
+                    object: Term::Variable("z".to_string()),
+                }),
+            ],
+        };
+
+        // Only parent(a, b) is present initially; no brother facts yet, so
+        // no uncle facts can be derived.
+        let fact_parent_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: parent,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_parent_ab);
+
+        let mut reasoner = IncrementalReasoner::new(vec![uncle_rule], &mut ds).unwrap();
+
+        let derived_uncle_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: uncle,
+            obj: c,
+        };
+        assert!(
+            !ds.named_graphs.contains(&derived_uncle_ac),
+            "uncle(a, c) should not exist before inserting brother(b, c)"
+        );
+
+        // Insert brother(b, c): this fact matches only the rule's SECOND
+        // body atom. Combined with the pre-existing parent(a, b), it should
+        // derive uncle(a, c).
+        let fact_brother_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: brother,
+            obj: c,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[fact_brother_bc])
+            .unwrap();
+
+        assert!(
+            ds.named_graphs.contains(&fact_brother_bc),
+            "inserted base fact brother(b, c) should be present"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_uncle_ac),
+            "uncle(a, c) should be derived via delta fact brother(b, c) \
+             matching the rule's second body atom, joined against the \
+             pre-existing parent(a, b)"
+        );
+    }
+
+    /// Differential-equivalence check: materialising a full fact set from
+    /// scratch must produce exactly the same closure as materialising a
+    /// subset from scratch and then `apply_insertions`-ing the remainder —
+    /// across a handful of differently-shaped multi-atom rules (transitivity,
+    /// a heterogeneous parent/brother/uncle chain, and a subproperty-style
+    /// alias). Any under-derivation from delta-seeding a rule the other two
+    /// hand-written tests don't happen to cover shows up here as a set
+    /// mismatch. See [#534](https://github.com/daghovland/rdf-datalog/issues/534).
+    #[test]
+    fn test_apply_insertions_matches_full_materialisation() {
+        let (mut ds_full, g, a, p, b, c) = setup_store();
+        let parent = ds_full
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/parent".to_string(),
+            )));
+        let brother = ds_full
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/brother".to_string(),
+            )));
+        let uncle = ds_full
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/uncle".to_string(),
+            )));
+        let p2 = ds_full
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let d = ds_full
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+
+        fn build_rules(
+            g: u32,
+            p: u32,
+            p2: u32,
+            parent: u32,
+            brother: u32,
+            uncle: u32,
+        ) -> Vec<Rule> {
+            vec![
+                // Transitivity: x p z :- x p y, y p z
+                transitivity_rule(g, p),
+                // Alias: x p z :- x p2 z
+                Rule {
+                    head: RuleHead::NormalHead(QuadPattern {
+                        graph: Term::Resource(g),
+                        subject: Term::Variable("x".to_string()),
+                        predicate: Term::Resource(p),
+                        object: Term::Variable("z".to_string()),
+                    }),
+                    body: vec![RuleAtom::PositivePattern(QuadPattern {
+                        graph: Term::Resource(g),
+                        subject: Term::Variable("x".to_string()),
+                        predicate: Term::Resource(p2),
+                        object: Term::Variable("z".to_string()),
+                    })],
+                },
+                // Heterogeneous chain: uncle(x, z) :- parent(x, y), brother(y, z)
+                Rule {
+                    head: RuleHead::NormalHead(QuadPattern {
+                        graph: Term::Resource(g),
+                        subject: Term::Variable("x".to_string()),
+                        predicate: Term::Resource(uncle),
+                        object: Term::Variable("z".to_string()),
+                    }),
+                    body: vec![
+                        RuleAtom::PositivePattern(QuadPattern {
+                            graph: Term::Resource(g),
+                            subject: Term::Variable("x".to_string()),
+                            predicate: Term::Resource(parent),
+                            object: Term::Variable("y".to_string()),
+                        }),
+                        RuleAtom::PositivePattern(QuadPattern {
+                            graph: Term::Resource(g),
+                            subject: Term::Variable("y".to_string()),
+                            predicate: Term::Resource(brother),
+                            object: Term::Variable("z".to_string()),
+                        }),
+                    ],
+                },
+            ]
+        }
+
+        // Full fact set, inserted all at once.
+        let all_facts = vec![
+            Quad {
+                triple_id: g,
+                subject: a,
+                predicate: p,
+                obj: b,
+            },
+            Quad {
+                triple_id: g,
+                subject: b,
+                predicate: p,
+                obj: c,
+            },
+            Quad {
+                triple_id: g,
+                subject: c,
+                predicate: p,
+                obj: d,
+            },
+            Quad {
+                triple_id: g,
+                subject: a,
+                predicate: p2,
+                obj: d,
+            },
+            Quad {
+                triple_id: g,
+                subject: a,
+                predicate: parent,
+                obj: b,
+            },
+            Quad {
+                triple_id: g,
+                subject: b,
+                predicate: brother,
+                obj: c,
+            },
+            Quad {
+                triple_id: g,
+                subject: c,
+                predicate: parent,
+                obj: d,
+            },
+        ];
+
+        // Path A: materialise everything from scratch in one go.
+        for q in &all_facts {
+            ds_full.named_graphs.add_quad(*q);
+        }
+        let rules_a = build_rules(g, p, p2, parent, brother, uncle);
+        IncrementalReasoner::new(rules_a, &mut ds_full).unwrap();
+        let mut quads_full: Vec<Quad> = ds_full.named_graphs.get_all_quads().collect();
+        quads_full.sort_by_key(|q| (q.triple_id, q.subject, q.predicate, q.obj));
+
+        // Path B: materialise a subset from scratch, then insert the rest
+        // incrementally via `apply_insertions` (possibly in several batches,
+        // to exercise the delta seed across multiple calls).
+        let (mut ds_incr, g2, a2, p2_, b2, c2) = setup_store();
+        assert_eq!(
+            (g, a, p, b, c),
+            (g2, a2, p2_, b2, c2),
+            "setup_store determinism"
+        );
+        let parent2 = ds_incr
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/parent".to_string(),
+            )));
+        let brother2 = ds_incr
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/brother".to_string(),
+            )));
+        let uncle2 = ds_incr
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/uncle".to_string(),
+            )));
+        let p2_2 = ds_incr
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let d2 = ds_incr
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/d".to_string(),
+            )));
+        assert_eq!(
+            (parent, brother, uncle, p2, d),
+            (parent2, brother2, uncle2, p2_2, d2)
+        );
+
+        let seed_facts = vec![all_facts[0], all_facts[4]]; // a p b, a parent b
+        for q in &seed_facts {
+            ds_incr.named_graphs.add_quad(*q);
+        }
+        let rules_b = build_rules(g, p, p2, parent, brother, uncle);
+        let mut reasoner = IncrementalReasoner::new(rules_b, &mut ds_incr).unwrap();
+
+        // Insert the rest of the facts in two batches to exercise
+        // `apply_insertions` being called more than once.
+        let remaining = &all_facts[1..];
+        let (batch1, batch2) = remaining.split_at(remaining.len() / 2);
+        reasoner.apply_insertions(&mut ds_incr, batch1).unwrap();
+        reasoner.apply_insertions(&mut ds_incr, batch2).unwrap();
+
+        let mut quads_incr: Vec<Quad> = ds_incr.named_graphs.get_all_quads().collect();
+        quads_incr.sort_by_key(|q| (q.triple_id, q.subject, q.predicate, q.obj));
+
+        assert_eq!(
+            quads_full, quads_incr,
+            "incremental delta-seeded insertion must derive exactly the same \
+             closure as materialising the whole fact set from scratch"
+        );
+    }
+
+    /// Inserting a quad that is already present in the store is a no-op:
+    /// `add_quad` dedups (so `quad_start == quad_count` after the insert
+    /// loop), and the delta-seeded first iteration correctly sees an empty
+    /// delta and performs zero rule evaluation instead of a full rescan.
+    /// The closure must be exactly unchanged.
+    #[test]
+    fn test_apply_insertions_of_existing_quad_is_noop() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+
+        let mut quads_before: Vec<Quad> = ds.named_graphs.get_all_quads().collect();
+        quads_before.sort_by_key(|q| (q.triple_id, q.subject, q.predicate, q.obj));
+
+        // Re-insert an already-present base fact.
+        reasoner.apply_insertions(&mut ds, &[fact_ab]).unwrap();
+
+        let mut quads_after: Vec<Quad> = ds.named_graphs.get_all_quads().collect();
+        quads_after.sort_by_key(|q| (q.triple_id, q.subject, q.predicate, q.obj));
+
+        assert_eq!(
+            quads_before, quads_after,
+            "re-inserting an already-present base fact must not change the closure"
+        );
+    }
+
+    /// Regression for a second correctness trap uncovered while fixing #534:
+    /// some `apply_insertions` callers (`sparql_endpoint`'s SPARQL Update and
+    /// transaction-commit paths) add the new base fact(s) directly to `base`
+    /// themselves *before* calling `apply_insertions` — `add_quad` is
+    /// idempotent, so this is harmless for the plain "is the fact present"
+    /// question, but it means a **position-based** delta seed (inferring
+    /// "what's new" from `base.named_graphs.quad_count` at entry) would see
+    /// `quad_start == quad_count` — nothing to process — and silently skip
+    /// all rule evaluation, exactly like the original `delta_start = 0` bug
+    /// but inverted (empty delta instead of a full-store delta). The fix
+    /// seeds `apply_insertions` with the explicit `inserts` fact list
+    /// instead of a position, so it works whether or not the caller already
+    /// added them.
+    ///
+    /// This test pre-adds the new fact to `base` exactly as those callers
+    /// do, then calls `apply_insertions` with the same fact, and asserts the
+    /// derivation still fires.
+    #[test]
+    fn test_apply_insertions_derives_even_when_caller_preadded_the_fact() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_bc);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            !ds.named_graphs.contains(&derived_ac),
+            "A->C should not exist before inserting A->B"
+        );
+
+        // Simulate a caller (like `sparql_endpoint::sparql_update`) that
+        // adds the new base fact to the live store itself before invoking
+        // the reasoner.
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        // `apply_insertions` is called with the SAME fact, which is already
+        // present in `ds` at this point.
+        reasoner.apply_insertions(&mut ds, &[fact_ab]).unwrap();
+
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A->C must still be derived even though the caller pre-added A->B \
+             to the store before calling apply_insertions"
+        );
+    }
 }
