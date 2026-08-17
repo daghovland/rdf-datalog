@@ -223,7 +223,7 @@ impl DatalogProgram {
         &mut self,
         datastore: &mut Datastore,
         delta_start: usize,
-        mut track: Option<&mut Vec<(dag_rdf::Quad, Derivation)>>,
+        track: Option<&mut Vec<(dag_rdf::Quad, Derivation)>>,
     ) -> Result<Option<(usize, usize)>, ReasoningError> {
         let delta_end = datastore.named_graphs.quad_count;
         if delta_start >= delta_end {
@@ -232,8 +232,40 @@ impl DatalogProgram {
 
         let delta: Vec<dag_rdf::Quad> =
             datastore.named_graphs.quad_list[delta_start..delta_end].to_vec();
+        let new_count = self.materialise_delta_iteration(datastore, &delta, track)?;
+        Ok(Some((delta_end, new_count)))
+    }
 
-        for quad in &delta {
+    /// Match every rule body atom that any quad in `delta` can bind, joining
+    /// the rule's other body atoms against the full (unrestricted) store,
+    /// and add every newly-derived quad to `datastore`. Returns the number
+    /// of quads added.
+    ///
+    /// This is the core of one semi-naive iteration, factored out so it can
+    /// be driven two ways:
+    /// - by position (`materialise_one_iteration_tracked`): `delta` is a
+    ///   contiguous slice of `datastore.named_graphs.quad_list`.
+    /// - by an explicit fact list (`materialise_seminaive_tracked_from_facts`):
+    ///   `delta` is caller-supplied and does not need to correspond to any
+    ///   particular position in `quad_list` — in particular it works whether
+    ///   or not `delta`'s quads are already present in `datastore` (each is
+    ///   still only matched once, since `get_rules_for_fact` just looks up
+    ///   the rule index; whether the quad itself was already extensional
+    ///   doesn't change which rules it can trigger). See
+    ///   [#534](https://github.com/daghovland/rdf-datalog/issues/534) for why
+    ///   this position-independence matters: some callers
+    ///   (`sparql_endpoint`) add net-insert quads to the live store
+    ///   themselves before invoking the reasoner, so a delta seed that only
+    ///   worked by inferring "what's new" from a quad-list position would
+    ///   silently see an empty delta and skip derivation entirely.
+    fn materialise_delta_iteration(
+        &mut self,
+        datastore: &mut Datastore,
+        delta: &[dag_rdf::Quad],
+        mut track: Option<&mut Vec<(dag_rdf::Quad, Derivation)>>,
+    ) -> Result<usize, ReasoningError> {
+        let quad_count_before = datastore.named_graphs.quad_count;
+        for quad in delta {
             for rule_match in self.get_rules_for_fact(quad) {
                 // `get_rules_for_fact` only tells us that `quad` matches ONE
                 // triggering atom of this rule's body — the other body atoms
@@ -291,9 +323,7 @@ impl DatalogProgram {
                 }
             }
         }
-
-        let new_count = datastore.named_graphs.quad_count - delta_end;
-        Ok(Some((delta_end, new_count)))
+        Ok(datastore.named_graphs.quad_count - quad_count_before)
     }
 
     /// Semi-naive forward-chaining materialisation over the quad store.
@@ -332,12 +362,103 @@ impl DatalogProgram {
         datastore: &mut Datastore,
         track: &mut Vec<(dag_rdf::Quad, Derivation)>,
     ) -> Result<(), ReasoningError> {
+        self.materialise_seminaive_tracked_from(datastore, track, 0)
+    }
+
+    /// Same as [`Self::materialise_seminaive_tracked`], but the *first*
+    /// semi-naive iteration treats `datastore.named_graphs.quad_list[initial_delta_start..]`
+    /// as the seed delta instead of the whole store (`initial_delta_start = 0`).
+    ///
+    /// This is what makes [`crate::IncrementalReasoner::apply_insertions`]
+    /// genuinely incremental: passing `initial_delta_start` = the quad count
+    /// captured *before* the newly-inserted base facts were appended means
+    /// the first iteration only matches rules against those new facts (and
+    /// only joins the *other* body atoms of each rule against the full
+    /// store), instead of re-matching every rule against every pre-existing
+    /// quad in the store. Every later iteration still starts from the
+    /// previous iteration's own output, exactly as in the `_start = 0` case
+    /// — this only changes the seed for iteration 1.
+    ///
+    /// This does **not** require a separate "rotate which body atom is the
+    /// delta" step: `get_rules_for_fact` already indexes one [`crate::types::PartialRule`]
+    /// entry per body atom (see [`Self::new`]/[`Self::add_rule`]), so for a
+    /// delta fact `f` that can bind body atom `Ai` of an n-atom rule, this
+    /// naturally evaluates `delta(Ai) ⋈ full(A1..An)` — once per atom `f`
+    /// can bind — because [`crate::datalog::evaluate_positive`] joins the
+    /// *unrestricted* store for every body atom starting from that one
+    /// triggering match. Callers seeding a non-zero `initial_delta_start`
+    /// must not skip any newly-added facts: passing anything other than a
+    /// quad-count boundary captured before the new facts were appended can
+    /// under-derive. See [#534](https://github.com/daghovland/rdf-datalog/issues/534).
+    ///
+    /// Deletion re-derivation (`IncrementalReasoner::forward_phase`/
+    /// `forward_phase_rules`) must keep using `initial_delta_start = 0` (via
+    /// [`Self::materialise_seminaive_tracked`]): after removing the
+    /// possibly-deleted set, re-derivation needs to re-match rules against
+    /// the *surviving* (old) facts, not just anything newly appended.
+    pub fn materialise_seminaive_tracked_from(
+        &mut self,
+        datastore: &mut Datastore,
+        track: &mut Vec<(dag_rdf::Quad, Derivation)>,
+        initial_delta_start: usize,
+    ) -> Result<(), ReasoningError> {
         self.materialise_calls += 1;
         for quad in self.get_facts()? {
             datastore.named_graphs.add_quad(quad);
         }
 
-        let mut delta_start: usize = 0;
+        let mut delta_start: usize = initial_delta_start;
+        loop {
+            match self.materialise_one_iteration_tracked(datastore, delta_start, Some(track))? {
+                None => break,
+                Some((new_start, _)) => delta_start = new_start,
+            }
+        }
+        Ok(())
+    }
+
+    /// Same as [`Self::materialise_seminaive_tracked`], but the *first*
+    /// semi-naive iteration's delta is the explicit `delta_facts` list
+    /// instead of a `quad_list` position range.
+    ///
+    /// Use this (rather than [`Self::materialise_seminaive_tracked_from`])
+    /// when the caller cannot guarantee `delta_facts` haven't already been
+    /// appended to `datastore` before this call — [`crate::IncrementalReasoner::apply_insertions`]
+    /// uses this because some `sparql_endpoint` call sites add net-insert
+    /// quads to the live store themselves (for the no-reasoner-configured
+    /// code path) before invoking the reasoner, which would make a
+    /// position-based delta seed see an empty delta (quad count already
+    /// includes them, so `quad_start == quad_count`) and silently skip
+    /// derivation. `delta_facts` are added to `datastore` here if not
+    /// already present (idempotent either way, see
+    /// [`dag_rdf::QuadTable::add_quad`]), then matched directly — see
+    /// [#534](https://github.com/daghovland/rdf-datalog/issues/534).
+    ///
+    /// After the first iteration, subsequent iterations switch to the
+    /// position-based path (their delta — newly-derived facts appended
+    /// *during* this call — is unambiguous, since nothing external mutates
+    /// `datastore` mid-call).
+    pub fn materialise_seminaive_tracked_from_facts(
+        &mut self,
+        datastore: &mut Datastore,
+        track: &mut Vec<(dag_rdf::Quad, Derivation)>,
+        delta_facts: &[dag_rdf::Quad],
+    ) -> Result<(), ReasoningError> {
+        self.materialise_calls += 1;
+        for quad in self.get_facts()? {
+            datastore.named_graphs.add_quad(quad);
+        }
+        for q in delta_facts {
+            datastore.named_graphs.add_quad(*q);
+        }
+
+        // Boundary between `delta_facts` (just processed explicitly below)
+        // and whatever this iteration derives — the position-based loop
+        // that follows picks up from here.
+        let baseline = datastore.named_graphs.quad_count;
+        self.materialise_delta_iteration(datastore, delta_facts, Some(track))?;
+
+        let mut delta_start = baseline;
         loop {
             match self.materialise_one_iteration_tracked(datastore, delta_start, Some(track))? {
                 None => break,
@@ -871,5 +992,92 @@ mod tests {
 
         assert_eq!(crate::datalog::is_safe_rule(&safe_rule), Ok(()));
         assert!(DatalogProgram::new(vec![safe_rule]).is_ok());
+    }
+
+    /// Direct unit test of [`DatalogProgram::materialise_seminaive_tracked_from`]
+    /// with an explicit non-zero `initial_delta_start` pointing past
+    /// pre-existing facts, pinning that the delta-seeded entry point stays
+    /// wired up correctly (a future refactor accidentally reverting to
+    /// `initial_delta_start = 0` internally would still pass every other
+    /// test here, since 0 is also correct — just slower). See
+    /// [#534](https://github.com/daghovland/rdf-datalog/issues/534).
+    ///
+    /// Setup: fact (a, p, b) is added to the store BEFORE the program is
+    /// constructed/tracked. `initial_delta_start` is then set to the quad
+    /// count at that point (i.e. this old fact is excluded from delta).
+    /// Then a new fact (b, p, c) is appended and materialisation is run from
+    /// that `initial_delta_start`. The transitivity rule can only derive
+    /// (a, p, c) by joining the NEW fact (b, p, c) — bound as the delta —
+    /// against the OLD fact (a, p, b) via the full-store join for the other
+    /// body atom. If delta seeding were broken (e.g. ignoring the seed and
+    /// re-scanning only what's added going forward without joining against
+    /// pre-existing facts), this would fail to derive (a, p, c).
+    #[test]
+    fn test_materialise_seminaive_tracked_from_respects_delta_start() {
+        let (mut ds, g, a, p, b, c) = setup_abpc_store();
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        // Old fact, present before the tracked delta window starts.
+        ds.named_graphs.add_quad(fact_ab);
+        let initial_delta_start = ds.named_graphs.quad_count;
+
+        // New fact, appended after the delta window boundary.
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_bc);
+
+        let rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("y".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("z".to_string()),
+                }),
+            ],
+        };
+
+        let mut program = DatalogProgram::new(vec![rule]).unwrap();
+        let mut track = Vec::new();
+        program
+            .materialise_seminaive_tracked_from(&mut ds, &mut track, initial_delta_start)
+            .unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "(a, p, c) must be derived: delta fact (b, p, c) joined against \
+             pre-existing (a, p, b) via the full-store join for the other body atom"
+        );
+        assert!(
+            track.iter().any(|(q, _)| *q == derived_ac),
+            "the derivation of (a, p, c) must be recorded in the track buffer"
+        );
     }
 }

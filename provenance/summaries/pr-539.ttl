@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# PROSPECTIVE summary, per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md.
+# startedAtTime is the real authored timestamp of the sole commit on this
+# branch (git log main..HEAD); endedAtTime is this session's own wall-clock
+# "now" at authoring time, not a guessed mergedAt.
+
+ghpull:539 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: seed apply_insertions with a true delta instead of restarting semi-naive at 0" ;
+    bl:number 539 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:534 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr539 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:534 ;
+    prov:startedAtTime "2026-08-17T14:19:53Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-17T17:35:37Z"^^xsd:dateTime .
+
+session:pr539Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #534: IncrementalReasoner::apply_insertions always restarted semi-naive materialisation at delta_start=0, re-scanning the whole store on every INSERT DATA instead of seeding from just the new fact(s). A prior session left a compiling but unverified fix; this session verified it. The fix threads DatalogProgram::materialise_seminaive_tracked_from_facts, seeding the first iteration with an explicit fact list (not a quad_list position, since sparql_endpoint sometimes pre-appends inserts to the store before calling the reasoner, which would make a position-based seed see an empty delta). No manual 'rotate the delta across body-atom positions' step was needed: get_rules_for_fact already indexes one PartialRule per body-atom position via rule_map, so evaluate() naturally joins the rule's other atoms against the full store regardless of which atom the delta fact binds. Checked against Motik/Nenov/Piro/Horrocks' B/F paper (AAAI 2015, already cited by this module for the deletion side): standard semi-naive-with-delta is the established-correct approach for insertions, confirming no further insertion-side design change was warranted. Verified the specific under-derivation trap from the issue with a new regression test using a 2-atom heterogeneous rule (uncle :- parent, brother) where the inserted fact can only bind the second body atom. Full quality gate (fmt/clippy/test --workspace) passed clean; bench showed ~7.1ms median per single-triple insert at LUBM scale=1 (37325 quads/8420 derived)." ;
+    agp:reasoningFor ghpull:539 ;
+    prov:wasGeneratedBy session:pr539 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr539Decision .
+
+session:pr539Decision a agp:Decision ;
+    agp:summaryText "Seeded the delta as an explicit Vec<Quad> fact list (materialise_seminaive_tracked_from_facts) rather than reusing the existing position-based materialise_seminaive_tracked_from(quad_start). A position-based seed is simpler and sufficient for a self-contained apply_insertions call, but breaks for the sparql_endpoint no-reasoner-configured code path, which appends inserts to the live store itself before invoking the reasoner — by the time apply_insertions runs, quad_start would already equal quad_count, so a position-based delta would silently see nothing and skip derivation entirely." ;
+    agp:alternative "Position-based delta_start seeding (materialise_seminaive_tracked_from with a quad_count boundary) — rejected because it is not robust to callers that pre-append the inserted facts to the store before calling the reasoner." .
