@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #105's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 105 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:105 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Fix: validate IRI scheme after RML template expansion" ;
+    bl:number 105 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:91 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr105 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:91 ;
+    prov:startedAtTime "2026-06-30T22:08:44Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-01T14:02:28Z"^^xsd:dateTime .
+
+session:pr105Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds is_valid_iri_scheme() helper in rml/src/template.rs that checks for a valid RFC 3986 scheme prefix ([a-zA-Z][a-zA-Z0-9+\\-.]*: followed by at least one character) eval_format_function in rml/src/engine.rs now returns None (skips the triple) when the expanded IRI string fails this check, consistent with the existing skip-on-missing semantics" ;
+    agp:reasoningFor ghpull:105 ;
+    prov:wasGeneratedBy session:pr105 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

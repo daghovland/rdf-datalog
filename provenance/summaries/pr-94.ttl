@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #94's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 94 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:94 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(rml): parse XmlRow XML once at construction — eliminate O(N×M) re-parse" ;
+    bl:number 94 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:89 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr94 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:89 ;
+    prov:startedAtTime "2026-06-28T17:12:54Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-06-28T17:19:12Z"^^xsd:dateTime .
+
+session:pr94Summary a agp:TranscriptSummary ;
+    agp:summaryText "XmlRow previously stored a serialised XML string and called sxd_document::parser::parse inside every get_str invocation, causing O(N × M) full XML parses for N rows and M referenced fields. This PR stores a pre-parsed sxd_document::Package in XmlRow instead. get_str now only evaluates an XPath expression against the already-parsed tree — O(1) per field lookup. collect_rows deep-copies each element into its own Package via element_to_package, eliminating the intermediate element_to_xml → string → re-parse round-trip. The public XmlRow(pub String) tuple-struct is replaced by a from_xml(xml: &str) -> Option<Self> constructor that catches malformed XML at row-construction time rather than silently returning None at the first get_str call." ;
+    agp:reasoningFor ghpull:94 ;
+    prov:wasGeneratedBy session:pr94 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

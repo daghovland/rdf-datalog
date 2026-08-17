@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #294's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 294 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:294 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog: formalize the ontology (#283)" ;
+    bl:number 294 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:283 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr294 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:283 ;
+    prov:startedAtTime "2026-07-24T23:27:16Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-25T10:58:26Z"^^xsd:dateTime .
+
+session:pr294Summary a agp:TranscriptSummary ;
+    agp:summaryText "Delivers #283's actual scope (a .ttl vocabulary with rdfs:label/rdfs:comment on every class/property, plus a modeling-choices note). Revised twice after pre-merge design review (a dedicated Fable-5-backed pass, plus direct follow-up feedback) — ontology decisions are expensive to reverse once #284/#285/#286 depend on them. Current state: 1. bl:Epic is an asserted type, rdfs:subClassOf bl:Issue, constrained by a new bl:EpicHasNoParentShape SHACL shape (backlog/ontology/shapes.ttl): an Epic must never carry bl:subIssueOf, but is not required to have children, and no depth limit is imposed elsewhere. Verified end-to-end through dagalog's own SHACL endpoint: conforms on real fixture data, and correctly reports a violation with the exact sh:focusNode/sh:value when a parent edge is deliberately injected on an epic in a scratch test. 2. bl:hasLabel is resource-valued (bl:Label), not a plain string — resolves a live duplication review caught: issues #264/#266 asserted both bl:hasLabel \"ready\" and bl:status bl:Ready as two independent facts about the same real thing. bl:Ready is now deliberately typed as both bl:Label and bl:WorkflowStatus, so both properties reference the identical resource. 3. bl:Issue and bl:PullRequest are now disjoint, under a new abstract bl:WorkItem superclass — a PR is conceptually a different kind of thing from an issue (proposes/merges a code change vs." ;
+    agp:reasoningFor ghpull:294 ;
+    prov:wasGeneratedBy session:pr294 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

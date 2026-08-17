@@ -11,6 +11,9 @@
 #   /oauth2/*  -> oauth2-proxy directly (its own callback/sign-in routes;
 #                 must stay outside forward_auth or sign-in itself would
 #                 require being already signed in -- a redirect loop)
+#   /ns/backlog, /ns/agentprov -> static Turtle vocabulary files, served
+#                 directly (no auth, no redirect -- see #441 and
+#                 docs/plans/DEREFERENCEABLE_URIS_441_PLAN.md)
 #   everything else -> forward_auth to oauth2-proxy first (redirects to
 #                 Google sign-in if not authenticated; on success, forwards
 #                 X-Auth-Request-* headers upstream), then:
@@ -35,12 +38,77 @@
 		reverse_proxy oauth2-proxy:4180
 	}
 
+	# Vocabulary/ontology IRIs (#441) must also stay outside forward_auth,
+	# for a different reason: they exist to be dereferenced by arbitrary
+	# external RDF clients/crawlers that will never sign in with Google.
+	# These are hash-URIs (bl:/agp: terms are #fragments of the namespace
+	# IRI, stripped by the client before the request reaches the server),
+	# so the namespace IRI itself can be answered directly with the
+	# vocabulary file's content -- no 303 redirect needed. See
+	# docs/plans/DEREFERENCEABLE_URIS_441_PLAN.md for the full design.
+	#
+	# Content negotiation: RDF clients (Accept: text/turtle) and anything
+	# else (missing Accept, */*, curl with no -H) get raw Turtle; browsers
+	# (Accept containing text/html) get the same Turtle text served as
+	# text/plain so it renders inline instead of prompting a download.
+	# Nested `handle` (not a plain `header` directive with a matcher) is
+	# deliberate here: Caddy's Caddyfile adapter sorts same-name directives
+	# by matcher specificity rather than preserving source order, so two
+	# `header Content-Type ...` lines (one matched, one not) do not reliably
+	# execute in the written order -- confirmed via `caddy adapt` while
+	# developing this, the unconditional line came out running *after* the
+	# matched one, always overwriting it. `handle`/`handle` blocks are
+	# mutually exclusive and evaluated in written order by design (the same
+	# guarantee the outer /oauth2/* vs. catch-all routing above relies on),
+	# so nesting the Accept check as its own handle avoids the ordering
+	# hazard entirely.
+	@ns_wants_html header Accept *text/html*
+
+	handle /ns/backlog {
+		root * /srv/vocab
+		rewrite * /vocabulary.ttl
+		handle @ns_wants_html {
+			header Content-Type "text/plain; charset=utf-8"
+			file_server
+		}
+		handle {
+			header Content-Type "text/turtle; charset=utf-8"
+			file_server
+		}
+	}
+
+	handle /ns/agentprov {
+		root * /srv/vocab
+		rewrite * /agentprov-vocabulary.ttl
+		handle @ns_wants_html {
+			header Content-Type "text/plain; charset=utf-8"
+			file_server
+		}
+		handle {
+			header Content-Type "text/turtle; charset=utf-8"
+			file_server
+		}
+	}
+
 	# Everything else requires a valid session first.
 	handle {
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth
 			copy_headers X-Auth-Request-User X-Auth-Request-Email
 			trusted_proxies private_ranges
+
+			# forward_auth proxies oauth2-proxy's /oauth2/auth response
+			# through as-is on failure -- oauth2-proxy deliberately returns a
+			# bare 401 from this check endpoint rather than a redirect (it's
+			# designed for auth-subrequest use, not direct browser access).
+			# Translate that 401 into a redirect to oauth2-proxy's own
+			# /oauth2/start sign-in flow here, preserving the originally
+			# requested URI via ?rd= so sign-in lands back where the user
+			# meant to go.
+			@error status 401
+			handle_response @error {
+				redir * /oauth2/start?rd={http.request.orig_uri} 302
+			}
 		}
 
 		handle /backlog* {

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #340's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 340 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:340 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: render literals via turtle::format_literal, fix lossy report round-trip" ;
+    bl:number 340 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:337 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr340 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:337 ;
+    prov:startedAtTime "2026-08-01T12:43:31Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-01T14:55:33Z"^^xsd:dateTime .
+
+session:pr340Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #337. shacl::graph::element_display rendered literals via RdfLiteral's ad-hoc Display impl (5^^http://..., no quotes, wrong lang@literal order) instead of the spec-compliant Turtle literal serializer already in the turtle crate. turtle_term (text serializer) and intern_result_term (RDF-quad interning for report_to_datastore) then heuristically re-classified that string, and could never recover a literal's datatype/language — everything non-IRI/non-blank-node flattened to a plain xsd:string literal. Fix (per repo owner's revised direction on the issue, 2026-08-01): Made turtle::serialize::format_literal pub. Added turtle::parse_literal_term, the inverse: reuses the existing oxttl Turtle parser (wraps the literal in a throwaway triple, parses it for real, rejects trailing garbage / non-literal results) rather than hand-rolling a second literal grammar. element_display now renders literals via format_literal — genuine \"lexical\"^^<iri> / \"lexical\"@lang Turtle syntax. turtle_term/intern_result_term recognize already-formatted Turtle literal syntax (leading \") and pass it through / parse it back into a proper TypedLiteral/LangLiteral, instead of flattening to a string. Updated stale test expectations in tests/shacl_suite.rs that asserted on the old ad-hoc format, plus the now-inaccurate \"lossiness cancels out\" comment in tests/w3c_shacl_suite.rs." ;
+    agp:reasoningFor ghpull:340 ;
+    prov:wasGeneratedBy session:pr340 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

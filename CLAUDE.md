@@ -50,7 +50,34 @@ All code changes (bug fixes, features) follow this workflow:
    ```bash
    git worktree add .claude/worktrees/<branch-name> -b <branch-name>
    ```
-3. **Delegate implementation to a sub-agent** by pointing it at the worktree path created in step 2 (plain `Agent` call, no `isolation` parameter — tell the sub-agent in the prompt to `cd` into that exact path for every command). The main session orchestrates; the sub-agent does the actual editing, building, and testing. Brief the sub-agent with: the issue description, affected files, the TDD phase required, and the worktree path.
+2b. **Check accumulated provenance for related past work** before delegating (issue [#353](https://github.com/daghovland/rdf-datalog/issues/353), part of the agent-provenance epic [#306](https://github.com/daghovland/rdf-datalog/issues/306) — see [`docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md`](docs/plans/PROVENANCE_QUERY_WORKFLOW_PLAN.md)). This is a lookup/nudge, not a hard gate — cheap, and worth doing even when nothing turns up.
+
+   For each file the issue looks likely to touch:
+   ```bash
+   provenance/queries/run.sh related_to_file '"path/to/file.rs"'
+   ```
+   (note the literal double quotes inside the single quotes — `bl:touchesFile` is a string-valued path, not an IRI). If the exact files aren't known yet, scan the whole crate instead:
+   ```bash
+   provenance/queries/run.sh related_to_crate crate:crate_name
+   ```
+   Read any hits' `agp:summaryText` (or the shorter `agp:abstractText` when present) before starting — this is how past decisions actually get reused instead of re-litigated. Note which files/crates you checked and what you found (or didn't); step 6 requires reporting this in the PR description, in the fixed format below, so record it now rather than reconstructing it later.
+
+   **Trace format (required in the PR description, step 6):** a `## Prior provenance checked` section with two lines, so the outcome is greppable and consistent across PRs rather than free-form prose that could be phrased differently every time:
+   ```
+   queried: <files/crates checked, e.g. `sparql_parser/src/lib.rs`, `crate:sparql_parser`>
+   provenance-checked: applied — #<PR>[, #<PR>...]
+   ```
+   or
+   ```
+   queried: <files/crates checked>
+   provenance-checked: none-relevant
+   ```
+   or, when the step was deliberately skipped (e.g. the issue only touches brand-new files with no prior history to look up) — an explicit `skipped` line, not silence, so "chose not to check" stays distinguishable from "forgot to write the section":
+   ```
+   provenance-checked: skipped — <reason>
+   ```
+   This is intentionally measurable, not just a compliance nudge: the point (per Dag, [#353](https://github.com/daghovland/rdf-datalog/issues/353)) is to later be able to tell whether checking provenance actually made agents more efficient/grounded, which requires a visible, auditable trace of what happened at this step, not just "read it and proceed" silently.
+3. **Delegate implementation to a sub-agent** by pointing it at the worktree path created in step 2 (plain `Agent` call, no `isolation` parameter — tell the sub-agent in the prompt to `cd` into that exact path for every command). The main session orchestrates; the sub-agent does the actual editing, building, and testing. Brief the sub-agent with: the issue description, affected files, the TDD phase required, the worktree path, and any provenance hits found in step 2b.
 
    **Do not also pass `isolation: "worktree"` here.** It does not attach to the worktree you just created — it makes the harness create a *second*, separately-named worktree/branch of its own (`.claude/worktrees/agent-<id>` on a branch like `worktree-agent-<id>`) and the sub-agent works there instead, leaving the one from step 2 empty. You end up tracking two worktrees for one task, and anything referencing the step-2 branch name (the GitHub issue comment, this session's own bookkeeping) points at the wrong one. If you don't need a predictable branch name and are fine letting the harness pick, skip step 2 entirely and use `isolation: "worktree"` on its own instead — but then read the actual worktree/branch name back from the agent's result rather than assuming it matches what you asked for, and use *that* name in the issue comment and everywhere else.
 4. **TDD inside the worktree** — sub-agent follows the red→green phases above. For pure refactors with no observable behavior change, one-pass (tests alongside implementation) is acceptable.
@@ -60,7 +87,7 @@ All code changes (bug fixes, features) follow this workflow:
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
-6. **Commit, push, open a PR** with `Closes #<issue>` in the body so the merge auto-closes the issue. **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you." Once CI is fully green, mark the issue's Status `Done` (`bash scripts/set-issue-status.sh <issue#> Done`) — this reflects "the work is finished and awaiting your review," not "the issue is closed"; the issue only actually closes when you merge.
+6. **Commit, push, open a PR** with `Closes #<issue>` in the body (so the merge auto-closes the issue) and the `## Prior provenance checked` section from step 2b (required, not optional — see that step for the exact format). **Never merge the PR yourself, under any circumstance** — not even when CI is fully green and you've independently verified the change. This applies to every agent, including Claude reviewing another agent's work. The user (Dag) always does the merge after their own look at the diff; your job ends at "PR open, reviewed, CI green, ready for you." Once CI is fully green, mark the issue's Status `Done` (`bash scripts/set-issue-status.sh <issue#> Done`) — this reflects "the work is finished and awaiting your review," not "the issue is closed"; the issue only actually closes when you merge.
 6b. **Write a transcript summary** before removing the worktree: one `provenance/summaries/pr-<N>.ttl` file distilling the actual reasoning behind the PR you just finished, per [`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md) (issue [#334](https://github.com/daghovland/rdf-datalog/issues/334), part of the agent-provenance epic [#306](https://github.com/daghovland/rdf-datalog/issues/306)). Self-authored — you write your own summary, not a separate reviewing agent. `tests/provenance_queries.rs` picks up any new file under `provenance/summaries/` automatically and SHACL-validates it against `backlog/ontology/agentprov-shapes.ttl`.
 7. **Remove the worktree** once the PR merges (keep it around until then — conflict-resolution or review-feedback commits may still need to land on the branch):
    ```bash
@@ -176,7 +203,7 @@ nom-based SPARQL 1.2 parser and in-memory executor. Supports: `SELECT`, `DESCRIB
 `axum`-based HTTP server exposing SPARQL 1.1 Protocol endpoints (`GET /sparql`, `POST /sparql`), Service Description, content negotiation, and CORS. State is an `Arc<RwLock<Datastore>>`.
 
 ### `manchester_parser` crate
-nom-based OWL 2 Manchester Syntax (`.omn`) parser producing an `owl_ontology::Ontology`. Covers ontology headers/prefixes/imports, entity frames (`Class:`, `ObjectProperty:`, `DataProperty:`, `Individual:`, `AnnotationProperty:`), and common class expressions/restrictions. See [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](docs/plans/MANCHESTER_SYNTAX_PLAN.md) for the exact grammar subset in scope; deferred productions (SWRL rules, `DisjointUnionOf:`, `HasKey:`, property chains, compound data ranges) are tracked in [#157](https://github.com/daghovland/rdf-datalog/issues/157).
+nom-based OWL 2 Manchester Syntax (`.omn`) parser producing an `owl_ontology::Ontology`. Covers ontology headers/prefixes/imports, entity frames (`Class:`, `ObjectProperty:`, `DataProperty:`, `Individual:`, `AnnotationProperty:`), common class expressions/restrictions, and the `Class:` frame's `DisjointUnionOf:` section. See [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](docs/plans/MANCHESTER_SYNTAX_PLAN.md) for the exact grammar subset in scope; remaining deferred productions (SWRL `Rule:` frames [#498](https://github.com/daghovland/rdf-datalog/issues/498), `HasKey:` [#499](https://github.com/daghovland/rdf-datalog/issues/499), property chains [#500](https://github.com/daghovland/rdf-datalog/issues/500), compound data ranges [#501](https://github.com/daghovland/rdf-datalog/issues/501), `Datatype:` frame [#502](https://github.com/daghovland/rdf-datalog/issues/502)) were split out of the original umbrella issue [#157](https://github.com/daghovland/rdf-datalog/issues/157).
 
 ### Key design pattern
 All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.

@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #450's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 450 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:450 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "backlog_endpoint/Dockerfile: fix cargo build failing to find the bin target" ;
+    bl:number 450 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr450 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-08-10T21:21:17Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-11T08:41:17Z"^^xsd:dateTime .
+
+session:pr450Summary a agp:TranscriptSummary ;
+    agp:summaryText "Bug Found while actually bringing up the #438 public-deployment stack for the first time — this is exactly the \"not yet live-tested\" gap that PR #439's own docs called out. docker compose -f deploy/docker-compose.public.yml up -d --build failed on the backlog-endpoint image: `` error: no bin target named backlog-endpoint in default-run packages help: available bin in backlog-endpoint package: backlog-endpoint ` cargo build --bin backlog-endpoint, run from the workspace root (as the Dockerfile does), only searches *default-run packages* — backlog_endpoint isn't one (only the root dagalog package is), so cargo can't find the target even though it genuinely exists. Add -p backlog-endpoint to scope the search to the right package explicitly — matches how cargo run -p backlog-endpoint -- is already invoked correctly elsewhere (scripts/serve-backlog.sh). Reproduced and confirmed locally: `sh cargo build --release --bin backlog-endpoint # fails, same error cargo build --release -p backlog-endpoint --bin backlog-endpoint # succeeds `` Closes nothing directly — this is a follow-up fix to #438/#439's deploy templates, not a new feature." ;
+    agp:reasoningFor ghpull:450 ;
+    prov:wasGeneratedBy session:pr450 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

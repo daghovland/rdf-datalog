@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #289's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 289 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:289 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): correctly evaluate sh:pattern/minLength/maxLength for IRI and blank-node value nodes" ;
+    bl:number 289 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:261 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr289 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:261 ;
+    prov:startedAtTime "2026-07-24T18:08:49Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T18:42:25Z"^^xsd:dateTime .
+
+session:pr289Summary a agp:TranscriptSummary ;
+    agp:summaryText "shacl/src/evaluate.rs::lexical_form previously returned None for any non-literal value node (IRI or blank node). The sh:pattern/sh:minLength/sh:maxLength evaluators treated a None lexical form as \"skip this value node\" instead of testing it, so a non-matching IRI or a blank node silently conformed when it should have violated. Deviation from the issue's suggested fix (please review) The issue (#261) suggested lexical_form should return \"the IRI string for an IRI value node and the blank-node label for a blank-node value node.\" After implementing that literally, I fetched the raw W3C SHACL spec text (not a paraphrase) for §4.4.1-4.4.3 to double-check, and it says something more specific: > \"This can be applied to any literals and IRIs, but not to blank nodes.\" The normative SPARQL definitions confirm this: they test str($value) guarded by !isBlank($value). So the spec-correct behavior is: Literal → tested against its lexical form (unchanged). IRI → tested against its own string form (str() of an IRI is the IRI) — matches the issue's suggestion. Blank node → always violates, regardless of the bound/pattern — the issue's \"test the blank-node label\" wording is not what the spec says." ;
+    agp:reasoningFor ghpull:289 ;
+    prov:wasGeneratedBy session:pr289 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

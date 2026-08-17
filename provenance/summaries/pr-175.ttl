@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #175's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 175 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:175 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Materialise Manchester ABox assertions into Datastore quads (#159)" ;
+    bl:number 175 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:159 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr175 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:159 ;
+    prov:startedAtTime "2026-07-19T17:19:28Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T20:20:45Z"^^xsd:dateTime .
+
+session:pr175Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #159. Frame-based OWL syntaxes such as Manchester Syntax parse Individual:/Types:/Facts: sections into owl_ontology::Assertion axioms, but owl2rl2datalog::owl2datalog only compiles TBox-style axioms (SubClassOf, property axioms, …) into inference rules and never looks at Assertion axioms. The RDF pipelines (Turtle/RDF-XML/JSON-LD) get their ABox facts as quads straight from the parser, so Manchester-parsed ABox facts previously never reached the Datastore and could not drive reasoning. In scope (this issue) New owl2rl2datalog::assert_abox(&mut Datastore, &Ontology) -> usize (module abox), the ground-triple counterpart to owl2datalog. It walks Axiom::AxiomAssertion(..) and materialises the atomic assertion kinds as quads: ClassAssertion(_, ClassName(C), i) → i rdf:type C ObjectPropertyAssertion(_, NamedObjectProperty(p), s, o) → s p o DataPropertyAssertion(_, p, s, lit) → s p lit Skipped (with log::warn!, matching the existing owl2rl2datalog / rdf_owl_translator skip convention): non-atomic class/property expressions (unions, intersections, restrictions, inverse properties, property chains, anonymous classes/properties) — none correspond to a single ground triple — and SameIndividual / DifferentIndividuals / negative assertions, which are out of scope for OWL-RL ground-triple materialisation." ;
+    agp:reasoningFor ghpull:175 ;
+    prov:wasGeneratedBy session:pr175 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

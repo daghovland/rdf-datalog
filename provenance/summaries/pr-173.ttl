@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #173's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 173 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:173 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(sparql): semi-join pushdown across UNION via component reordering" ;
+    bl:number 173 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:38 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr173 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:38 ;
+    prov:startedAtTime "2026-07-19T16:14:40Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T16:57:06Z"^^xsd:dateTime .
+
+session:pr173Summary a agp:TranscriptSummary ;
+    agp:summaryText "Phase C of the join-reordering epic (#35). Closes #38. Re-baselined the DBLP diagnostic benchmark after Phases A (#36) and B (#141) landed: union-constraint-large-join still OOM-kills. Root cause confirmed independent of both prior phases — the pathology is at the WHERE-clause component level (a UNION evaluated before a constraining conjunct, over empty outer solutions → both arms full-scan and the whole union materialises before the downstream pattern can filter it), which neither phase reorders across. sparql_parser::component_ordering reorders a maximal conjunctive run of WHERE-clause components so a conjunct constraining a UNION's shared variable is scheduled before it, letting bindings flow into the arms via eval_component's existing per-arm threading — no new evaluation semantics. Reordering within such a run is result-preserving: bag-join is commutative/associative and distributes over bag-union, so it can only change performance, never the result multiset. Correctness rests entirely on never reordering across a barrier: Optional, Minus, Filter, Bind, Service all keep their original position. OPTIONAL is deliberately not optimized — a semi-join cannot reduce a left-join's outer rows without violating its semantics." ;
+    agp:reasoningFor ghpull:173 ;
+    prov:wasGeneratedBy session:pr173 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #191's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 191 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:191 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(owl2rl2datalog): namespace anonymous individuals away from RDF blank nodes" ;
+    bl:number 191 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:183 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr191 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:183 ;
+    prov:startedAtTime "2026-07-19T21:58:40Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-20T06:08:22Z"^^xsd:dateTime .
+
+session:pr191Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #183. Follow-up from #175 (which closed #159): owl2rl2datalog::abox::intern_individual mapped a Manchester/OWL Individual::AnonymousIndividual(id) directly onto RdfResource::AnonymousBlankNode(id), reusing the OWL parser's raw u32 id in the same numeric space Datastore::new_anonymous_blank_node allocates from for blank nodes ingested from RDF (Turtle/TriG/N-Triples/JSON-LD). A single Datastore that ingested both an ontology with anonymous individuals and RDF blank-node data could silently merge two unrelated nodes whose raw ids happened to coincide. Mechanism chosen The issue's phrasing suggested \"a separate counter\" for OWL anonymous individuals, but a second counter alone doesn't fix anything — both counters would start at 0 and mint the same AnonymousBlankNode(n) values, so AnonymousBlankNode(1) from each source still collides. The actual fix needs one authoritative allocator shared by both sources. dag_rdf::GraphElementManager already has exactly that idiom: get_or_create_named_anon_resource(name: String), used by the Turtle parser (turtle/src/lib.rs), rml, and rdf_canon to turn an external blank-node label into a GraphElementId. It dedups by string key and, on a miss, calls create_unnamed_anon_resource, which draws from anon_resource_count — the single monotonic counter that also backs Datastore::new_anonymous_blank_node." ;
+    agp:reasoningFor ghpull:191 ;
+    prov:wasGeneratedBy session:pr191 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

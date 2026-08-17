@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #130's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 130 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:130 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(#126): collect-then-apply atomicity for SPARQL Update sequences" ;
+    bl:number 130 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:126 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr130 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:126 ;
+    prov:startedAtTime "2026-07-05T21:41:57Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-05T22:30:30Z"^^xsd:dateTime .
+
+session:pr130Summary a agp:TranscriptSummary ;
+    agp:summaryText "Problem apply_prepared_update applied InsertData/DeleteData mutations eagerly to the live store. A subsequent LOAD failure (or any other error) left the store permanently dirty — an Atomicity violation. Rewrites apply_prepared_update with a collect-then-apply approach: 1. InsertData/DeleteData buffer into pending_inserts/pending_deletes without touching the live store. 2. DeleteData filter accepts quads in either the live store or pending_inserts so insert-then-delete in one request works correctly. 3. PatternUpdate clones the store, applies the pending delta to the clone, runs the WHERE query on the clone (preserving SPARQL 1.1 Update §3.1.3 intra-request visibility), materialises templates, then buffers the results — never touching the live store. 4. CLEAR/DROP/CREATE are still applied eagerly (they can't fail). 5. LoadGraph with Deny returns Err early — since inserts are now buffered, the live store is unmodified at that point. 6. Final apply: net inserts/deletes applied atomically, then the reasoner called once. Removes the now-unused apply_pattern_update, apply_insert, and apply_delete helpers (net -48 lines)." ;
+    agp:reasoningFor ghpull:130 ;
+    prov:wasGeneratedBy session:pr130 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

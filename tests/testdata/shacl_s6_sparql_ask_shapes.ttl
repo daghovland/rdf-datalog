@@ -1,0 +1,13 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:AgeShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Person ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "age must be non-negative" ;
+        sh:ask """
+            ASK { $this <http://example.org/ns#age> ?age . FILTER (?age >= 0) }
+        """ ;
+    ] .

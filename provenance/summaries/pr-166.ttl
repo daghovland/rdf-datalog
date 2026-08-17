@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #166's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 166 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+#
+# No linked issue was found in the PR body (no Closes/Fixes/Resolves
+# reference) -- bl:closesIssue and prov:used are omitted rather than
+# pointing at a guessed issue number; agentprov-shapes.ttl does not require
+# either.
+
+ghpull:166 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "docs: rewrite README for a prospective-user audience" ;
+    bl:number 166 ;
+    bl:state bl:Closed .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr166 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:startedAtTime "2026-07-18T10:17:28Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-18T14:41:46Z"^^xsd:dateTime .
+
+session:pr166Summary a agp:TranscriptSummary ;
+    agp:summaryText "The README had grown to 1243 lines mixing user-facing feature overview with developer/status content. Rewritten to ~340 lines: what dagalog does and how to use it, with links out to docs/user/ for depth instead of duplicating it there. Removed dev-only sections: implementation plan, protocol-compliance checklist, workspace crate-layout diagram, exhaustive SHACL §-by-§ conformance table. Fixed abstraction-level inconsistency: JSON-LD previously got a dedicated versioned section + feature-table row while Turtle/TriG shared one row; formats are now presented at the same level, with detail in docs/user/formats.md. SHACL section compressed per request: states SHACL Core is fully supported and SHACL-AF is not, one link to the W3C spec, no per-clause table. Moved detailed OIDC provider walkthroughs (Azure/Google/Keycloak) and the full HTTP route reference into docs/user/deployment.md, which previously just linked *back* to the README for this depth — that direction was backwards, so deployment.md is now the canonical source. Stale facts fixed along the way Manchester Syntax parser (#139) and incremental Datalog maintenance (#83) were both closed/shipped but the README still listed them as tracked issues. rml-mapping.md's conformance note still called rml:JoinCondition (#140) unimplemented after it shipped." ;
+    agp:reasoningFor ghpull:166 ;
+    prov:wasGeneratedBy session:pr166 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

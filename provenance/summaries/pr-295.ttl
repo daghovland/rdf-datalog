@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #295's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 295 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:295 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql_endpoint): RML upload size-limit violations return 413" ;
+    bl:number 295 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:279 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr295 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:279 ;
+    prov:startedAtTime "2026-07-24T23:30:22Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-25T08:16:46Z"^^xsd:dateTime .
+
+session:pr295Summary a agp:TranscriptSummary ;
+    agp:summaryText "The RDF write routes (/{name}/data, /rdf-graph-store) correctly return 413 Payload Too Large for over-limit requests via axum's DefaultBodyLimit. The RML mapping routes (POST /{name}/rml, POST /rml/map) use the Multipart extractor instead, whose error handler hardcoded 400 Bad Request for every MultipartError — including body-size overflows, making it impossible for a client to distinguish \"too large, retry smaller\" from \"malformed, retrying won't help.\" materialize_multipart in sparql_endpoint/src/rml_endpoint.rs now propagates MultipartError::status() instead of hardcoding 400. Axum derives this from the underlying multer::Error kind: FieldSizeExceeded/StreamSizeExceeded map to 413, everything else (bad boundary, truncated headers, etc.) stays 400 — no manual error-kind detection needed, axum already does this correctly." ;
+    agp:reasoningFor ghpull:295 ;
+    prov:wasGeneratedBy session:pr295 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

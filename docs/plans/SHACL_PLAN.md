@@ -401,7 +401,8 @@ All SHACL tests are `#[ignore]` until the relevant translation slice is complete
 
 ### Not yet covered by tests
 
-- §5–6 SHACL-AF SPARQL-based constraints / targets
+- §5–6 SHACL-AF SPARQL-based constraints / targets on **property shapes**
+  (deferred — see "Deferred to a follow-up" above)
 
 Additional W3C conformance test suite: <https://github.com/w3c/data-shapes/tree/gh-pages/shacl/tests>
 
@@ -508,12 +509,51 @@ ex:MyShape
     ] .
 ```
 
-Each solution row of the SELECT is one `ValidationResult`. The pre-bound variables
-`$this` (focus node), `$value` (offending value), and `$path` (offending path) are
-recognised by the SHACL report builder.
+Each solution row of the SELECT is one `ValidationResult`. Only `$this` (focus node)
+is pre-bound externally (by injecting a `VALUES` binding before the query's `WHERE`
+clause, see below); `$value` and `$path`, when the query's own projection includes
+them, are read straight out of each solution row — they are ordinary query-defined
+variables here, not externally pre-bound. (Pre-bound `$value`/`$path` only exist for
+SPARQL-based *constraint components* declared with `sh:parameter`/`sh:validator`,
+which is out of scope for this phase — see "Deferred to a follow-up" below.)
 
 For ASK-based constraints, a `false` answer produces one `ValidationResult` for the
 focus node.
+
+#### `$this`/`$value`/`$path` use the `?` sigil internally
+
+`sparql_parser`'s variable grammar only recognises the `?name` sigil (SPARQL 1.1's
+`VAR1` production); it does not implement `$name` (`VAR2`), even though the two are
+interchangeable per the SPARQL grammar and SHACL-AF's examples are written with `$`.
+Rather than extending the shared parser's variable grammar for this one caller, the
+embedded query text is preprocessed before parsing: every `$name` token is rewritten
+to `?name` via a regex substitution (`shacl/src/sparql_constraints.rs`) before handing
+the string to `sparql_parser::parse_query`. This is a textual approximation — it does
+not parse-aware-skip `$` occurring inside a string literal in the query body — judged
+acceptable for a first landing since SHACL constraint queries essentially never embed
+a literal dollar sign in a string constant.
+
+#### Execution granularity: per focus node, not batched
+
+Although a single `VALUES ($this) { (<n1>) (<n2>) ... }` block could in principle
+bind every focus node in one query execution (and the solutions re-split by `$this`
+afterward), this is not equivalent to the spec's per-focus-node evaluation model
+whenever the query has its own `LIMIT`/`OFFSET`, or an aggregate not grouped by
+`$this` — those apply once to the whole batched result set rather than once per
+focus node. The implementation therefore executes the query **once per focus node**
+(SELECT and ASK alike), each time with a single-row `VALUES ($this) { (<node>) }`
+injected as the first element of the query's `where_clause`. `focus_node` on the
+resulting `ValidationResult` is taken from the loop's node, not from the row's own
+`$this` binding, so a query that doesn't happen to project `$this` still attributes
+results correctly. Batching as a performance optimisation is left to a follow-up
+(see below) if per-node re-execution proves too slow in practice.
+
+#### A parse/execution error on an embedded query is a hard validation failure
+
+A `sh:select`/`sh:ask` query that fails to parse (unsupported syntax, typo) or fails
+to execute against the data graph returns `Err` from `shacl::validate` — it does not
+silently skip the constraint (which would make invalid data appear to conform). This
+matches the existing hard-failure precedent for a cyclic shapes graph (#278).
 
 #### Pre-binding `$this`
 
@@ -559,6 +599,31 @@ This means SHACL-SPARQL cannot interact with OWL-RL-derived facts unless those
 facts are materialised into the data graph before validation. For now, SHACL-SPARQL
 sees only the original asserted triples. This is the same behaviour as Apache Jena
 Fuseki.
+
+SPARQL-based *targets* (`sh:target [ a sh:SPARQLTarget ; sh:select "..." ]`, §5) are
+resolved differently from constraints: since they only ever contribute plain focus
+nodes (no violation semantics of their own), they slot into the *existing* two target
+computation paths — `translate::target_rules` (executed against `data`, before any
+synthetic Datalog triples are added to `work`, same as the `Target::Class` arm) and
+`data_targets` (the direct-evaluation path used by `sh:closed`/Phase 2 constraints) —
+rather than needing a third, separate pass. Both call the same `sparql_constraints`
+query-execution helpers as §6 constraints, but with no `$this` pre-binding (the
+query's own `?this`/`$this` projection *is* the target-node list, per spec).
+
+#### Deferred to a follow-up
+
+Filed as unlabeled follow-up issues (see the Dagalog backlog) rather than built here:
+
+- `sh:SPARQLConstraintComponent` / `sh:parameter` / `sh:validator` — reusable,
+  declaratively-parameterised custom constraint component definitions (SHACL-AF
+  §6.2+). This phase only implements the simpler, self-contained `sh:sparql`
+  attached directly to a shape.
+- `sh:sparql` declared on a **property shape** (as opposed to a node shape), which
+  additionally requires `$PATH` substitution per SHACL-AF §6.1.
+- Batching SELECT-constraint evaluation across all of a shape's focus nodes into a
+  single query execution, as a performance optimisation over today's per-node
+  execution (see above) — only worth doing if per-node re-execution shows up as a
+  real bottleneck.
 
 ---
 

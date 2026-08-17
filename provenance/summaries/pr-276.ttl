@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #276's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 276 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:276 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): shared inner-shape conformance checker for combinators" ;
+    bl:number 276 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:258 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr276 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:258 ;
+    prov:startedAtTime "2026-07-24T12:13:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T15:00:12Z"^^xsd:dateTime .
+
+session:pr276Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes #258. sh:or/sh:not (translate.rs::inner_ok_rules) and sh:node/sh:xone/sh:qualifiedValueShape (evaluate.rs::node_conforms_to_inner) evaluated inner-shape conformance through hand-rolled mini-checkers understanding only sh:class/sh:nodeKind/sh:property[sh:minCount>=1]. This PR replaces both with a shared full-constraint conformance checker. Status: tests added (currently #[ignore]d, red phase). Implementation in progress." ;
+    agp:reasoningFor ghpull:276 ;
+    prov:wasGeneratedBy session:pr276 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

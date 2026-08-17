@@ -321,6 +321,65 @@ fn class_frame_equivalentto_and_disjointwith() {
 }
 
 #[test]
+fn class_frame_disjointunionof_two_classes() {
+    let onto = manchester_parser::parse(&doc("Class: Topping DisjointUnionOf: Mozzarella, Tomato"))
+        .unwrap();
+    assert!(
+        onto.axioms
+            .contains(&Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+                vec![],
+                iri("Topping"),
+                vec![cls("Mozzarella"), cls("Tomato")]
+            )))
+    );
+}
+
+#[test]
+fn class_frame_disjointunionof_three_classes() {
+    let onto = manchester_parser::parse(&doc(
+        "Class: Topping DisjointUnionOf: Mozzarella, Tomato, Basil",
+    ))
+    .unwrap();
+    assert!(
+        onto.axioms
+            .contains(&Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+                vec![],
+                iri("Topping"),
+                vec![cls("Mozzarella"), cls("Tomato"), cls("Basil")]
+            )))
+    );
+}
+
+#[test]
+fn class_frame_disjointunionof_with_annotations_and_compound_expr() {
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("Class: Topping DisjointUnionOf: Annotations: rdfs:comment \"why\" Mozzarella, (Tomato and Fresh)")
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(anns, class, list))
+                if anns.len() == 1
+                    && *class == iri("Topping")
+                    && list.len() == 2
+                    && list[0] == cls("Mozzarella")
+                    && list[1]
+                        == ClassExpression::ObjectIntersectionOf(vec![
+                            cls("Tomato"),
+                            cls("Fresh")
+                        ])
+        )
+    });
+    assert!(
+        found,
+        "expected an annotated DisjointUnion for Topping, got: {:?}",
+        onto.axioms
+    );
+}
+
+#[test]
 fn class_frame_declaration_and_annotations() {
     let onto = manchester_parser::parse(&format!(
         "Prefix: rdfs: <{RDFS}>\n{}",
@@ -721,17 +780,6 @@ Individual: Margherita
 // support yet (see docs/plans/MANCHESTER_SYNTAX_PLAN.md's scope table).
 // They are `#[ignore]`d and expected to keep failing (return `Err`, or parse
 // but silently drop the construct) until #157 is implemented.
-
-#[test]
-#[ignore] // #157: DisjointUnionOf: is not parsed.
-fn deferred_disjoint_union_of() {
-    let onto = manchester_parser::parse(&doc("Class: Topping DisjointUnionOf: Mozzarella, Tomato"))
-        .unwrap();
-    assert!(onto.axioms.iter().any(|a| matches!(
-        a,
-        Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(_, _, _))
-    )));
-}
 
 #[test]
 #[ignore] // #157: HasKey: is not parsed.

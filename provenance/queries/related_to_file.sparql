@@ -10,9 +10,11 @@
 # join through an IRI.
 #
 # Parameterized via the VALUES line below -- edit ?file to a different
-# repo-relative path to ask about a different one. Shipped pointing at
-# "shacl/src/evaluate.rs", a real file changed by PR #300 (see
-# ../summaries/pr-300.ttl and backlog/examples/snapshot.ttl).
+# repo-relative path to ask about a different one, or pass it on the
+# command line without editing this file:
+#   provenance/queries/run.sh related_to_file '"other/path.rs"'
+# Shipped pointing at "shacl/src/evaluate.rs", a real file changed by PR
+# #300 (see ../summaries/pr-300.ttl and backlog/examples/snapshot.ttl).
 
 PREFIX agp: <https://dagalog.no/ns/agentprov#>
 PREFIX bl: <https://dagalog.no/ns/backlog#>

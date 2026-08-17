@@ -9,6 +9,7 @@ ingress = { path = "../ingress" }
 owl-ontology = { path = "../owl_ontology" }
 num-bigint = "0.4"
 log = "0.4"
+thiserror = "2"
 
 [dev-dependencies]
 turtle = { path = "../turtle" }

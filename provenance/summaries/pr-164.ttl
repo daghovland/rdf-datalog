@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #164's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 164 --json
+# commits,mergedAt`: startedAtTime is the closing session's first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:164 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Security fix: close 3 auth fail-open gaps (SPARQL Update smuggling, transaction API, /$/compact)" ;
+    bl:number 164 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:163 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr164 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:163 ;
+    prov:startedAtTime "2026-07-18T09:20:27Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-18T09:25:06Z"^^xsd:dateTime .
+
+session:pr164Summary a agp:TranscriptSummary ;
+    agp:summaryText "Fixes three confirmed authorization bypasses in sparql_endpoint's auth module, tracked in #163. 1. (Critical) SPARQL Update smuggled through Read-classified POST /sparql (also /{name}/sparql, /{name}/query). classify() only sees method + path, so it always classified these as Read — but the handler (sparql_post_with_state) inspects the body: Content-Type: application/sparql-update, or a form update= field, dispatches to run_update, a real write with no independent permission check. In ApiKey mode with the documented require_for_reads=false default, an unauthenticated caller could execute a full SPARQL Update this way. 2. POST /transaction/{begin,commit,rollback} fail open to Read. No matching branch in classify() at all. 3. POST /$/compact fails open to Read. Same root cause — rewrites the persistence changelog, an admin-tier operation. Bug 1: auth_middleware now runs a body-based check for POST requests to SPARQL query-shaped paths, before falling back to classify(). application/sparql-update → Write from the Content-Type alone (no body read). application/x-www-form-urlencoded → buffer the body (bounded by the same 2 MiB limit as axum's DefaultBodyLimit, so no new DoS surface), scan for a literal update= field matching query.rs's own parsing, then reconstruct the request byte-for-byte via Request::from_parts so the downstream handler sees the identical body." ;
+    agp:reasoningFor ghpull:164 ;
+    prov:wasGeneratedBy session:pr164 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

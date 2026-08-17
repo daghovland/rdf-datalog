@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #113's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 113 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:113 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(D6): wire IncrementalReasoner into SPARQL Update and GSP handlers" ;
+    bl:number 113 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:110 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr113 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:110 ;
+    prov:startedAtTime "2026-07-02T22:49:41Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-03T12:29:22Z"^^xsd:dateTime .
+
+session:pr113Summary a agp:TranscriptSummary ;
+    agp:summaryText "Add Config::initial_rules: Vec<Rule> and AppState::reasoner: Option<Arc<Mutex<IncrementalReasoner>>> to sparql_endpoint serve_on_listener creates an IncrementalReasoner from the configured rules, running full initial materialisation at startup; subsequent INSERT DATA / DELETE DATA SPARQL Update mutations are applied semi-naively via apply_insertions / apply_deletions GSP PUT/POST/DELETE handlers also route through the reasoner when configured, so graph store mutations also trigger incremental re-inference apply_prepared_update gains an optional &mut IncrementalReasoner parameter; existing callers (dataset routes, tests) pass None src/main.rs routes --rules through Config::initial_rules when serving (deferred materialisation inside the server), preserving existing one-shot apply behaviour for non-serve mode Add parse_rules helper to the dagalog library for deferred rule parsing without materialisation" ;
+    agp:reasoningFor ghpull:113 ;
+    prov:wasGeneratedBy session:pr113 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

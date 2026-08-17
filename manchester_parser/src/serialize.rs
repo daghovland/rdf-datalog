@@ -38,9 +38,10 @@ Contact: hovlanddag@gmail.com
 //!   as a frame subject (e.g. an `inverse P` object property expression).
 //! - **Out-of-scope constructs are skipped with a `log::warn!`,  never
 //!   silently emitted as invalid syntax.** This covers everything deferred by
-//!   [#157](https://github.com/daghovland/rdf-datalog/issues/157)
-//!   (`DisjointUnionOf:`, `HasKey:`, property chains, compound data ranges,
-//!   the `Datatype:` frame) plus a few gaps specific to serialisation
+//!   [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
+//!   follow-up issues (`HasKey:`, property chains, compound data ranges, the
+//!   `Datatype:` frame; `DisjointUnionOf:` is now supported) plus a few gaps
+//!   specific to serialisation
 //!   (standalone `AnnotationAssertion` axioms about an arbitrary subject: the
 //!   frame grammar only lets `Annotations:` attach to a frame's own entity
 //!   declaration, so an assertion about an unrelated subject has no frame
@@ -294,9 +295,15 @@ fn classify_class_axiom(a: &ClassAxiom) -> Option<Emission> {
         ClassAxiom::DisjointClasses(anns, list) => {
             class_nary(anns, list, "DisjointWith", "DisjointClasses")
         }
-        ClassAxiom::DisjointUnion(..) => {
-            log_skip("DisjointUnionOf: (#157)");
-            None
+        ClassAxiom::DisjointUnion(anns, class, list) => {
+            let items: Option<Vec<String>> = list.iter().map(fmt_class_expr).collect();
+            let items = items?;
+            let ann = ann_prefix(anns)?;
+            let line = format!("    DisjointUnionOf: {ann}{}\n", items.join(", "));
+            Some(Emission::FrameLine(
+                FrameKey::Class(class.0.0.clone()),
+                line,
+            ))
         }
     }
 }

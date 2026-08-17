@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #168's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 168 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:168 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "docs: wire docs/user Rust examples up as rustdoc doctests" ;
+    bl:number 168 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:167 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr168 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:167 ;
+    prov:startedAtTime "2026-07-18T20:06:29Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-18T20:10:47Z"^^xsd:dateTime .
+
+session:pr168Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements #167: the Rust code fences in docs/user/{deployment,formats,reasoning,rml-mapping,ottr-templates}.md are now real rustdoc doctests, so the \"wrong function signature / wrong crate path\" class of doc drift found by hand during the README cleanup (#166) is caught by CI from now on. Mechanism: #[cfg_attr(doctest, doc = include_str!(\"../docs/user/<file>.md\"))] on an empty private module in dagalog's lib.rs — zero new runtime dependencies, active only under cargo test --doc (already part of cargo test --workspace in CI), invisible in rendered cargo doc output. Judgment calls to spot-check Hidden setup lines (# -prefixed, compiled but not rendered): added where an example referenced an undefined ds or omitted imports — visible content is unchanged for readers. Files: formats.md (serialization example), reasoning.md (apply_rules), rml-mapping.md (ontology+mapping combo), deployment.md (unused-config suppressions). no_run fences (compile-checked, not executed): those that read files from disk that don't exist in the test environment (data.ttl, mapping.ttl, …) or start the HTTP server (binds a port, blocks). 10 doctests total: 5 execute, 5 compile-checked." ;
+    agp:reasoningFor ghpull:168 ;
+    prov:wasGeneratedBy session:pr168 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

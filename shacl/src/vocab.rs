@@ -168,6 +168,35 @@ pub const CC_CLOSED: &str = "http://www.w3.org/ns/shacl#ClosedConstraintComponen
 pub const CC_HAS_VALUE: &str = "http://www.w3.org/ns/shacl#HasValueConstraintComponent";
 pub const CC_IN: &str = "http://www.w3.org/ns/shacl#InConstraintComponent";
 
+/// SHACL-AF §6.1 `sh:sparql` — the constraint component every `sh:SPARQLConstraint`
+/// violation is reported under. See
+/// <https://www.w3.org/TR/shacl-af/#SPARQLConstraintComponent>.
+pub const CC_SPARQL: &str = "http://www.w3.org/ns/shacl#SPARQLConstraintComponent";
+
+// ── §5–6 SHACL-AF: SPARQL-based targets/constraints ────────────────────────────
+// Spec: <https://www.w3.org/TR/shacl-af/#sparql-based-constraints>
+
+/// `sh:sparql` — attaches a `sh:SPARQLConstraint` to a shape.
+pub const SH_SPARQL: &str = "http://www.w3.org/ns/shacl#sparql";
+/// `sh:select` — a SPARQL SELECT query string (on a `sh:SPARQLConstraint` or a
+/// `sh:SPARQLTarget`).
+pub const SH_SELECT: &str = "http://www.w3.org/ns/shacl#select";
+/// `sh:ask` — a SPARQL ASK query string on a `sh:SPARQLConstraint`.
+pub const SH_ASK: &str = "http://www.w3.org/ns/shacl#ask";
+/// `sh:target` — attaches an arbitrary target declaration (here: a
+/// `sh:SPARQLTarget`) to a shape.
+pub const SH_TARGET: &str = "http://www.w3.org/ns/shacl#target";
+/// `sh:prefixes` — points at one or more nodes carrying `sh:declare` prefix
+/// declarations to prepend to an embedded SPARQL query.
+pub const SH_PREFIXES: &str = "http://www.w3.org/ns/shacl#prefixes";
+/// `sh:declare` — one prefix declaration (paired `sh:prefix`/`sh:namespace`).
+pub const SH_DECLARE: &str = "http://www.w3.org/ns/shacl#declare";
+/// `sh:prefix` — the short prefix name of one `sh:declare` entry.
+pub const SH_PREFIX_NAME: &str = "http://www.w3.org/ns/shacl#prefix";
+/// `sh:namespace` — the namespace IRI of one `sh:declare` entry (typically a
+/// `"..."^^xsd:anyURI` typed literal, not a bare IRI node).
+pub const SH_NAMESPACE: &str = "http://www.w3.org/ns/shacl#namespace";
+
 // ── Synthetic marker IRIs (internal to this implementation) ───────────────────
 //
 // These are minted into the working Datastore as predicate IRIs during validation.

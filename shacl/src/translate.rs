@@ -46,6 +46,7 @@ use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
 pub fn shapes_to_rules(
     parsed: &[ParsedShape],
     shapes: &Datastore,
+    data: &Datastore,
     work: &mut Datastore,
 ) -> (Vec<Rule>, Vec<(GraphElementId, ViolMeta)>) {
     let true_id = graph::intern_iri(work, INT_TRUE);
@@ -68,7 +69,7 @@ pub fn shapes_to_rules(
         let target_pred = graph::intern_iri(work, &int_target(si));
 
         // Target rules
-        rules.extend(target_rules(shape, target_pred, true_id, work));
+        rules.extend(target_rules(shape, target_pred, true_id, data, work));
 
         // Property shape constraints
         for prop in &shape.property_shapes {
@@ -172,6 +173,7 @@ fn target_rules(
     shape: &ParsedShape,
     target_pred: GraphElementId,
     true_id: GraphElementId,
+    data: &Datastore,
     work: &mut Datastore,
 ) -> Vec<Rule> {
     let mut rules = Vec::new();
@@ -222,6 +224,36 @@ fn target_rules(
                         Term::Variable("n".into()),
                     )],
                 });
+            }
+            Target::Sparql(sq) => {
+                // Resolved as ground facts, like Target::Class above — and,
+                // crucially, executed against `data` (the pristine store),
+                // never `work`: by the time `target_rules` runs, `work`
+                // already carries synthetic `urn:dagalog:shacl:*` triples
+                // from `pre_compute_violations` (sh:closed, Phase 2
+                // constraints), and an arbitrary SPARQL target query (unlike
+                // Target::Class's fixed rdf:type/rdfs:subClassOf* pattern)
+                // could easily match those and make the target set depend on
+                // which other shapes happened to run first. A failing/
+                // malformed query contributes no target nodes rather than
+                // failing the whole translation pass — see `data_targets`'s
+                // identical `Target::Sparql` arm for why (no `Result` return
+                // threaded through this far). See
+                // [#54](https://github.com/daghovland/rdf-datalog/issues/54).
+                match crate::sparql_constraints::eval_sparql_target(sq, data) {
+                    Ok(elems) => {
+                        for elem in elems {
+                            let node_id = work.add_resource(elem);
+                            rules.push(fact(node_id, target_pred, true_id));
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "sh:target SPARQLTarget query failed for shape {:?}, contributing no target facts: {e}",
+                            shape.iri
+                        );
+                    }
+                }
             }
         }
     }

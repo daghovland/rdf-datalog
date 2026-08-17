@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #169's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 169 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:169 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(sparql): PartialSub value enum (Interned/Computed) — #141" ;
+    bl:number 169 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:141 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr169 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:141 ;
+    prov:startedAtTime "2026-07-18T20:15:24Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-18T21:32:49Z"^^xsd:dateTime .
+
+session:pr169Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements #141: replace PartialSub = HashMap<String, GraphElement> with HashMap<String, PartialSubValue>. Interned(GraphElementId) — bindings from triple-pattern matches, kept as cheap interned ids so the hot BGP/join path never clones a full GraphElement. Computed(GraphElement) — bindings from BIND/VALUES/aggregate results, which may not be interned in the store, carried inline. PartialSubValue deliberately omits a derived PartialEq: equality must compare *resolved* values (an Interned id and a Computed value can denote the same element), done via psv_eq / partial_subs_equal. Helpers resolve / to_id reproduce the pre-refactor get_graph_element / resource_map.get lookups. Expression evaluation is split into the public eval_expression_value (over SolutionRow) and a private eval_expression_value_inner (over PartialSub). The three Phase-B regression guards in partial_sub_tests.rs are un-ignored (behavior-preserving refactor: they pass identically before and after). ⚠️ Reviewer note — two reconstructed tests During implementation this worktree hit a disk-full condition that caused rustfmt to truncate sparql_parser/src/execute.rs mid-write, losing the tail of the file. The tail was reconstructed by stitching the intact head with the original tail from HEAD and re-applying the edits." ;
+    agp:reasoningFor ghpull:169 ;
+    prov:wasGeneratedBy session:pr169 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

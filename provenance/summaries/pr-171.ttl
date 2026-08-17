@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #171's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 171 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:171 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "perf(sparql): LIMIT short-circuit + web-frontend default LIMIT & pagination (#165)" ;
+    bl:number 171 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:165 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr171 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:165 ;
+    prov:startedAtTime "2026-07-19T09:26:48Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-19T15:57:25Z"^^xsd:dateTime .
+
+session:pr171Summary a agp:TranscriptSummary ;
+    agp:summaryText "Two parts, both in scope for the issue. 1. Executor LIMIT short-circuit (sparql_parser, dag_rdf) SELECT ?s ?p ?o WHERE { ... } LIMIT n (with or without OFFSET) previously materialised every solution and then truncated. It now threads an optional row budget (OFFSET + LIMIT) down to the solution-producing loop so enumeration stops once enough rows exist. The concrete win: Datastore::quads_matching_limited applies .take(n) to the lazy index scans, so the eager .collect() that used to materialise every matching quad no longer runs. quads_matching now delegates to it with None. Legality analysis — when the short-circuit applies, and why it's safe The budget is computed by select_solution_budget and is None (full materialisation, unchanged behaviour) whenever the full solution set is needed: No LIMIT — an OFFSET alone is unbounded. ORDER BY — the whole set must be sorted first. GROUP BY / aggregates — every row must be folded. DISTINCT — conservative first pass (counting *distinct* rows early is legal but not implemented here). When a budget is present it is passed to the last WHERE component only. That component's output *is* the final solution set, in order; projection is 1:1 with solutions and OFFSET/LIMIT are prefix operations, so returning the first budget solutions is byte-identical to producing them all and truncating." ;
+    agp:reasoningFor ghpull:171 ;
+    prov:wasGeneratedBy session:pr171 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

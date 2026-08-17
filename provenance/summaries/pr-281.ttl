@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #281's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 281 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:281 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Use SPARQL DESCRIBE for resource browser's outbound triples" ;
+    bl:number 281 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:45 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr281 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:45 ;
+    prov:startedAtTime "2026-07-24T15:14:31Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-24T17:27:45Z"^^xsd:dateTime .
+
+session:pr281Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #45. The issue's premise was stale: it said DESCRIBE needed implementing in sparql_parser, but DESCRIBE (Query::Describe) has been fully implemented there for a while (parser: sparql_parser/src/ast.rs, sparql_parser/src/lib.rs; executor: sparql_parser/src/execute.rs). The real remaining work — per the issue's actual goal — was wiring the frontend's resource browser to use it instead of a manual SELECT. showResourceView in sparql_endpoint/src/frontend.html ran two separate SELECTs in parallel: ``js SELECT ?p ?o WHERE { <iri> ?p ?o } ORDER BY ?p // outbound SELECT ?s ?p WHERE { ?s ?p <iri> } ORDER BY ?p LIMIT 200 // inbound ` DESCRIBE-semantics decision (outbound-only kept, frontend only partially replaced) Query::Describe's executor (sparql_parser/src/execute.rs, the Query::Describe match arm) only collects triples where the described resource is the subject — it does not gather inbound triples. This is pinned by an existing test, test_describe_iri_returns_subject_triples in sparql_parser/tests/describe_from_tests.rs, which explicitly asserts \"should return exactly the 2 triples where Alice is subject.\" I considered two options: 1. Extend DESCRIBE to also include inbound quads (more CBD-adjacent, single query fully replaces both SELECTs). 2. Keep DESCRIBE outbound-only, replace only the outbound SELECT with DESCRIBE <iri>, leave the inbound SELECT as-is." ;
+    agp:reasoningFor ghpull:281 ;
+    prov:wasGeneratedBy session:pr281 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

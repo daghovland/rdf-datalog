@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #112's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 112 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:112 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat: BF incremental datalog maintenance (D1–D5)" ;
+    bl:number 112 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:107 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr112 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:107 ;
+    prov:startedAtTime "2026-07-02T09:38:08Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-02T20:30:58Z"^^xsd:dateTime .
+
+session:pr112Summary a agp:TranscriptSummary ;
+    agp:summaryText "Implements the first five phases of the Backward/Forward incremental datalog algorithm (#83). Changes D1 — Base/derived fact separation (#107) QuadTable gains derived_quads: HashSet<Quad>, add_derived_quad, is_base, base_quads, derived_quads_iter Datalog reasoner uses add_derived_quad for all inferred facts; seed facts from rules remain base D2 — DerivedFrom index (#108) Derivation { rule_id, body_witnesses } and DerivedFromIndex added to datalog::types DatalogProgram records every derivation (all paths, dedup-aware) during materialise_seminaive D4+D5 — BF backward and forward phases (#109) New IncrementalReasoner in datalog::incremental Backward phase: BFS through a reverse DerivedFrom index to compute PD (possibly-deleted derived facts) Forward phase: removes PD from the closure, re-runs semi-naive from surviving base facts so re-derivable facts are restored Tipping-point guard: falls back to full re-materialisation when |PD|/|derived| > 25% Insert path: semi-naive from newly added base facts, no backward phase needed D3 — already implemented DatalogProgram::materialise_seminaive was already semi-naive forward evaluation." ;
+    agp:reasoningFor ghpull:112 ;
+    prov:wasGeneratedBy session:pr112 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

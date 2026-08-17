@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
+use utoipa_swagger_ui::SwaggerUi;
 
 /// HTTP methods that never mutate server state.
 ///
@@ -116,7 +117,19 @@ pub fn build_router(state: AppState) -> Router {
             axum::http::header::AUTHORIZATION,
         ]);
 
+    // ── OpenAPI spec + interactive Swagger UI (#386) ─────────────────────────
+    // Aimed at developers integrating over HTTP, distinct from the `/`
+    // query-builder frontend. `.url()` registers both the spec JSON route
+    // (`/api-docs/openapi.json`) and the Swagger UI page (`/swagger-ui/`).
+    // Merged before the auth middleware layer below, so both routes are
+    // plain `GET`s classified as `Permission::Read` by `auth::classify()` —
+    // the same treatment as every other read route, including `/`.
+    let swagger: Router<AppState> = SwaggerUi::new("/swagger-ui")
+        .url("/api-docs/openapi.json", crate::openapi::build_openapi())
+        .into();
+
     Router::new()
+        .merge(swagger)
         // ── VoID dataset description (§4, P2) ───────────────────────────────
         .route("/.well-known/void", get(crate::void::void_handler))
         .route("/void", get(crate::void::void_handler))

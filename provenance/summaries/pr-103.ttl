@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #103's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 103 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:103 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Fix #81: OWL qualified cardinality with owl:unionOf and nested class expressions" ;
+    bl:number 103 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:81 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr103 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:81 ;
+    prov:startedAtTime "2026-06-29T07:42:10Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-06-29T09:09:29Z"^^xsd:dateTime .
+
+session:pr103Summary a agp:TranscriptSummary ;
+    agp:summaryText "Parsing fix (rdf_owl_translator): OntologyDeclarations::build previously ran parse_anonymous_class_expressions and parse_anonymous_restrictions as two independent topological sorts. Anonymous owl:Class nodes (e.g. intersectionOf) that reference owl:Restriction blank nodes as members fell back to owl:Thing because the restrictions hadn't been processed yet. Replaced the two-pass approach with a single unified parse_anonymous_exprs that collects AnonExpr entries from both types, sorts them all together, and builds in dependency order. ELI translation fix (eli): eli_sub_class_extractor handled top-level ObjectUnionOf correctly but not when a union is nested inside ObjectSomeValuesFrom or ObjectMinQualifiedCardinality(1, ...). Added two new match arms that distribute the quantifier over the union — ∃role.(C₁ ⊔ C₂) → ∃role.C₁ ⊔ ∃role.C₂ — generating one Datalog rule per disjunct. Removed #[ignore] from all five tests added in issue #81." ;
+    agp:reasoningFor ghpull:103 ;
+    prov:wasGeneratedBy session:pr103 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

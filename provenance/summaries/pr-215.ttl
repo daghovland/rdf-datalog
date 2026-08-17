@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #215's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 215 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:215 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(tests): load qt:graphData in W3C harness for EXISTS-in-GRAPH test" ;
+    bl:number 215 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:199 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr215 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:199 ;
+    prov:startedAtTime "2026-07-21T07:36:47Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T08:32:17Z"^^xsd:dateTime .
+
+session:pr215Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #199. The engine was already correct. This is not an execute.rs bug fix — it's a fix to the W3C test harness (tests/w3c_sparql11_suite.rs). What I found The failing entry, \"Exists within graph pattern\" (exists03), failed with expected 1 rows, got 0. The issue assumed an active-graph-scoping gap in how EXISTS/NOT EXISTS evaluate their inner pattern relative to an enclosing GRAPH { ... } block. Before touching any code, I reproduced the query directly against a hand-built TriG dataset (default graph + one real named graph) via cargo run --bin dagalog. It returned the exact expected row (?s = :b). That ruled out a bug in sparql_parser::execute's GRAPH/FILTER EXISTS active-graph threading — QueryComponent::Graph already correctly scopes ActiveGraph for everything nested inside it, including Expression::Exists/NotExists. The real bug: tests/w3c_sparql11_suite.rs's manifest parser (parse_sparql_manifest) only ever extracted qt:data, never qt:graphData. The exists03 test's action block is: ``turtle mf:action [ qt:query <exists03.rq> ; qt:data <exists01.ttl> ; qt:graphData <exists02.ttl> ] ; ` qt:graphData <exists02.ttl> — the named-graph fixture the query's GRAPH <exists02.ttl> { ... } block actually queries — was silently never loaded into the datastore, so the GRAPH block always matched zero triples regardless of what the engine did." ;
+    agp:reasoningFor ghpull:215 ;
+    prov:wasGeneratedBy session:pr215 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

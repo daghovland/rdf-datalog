@@ -1,0 +1,48 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Prospective summary for issue #355 (full-scope backfill follow-up to
+# #352's representative sample), written before merge per CLAUDE.md step
+# 6b. Timestamps are real, from `git log main..HEAD` on branch
+# feat/355-provenance-backfill: startedAtTime is the branch's first
+# commit's authoredDate, endedAtTime is this session's own wall-clock
+# "now" at authoring time (not a guessed mergedAt), per
+# TRANSCRIPT_SUMMARY_GUIDELINES.md's prospective case. bl:state bl:Open
+# since the PR has not merged yet.
+
+ghpull:483 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "provenance: full backfill of transcript summaries for historical merged PRs" ;
+    bl:number 483 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:355 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr483 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:355 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-15T07:38:09Z"^^xsd:dateTime .
+
+session:pr483Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #355 asked for the remaining 129 of 192 merged PRs (63 already covered by #352's sample) to get a provenance/summaries/pr-<N>.ttl file. Given the scale, a hand-crafted-per-PR pass was infeasible within budget, so the approach was: bulk-fetch every merged PR's title/body/mergedAt in one gh pr list call plus one gh pr view --json commits per PR (129 calls, all succeeded), then programmatically clean each body (strip markdown/footers/test-plan sections, join into prose) into agp:summaryText, falling back to an honest short mechanical note (title + merge date, explicitly flagging no recorded reasoning) for the dozen oldest/terse PRs whose bodies were empty, rather than fabricating depth. Before scaling to all 129, five PRs spanning old/terse and detailed/well-documented cases were generated and SHACL-validated first (per advisor guidance) to catch template bugs (Turtle escaping, closesIssue cardinality, retrospective timestamp rules) early -- confirmed bl:closesIssue/prov:used have no sh:minCount, so the 24 PRs with no Closes/Fixes/Resolves reference in their body simply omit those triples instead of guessing an issue. All 192 summary files (63 existing + 129 new) pass every_summary_file_conforms_to_shapes." ;
+    agp:reasoningFor ghpull:483 ;
+    prov:wasGeneratedBy session:pr483 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+# TODO: if there was a genuine fork in approach worth recording, uncomment
+# and fill in; otherwise delete this block and the agp:decisionPoint line
+# above it on the Summary resource.
+#
+# session:pr483Summary agp:decisionPoint session:pr483Decision .
+#
+# session:pr483Decision a agp:Decision ;
+#     agp:summaryText "TODO: the approach actually taken (30-4000 chars)." ;
+#     agp:alternative "TODO: the alternative considered and why it was rejected." .

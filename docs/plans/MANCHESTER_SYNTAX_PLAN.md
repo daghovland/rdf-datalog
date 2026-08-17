@@ -189,8 +189,8 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | Feature | In scope | Notes |
 |---|---|---|
 | `Prefix:` (incl. default `:`), `Ontology:`, `Import:`, ontology `Annotations:` | Yes | |
-| `Class:` frame: `Annotations:`, `SubClassOf:`, `EquivalentTo:`, `DisjointWith:` | Yes | |
-| `Class:` frame: `DisjointUnionOf:`, `HasKey:` | No | #157 |
+| `Class:` frame: `Annotations:`, `SubClassOf:`, `EquivalentTo:`, `DisjointWith:`, `DisjointUnionOf:` | Yes | |
+| `Class:` frame: `HasKey:` | No | filed as a #157 follow-up |
 | `ObjectProperty:` frame: `Annotations:`, `Domain:`, `Range:`, `Characteristics:`, `SubPropertyOf:`, `EquivalentTo:`, `DisjointWith:`, `InverseOf:` | Yes | |
 | `ObjectProperty:` frame: `SubPropertyChain:` | No | #157 |
 | `DataProperty:` frame: all sections (Characteristics limited to `Functional`, per spec) | Yes | |
@@ -203,6 +203,45 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | `Datatype:` frame | No | #157 (depends on compound data ranges) |
 | `Rule:` (SWRL) frames | No | #157 |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
+
+---
+
+## Addendum: `DisjointUnionOf:` (#157, item 2 of 6)
+
+[#157](https://github.com/daghovland/rdf-datalog/issues/157) originally
+deferred six grammar productions as a single follow-up. That issue is too
+large for one PR; `DisjointUnionOf:` is implemented first because it slots
+directly into the existing `Class:` frame machinery (same shape as
+`SubClassOf:`/`EquivalentTo:`/`DisjointWith:`) and the target axiom type,
+`ClassAxiom::DisjointUnion(Vec<Annotation>, Class, Vec<ClassExpression>)`
+(`owl_ontology/src/axioms.rs`), already exists. The other five items (SWRL
+`Rule:` frames, `HasKey:`, `SubPropertyChain:`, compound data ranges,
+`Datatype:` frame) are split into their own follow-up issues, filed against
+#157 as parent, and remain out of scope here.
+
+Grammar (§2.5, W3C Manchester Syntax spec):
+```
+classFrame ::= 'Class:' classIRI { ... | 'DisjointUnionOf:' annotations description2List }
+```
+i.e. one optional `Annotations:`-style leading annotation list, then a
+comma-separated list of 2+ class expressions (`description2List`). This
+matches the `misc` top-level axioms' `'EquivalentClasses:' annotations
+description2List` shape (a single leading annotation list, not a
+per-item-annotated list like `SubClassOf:`/`EquivalentTo:`/`DisjointWith:`
+use) — so the parser reuses `frame.rs`'s existing `opt_annotations` helper
+(already used by `misc`'s `EquivalentClasses:`/`DisjointClasses:`) rather
+than `annotated_list`. Per-frame minimum-2-elements is not enforced by the
+parser, matching the existing lax `separated_list1` (min 1) convention used
+for `EquivalentClasses:`/`DisjointClasses:` in this codebase.
+
+`Class: C DisjointUnionOf: D1, D2, ...` expands to one axiom:
+`ClassAxiom::DisjointUnion(anns, C, vec![D1, D2, ...])` — the class itself
+(`C`, as `Class`/`FullIri`, not wrapped in `ClassExpression::ClassName` since
+`DisjointUnion`'s second field is `Class`) plus the disjuncts.
+
+`manchester_parser::serialize` previously skipped `ClassAxiom::DisjointUnion`
+with `log_skip("DisjointUnionOf: (#157)")`; that skip is removed as part of
+this addendum so round-tripping now emits `DisjointUnionOf:` sections.
 
 ---
 

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #230's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 230 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:230 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): BIND-computed non-integer/function-call values fail to join (#228)" ;
+    bl:number 230 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:228 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr230 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:228 ;
+    prov:startedAtTime "2026-07-21T14:42:30Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T17:58:01Z"^^xsd:dateTime .
+
+session:pr230Summary a agp:TranscriptSummary ;
+    agp:summaryText "Generalizes the fix from #227/#198 (which only covered eval_arithmetic's integer fast path) to every remaining computed-value producer in sparql_parser::execute that emitted a native RdfLiteral variant (IntegerLiteral/DecimalLiteral/FloatLiteral/DoubleLiteral/ BooleanLiteral) instead of the TypedLiteral { type_iri, literal } shape real parsed data always uses — so a BIND-computed value used in a later triple-pattern join position silently matched zero rows. Fixed (within the issue's enumerated scope): eval_arithmetic's decimal/float/double branches (only integer was fixed in #227) arithmetic_negate (unary minus) — also fixes a latent bug where a real xsd:decimal input was silently promoted to xsd:double ABS/CEIL/FLOOR/ROUND — ABS had the same silent decimal→double promotion bug as unary minus cast_to_xsd_integer/decimal/double/float/boolean/dateTime Also fixed (same producer/lookup bug, not in the issue's enumerated list, but the exact recurring pattern the issue itself calls out — cheap to close once the helper existed): YEAR/MONTH/DAY/HOURS/MINUTES/SECONDS All of these now share two helpers: classify_numeric (pre-existing; recognizes a numeric literal in either representation as *input*) and the new numeric_lit_to_element (a single normalization point for *output*)." ;
+    agp:reasoningFor ghpull:230 ;
+    prov:wasGeneratedBy session:pr230 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

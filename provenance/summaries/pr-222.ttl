@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #222's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 222 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:222 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: BASE directive parsing and relative-IRI resolution" ;
+    bl:number 222 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:217 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr222 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:217 ;
+    prov:startedAtTime "2026-07-21T09:07:16Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T13:35:29Z"^^xsd:dateTime .
+
+session:pr222Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds SPARQL 1.1 BASE <iri> prologue parsing (alongside PREFIX) and relative-IRI resolution against it, per §4.1 / RFC 3986. ParserContext gains a base: Option<String> field: the effective base IRI. A caller can set it to a natural default (e.g. a query file's own path); an in-query BASE <iri> directive overrides that default for the rest of the query, and is itself resolved against whatever base was already in effect (so a relative BASE can extend a caller-supplied default). Resolution is centralized in a single choke point (parse_iri_ref/parse_iri_ref_resolved in sparql_parser/src/lib.rs), which every <...> reference in the grammar goes through: triple patterns, PREFIX/BASE IRIs, GRAPH/FROM clauses, datatype IRIs, function names. Resolution logic uses oxiri (promoted from a transitive to a direct dependency of sparql_parser), the same crate turtle's underlying oxttl parser already uses for @base — no hand-rolled RFC 3986 logic. No-base fallback decision When there is genuinely no base available (no BASE directive, no caller-supplied default), a relative IRI reference is kept verbatim rather than raising a parse error. This deliberately differs from turtle::parse_turtle's stricter no-base behavior (which hard-errors on any non-absolute IRI, since oxttl/oxiri's Iri::parse rejects relative references outright when no base is set)." ;
+    agp:reasoningFor ghpull:222 ;
+    prov:wasGeneratedBy session:pr222 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #244's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 244 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:244 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(sparql-endpoint): wire OTTR mapping expansion into HTTP endpoint" ;
+    bl:number 244 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:232 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr244 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:232 ;
+    prov:startedAtTime "2026-07-22T22:20:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T22:29:43Z"^^xsd:dateTime .
+
+session:pr244Summary a agp:TranscriptSummary ;
+    agp:summaryText "Adds POST /{name}/ottr: expands stOTTR templates/instances (uploaded as multipart/form-data, one or more self-contained or partial document parts) directly into a named dataset via ottr::expand_documents, mirroring the existing /{name}/rml endpoint's single-call, dataset-scoped shape. Design decisions are documented in docs/plans/OTTR_HTTP_ENDPOINT_PLAN.md: Route: POST /{name}/ottr, single-call, dataset-scoped (no stateful upload-then-trigger flow — rejected because it would need server-side session state the codebase has no precedent for, and ottr::expand_documents already merges templates across multiple documents in one call). Request shape: multipart/form-data with one or more unnamed parts, each a stOTTR document (template def, instance data, or both) — parsed independently and merged before expansion, so a client can reuse a template-library part across multiple instance-set parts in one request. Response: 200 OK plain text \"OTTR expansion applied: N triples inserted\", matching /rml's response shape. Persistence/store merge: same pattern as dataset_rml_post — expand into a scratch Datastore, append to the changelog if configured, then copy quads into the target dataset's live store. Permissions: Permission::Write, same as /rml//update." ;
+    agp:reasoningFor ghpull:244 ;
+    prov:wasGeneratedBy session:pr244 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

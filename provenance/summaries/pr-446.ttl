@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #446's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 446 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:446 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "docs: plan for default-reject malformed OWL axioms, opt-in lenient mode (#426)" ;
+    bl:number 446 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:426 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr446 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:426 ;
+    prov:startedAtTime "2026-08-10T19:50:43Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-11T08:44:46Z"^^xsd:dateTime .
+
+session:pr446Summary a agp:TranscriptSummary ;
+    agp:summaryText "Part of #426 — plan doc only, implementation is a follow-up PR. Adds docs/plans/OWL_AXIOM_REJECTION_426_PLAN.md, investigating the actual ClassExprBuilder/OntologyDeclarations/rdf2owl code (not just restating the issue) to design: Default-reject: turns out parse_anonymous_exprs → OntologyDeclarations::build() → rdf2owl() already forms a complete Result-propagating ?-chain up to the crate's public API. The only gap is that ClassExprBuilder (the lazy closure type used to build anonymous class expressions) isn't itself Result-returning. Fixing that closure type is enough — no changes needed to axiom_parser.rs's subject/object handling, since every anonymous class expression is pre-resolved (or the whole build already failed) before axiom extraction sees subject/object position at all. Opt-in lenient mode: TranslationOptions/rdf2owl_with_options, threaded via a --lenient-owl-parsing CLI flag following the existing --read-only precedent. The polarity-aware Thing/Nothing fallback this issue originally proposed genuinely does need position threaded through 18 class_expression() call sites (this is the part axiom_parser.rs does touch) — sketched as two implementation options (A: lazy resolution + Position enum reusing eli::extractor's positive/negative terminology; B: skip the malformed axiom instead of substituting a value), left as an implementation-time decision." ;
+    agp:reasoningFor ghpull:446 ;
+    prov:wasGeneratedBy session:pr446 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

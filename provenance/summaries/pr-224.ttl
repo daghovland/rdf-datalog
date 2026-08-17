@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #224's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 224 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:224 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Add fuseki-style support for fetching whole dataset json-ld" ;
+    bl:number 224 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:219 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr224 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:219 ;
+    prov:startedAtTime "2026-07-21T13:46:19Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-21T14:29:31Z"^^xsd:dateTime .
+
+session:pr224Summary a agp:TranscriptSummary ;
+    agp:summaryText "gsp_get_inner's whole-dataset content-negotiation match only had arms for RdfFormat::NQuads and RdfFormat::TriG; a bare GET /{name}/data with Accept: application/ld+json fell into the catch-all and incorrectly returned 400 Bad Request. Added a Some(RdfFormat::JsonLd) arm calling the existing jsonld_parser::serialize_jsonld(&store) (which already serializes the whole Datastore — default graph plus every named graph, wrapped per JSON-LD's dataset representation) and returning 200 OK with application/ld+json; charset=utf-8, matching the existing single-graph JSON-LD path's content-type. Mirrored the identical fix in gsp_head_inner." ;
+    agp:reasoningFor ghpull:224 ;
+    prov:wasGeneratedBy session:pr224 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

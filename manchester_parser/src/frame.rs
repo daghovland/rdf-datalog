@@ -11,9 +11,9 @@ Contact: hovlanddag@gmail.com
 //! returns `Vec<Axiom>` — one frame typically expands to several axioms (one
 //! per section-list item), per `docs/plans/MANCHESTER_SYNTAX_PLAN.md`.
 //!
-//! `DisjointUnionOf:` and `HasKey:` (class frame), `SubPropertyChain:`
-//! (object property frame) are deferred; see
-//! [#157](https://github.com/daghovland/rdf-datalog/issues/157).
+//! `HasKey:` (class frame), `SubPropertyChain:` (object property frame) are
+//! deferred; see [#157](https://github.com/daghovland/rdf-datalog/issues/157)
+//! and its follow-up issues.
 
 use crate::annotation::{annotations_section, opt_leading_annotations};
 use crate::class_expr::description;
@@ -57,6 +57,7 @@ enum ClassSection {
     SubClassOf(Vec<(Vec<Annotation>, ClassExpression)>),
     EquivalentTo(Vec<(Vec<Annotation>, ClassExpression)>),
     DisjointWith(Vec<(Vec<Annotation>, ClassExpression)>),
+    DisjointUnionOf(Vec<Annotation>, Vec<ClassExpression>),
 }
 
 fn class_section<'a>(
@@ -85,6 +86,16 @@ fn class_section<'a>(
                     annotated_list(ctx, description(ctx)),
                 ),
                 ClassSection::DisjointWith,
+            ),
+            nom::combinator::map(
+                nom::sequence::preceded(
+                    keyword("DisjointUnionOf:"),
+                    nom::sequence::pair(
+                        opt_annotations(ctx),
+                        separated_list1(punct(','), description(ctx)),
+                    ),
+                ),
+                |(anns, list)| ClassSection::DisjointUnionOf(anns, list),
             ),
         ))(input)
     }
@@ -127,6 +138,13 @@ pub(crate) fn class_frame<'a>(
                             vec![ClassExpression::ClassName(class_iri.clone()), expr],
                         )));
                     }
+                }
+                ClassSection::DisjointUnionOf(anns, list) => {
+                    axioms.push(Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+                        anns,
+                        class_iri.clone(),
+                        list,
+                    )));
                 }
             }
         }

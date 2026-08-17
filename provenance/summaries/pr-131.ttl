@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #131's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 131 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:131 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "feat(#127): reject commits where owl:Nothing has instances after reasoning" ;
+    bl:number 131 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:127 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr131 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:127 ;
+    prov:startedAtTime "2026-07-05T22:14:32Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-05T22:31:02Z"^^xsd:dateTime .
+
+session:pr131Summary a agp:TranscriptSummary ;
+    agp:summaryText "Any SPARQL Update transaction that causes an instance of owl:Nothing to exist in the default graph after incremental reasoning is rejected with HTTP 409 Conflict and fully rolled back. Users express datalog constraints as rules whose head derives ?x a owl:Nothing. If any such triple is materialized at commit time, the transaction fails and the store is unchanged. Example constraint ``turtle Every ex:Person must have an ex:name. [?x a owl:Nothing] :- [?x a ex:Person], NOT EXISTS ?n IN [?x ex:name ?n] . ` Inserting ex:alice a ex:Person without an ex:name triple returns HTTP 409: ` Transaction rejected: owl:Nothing has instances after reasoning. Instance 1: <http://example.org/alice> <http://example.org/description> \"Missing required property\" (showing 1 of 1 instance) ` OWL-RL disjointness axioms (owl:disjointWith) already derive owl:Nothing automatically, so those become blocking constraints with no extra rules. Changes sparql_update.rs: apply_prepared_update now returns Ok((net_inserts, net_deletes)) — the delta actually applied — so callers can roll back on constraint violation. constraints.rs (new): check_owl_nothing scans the store for owl:Nothing instances; format_409_body produces the human-readable error. query.rs: after a successful apply, checks for violations; on violation applies the inverse delta through the reasoner and returns 409." ;
+    agp:reasoningFor ghpull:131 ;
+    prov:wasGeneratedBy session:pr131 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

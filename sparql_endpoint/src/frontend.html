@@ -55,6 +55,18 @@
       background: #f8f8f8;
     }
     textarea:focus { outline: 2px solid #445; background: #fff; }
+    /* CodeMirror 6 query editor (issue #42) — mimics the textarea it replaces */
+    .query-editor-wrap { position: relative; }
+    .cm-mount .cm-editor {
+      font-family: "Fira Mono", "Consolas", monospace;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f8f8f8;
+    }
+    .cm-mount .cm-editor.cm-focused { outline: 2px solid #445; background: #fff; }
+    .cm-mount .cm-scroller { min-height: 8.5rem; }
+    .cm-mount .cm-content { padding: 0.6rem 0; }
     .actions { margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
     button {
       padding: 0.4rem 1.1rem;
@@ -151,13 +163,6 @@
     .resource-types { margin: 0.4rem 0 0.2rem; }
     .type-badge { display: inline-block; background: #dce8f5; border-radius: 10px;
                   padding: 0.1rem 0.45rem; font-size: 0.75rem; margin-right: 0.3rem; }
-    /* Class hierarchy */
-    #class-tree details, #class-tree div { padding-left: 1.2rem; margin: 0.15rem 0; font-size: 0.85rem; }
-    #class-tree > details, #class-tree > div { padding-left: 0; }
-    #class-tree summary { list-style: none; cursor: pointer; }
-    #class-tree summary::-webkit-details-marker { display: none; }
-    #class-tree summary::before { content: '\25B6\00A0'; font-size: 0.6rem; opacity: 0.5; }
-    #class-tree details[open] > summary::before { content: '\25BC\00A0'; }
     /* Graph view tabs */
     .tab-bar { display: flex; border-bottom: 2px solid #e0e0e0; margin-bottom: 0.75rem; gap: 0; }
     .tab { padding: 0.4rem 1.1rem; background: none; border: none;
@@ -185,6 +190,9 @@
     #cy-fullscreen-wrap:fullscreen #cy { flex:1; height:auto !important; margin-top:0; border-radius:0; }
     #cy-fullscreen-wrap:fullscreen .cy-toolbar { flex-shrink:0; }
     #cy-fullscreen-wrap:fullscreen .graph-hint { margin-top:0.5rem; flex-shrink:0; }
+    #class-tree.class-cy { width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 4px;
+          background: #f8f8f8; cursor: grab; margin-top: 0.5rem; }
+    #class-tree.class-cy:active { cursor: grabbing; }
     /* Drag-and-drop upload */
     .drop-zone { position: relative; }
     .drop-zone.drag-over textarea { border-color: #2b6cb0; background: #eef3ff; }
@@ -335,7 +343,10 @@
           <option value="instances">Instances of owl:Class</option>
         </select>
       </div>
-      <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
+      <div class="query-editor-wrap">
+        <textarea id="query" rows="7">SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</textarea>
+        <div id="query-cm" class="cm-mount" style="display:none"></div>
+      </div>
       <div class="actions">
         <button id="run-btn" onclick="runQuery()">Run Query</button>
         <button class="help-btn" onclick="document.getElementById('sparql-help-modal').classList.add('open')" title="SPARQL quick reference" aria-label="SPARQL quick reference">?</button>
@@ -452,8 +463,13 @@
     <div class="card">
       <a href="/" class="back-link">&#8592; Back to queries</a>
       <h2>Class Hierarchy</h2>
-      <p class="hint">Classes connected by <code>rdfs:subClassOf</code>. Click any class to browse its resource page.</p>
-      <div id="class-tree" style="margin-top:0.75rem"></div>
+      <p class="hint">Classes connected by <code>rdfs:subClassOf</code>, laid out with dagre (parents above children).
+        Click any class node to browse its resource page.</p>
+      <div class="cy-toolbar">
+        <button class="btn-graph-action" onclick="relayoutClassGraph()">Re-layout</button>
+      </div>
+      <div id="class-tree" class="class-cy">Loading…</div>
+      <div id="class-graph-warning" class="graph-hint" style="display:none;color:#b45309"></div>
     </div>
   </div>
 
@@ -632,6 +648,18 @@
       componentSpacing: 50, nodeRepulsion: () => 8000,
       edgeElasticity: () => 100, idealEdgeLength: () => 80,
     };
+    // Class hierarchy view (issue #43): capped separately from GRAPH_NODE_LIMIT
+    // since it always covers the whole ontology's rdfs:subClassOf edges rather
+    // than an arbitrary user query's result set.
+    const CLASS_GRAPH_NODE_LIMIT = 300;
+    // Hierarchical layout: edges point from subclass -> superclass (matching the
+    // rdfs:subClassOf triple direction), and rankDir 'BT' (bottom-to-top) places
+    // edge sources (subclasses) below their targets (superclasses), so the
+    // rendered tree reads with the most general classes on top, as the old
+    // <details>-based tree did depth-first top to bottom.
+    const CLASS_DAGRE_LAYOUT_OPTIONS = {
+      name: 'dagre', rankDir: 'BT', nodeSep: 40, rankSep: 70, animate: false, fit: true, padding: 30,
+    };
     // Default page size applied to SELECT queries that carry no explicit
     // LIMIT/OFFSET, so a query over a large store returns a bounded first
     // page with Prev/Next pagination instead of every row (issue #165).
@@ -725,7 +753,7 @@
     // ── Query templates ────────────────────────────────────────────────────────
     function applyTemplate(sel) {
       if (!sel.value) return;
-      document.getElementById('query').value = TEMPLATES[sel.value] || '';
+      setQueryValue(TEMPLATES[sel.value] || '');
       sel.value = '';
     }
 
@@ -765,7 +793,7 @@
         code.textContent = entry.query;
         row.append(time, code);
         row.addEventListener('click', () => {
-          document.getElementById('query').value = entry.query;
+          setQueryValue(entry.query);
         });
         list.appendChild(row);
       }
@@ -1087,6 +1115,35 @@
       return cytoscapeLoading;
     }
 
+    // Loads dagre.js then cytoscape-dagre.js (in that order — cytoscape-dagre's
+    // UMD bundle looks for dagre on window at load time) and registers the
+    // layout extension with cytoscape. Used only by the class hierarchy view
+    // (issue #43); the query-result graph view keeps using the force-directed
+    // 'cose' layout above.
+    let cytoscapeDagreLoading = null;
+    function ensureCytoscapeDagre() {
+      if (cytoscapeDagreLoading) return cytoscapeDagreLoading;
+      cytoscapeDagreLoading = ensureCytoscape().then(() => new Promise((resolve, reject) => {
+        if (window.cytoscapeDagre) { resolve(); return; }
+        const dagreScript = document.createElement('script');
+        dagreScript.src = 'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js';
+        dagreScript.onload = () => {
+          const extScript = document.createElement('script');
+          extScript.src = 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js';
+          extScript.onload = () => {
+            if (!window.cytoscapeDagre) { reject(new Error('cytoscape-dagre did not register')); return; }
+            window.cytoscape.use(window.cytoscapeDagre);
+            resolve();
+          };
+          extScript.onerror = () => reject(new Error('Could not load cytoscape-dagre from CDN'));
+          document.head.appendChild(extScript);
+        };
+        dagreScript.onerror = () => reject(new Error('Could not load dagre from CDN'));
+        document.head.appendChild(dagreScript);
+      }));
+      return cytoscapeDagreLoading;
+    }
+
     async function showTab(name) {
       const tablePane = document.getElementById('result-table-pane');
       const graphPane = document.getElementById('result-graph-pane');
@@ -1285,7 +1342,7 @@
     async function runQuery() { return runQueryPage(0); }
 
     async function runQueryPage(offset) {
-      const rawQuery = document.getElementById('query').value.trim();
+      const rawQuery = getQueryValue().trim();
       if (!rawQuery) return;
       // Paginate only SELECT queries with no explicit LIMIT/OFFSET; anything
       // else runs verbatim (issue #165).
@@ -1465,6 +1522,11 @@
     }
 
     // ── Class hierarchy view ───────────────────────────────────────────────────
+    // Cytoscape instance backing the class hierarchy view (issue #43); kept
+    // separate from `cyInstance` (the query-result graph tab) so the two views
+    // can each hold their own instance without clobbering one another.
+    let classCyInstance = null;
+
     async function showClassesView() {
       document.getElementById('query-view').style.display    = 'none';
       document.getElementById('resource-view').style.display = 'none';
@@ -1475,7 +1537,10 @@
       document.getElementById('nav-classes').classList.add('active');
 
       const treeEl = document.getElementById('class-tree');
+      const warnEl = document.getElementById('class-graph-warning');
       treeEl.textContent = 'Loading…';
+      warnEl.style.display = 'none';
+      if (classCyInstance) { classCyInstance.destroy(); classCyInstance = null; }
 
       try {
         const data = await sparqlFetch(
@@ -1483,50 +1548,74 @@
         );
         const bindings = data.results?.bindings ?? [];
 
-        const children = new Map();
-        const allClasses = new Set();
+        const nodeMap = new Map();  // iri -> { id, label, iri }
+        let edges = [];             // { source: child, target: parent }
         for (const b of bindings) {
           const child = b.child?.value, parent = b.parent?.value;
           if (!child || !parent) continue;
-          allClasses.add(child);
-          allClasses.add(parent);
-          if (!children.has(parent)) children.set(parent, new Set());
-          children.get(parent).add(child);
+          if (!nodeMap.has(child))  nodeMap.set(child,  { id: child,  label: shortenIri(child),  iri: child });
+          if (!nodeMap.has(parent)) nodeMap.set(parent, { id: parent, label: shortenIri(parent), iri: parent });
+          edges.push({ source: child, target: parent });
         }
 
-        if (allClasses.size === 0) {
+        if (nodeMap.size === 0) {
           treeEl.textContent = 'No rdfs:subClassOf triples found.';
           return;
         }
 
-        const hasParent = new Set(bindings.map(b => b.child?.value).filter(Boolean));
-        const roots = [...allClasses].filter(c => !hasParent.has(c)).sort();
-
-        treeEl.innerHTML = '';
-
-        function renderNode(iri, depth) {
-          const kids = [...(children.get(iri) || [])].sort();
-          if (kids.length > 0) {
-            const det = document.createElement('details');
-            det.open = depth < 2;
-            det.style.paddingLeft = depth > 0 ? '1.2rem' : '0';
-            const sum = document.createElement('summary');
-            sum.appendChild(makeIriLink(iri));
-            det.appendChild(sum);
-            for (const k of kids) det.appendChild(renderNode(k, depth + 1));
-            return det;
-          } else {
-            const div = document.createElement('div');
-            div.style.paddingLeft = depth > 0 ? '1.2rem' : '0';
-            div.appendChild(makeIriLink(iri));
-            return div;
-          }
+        let nodes = [...nodeMap.values()];
+        if (nodes.length > CLASS_GRAPH_NODE_LIMIT) {
+          warnEl.style.display = '';
+          warnEl.textContent =
+            'Class hierarchy capped at ' + CLASS_GRAPH_NODE_LIMIT + ' classes (' + nodes.length +
+            ' total found).';
+          const allowed = new Set(nodes.slice(0, CLASS_GRAPH_NODE_LIMIT).map(n => n.id));
+          edges = edges.filter(e => allowed.has(e.source) && allowed.has(e.target));
+          nodes = nodes.slice(0, CLASS_GRAPH_NODE_LIMIT);
         }
 
-        for (const root of roots) treeEl.appendChild(renderNode(root, 0));
+        treeEl.textContent = 'Rendering…';
+        try { await ensureCytoscapeDagre(); } catch (e) { treeEl.textContent = e.message; return; }
+        treeEl.textContent = '';
+
+        const elements = [
+          ...nodes.map(n => ({ group: 'nodes', data: { id: n.id, label: n.label, iri: n.iri } })),
+          ...edges.map((e, i) => ({ group: 'edges', data: { id: 'ce' + i, source: e.source, target: e.target } })),
+        ];
+
+        classCyInstance = cytoscape({
+          container: treeEl,
+          elements,
+          style: [
+            { selector: 'node', style: {
+              label: 'data(label)', 'font-size': '11px', 'background-color': '#2b6cb0',
+              color: '#fff', 'text-halign': 'center', 'text-valign': 'center',
+              width: 'label', height: 'label', padding: '8px', shape: 'round-rectangle',
+              'text-wrap': 'wrap', 'text-max-width': '140px', 'border-width': 0, cursor: 'pointer',
+            }},
+            { selector: 'node:selected', style: { 'background-color': '#1a365d', 'border-width': 2, 'border-color': '#fff' }},
+            { selector: 'edge', style: {
+              'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+              'line-color': '#b0b0b0', 'target-arrow-color': '#b0b0b0',
+              'arrow-scale': 0.9, width: 1.5,
+            }},
+          ],
+          layout: CLASS_DAGRE_LAYOUT_OPTIONS,
+        });
+        window.classCyInstance = classCyInstance;
+
+        classCyInstance.on('tap', 'node', e => {
+          const iri = e.target.data('iri');
+          if (iri) location.href = '/?resource=' + encodeURIComponent(iri);
+        });
       } catch (e) {
         treeEl.textContent = 'Error: ' + e.message;
       }
+    }
+
+    function relayoutClassGraph() {
+      if (!classCyInstance) return;
+      classCyInstance.layout(CLASS_DAGRE_LAYOUT_OPTIONS).run();
     }
 
     // ── Drag-and-drop upload ───────────────────────────────────────────────────
@@ -1548,6 +1637,10 @@
     }
 
     // ── Keyboard shortcut ──────────────────────────────────────────────────────
+    // NB: this listens on the fallback <textarea id="query">. When CodeMirror 6
+    // is active (see the <script type="module"> block below) the textarea is
+    // hidden and doesn't receive keyboard events, so the equivalent Ctrl/Cmd+Enter
+    // binding is registered there too, as a CodeMirror keymap extension.
     function initKeyboardShortcuts() {
       document.getElementById('query').addEventListener('keydown', e => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -1555,6 +1648,24 @@
           runQuery();
         }
       });
+    }
+
+    // ── CodeMirror <-> plain-textarea shim ───────────────────────────────────────
+    // Every other call site reads/writes the query through these two helpers so
+    // it works identically whether CodeMirror 6 loaded successfully (see the
+    // module script near the end of this file) or the plain <textarea id="query">
+    // fallback is still active (CDN unreachable, JS module load failure, etc).
+    function getQueryValue() {
+      if (window.dagalogQueryEditor) return window.dagalogQueryEditor.state.doc.toString();
+      return document.getElementById('query').value;
+    }
+    function setQueryValue(text) {
+      const editor = window.dagalogQueryEditor;
+      if (editor) {
+        editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } });
+      } else {
+        document.getElementById('query').value = text;
+      }
     }
 
     // ── Query builder — SPARQL generation ─────────────────────────────────────
@@ -2124,7 +2235,7 @@
     function editInSparql() {
       const sparql = document.getElementById('qb-generated').textContent.trim();
       if (!sparql) return;
-      document.getElementById('query').value = sparql;
+      setQueryValue(sparql);
       document.getElementById('build-view').style.display  = 'none';
       document.getElementById('query-view').style.display  = '';
       document.getElementById('nav-build').classList.remove('active');
@@ -2351,7 +2462,7 @@
       } else {
         document.getElementById('nav-query').classList.add('active');
         if (query) {
-          document.getElementById('query').value = query;
+          setQueryValue(query);
           runQuery();
         }
       }
@@ -2396,7 +2507,7 @@ SELECT ?person ?label ?age WHERE {
 
     function loadSampleData() {
       document.getElementById('turtle').value = SAMPLE_TURTLE;
-      document.getElementById('query').value  = SAMPLE_QUERY;
+      setQueryValue(SAMPLE_QUERY);
       document.getElementById('turtle').focus();
     }
 
@@ -2457,5 +2568,62 @@ SELECT ?contact WHERE {
       </p>
     </div>
   </div>
+
+  <!-- ── CodeMirror 6 SPARQL editor (issue #42) ─────────────────────────────────
+       Loaded as ES modules straight from a CDN (esm.sh) — no build step. If the
+       CDN is unreachable or the module fails to load/instantiate for any reason,
+       the catch block below leaves the plain <textarea id="query"> visible and
+       functional; every other part of the app talks to the query editor only
+       through getQueryValue()/setQueryValue() (defined in the classic script
+       above), so nothing else needs to know which one is active. -->
+  <script type="module">
+    import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.2';
+    import { EditorState } from 'https://esm.sh/@codemirror/state@6.7.1';
+    import { keymap } from 'https://esm.sh/@codemirror/view@6.43.8';
+    import { sparql as sparqlLanguage } from 'https://esm.sh/codemirror-lang-sparql@2.1.0';
+
+    function initQueryEditor() {
+      const textarea = document.getElementById('query');
+      const mount    = document.getElementById('query-cm');
+      if (!textarea || !mount) return;
+
+      try {
+        const runQueryKeymap = keymap.of([
+          {
+            key: 'Ctrl-Enter', mac: 'Cmd-Enter',
+            run: () => { if (typeof window.runQuery === 'function') window.runQuery(); return true; },
+          },
+        ]);
+
+        const view = new EditorView({
+          state: EditorState.create({
+            doc: textarea.value,
+            extensions: [
+              basicSetup,           // line numbers, bracket matching, history, default keymap, ...
+              sparqlLanguage(),     // SPARQL keyword/variable/literal highlighting
+              runQueryKeymap,
+              EditorView.lineWrapping,
+              EditorView.updateListener.of(update => {
+                if (update.docChanged) textarea.value = update.state.doc.toString();
+              }),
+            ],
+          }),
+          parent: mount,
+        });
+
+        window.dagalogQueryEditor = view;
+        textarea.style.display = 'none';
+        mount.style.display = '';
+      } catch (err) {
+        console.warn('CodeMirror 6 failed to initialise; falling back to plain textarea.', err);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initQueryEditor);
+    } else {
+      initQueryEditor();
+    }
+  </script>
 </body>
 </html>

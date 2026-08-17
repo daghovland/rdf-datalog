@@ -1,0 +1,15 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:ActiveShape
+    a sh:NodeShape ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            SELECT ?this WHERE { ?this <http://example.org/ns#status> <http://example.org/ns#Active> }
+        """
+    ] ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+    ] .

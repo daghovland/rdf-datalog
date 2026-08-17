@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #322's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 322 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:322 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): property-shape-scoped constraint gaps (#311)" ;
+    bl:number 322 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:311 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr322 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:311 ;
+    prov:startedAtTime "2026-07-31T15:53:33Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T16:54:18Z"^^xsd:dateTime .
+
+session:pr322Summary a agp:TranscriptSummary ;
+    agp:summaryText "Status: 12 of 15 originally-listed entries fixed; 3 deferred to #323 All 15 entries originally listed in #311 were confirmed still-failing at the start of this branch — #309/#303 did not incidentally fix any of them (those touched node-shape-scoped and/or/not/xone and lessThan comparability respectively, separate code paths from property-shape-scoped combinators and range-constraint comparability). This branch has been rebased onto latest main, which in the meantime picked up #316 (node-shape-scoped sh:and/sh:or/sh:not/sh:xone violation metadata fix) and #317 (reasoner Contradiction handling) — both merged cleanly with this PR's property-shape-scoped fixes; both scopes' tests pass (see below). Fixed in this PR sh:uniqueLang was counting one violation per duplicate occurrence instead of one per duplicated language tag (over-counting). Fixes uniqueLang-001. sh:minExclusive/sh:maxExclusive/sh:minInclusive/sh:maxInclusive silently skipped incomparable values instead of reporting a violation. Fixes maxExclusive-001, maxInclusive-001, minExclusive-002. sh:and/sh:or/sh:not/sh:xone declared directly inside a sh:property block (applying to path-traversed values, not the focus node) — ParsedPropShape had no fields for these combinators at all, only the node-shape-scoped ParsedShape did, so they were silently dropped during parsing." ;
+    agp:reasoningFor ghpull:322 ;
+    prov:wasGeneratedBy session:pr322 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

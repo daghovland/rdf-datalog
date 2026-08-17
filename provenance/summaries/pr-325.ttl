@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #325's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 325 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:325 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(shacl): multi-valued sh:class, ill-typed sh:datatype, incomparable value-range violations" ;
+    bl:number 325 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:318 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr325 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:318 ;
+    prov:startedAtTime "2026-07-31T19:09:05Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-31T20:09:17Z"^^xsd:dateTime .
+
+session:pr325Summary a agp:TranscriptSummary ;
+    agp:summaryText "Three distinct root causes surfaced by the W3C SHACL suite's core/node fixtures, found in shacl/src/shapes.rs / shacl/src/evaluate.rs, plus two smaller lexical-validity gaps found on review: 1. Multi-valued sh:class only picked up one occurrence — parse_prop_constraints used get_object (singular) instead of get_objects (plural). sh:class is repeatable; each occurrence is an independent constraint. 2. sh:datatype didn't check lexical validity for numeric/date XSD types — \"aldi\"^^xsd:integer conformed. Extended is_well_formed_lexical to cover xsd:integer/decimal/float/double/date/dateTime (previously only byte/short/int/long/boolean/unsigned* were checked). Also: xsd:date's lexical space permits an optional trailing timezone fragment (Z/±HH:MM) that chrono::NaiveDate rejects outright — added parse_xsd_date_lexical to accept it (guarded against panicking on a non-char-boundary byte index for multibyte input); and xsd:nonNegativeInteger/positiveInteger/nonPositiveInteger/negativeInteger now enforce their sign facet instead of just \"parses as i128\". 3. Value-range constraints silently skipped incomparable values instead of violating. Comparable's Ord-based fallthrough treated mismatched variants (numeric vs. date, or timezoned vs. timezone-less xsd:dateTime) as Equal." ;
+    agp:reasoningFor ghpull:325 ;
+    prov:wasGeneratedBy session:pr325 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

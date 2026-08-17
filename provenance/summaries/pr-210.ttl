@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #210's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 210 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:210 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix(sparql): normalize numeric/boolean values for FILTER = and !=" ;
+    bl:number 210 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:208 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr210 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:208 ;
+    prov:startedAtTime "2026-07-20T22:48:25Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-20T23:08:43Z"^^xsd:dateTime .
+
+session:pr210Summary a agp:TranscriptSummary ;
+    agp:summaryText "Closes #208. Found while adding a Datalog FILTER(xsd:integer(?v) = 42) end-to-end test on #190/PR #195 (verifying the shared sparql_parser/datalog expression-evaluation architecture). That test failed with zero rows — turned out to have nothing to do with Datalog or the cast function's correctness; it reproduces in plain SPARQL too. sparql_parser::lib::parse_numeric_literal/parse_boolean_literal deliberately parse a bare literal written in SPARQL query text (42, true) into RdfLiteral::TypedLiteral { type_iri, literal } — matching what the turtle crate produces from Turtle data. Meanwhile, essentially every *computed* numeric/boolean result in sparql_parser::execute — unary minus, binary arithmetic, ABS/CEIL/FLOOR/ROUND, xsd casts (#190), boolean-returning string predicates — produces the *native* enum variants instead (IntegerLiteral(BigInt), DecimalLiteral, DoubleLiteral, FloatLiteral, BooleanLiteral). eval_expression_bool's BinaryOp::Eq/Ne arms did a raw Rust l == r on the resulting GraphElements. Two different enum variants denoting the exact same value are never ==-equal, so e.g. FILTER((1 + 1) = 2) and FILTER(ABS(-5) = 5) both wrongly evaluated to false — confirmed by hand before filing, unrelated to any one function. </>/<=/>= were already correct, since they go through compare_graph_elements, which does normalize numerically. Added values_equal(a, b): 1." ;
+    agp:reasoningFor ghpull:210 ;
+    prov:wasGeneratedBy session:pr210 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

@@ -1,0 +1,36 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Retrospective transcript summary, backfilled for issue #355 (full backfill
+# follow-up to the #352 sample), distilling PR #237's own body/commit history --
+# no live session context was available (this PR predates or was outside this
+# backfill session), per docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md's
+# retrospective case. Timestamps are real, from `gh pr view 237 --json
+# commits,mergedAt`: startedAtTime is the first commit's authoredDate, endedAtTime is the PR's actual mergedAt.
+
+ghpull:237 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Regression test: JSON-LD named-graph POST preserves named graphs (#234)" ;
+    bl:number 237 ;
+    bl:state bl:Closed ;
+    bl:closesIssue ghissues:234 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr237 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:234 ;
+    prov:startedAtTime "2026-07-22T19:46:18Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-07-22T19:59:22Z"^^xsd:dateTime .
+
+session:pr237Summary a agp:TranscriptSummary ;
+    agp:summaryText "The actual bug fix for #234 (JSON-LD uploads via POST /{dataset}/data with no ?graph/?default param dropping named graphs) was already applied in commit 6ac8097 (\"Fixed json-ld upload named graphs\"), which is present on main: gsp_post_inner now routes UploadFormat::JsonLd through the same copy_dataset_to(...) path as TriG/NQuads in the no-param branch, instead of falling through to copy_default_graph_to(...) (which only copies default-graph quads and silently discards any named graphs). However, there was no regression test guarding this behavior for JSON-LD specifically (only TriG/N-Quads have G-8/G-9 tests for the no-param case). This PR adds fuseki_gsp_post_data_no_params_jsonld_preserves_named_graphs in sparql_endpoint/tests/fuseki_compat.rs, using a two-named-graph JSON-LD fixture (a data graph + a metadata graph, mirroring the \"Bravo/records\" integration shape described in the issue). Confirmed the new test fails (404 on both graphs) when the fix is reverted locally, and passes with the fix in place." ;
+    agp:reasoningFor ghpull:237 ;
+    prov:wasGeneratedBy session:pr237 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
