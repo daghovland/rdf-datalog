@@ -28,12 +28,25 @@ Contact: hovlanddag@gmail.com
 //! the shortest is 1s). To avoid a timing race against a 1s deadline, the
 //! "slow" query here is sized so that, uncancelled, it deterministically
 //! takes several seconds regardless of machine speed — a transitive-closure
-//! property path (`ex:p+`) over a 300,000-node chain, which takes ~5-6s to
-//! run to completion on a modest machine (measured locally; see
-//! `sparql_parser/tests/query_timeout_tests.rs` for the same pattern at a
-//! smaller scale under a 1ms budget). That leaves a wide margin over the 1s
-//! configured timeout so the deadline reliably trips mid-evaluation instead
-//! of the query racing it to completion.
+//! property path (`ex:p+`) over a 3,000,000-node chain.
+//!
+//! **Chain size history, and why it's this large:** an earlier version of
+//! this test used a 300,000-node chain, sized from a `cargo test` (debug
+//! profile) benchmark that took ~5-6s. That was large enough in a *debug*
+//! build but not in the CI `--release` build (see `test-release` in
+//! `.github/workflows/ci.yml`), where the same 300,000-node query completed
+//! in well under 1s and the test flaked to a false failure — release-mode
+//! optimisation of the transitive-closure BFS loop is dramatically faster
+//! than debug, so a size picked against a debug build gives no real
+//! guarantee about the release build the CI job actually runs (or a faster
+//! CI machine's release build specifically). The size here was instead
+//! chosen against `cargo test --release`: a 1,000,000-node chain measured
+//! ~3.6-6.6s end-to-end (including HTTP/parsing overhead) on a
+//! resource-constrained local machine, well over the 1s budget; 3,000,000
+//! is used for the actual test to leave a further safety margin for faster
+//! CI hardware, while comfortably fitting a standard GitHub Actions runner's
+//! memory (~16GB — this chain's `Datastore` measured well under 2GB
+//! resident at 1,000,000 nodes, scaling roughly linearly).
 
 mod common;
 
@@ -60,7 +73,7 @@ fn chain_turtle(len: usize) -> String {
 /// finishes, and not fall through to a generic `500`.
 #[tokio::test]
 async fn slow_transitive_closure_query_times_out_with_503() {
-    let turtle = chain_turtle(300_000);
+    let turtle = chain_turtle(3_000_000);
     let server = common::TestServer::start_writable_with_query_timeout(&turtle, 1).await;
 
     let sparql = "\
