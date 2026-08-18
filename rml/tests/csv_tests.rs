@@ -1,8 +1,13 @@
 use rml::sources::csv::CsvSource;
 use std::path::PathBuf;
 
+// The directory name incorporates a fresh UUID per call so that concurrent
+// `cargo test --workspace` runs (e.g. across multiple `git worktree`
+// checkouts, per this repo's CLAUDE.md workflow) never race on the same
+// path — same pattern used in `rml/tests/security_tests.rs`'s `temp_dir`
+// helper (see #229, #546).
 fn write_temp_csv(name: &str, content: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("rml_csv_tests");
+    let dir = std::env::temp_dir().join(format!("rml_csv_tests_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     std::fs::write(&path, content).unwrap();
