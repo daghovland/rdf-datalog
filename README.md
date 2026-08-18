@@ -380,13 +380,14 @@ image locally, environment-variable configuration, and read-only mode.
 
 ## Authentication
 
-Three tiers, selected at startup:
+Four tiers, selected at startup:
 
 | Tier | Mechanism | When to use |
 |------|-----------|-------------|
 | 0 — None (default) | No check | Local / trusted-network deployments |
 | 1 — API key | Static Bearer token (`--api-key`) | Single-tenant, simple deployments |
 | 2 — OIDC | JWT validation (`--oidc-issuer` + `--oidc-audience`) | Multi-user deployments (Azure Entra ID, Google, Keycloak, Auth0) |
+| 3 — Managed Identity | Same OIDC validation, Azure-issued tokens (no shared credentials) | Service-to-service calls inside Azure — see [deployment §Managed Identity](docs/user/deployment.md#managed-identity-tier-3) |
 
 ```sh
 dagalog --serve --data data.ttl --api-key "my-secret-key"
