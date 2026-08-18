@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# Set a GitHub issue/PR's Status field (Todo/In Progress/Done) on the
-# "Dagalog" project (user project #11) via the Projects v2 GraphQL API.
+# Set a GitHub issue/PR's Status field (Todo/Agent/In Progress/Review/Done)
+# on the "Dagalog" project (user project #11) via the Projects v2 GraphQL API.
 #
 #   bash scripts/set-issue-status.sh 381 "In Progress"
-#   bash scripts/set-issue-status.sh 381 Done
+#   bash scripts/set-issue-status.sh 381 Review
 #
-# Matching bl:WorkflowStatus (backlog/ontology/vocabulary.ttl): Status only
-# ever advances Todo -> Ready -> InProgress -> Done, where "Ready" is the
-# `ready` label (not a Status column -- the Project's Status field itself
-# only has Todo/In Progress/Done, see CLAUDE.md's Implementation workflow).
-#
-# Marking "In Progress" as early as possible (before or immediately after
-# creating the worktree, before delegating to a sub-agent) is what lets a
-# second agent scanning for ready work notice an issue is already claimed --
-# see CLAUDE.md step 1. Marking "Done" happens when the PR is opened and CI
-# is green (ready for review, not yet merged) -- NOT when the issue closes;
-# closing happens automatically on merge via "Closes #N" in the PR body.
+# Status only ever advances Todo -> Agent -> In Progress -> Review -> Done:
+# - Todo: unreviewed backlog.
+# - Agent: the user has reviewed the issue and approved an agent to start
+#   it -- this is the pickup signal agents scan for (replaces the old
+#   `ready` label as the "you may start this" gate; the `ready` label may
+#   still exist on some issues for historical/reference reasons but Status
+#   is authoritative). Set by the user, not by agents.
+# - In Progress: an agent has claimed it and is actively working (mark this
+#   as early as possible -- before or immediately after creating the
+#   worktree, before delegating to a sub-agent -- so a second agent scanning
+#   for Agent-status work never picks up the same issue).
+# - Review: the PR is open and CI is green -- ready for the user's review,
+#   NOT yet merged. This is what "Done" used to mean before this field grew
+#   a dedicated Review state; agents set this, not Done.
+# - Done: the PR has actually merged. Agents must NOT set this themselves --
+#   it reflects a real merge, which only the user performs (see CLAUDE.md's
+#   "never merge your own PR" rule). Included here only so a human/automation
+#   can use this same script for that final transition; passing it from
+#   agent code is almost certainly a mistake.
 #
 # Uses only `gh`'s own `-q` (gojq) queries -- no standalone `jq` dependency.
 
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <issue-number> <Todo|'In Progress'|Done>" >&2
+  echo "usage: $0 <issue-number> <Todo|Agent|'In Progress'|Review|Done>" >&2
   exit 1
 fi
 
@@ -34,10 +42,12 @@ field_id="PVTSSF_lAHOAAbH684BbhXVzhWRUuE"
 
 case "$status" in
   Todo) option_id="f75ad846" ;;
+  Agent) option_id="15b07ca9" ;;
   "In Progress") option_id="47fc9ee4" ;;
+  Review) option_id="e6948ef6" ;;
   Done) option_id="98236657" ;;
   *)
-    echo "error: status must be one of: Todo, 'In Progress', Done (got: $status)" >&2
+    echo "error: status must be one of: Todo, Agent, 'In Progress', Review, Done (got: $status)" >&2
     exit 1
     ;;
 esac
