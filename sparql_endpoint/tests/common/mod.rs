@@ -169,6 +169,50 @@ impl TestServer {
         }
     }
 
+    /// Start a writable server pre-loaded with Turtle data, with a custom
+    /// `max_query_timeout_secs` override (see `Config::max_query_timeout_secs`).
+    ///
+    /// Use this to test the cooperative SPARQL query-timeout `Deadline`
+    /// (issue #372) end-to-end through the real HTTP `/sparql` route at a
+    /// short, fast-to-exceed duration instead of the 30s production default.
+    /// See <https://github.com/daghovland/rdf-datalog/issues/527>.
+    pub async fn start_writable_with_query_timeout(
+        turtle: &str,
+        max_query_timeout_secs: u64,
+    ) -> Self {
+        let mut ds = Datastore::new(1024);
+        if !turtle.is_empty() {
+            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
+                .expect("test fixture turtle must parse");
+        }
+        let store = Arc::new(RwLock::new(ds));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only: false,
+            auth: AuthConfig::None,
+            data_dir: None,
+            max_query_timeout_secs,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
+    }
+
     /// Start a writable server with an explicit CORS allow-list for
     /// state-changing methods (see `Config::cors_allowed_origins`).
     pub async fn start_writable_with_cors_allowed_origins(
