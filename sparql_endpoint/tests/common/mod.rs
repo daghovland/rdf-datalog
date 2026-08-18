@@ -170,6 +170,49 @@ impl TestServer {
     }
 
     /// Start a writable server pre-loaded with Turtle data, with a custom
+    /// `max_concurrent_writes` override (see `Config::max_concurrent_writes`).
+    ///
+    /// Use this to test the write-route `GlobalConcurrencyLimitLayer` at a
+    /// small limit (e.g. 1) instead of the production default of 64.
+    pub async fn start_writable_with_max_concurrent_writes(
+        turtle: &str,
+        max_concurrent_writes: usize,
+    ) -> Self {
+        let mut ds = Datastore::new(1024);
+        if !turtle.is_empty() {
+            parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
+                .expect("test fixture turtle must parse");
+        }
+        let store = Arc::new(RwLock::new(ds));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind failed");
+        let addr = listener.local_addr().expect("local_addr");
+        let base_url = format!("http://{}", addr);
+        let config = Config {
+            bind_addr: addr,
+            base_iri: base_url.clone(),
+            read_only: false,
+            max_query_timeout_secs: 10,
+            auth: AuthConfig::None,
+            data_dir: None,
+            max_concurrent_writes,
+            ..Default::default()
+        };
+        let handle = tokio::spawn(async move {
+            serve_on_listener(store, config, listener)
+                .await
+                .expect("server error");
+        });
+        tokio::task::yield_now().await;
+        TestServer {
+            base_url,
+            client: reqwest::Client::new(),
+            _handle: handle,
+        }
+    }
+
+    /// Start a writable server pre-loaded with Turtle data, with a custom
     /// `max_query_timeout_secs` override (see `Config::max_query_timeout_secs`).
     ///
     /// Use this to test the cooperative SPARQL query-timeout `Deadline`

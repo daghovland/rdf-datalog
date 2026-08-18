@@ -18,6 +18,7 @@ ottr = { path = "../ottr" }
 log = "0.4"
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1.52", features = ["full"] }
+tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.7", features = ["cors", "timeout"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }

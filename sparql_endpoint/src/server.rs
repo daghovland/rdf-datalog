@@ -16,6 +16,7 @@ use axum::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use utoipa_swagger_ui::SwaggerUi;
@@ -87,6 +88,34 @@ pub fn build_router(state: AppState) -> Router {
     // every other route keeps 2 MB. See #274.
     let rdf_body_limit = DefaultBodyLimit::max(state.config.max_rdf_upload_bytes);
 
+    // Concurrency limit for write-class routes (#526): a single semaphore
+    // shared across every write route below, so the limit bounds *total*
+    // in-flight writes across all of them combined, not one limit per route.
+    // Enforced at `tower::Service::poll_ready`, before axum's per-route
+    // handler (and its body extractor) ever runs — see
+    // `Config::max_concurrent_writes` for the reasoning (the write path is
+    // already serialized by the datastore's `RwLock`, so this bounds
+    // in-flight request/body memory, not lock contention).
+    let write_concurrency_limit =
+        GlobalConcurrencyLimitLayer::new(state.config.max_concurrent_writes);
+
+    // `MethodRouter::layer` can't chain two separate `.layer()` calls back to
+    // back here: each call is generic over its own `NewError` (constrained
+    // only by `Error: Into<NewError>`), and with two chained calls rustc has
+    // nothing concrete to pin `NewError` to until the *whole* router
+    // expression's type is known, which is too late for local inference.
+    // Combining both middlewares into one `tower::ServiceBuilder` stack and
+    // applying that as a single `.layer()` call sidesteps it — same runtime
+    // behavior (concurrency limit outermost, so the (limit+1)th request
+    // blocks in `poll_ready` before the body-limit layer or handler ever
+    // runs), one inference step instead of two.
+    let rdf_write_layers = tower::ServiceBuilder::new()
+        .layer(write_concurrency_limit.clone())
+        .layer(rdf_body_limit);
+    let rml_write_layers = tower::ServiceBuilder::new()
+        .layer(write_concurrency_limit.clone())
+        .layer(rml_body_limit);
+
     // Request-level timeout (#367): bounds how long any single request may
     // occupy a connection. `TimeoutLayer` is response-preserving (it wraps
     // an Infallible service and stays Infallible), returning a plain 408
@@ -139,7 +168,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(crate::frontend::serve_frontend))
         .route(
             "/upload",
-            post(crate::upload::upload_turtle).layer(rdf_body_limit),
+            post(crate::upload::upload_turtle).layer(rdf_write_layers.clone()),
         )
         // ── VQS productive-extension index (query-builder support) ──────────
         .route(
@@ -170,7 +199,7 @@ pub fn build_router(state: AppState) -> Router {
                 .put(crate::graph_store::gsp_put)
                 .post(crate::graph_store::gsp_post)
                 .delete(crate::graph_store::gsp_delete)
-                .layer(rdf_body_limit),
+                .layer(rdf_write_layers.clone()),
         )
         // ── Direct graph identification (§4.1) ───────────────────────────────
         .route(
@@ -180,7 +209,7 @@ pub fn build_router(state: AppState) -> Router {
                 .put(crate::graph_store::direct_gsp_put)
                 .post(crate::graph_store::direct_gsp_post)
                 .delete(crate::graph_store::direct_gsp_delete)
-                .layer(rdf_body_limit),
+                .layer(rdf_write_layers.clone()),
         )
         // ── Admin API (`/$/...`) ─────────────────────────────────────────────
         .route(
@@ -225,12 +254,12 @@ pub fn build_router(state: AppState) -> Router {
         // ── Per-dataset SHACL validation (`/{name}/shacl`) ───────────────────
         .route(
             "/{name}/shacl",
-            post(crate::shacl_endpoint::dataset_shacl_post).layer(rdf_body_limit),
+            post(crate::shacl_endpoint::dataset_shacl_post).layer(rdf_write_layers.clone()),
         )
         // ── Per-dataset RML mapping (`/{name}/rml`) ──────────────────────────
         .route(
             "/{name}/rml",
-            post(crate::rml_endpoint::dataset_rml_post).layer(rml_body_limit),
+            post(crate::rml_endpoint::dataset_rml_post).layer(rml_write_layers.clone()),
         )
         // ── Stateless RML mapping (`/rml/map`) — apply a mapping, return RDF ──
         .route(
@@ -255,7 +284,7 @@ pub fn build_router(state: AppState) -> Router {
                 .put(crate::dataset_routes::dataset_data_put)
                 .post(crate::dataset_routes::dataset_data_post)
                 .delete(crate::dataset_routes::dataset_data_delete)
-                .layer(rdf_body_limit),
+                .layer(rdf_write_layers.clone()),
         )
         .route(
             "/{name}/get",
