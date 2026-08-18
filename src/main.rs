@@ -151,6 +151,17 @@ struct Cli {
     )]
     request_timeout: u64,
 
+    /// Maximum number of write-class requests (`/upload`, `/rdf-graph-store`,
+    /// `/rdf-graphs/*`, `/{name}/data`, `/{name}/rml`, `/{name}/shacl`) that
+    /// may be in flight at once, across all of them combined
+    #[arg(
+        long = "max-concurrent-writes",
+        value_name = "N",
+        default_value_t = 64,
+        env = "DAGALOG_MAX_CONCURRENT_WRITES"
+    )]
+    max_concurrent_writes: usize,
+
     /// Origin(s) allowed to make cross-origin state-changing requests
     /// (POST/PUT/DELETE — SPARQL Update, Graph Store Protocol writes, admin
     /// API), repeatable or comma-separated. Safe/read-only cross-origin
@@ -486,6 +497,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_rdf_upload_bytes: cli.max_rdf_upload_bytes,
             max_rml_upload_bytes: cli.max_rml_upload_bytes,
             request_timeout_secs: cli.request_timeout,
+            max_concurrent_writes: cli.max_concurrent_writes,
             initial_rules: serve_rules,
             network_policy,
             cors_allowed_origins: cli.cors_allow_origin.clone(),

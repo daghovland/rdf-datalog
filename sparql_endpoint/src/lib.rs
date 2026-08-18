@@ -263,6 +263,34 @@ pub struct Config {
     /// Configurable via `--request-timeout` / `DAGALOG_REQUEST_TIMEOUT`.
     /// See [#367](https://github.com/daghovland/rdf-datalog/issues/367).
     pub request_timeout_secs: u64,
+    /// Maximum number of write-class requests
+    /// (`POST /upload`, `/rdf-graph-store`, `/rdf-graphs/*`, `/{name}/data`,
+    /// `/{name}/rml`, `/{name}/shacl`) that may be in flight at once.
+    ///
+    /// The write path is already serialized by the single
+    /// `Arc<RwLock<Datastore>>`, so this does **not** bound lock contention —
+    /// only one write ever holds the lock at a time regardless of this
+    /// setting. What it *does* bound is a concrete memory-multiplication
+    /// risk: every write route buffers its whole request body (up to
+    /// `max_rdf_upload_bytes` / `max_rml_upload_bytes`, 64 MiB each by
+    /// default) into memory before it ever reaches the lock, so N concurrent
+    /// large uploads multiply peak memory by N even though they will
+    /// serialize on the lock one at a time. Applied via a single shared
+    /// `tower::limit::GlobalConcurrencyLimitLayer` across all write routes
+    /// (one semaphore, not one per route), so the limit is on *total*
+    /// in-flight writes across all of them combined.
+    ///
+    /// Enforcement happens at the `tower::Service::poll_ready` layer, before
+    /// axum's per-route handler (and therefore its body extractor) ever
+    /// runs: the (limit+1)th concurrent write request's body is not read at
+    /// all until an earlier one completes and releases its permit.
+    ///
+    /// Default: 64 — chosen to bound worst-case peak memory (64 × 64 MiB ≈
+    /// 4 GiB) without throttling ordinary bursty traffic from a single
+    /// deployment. Configurable via `--max-concurrent-writes` /
+    /// `DAGALOG_MAX_CONCURRENT_WRITES`.
+    /// See [#526](https://github.com/daghovland/rdf-datalog/issues/526).
+    pub max_concurrent_writes: usize,
     /// Datalog rules for incremental reasoning.
     ///
     /// When non-empty, an [`IncrementalReasoner`] is created from these rules
@@ -328,6 +356,7 @@ impl Default for Config {
             max_rml_upload_bytes: 64 * 1024 * 1024,
             max_rdf_upload_bytes: 64 * 1024 * 1024,
             request_timeout_secs: 30,
+            max_concurrent_writes: 64,
             initial_rules: Vec::new(),
             network_policy: NetworkPolicy::Deny,
             cors_allowed_origins: Vec::new(),
