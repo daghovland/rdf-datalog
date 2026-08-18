@@ -95,13 +95,14 @@ CLI flags take precedence over environment variables.
 
 ## Authentication
 
-The server supports three authentication tiers, selected at startup:
+The server supports four authentication tiers, selected at startup:
 
 | Tier | When to use |
 |---|---|
 | 0 — None (default) | Local / trusted-network deployments |
 | 1 — API key | Single-tenant, simple deployments |
 | 2 — OIDC / JWT | Multi-user deployments (Azure Entra ID, Google, Keycloak, …) |
+| 3 — Managed Identity | Service-to-service calls inside Azure (no shared credentials) |
 
 ### No authentication (Tier 0)
 
@@ -226,6 +227,69 @@ curl -H "Authorization: Bearer $TOKEN" \
 **Browser sign-in (MSAL.js)** — set `--oidc-browser-client-id` to the app registration's
 client ID to enable a *Sign in* button in the browser UI; MSAL.js then handles the
 interactive popup flow and token refresh automatically.
+
+### Managed Identity (Tier 3)
+
+For service-to-service calls inside Azure — one Azure resource (a Container App, a
+Function, an AKS pod) calling dagalog without any shared secret. Managed Identity is
+relevant in two directions:
+
+**Incoming — dagalog as a resource server.** A calling service authenticates with its own
+Managed Identity and obtains a token for `api://dagalog` from the Azure Instance Metadata
+Service (IMDS) instead of a client secret:
+
+```sh
+# Inside the Azure-hosted caller:
+curl "http://169.254.169.254/metadata/identity/oauth2/token?\
+      api-version=2018-02-01&resource=api://dagalog" \
+     -H Metadata:true
+```
+
+The resulting token is a standard Entra ID JWT — dagalog validates it with the exact same
+`--oidc-issuer`/`--oidc-audience` configuration as [Azure Entra ID](#azure-entra-id) above,
+no separate flags or code path. Two Entra ID setup details are easy to miss, and both fail
+closed (401/403) rather than erroring loudly, which can look like a dagalog bug if you
+don't know to check them:
+
+1. **Token issuer version.** Classic IMDS tokens (the `resource=` form above) carry the
+   **v1.0** issuer `https://sts.windows.net/<tenant-id>/` by default, not the v2.0 issuer
+   dagalog expects from `--oidc-issuer https://login.microsoftonline.com/<tenant-id>/v2.0`.
+   Pick one fix:
+   - **Preferred:** in the dagalog app registration (the *resource* app, not the caller) →
+     *Manifest*, set `api.requestedAccessTokenVersion` (or `accessTokenAcceptedVersion` on
+     older portal views) to `2`. All tokens issued for `api://dagalog` then carry the v2.0
+     issuer and the `--oidc-issuer .../v2.0` form above works unchanged.
+   - **Alternative**, if you can't edit the manifest (e.g. a shared/multi-tenant app):
+     point dagalog at the v1.0 issuer instead — `--oidc-issuer
+     https://sts.windows.net/<tenant-id>/`. OIDC discovery works against this issuer too,
+     so no `--oidc-jwks-uri` override is needed; audience and roles-claim config are
+     unaffected.
+2. **Role assignment for a Managed Identity doesn't go through *App registrations*** — a
+   Managed Identity has no app registration entry, so the Tier 2 walkthrough above (*Users
+   and groups*, *API permissions*) doesn't reach it. Assign the app role via Microsoft
+   Graph instead:
+   ```sh
+   # $MI_OBJECT_ID: the Managed Identity's service principal object ID
+   #   (Azure portal -> the calling resource -> Identity -> Object (principal) ID)
+   # $DAGALOG_SP_ID: dagalog app registration's service principal object ID
+   # $ROLE_ID: the app role's ID (from dagalog's app manifest "appRoles")
+   az rest --method POST \
+     --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$MI_OBJECT_ID/appRoleAssignments" \
+     --body "{\"principalId\": \"$MI_OBJECT_ID\", \"resourceId\": \"$DAGALOG_SP_ID\", \"appRoleId\": \"$ROLE_ID\"}"
+   ```
+   Without this, the token is valid (issuer/audience/signature all check out) but carries
+   no `roles` claim, and every request gets `403 InsufficientRole` — easy to mistake for a
+   misconfigured `--oidc-roles-claim`.
+
+The `OidcConfig::azure(tenant_id, audience)` convenience constructor (see
+[Library usage](#library-usage) below) documents which token version it expects.
+
+**Outgoing — dagalog calling Azure services.** The other direction — dagalog itself using
+its own Managed Identity to reach an Azure service, e.g. reading/writing persistence
+snapshots to Azure Blob Storage instead of local disk — is not yet implemented; it depends
+on persistence backends other than local disk, which are separate future work. See
+[`docs/plans/AUTH.md`](../plans/AUTH.md#outgoing-dagalog-calling-azure-services) for the
+design sketch.
 
 #### Google
 
