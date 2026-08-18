@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/495-rml-thiserror).
+
+ghpull:547 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rml: convert hand-rolled RmlError to #[derive(thiserror::Error)]" ;
+    bl:number 547 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:495 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr547 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:495 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-18T02:37:54Z"^^xsd:dateTime .
+
+session:pr547Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #495 asked to finish the thiserror standardization that #462/PR #496 deliberately deferred: rml::RmlError was left out there as the riskiest of the four hand-rolled error enums (11 variants, several #[source]-carrying wrapped errors, a filename-truncation helper reused across Display arms, and an existing From<std::io::Error>). Read PR #496's actual diff and provenance/summaries/pr-496.ttl first as the precedent (found via git log --all | grep -i 462, since the provenance query tool indexes it under the merged PR number 496, not the issue number 462) — none of its four converted types needed #[source]/#[from], so this PR is where the crate's #[source]/#[from] convention (already used in ottr/src/error.rs) actually gets tested against a real multi-variant case. Every #[error(...)] string was transcribed verbatim from the original Display match arms, using thiserror's documented arbitrary-expression syntax (path_file_name(.file), with the leading dot required to reference a field from an extra format argument) to preserve the Csv/Json/Xml filename-truncation behavior exactly. The one non-mechanical decision: RmlError::Xml's wrapped sxd_document::parser::Error field had to be renamed from source to xml_error, because thiserror unconditionally treats any field literally named source as the Error::source() value (confirmed by reading thiserror-impl's prop.rs::source_field, which has no attribute to opt out) — but the original hand-rolled source() impl deliberately returned None for Xml (only Io/Csv/Json/Sql/Postgres returned Some). Preserving that asymmetry required the rename plus updating the one construction site in rml/src/sources/xml.rs. No existing test in the crate asserted on RmlError's Display or source() output at all, so a new rml_error_tests module (10 tests) was added to lock in exact Display text and source()-presence/absence per variant as the actual proof of 'no behavior change', rather than just asserting it in prose. Full cargo fmt/clippy/test --workspace all passed clean; one intermittent test failure (rml::xml_source_nested_iterator) on a first run turned out to be a pre-existing, unrelated race — a fixed shared temp-file path colliding with another worktree's concurrent cargo test --workspace on the same machine (the same class of bug PR #229 already fixed for security_tests.rs, just not for this file) — confirmed unrelated by reproducing it only under concurrent load and passing standalone, then filed as follow-up issue #546 rather than folding an unrelated fix into this PR." ;
+    agp:reasoningFor ghpull:547 ;
+    prov:wasGeneratedBy session:pr547 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

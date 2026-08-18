@@ -160,7 +160,7 @@ impl XmlSource {
             log::error!("XML parse error in {}: {e}", self.path.display());
             RmlError::Xml {
                 file: self.path.clone(),
-                source: e,
+                xml_error: e,
             }
         })?;
         let doc = package.as_document();
