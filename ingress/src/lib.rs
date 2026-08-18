@@ -5,12 +5,16 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
+//! Core RDF type hierarchy (`IriReference`, `RdfResource`, `RdfLiteral`, `GraphElement`)
+//! and vocabulary constants, shared by all crates in the workspace.
+#![warn(missing_docs)]
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use num_bigint::BigInt;
 use ordered_float::OrderedFloat;
 use rust_decimal::Decimal;
 use std::fmt;
 
+/// A resolved (or unresolved) IRI, stored as a plain string.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct IriReference(pub String);
 
@@ -20,15 +24,20 @@ impl fmt::Display for IriReference {
     }
 }
 
+/// RDF/RDFS/OWL/XSD namespace IRI constants.
 mod namespaces;
 pub use namespaces::*;
 
+/// Gating policy for operations that require an outbound network fetch.
 mod network_policy;
 pub use network_policy::NetworkPolicy;
 
+/// An RDF resource: a named IRI node or an anonymous blank node.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RdfResource {
+    /// A named resource identified by an IRI.
     Iri(IriReference),
+    /// A blank node identified by its assigned numeric ID.
     AnonymousBlankNode(u32),
 }
 
@@ -47,24 +56,41 @@ impl fmt::Display for RdfResource {
     }
 }
 
+/// An RDF literal value, one variant per supported datatype.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RdfLiteral {
+    /// A plain string with no datatype or language tag.
     LiteralString(String),
+    /// An `xsd:boolean` value.
     BooleanLiteral(bool),
+    /// An `xsd:decimal` value.
     DecimalLiteral(Decimal),
+    /// An `xsd:float` value.
     FloatLiteral(OrderedFloat<f64>),
+    /// An `xsd:double` value.
     DoubleLiteral(OrderedFloat<f64>),
+    /// An `xsd:duration` value.
     DurationLiteral(Duration),
+    /// An `xsd:integer` value.
     IntegerLiteral(BigInt),
+    /// An `xsd:dateTime` value.
     DateTimeLiteral(DateTime<Utc>),
+    /// An `xsd:time` value.
     TimeLiteral(NaiveTime),
+    /// An `xsd:date` value.
     DateLiteral(NaiveDate),
+    /// A language-tagged string (`rdf:langString`).
     LangLiteral {
+        /// The BCP 47 language tag.
         lang: String,
+        /// The literal's lexical value.
         literal: String,
     },
+    /// A literal with an explicit, non-built-in datatype IRI.
     TypedLiteral {
+        /// The literal's datatype IRI.
         type_iri: IriReference,
+        /// The literal's lexical value.
         literal: String,
     },
 }
@@ -98,14 +124,20 @@ impl fmt::Display for RdfLiteral {
 /// carry it without introducing a circular dependency.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct TripleTermKey {
+    /// Interned `GraphElementId` of the embedded triple's subject.
     pub subject: u32,
+    /// Interned `GraphElementId` of the embedded triple's predicate.
     pub predicate: u32,
+    /// Interned `GraphElementId` of the embedded triple's object.
     pub obj: u32,
 }
 
+/// A value that can be interned and assigned a `GraphElementId`: a resource, a literal, or a triple term.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum GraphElement {
+    /// A named or blank-node RDF resource.
     NodeOrEdge(RdfResource),
+    /// An RDF literal.
     GraphLiteral(RdfLiteral),
     /// RDF 1.2 embedded triple (triple term): `<<( subject predicate object )>>`.
     ///
@@ -132,12 +164,20 @@ impl fmt::Display for GraphElement {
     }
 }
 
+/// A namespace prefix declaration, e.g. `PREFIX ex: <http://example.org/>`.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum PrefixDeclaration {
-    PrefixDefinition { name: String, iri: IriReference },
+    /// Maps a short prefix `name` to a full `iri`.
+    PrefixDefinition {
+        /// The prefix's short name (without the trailing colon).
+        name: String,
+        /// The IRI the prefix expands to.
+        iri: IriReference,
+    },
 }
 
 impl PrefixDeclaration {
+    /// Returns the prefix's short name and its expanded IRI.
     pub fn try_get_prefix_name(&self) -> (&str, &IriReference) {
         match self {
             PrefixDeclaration::PrefixDefinition { name, iri } => (name, iri),
@@ -145,17 +185,24 @@ impl PrefixDeclaration {
     }
 }
 
+/// The identity of an ontology: unnamed, named, or named with a version IRI.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum OntologyVersion {
+    /// No ontology IRI was declared.
     UnNamedOntology,
+    /// An ontology IRI with no separate version IRI.
     NamedOntology(IriReference),
+    /// An ontology IRI paired with a distinct version IRI.
     VersionedOntology {
+        /// The ontology's IRI.
         ontology_iri: IriReference,
+        /// The IRI of this specific version of the ontology.
         version_iri: IriReference,
     },
 }
 
 impl OntologyVersion {
+    /// Returns the version IRI, if this ontology declares one.
     pub fn try_get_ontology_version_iri(&self) -> Option<&IriReference> {
         match self {
             OntologyVersion::NamedOntology(_) => None,
@@ -164,6 +211,7 @@ impl OntologyVersion {
         }
     }
 
+    /// Returns the ontology IRI, if this ontology is named.
     pub fn try_get_ontology_iri(&self) -> Option<&IriReference> {
         match self {
             OntologyVersion::NamedOntology(iri) => Some(iri),

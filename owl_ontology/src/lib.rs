@@ -5,8 +5,12 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 Contact: hovlanddag@gmail.com
 */
+//! Pure OWL 2 data types: class/property expressions, data ranges, axioms, and ontologies.
+#![warn(missing_docs)]
 
+/// OWL 2 axiom and expression types (`Axiom`, `ClassExpression`, `ObjectPropertyExpression`, `DataRange`).
 pub mod axioms;
+/// The `Ontology` and `OntologyDocument` container types.
 pub mod ontology;
 
 pub use axioms::*;

@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:545 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "ingress, owl_ontology: add one-line /// docs to public API, enforce with #![warn(missing_docs)]" ;
+    bl:number 545 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:485 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr545 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:485 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-18T02:31:36Z"^^xsd:dateTime .
+
+session:pr545Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #485 was a follow-up to #467/#486, which added one-line /// docs and #![warn(missing_docs)] to dag_rdf's public API but explicitly scoped ingress and owl_ontology out to keep that PR focused. This PR closes the gap: every public type, function, const, enum variant, and struct field in ingress/src/{lib,namespaces,network_policy}.rs and owl_ontology/src/{lib,axioms,ontology}.rs now has a doc comment, and both crates' lib.rs gain #![warn(missing_docs)]. Before writing anything, checked prior provenance via related_to_file on dag_rdf/src/lib.rs and related_to_crate on ingress and owl_ontology -- none of the hits documented the actual doc-comment convention itself (they covered unrelated features: triple terms, network policy variants, TBox retraction), so the real precedent was found directly via git log for the #467/#486 commit and read as the style reference rather than inventing a new convention. Matched its established terse one-liner-per-item style throughout, including for owl_ontology's large tuple-variant enums (Axiom, ClassExpression, Assertion, etc.) where each variant needed a one-line gloss of what it represents rather than per-field docs (tuple fields aren't linted by missing_docs, only named struct fields are). ingress/src/namespaces.rs has ~90 flat IRI constants; rather than write each by hand, used a small Python pass to derive a first-draft doc ('The IRI for <local-name>.') from each constant's URL fragment, then manually fixed the handful of cases the script couldn't handle correctly: the three bare namespace constants (RDF, RDFS, OWL) whose IRIs end in '#' and so produced an empty fragment, and four multi-line const declarations (OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_NEGATIVE_PROPERTY_ASSERTION, OWL_MIN_QUALIFIED_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY) that the single-line regex didn't match. ingress/src/network_policy.rs turned out to already be fully documented from an earlier PR, so it needed no changes at all. After the doc pass, `RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --no-deps --document-private-items` still failed on TripleTermKey's three struct fields (subject/predicate/obj) -- these are named struct fields, not tuple-variant fields, so they do need individual docs -- fixed by documenting each as identifying one component of the embedded triple. Full quality gate (fmt, clippy -D warnings, cargo test --workspace, and the rustdoc lint) passed clean after that fix." ;
+    agp:reasoningFor ghpull:545 ;
+    prov:wasGeneratedBy session:pr545 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
