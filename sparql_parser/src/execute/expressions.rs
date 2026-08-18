@@ -490,23 +490,34 @@ pub(crate) fn eval_expression_bool(
             // fail is if a *nested* deadline-bearing evaluation propagated an
             // error into it — which cannot happen here, since `None` never
             // installs an expiring deadline anywhere downstream either.
-            let sols = eval_components(
+            //
+            // Only whether `inner` has *any* solution matters here (never
+            // which one, or how many) and the result is discarded except for
+            // `is_empty()` — no bindings from `inner` leak into `sub`. So,
+            // like `Query::Ask` (issue #536), budget the evaluation to a
+            // single row: an unselective `inner` pattern stops scanning after
+            // the first match instead of enumerating every match.
+            let sols = eval_components_budgeted(
                 inner,
                 vec![sub.clone()],
                 datastore,
                 (*active_graph).clone(),
+                Some(1),
                 &Deadline::none(),
             )
             .unwrap_or_default();
             Some(!sols.is_empty())
         }
         Expression::NotExists(inner) => {
-            // See the comment on the `Exists` arm above.
-            let sols = eval_components(
+            // See the comment on the `Exists` arm above (including the
+            // #536 budget-of-1 short-circuit — inverting the boolean does
+            // not change how many solutions are needed to decide it).
+            let sols = eval_components_budgeted(
                 inner,
                 vec![sub.clone()],
                 datastore,
                 (*active_graph).clone(),
+                Some(1),
                 &Deadline::none(),
             )
             .unwrap_or_default();
