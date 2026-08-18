@@ -357,12 +357,29 @@ fn execute_inner(
             where_clause,
             dataset,
         } => {
+            // ASK only needs to know whether at least one solution exists, so
+            // budget the evaluation to a single row (issue #536) instead of
+            // materialising the full solution set just to check
+            // `!solutions.is_empty()`. This reuses the exact same
+            // `budget`/quad-limit machinery `LIMIT` already relies on (issue
+            // #165, see `eval_components_budgeted`'s doc comment): the budget
+            // reaches the BGP arm's underlying index scan
+            // (`Datastore::quads_matching_limited`) via a lazy `.take()`, so
+            // an unselective top-level BGP genuinely stops scanning after the
+            // first match rather than enumerating every match and discarding
+            // the rest. As documented there, the budget only applies to the
+            // *last* top-level component — earlier components in a
+            // multi-component WHERE clause (e.g. a join of several triple
+            // patterns before a final `FILTER`) are still fully materialised,
+            // so this is a partial, honestly-scoped short-circuit rather than
+            // one that reaches through every join stage.
             let initial: Vec<PartialSub> = vec![HashMap::new()];
-            let solutions = eval_components(
+            let solutions = eval_components_budgeted(
                 where_clause,
                 initial,
                 datastore,
                 dataset_active_graph(dataset, datastore),
+                Some(1),
                 deadline,
             )?;
             Ok(QueryResult::Ask(!solutions.is_empty()))
