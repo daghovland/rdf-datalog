@@ -959,6 +959,242 @@ mod tests {
         );
     }
 
+    /// Regression test for [#540](https://github.com/daghovland/rdf-datalog/issues/540):
+    /// deleting a base fact must cascade through a derived-depends-on-derived
+    /// chain of depth ≥ 3, not just a single hop.
+    ///
+    /// Setup: a single base fact `p(a,b)` and a strictly linear chain of
+    /// single-body-atom rules `p2 :- p`, `p3 :- p2`, `p4 :- p3`. Each derived
+    /// quad has exactly one witness (its immediate predecessor in the chain),
+    /// so the reverse witness index cannot short-circuit through a
+    /// multi-witness derivation the way transitivity's rule can — the only
+    /// way `backward_phase` can reach `p4(a,b)` is by walking
+    /// `p(a,b) → p2(a,b) → p3(a,b) → p4(a,b)`, three hops deep.
+    ///
+    /// Deleting `p(a,b)` must retract the entire chain.
+    #[test]
+    fn test_delete_base_fact_cascades_deep_chain() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let p = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/chain_p".to_string(),
+            )));
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/chain_p2".to_string(),
+            )));
+        let p3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/chain_p3".to_string(),
+            )));
+        let p4 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/chain_p4".to_string(),
+            )));
+
+        let fact_p = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_p);
+
+        // Single-body-atom "chain link" rule: { ?x from ?y } => { ?x to ?y }
+        let chain_rule = |from: u32, to: u32| Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(to),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(from),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let mut reasoner = IncrementalReasoner::new(
+            vec![chain_rule(p, p2), chain_rule(p2, p3), chain_rule(p3, p4)],
+            &mut ds,
+        )
+        .unwrap();
+
+        let fact_p2 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p2,
+            obj: b,
+        };
+        let fact_p3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p3,
+            obj: b,
+        };
+        let fact_p4 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p4,
+            obj: b,
+        };
+        assert!(ds.named_graphs.contains(&fact_p2), "p2 should be derived");
+        assert!(ds.named_graphs.contains(&fact_p3), "p3 should be derived");
+        assert!(ds.named_graphs.contains(&fact_p4), "p4 should be derived");
+
+        // Delete the root base fact: the whole chain should cascade away.
+        reasoner.apply_deletions(&mut ds, &[fact_p]).unwrap();
+
+        assert!(
+            !ds.named_graphs.contains(&fact_p),
+            "deleted base fact p should be gone"
+        );
+        assert!(
+            !ds.named_graphs.contains(&fact_p2),
+            "p2 should be retracted (depth-1 cascade)"
+        );
+        assert!(
+            !ds.named_graphs.contains(&fact_p3),
+            "p3 should be retracted (depth-2 cascade)"
+        );
+        assert!(
+            !ds.named_graphs.contains(&fact_p4),
+            "p4 should be retracted (depth-3 cascade)"
+        );
+    }
+
+    /// Regression test for [#540](https://github.com/daghovland/rdf-datalog/issues/540):
+    /// a "deep diamond" — two derivation paths of *different* depths converging
+    /// on the same fact. Deleting the support for the *shorter* path must not
+    /// remove the fact, because `forward_phase`'s full re-derivation still
+    /// finds it via the surviving longer path.
+    ///
+    /// Setup: `final(a,b)` is derivable two ways:
+    /// - short path (depth 1): `short(a,b)` directly implies `final(a,b)`.
+    /// - long path (depth 4): `longbase(a,b) → long1 → long2 → long3 → final`.
+    ///
+    /// Deleting `short(a,b)` puts `final(a,b)` in PD (it has a derivation
+    /// witnessing off `short(a,b)`), but the long chain's intermediate facts
+    /// are untouched, so `forward_phase` re-derives `final(a,b)` via
+    /// `long3(a,b)`.
+    #[test]
+    fn test_delete_base_fact_keeps_deep_diamond_via_longer_path() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let short = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/short".to_string(),
+            )));
+        let longbase = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/longbase".to_string(),
+            )));
+        let long1 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/long1".to_string(),
+            )));
+        let long2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/long2".to_string(),
+            )));
+        let long3 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/long3".to_string(),
+            )));
+        let final_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/final".to_string(),
+            )));
+
+        let fact_short = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: short,
+            obj: b,
+        };
+        let fact_longbase = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: longbase,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_short);
+        ds.named_graphs.add_quad(fact_longbase);
+
+        // Single-body-atom "chain link" rule: { ?x from ?y } => { ?x to ?y }
+        let chain_rule = |from: u32, to: u32| Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(to),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(from),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let mut reasoner = IncrementalReasoner::new(
+            vec![
+                chain_rule(short, final_pred), // depth-1 path
+                chain_rule(longbase, long1),   // depth-4 path, link 1
+                chain_rule(long1, long2),      // link 2
+                chain_rule(long2, long3),      // link 3
+                chain_rule(long3, final_pred), // link 4: converges on `final`
+            ],
+            &mut ds,
+        )
+        .unwrap();
+
+        let fact_final = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: final_pred,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&fact_final),
+            "final should be derived before deletion"
+        );
+
+        // Delete the short path's only support: the long path should keep `final` alive.
+        reasoner.apply_deletions(&mut ds, &[fact_short]).unwrap();
+
+        assert!(
+            !ds.named_graphs.contains(&fact_short),
+            "deleted base fact short should be gone"
+        );
+        assert!(
+            ds.named_graphs.contains(&fact_final),
+            "final should survive: still derivable via the longer surviving path"
+        );
+        // The long chain's intermediate facts are untouched by this deletion.
+        let fact_long3 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: long3,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&fact_long3),
+            "long3 (unrelated to the deleted short path) should remain"
+        );
+    }
+
     /// Inserting a new base fact that completes a derivation chain must add the
     /// derived facts produced by that chain.
     ///
