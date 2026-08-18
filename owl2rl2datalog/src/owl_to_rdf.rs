@@ -57,15 +57,16 @@ use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
     IriReference, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_CLASS,
     OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH,
-    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY,
+    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY,
     OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL,
     OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY,
     OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST,
     RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
 };
 use owl_ontology::{
-    Assertion, Axiom, ClassAxiom, ClassExpression, DataPropertyAxiom, DataRange, Entity, FullIri,
-    Individual, ObjectPropertyAxiom, ObjectPropertyExpression, Ontology, SubPropertyExpression,
+    Assertion, Axiom, ClassAxiom, ClassExpression, DataProperty, DataPropertyAxiom, DataRange,
+    Entity, FullIri, Individual, ObjectPropertyAxiom, ObjectPropertyExpression, Ontology,
+    SubPropertyExpression,
 };
 
 /// What [`owl2rdf`] did, and what it could not do.
@@ -311,6 +312,9 @@ impl<'a> Translator<'a> {
             Axiom::AxiomObjectPropertyAxiom(prop_axiom) => self.object_property_axiom(prop_axiom),
             Axiom::AxiomDataPropertyAxiom(prop_axiom) => self.data_property_axiom(prop_axiom),
             Axiom::AxiomAssertion(assertion) => self.assertion(assertion),
+            Axiom::AxiomHasKey(_, class_expr, obj_props, data_props) => {
+                self.has_key(axiom, class_expr, obj_props, data_props)
+            }
             other => self.skip("axiom", other),
         }
     }
@@ -514,6 +518,38 @@ impl<'a> Translator<'a> {
                 self.triple_p(ids[0], OWL_DIFFERENT_FROM, ids[1]);
             }
             other => self.skip("assertion", other),
+        }
+    }
+
+    /// `HasKey(C (OPE1 ... OPEm) (DPE1 ... DPEn))` becomes
+    /// `T(C) owl:hasKey T(SEQ OPE1 ... OPEm DPE1 ... DPEn)`, per the W3C
+    /// mapping's `HasKey` row (<https://www.w3.org/TR/owl2-mapping-to-rdf/>).
+    /// Unlike some other axiom-to-RDF mappings, `T(C)` for a named class is
+    /// simply the class IRI — no blank node is needed for the subject side,
+    /// only for the `rdf:List` cells encoding the key properties.
+    ///
+    /// A `C` that is itself a complex (non-atomic) class expression needs the
+    /// general blank-node structural encoding for class expressions, deferred
+    /// to [#509](https://github.com/daghovland/rdf-datalog/issues/509); such
+    /// an axiom is reported as skipped rather than translated.
+    fn has_key(
+        &mut self,
+        axiom: &Axiom,
+        class_expr: &ClassExpression,
+        obj_props: &[ObjectPropertyExpression],
+        data_props: &[DataProperty],
+    ) {
+        match (
+            self.named_class(class_expr),
+            self.named_object_properties(obj_props),
+        ) {
+            (Some(class_id), Some(obj_ids)) => {
+                let mut key_ids = obj_ids;
+                key_ids.extend(data_props.iter().map(|p| self.full_iri(p)));
+                let list_head = self.rdf_list(&key_ids);
+                self.triple_p(class_id, OWL_HAS_KEY, list_head);
+            }
+            _ => self.skip("HasKey with complex class expression", axiom),
         }
     }
 }
@@ -929,6 +965,68 @@ mod tests {
     }
 
     const EX_HAS_PET: &str = "http://example.org/hasPet";
+
+    /// `HasKey` on a named class with a single object property key becomes
+    /// `<class> owl:hasKey (<prop>)`, per the W3C mapping's
+    /// `T(C) owl:hasKey T(SEQ OPE1 ... DPEn)` rule
+    /// (<https://www.w3.org/TR/owl2-mapping-to-rdf/>). Tracked in
+    /// [#511](https://github.com/daghovland/rdf-datalog/issues/511).
+    #[test]
+    fn has_key_on_named_class_with_single_object_property() {
+        let (ds, report) = translate(vec![Axiom::AxiomHasKey(
+            vec![],
+            class("Person"),
+            vec![obj_prop("hasSsn")],
+            vec![],
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head =
+            object_of(&ds, &ex("Person"), OWL_HAS_KEY).expect("owl:hasKey triple must exist");
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("hasSsn")]);
+        // owl:hasKey + 1 list cell (rdf:first + rdf:rest) = 3 triples
+        assert_eq!(report.triples_added, 3);
+    }
+
+    /// A mix of object and data properties: the `rdf:List` must preserve
+    /// declared order, object properties first then data properties, per the
+    /// spec's `SEQ OPE1 ... OPEm DPE1 ... DPEn` ordering.
+    #[test]
+    fn has_key_with_mixed_object_and_data_properties_preserves_order() {
+        let (ds, report) = translate(vec![Axiom::AxiomHasKey(
+            vec![],
+            class("Person"),
+            vec![obj_prop("hasSsn"), obj_prop("hasPassport")],
+            vec![full("firstName"), full("lastName")],
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head =
+            object_of(&ds, &ex("Person"), OWL_HAS_KEY).expect("owl:hasKey triple must exist");
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![
+                ex("hasSsn"),
+                ex("hasPassport"),
+                ex("firstName"),
+                ex("lastName"),
+            ]
+        );
+    }
+
+    /// `HasKey` on a complex (non-named) class expression needs the general
+    /// blank-node structural encoding — deferred to
+    /// [#509](https://github.com/daghovland/rdf-datalog/issues/509) — and
+    /// must be reported as skipped rather than partially/incorrectly emitted.
+    #[test]
+    fn has_key_on_complex_class_expression_is_reported_not_silently_dropped() {
+        let (_ds, report) = translate(vec![Axiom::AxiomHasKey(
+            vec![],
+            ClassExpression::ObjectUnionOf(vec![class("Person"), class("Organization")]),
+            vec![obj_prop("hasSsn")],
+            vec![],
+        )]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
+    }
 
     /// Axioms whose RDF encoding is not implemented yet must be *reported*,
     /// not silently dropped — the reporting half of

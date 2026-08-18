@@ -118,6 +118,8 @@ pub const OWL_TRANSITIVE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#Transit
 pub const OWL_DISJOINT_WITH: &str = "http://www.w3.org/2002/07/owl#disjointWith";
 /// The IRI for disjointUnionOf.
 pub const OWL_DISJOINT_UNION_OF: &str = "http://www.w3.org/2002/07/owl#disjointUnionOf";
+/// The IRI for hasKey.
+pub const OWL_HAS_KEY: &str = "http://www.w3.org/2002/07/owl#hasKey";
 /// The IRI for NegativePropertyAssertion.
 pub const OWL_NEGATIVE_PROPERTY_ASSERTION: &str =
     "http://www.w3.org/2002/07/owl#NegativePropertyAssertion";
