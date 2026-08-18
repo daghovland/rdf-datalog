@@ -11,13 +11,18 @@ use ingress::{IriReference, OntologyVersion, PrefixDeclaration};
 
 /// An OWL 2 ontology.
 pub struct Ontology {
+    /// IRIs of directly imported ontology documents.
     pub directly_imports_documents: Vec<IriReference>,
+    /// This ontology's identity (unnamed, named, or versioned).
     pub version: OntologyVersion,
+    /// Ontology-level annotations.
     pub annotations: Vec<Annotation>,
+    /// User-supplied axioms (excludes built-in declarations; see [`Self::all_axioms`]).
     pub axioms: Vec<Axiom>,
 }
 
 impl Ontology {
+    /// Constructs an ontology from its imports, version, annotations, and axioms.
     pub fn new(
         directly_imports_documents: Vec<IriReference>,
         version: OntologyVersion,
@@ -65,10 +70,12 @@ impl Ontology {
         user.into_iter().chain(built_in)
     }
 
+    /// Returns this ontology's IRI, if it is named.
     pub fn try_get_ontology_iri(&self) -> Option<&IriReference> {
         self.version.try_get_ontology_iri()
     }
 
+    /// Returns this ontology's version IRI, if it declares one.
     pub fn try_get_version_iri(&self) -> Option<&IriReference> {
         self.version.try_get_ontology_version_iri()
     }
@@ -154,19 +161,24 @@ impl Ontology {
 
 /// An OWL 2 ontology document (ontology + prefix declarations).
 pub struct OntologyDocument {
+    /// Namespace prefix declarations for this document.
     pub prefixes: Vec<PrefixDeclaration>,
+    /// The ontology itself.
     pub ontology: Ontology,
 }
 
 impl OntologyDocument {
+    /// Constructs an ontology document from its prefixes and ontology.
     pub fn new(prefixes: Vec<PrefixDeclaration>, ontology: Ontology) -> Self {
         OntologyDocument { prefixes, ontology }
     }
 
+    /// Returns the wrapped ontology's IRI, if it is named.
     pub fn try_get_ontology_iri(&self) -> Option<&IriReference> {
         self.ontology.try_get_ontology_iri()
     }
 
+    /// Returns the wrapped ontology's version IRI, if it declares one.
     pub fn try_get_version_iri(&self) -> Option<&IriReference> {
         self.ontology.try_get_version_iri()
     }
