@@ -33,6 +33,7 @@ pub struct TestServer {
 }
 
 #[cfg(test)]
+#[cfg(tokio::test)]
 impl TestServer {
     /// Start a read-only server pre-loaded with Turtle data.
     ///
