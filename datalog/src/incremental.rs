@@ -240,8 +240,8 @@ impl IncrementalReasoner {
     /// is an index into one specific program's `rules`; moving a rule to a
     /// different program would require either physically removing it from
     /// its old program (shifting every later index and corrupting *other*
-    /// rules' recorded derivations — exactly the bug [`DatalogProgram::disabled_rules`]
-    /// exists to avoid) or rebuilding that program from scratch (losing its
+    /// rules' recorded derivations — exactly the bug `DatalogProgram`'s
+    /// `disabled_rules` field exists to avoid) or rebuilding that program from scratch (losing its
     /// `derived_from` index, forcing an O(base facts) re-materialisation —
     /// the very cost this method exists to avoid). So every existing rule's
     /// program assignment is permanently fixed once it is first materialised;
