@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps are real (from `git log main..HEAD` on branch
+# issue-474-incremental-rule-insertion).
+
+ghpull:563 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: genuinely incremental rule addition (apply_rule_insertions)" ;
+    bl:number 563 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:474 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr563 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:474 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-19T19:44:39Z"^^xsd:dateTime .
+
+session:pr563Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #474 asked for IncrementalReasoner::apply_rule_insertions, the insertion-side counterpart to apply_rule_deletions (#434), so new/reactivated rules could be added to a live reasoner without the O(base facts) cost of a full IncrementalReasoner::new rebuild. The provenance query for datalog/src/incremental.rs surfaced the load-bearing prior decisions before design started: #434 established that an existing rule's index into its DatalogProgram can never change (disabled_rules exists precisely to avoid shifting other rules' Derivation::rule_id references), and #338 established the undo-log rollback shape (track exactly what a call added, unrecord/truncate on Err, restore exact pre-call state) apply_rule_insertions' own rollback mirrors. Read together, those two facts forced the central design constraint: a newly-inserted or reactivated rule can only ever be appended as a brand-new final stratum (or reactivated in its own unchanged stratum) -- it can never be woven into an earlier existing stratum, because that would require moving an already-materialised rule. The stratifiability check needed to enforce that safely was designed, then reviewed via the advisor tool before implementation, which caught a real soundness gap in the first draft: reactivating a previously-retracted rule was only checked against a one-hop scan of *fresh* rules' heads, not reactivated rules' own heads, and only re-materialised the rule's own stratum rather than sweeping the delta forward through later strata the way apply_insertions already does -- both of which could silently leave a stale NOT-derived fact behind (over-derivation) if a later/negating rule depended on the reactivated rule's output. Fixed by applying the identical any-edge (not just negative-edge) dependency check to reactivated rules too, and by extending the reactivation path to sweep its output forward through every later program exactly like apply_insertions' existing cross-stratum accumulation. A dedicated regression test (P/A rule retracted, making a NOT-P rule fire; re-inserting P must be rejected rather than silently leaving the now-stale derived fact behind) was added specifically to catch that class of bug, following the review round. Implementation caught two more real issues during TDD: DatalogProgram::new can itself fail on an unsafe rule, so fresh-stratum programs are built into a local Vec before any mutation happens (keeping that a clean no-mutation Err, not a mid-rollback complication); and a first test draft for the reactivation-negation case used a rule with only a NotPattern body atom, which is accepted by is_safe_rule but can never actually fire in this forward-chaining engine (rules only trigger off positive body-atom matches) -- fixed by adding a triggering positive 'domain' atom to the test rule bodies. The CI Docs job caught a private-intra-doc-link violation (linking to DatalogProgram::disabled_rules, a pub(crate) field, from a doc comment that resolves locally under --document-private-items but not in CI's build) after the first green local run -- fixed by switching to plain text; a follow-up commit and a local `cargo doc` re-run with the exact CI flags confirmed the fix before re-pushing." ;
+    agp:reasoningFor ghpull:563 ;
+    agp:decisionPoint session:pr563Decision ;
+    prov:wasGeneratedBy session:pr563 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr563Decision a agp:Decision ;
+    agp:summaryText "Accepted insertions/reactivations only when strictly downstream of everything already materialised, enforced by a single-hop 'any edge' (not negative-only) dependency scan via unification::depending_rules, and rejected everything else with Err(NotStratifiable) rather than attempting to move existing rules to a different stratum." ;
+    agp:alternative "Considered fully re-stratifying the combined rule set on every call (as the issue's literal wording suggested) and reshuffling which DatalogProgram each rule belongs to accordingly; rejected because moving an already-materialised rule to a different program either corrupts other rules' Derivation::rule_id references (if physically removed from its old rules Vec) or forces rebuilding that program's derived_from index from scratch (an O(base facts) re-materialisation) -- exactly the cost this issue exists to avoid. Also considered relaxing the check to reject only negative dependency edges (accepting more insertions, useful for the future sparql_endpoint follow-up); rejected for this PR because a positive edge can chain transitively into a negative one further downstream, which would require a full transitive/BFS reachability check instead of a cheap single-hop scan -- deferred as a documented limitation rather than solved here." .
