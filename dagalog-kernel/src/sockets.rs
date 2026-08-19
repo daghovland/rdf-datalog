@@ -16,7 +16,6 @@ use crate::cell::{
 use crate::protocol::{Header, JupyterMessage, encode_message, parse_message, reply_header};
 use crate::session::KernelSession;
 
-#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 pub struct ConnectionFile {
     pub ip: String,
