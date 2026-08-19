@@ -47,7 +47,6 @@ const TURTLE: &str = r#"
 
 /// `GET /describe?uri=<known IRI>` -> 200.
 #[tokio::test]
-#[ignore]
 async fn describe_known_iri_returns_200() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -67,7 +66,6 @@ async fn describe_known_iri_returns_200() {
 
 /// `GET /describe?uri=<unknown IRI>` -> 404 (IRI never interned in the store).
 #[tokio::test]
-#[ignore]
 async fn describe_unknown_iri_returns_404() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -87,7 +85,6 @@ async fn describe_unknown_iri_returns_404() {
 
 /// Missing `uri` query parameter -> 400.
 #[tokio::test]
-#[ignore]
 async fn describe_missing_uri_param_returns_400() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -103,7 +100,6 @@ async fn describe_missing_uri_param_returns_400() {
 
 /// A syntactically invalid IRI in `uri` -> 400, not a broken query.
 #[tokio::test]
-#[ignore]
 async fn describe_invalid_uri_param_returns_400() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -126,7 +122,6 @@ async fn describe_invalid_uri_param_returns_400() {
 /// The description of a `bl:Issue` must include its own outbound triples
 /// (rdf:type, rdfs:label).
 #[tokio::test]
-#[ignore]
 async fn describe_includes_outbound_triples() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -157,7 +152,6 @@ async fn describe_includes_outbound_triples() {
 /// This is the whole reason plain `DESCRIBE <iri>` (outbound-only, #281)
 /// isn't reused as-is.
 #[tokio::test]
-#[ignore]
 async fn describe_includes_inbound_triples() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -183,7 +177,6 @@ async fn describe_includes_inbound_triples() {
 
 /// Default (no Accept header) -> Turtle.
 #[tokio::test]
-#[ignore]
 async fn describe_default_content_type_is_turtle() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -204,7 +197,6 @@ async fn describe_default_content_type_is_turtle() {
 
 /// `Accept: application/ld+json` -> JSON-LD (stretch goal from the issue).
 #[tokio::test]
-#[ignore]
 async fn describe_jsonld_content_negotiation() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -227,7 +219,6 @@ async fn describe_jsonld_content_negotiation() {
 
 /// An `Accept` header naming no supported format -> 406.
 #[tokio::test]
-#[ignore]
 async fn describe_unsupported_accept_returns_406() {
     let server = common::TestServer::start(TURTLE).await;
 
@@ -251,7 +242,6 @@ async fn describe_unsupported_accept_returns_406() {
 /// `GET /id/{*path}` -> 303 See Other with a relative `Location` pointing at
 /// `/describe?uri=<base_iri>/id/{*path}`.
 #[tokio::test]
-#[ignore]
 async fn id_path_redirects_303_to_describe() {
     let server = common::TestServer::start(TURTLE).await;
     let no_redirect_client = reqwest::Client::builder()
@@ -287,7 +277,6 @@ async fn id_path_redirects_303_to_describe() {
 /// (200), proving `/id/*` and `/describe` are wired together correctly, not
 /// just independently correct in isolation.
 #[tokio::test]
-#[ignore]
 async fn id_path_redirect_target_resolves() {
     let server = common::TestServer::start(TURTLE).await;
 

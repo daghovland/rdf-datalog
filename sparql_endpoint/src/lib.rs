@@ -12,6 +12,7 @@ pub mod admin;
 pub mod auth;
 pub mod constraints;
 pub mod dataset_routes;
+pub mod describe;
 pub mod frontend;
 pub mod graph_store;
 pub mod negotiate;

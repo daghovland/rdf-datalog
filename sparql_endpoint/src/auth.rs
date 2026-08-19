@@ -822,6 +822,24 @@ mod tests {
         assert_eq!(classify(&Method::GET, "/$/server"), Permission::Read);
     }
 
+    // ── Dereferenceable resource IRIs (#493): no auth bypass ────────────────
+    // Unlike #441's /ns/* vocabulary routes (carved out of forward_auth at
+    // the Caddyfile layer, since they serve static files with no dataset
+    // content), /describe and /id/* serve live dataset content and must
+    // classify as an ordinary Read like every other GET — no special case
+    // in classify() or auth_middleware. See
+    // docs/plans/DEREFERENCEABLE_RESOURCE_IRIS_493_PLAN.md §4.
+
+    #[test]
+    fn get_describe_is_read() {
+        assert_eq!(classify(&Method::GET, "/describe"), Permission::Read);
+    }
+
+    #[test]
+    fn get_id_path_is_read() {
+        assert_eq!(classify(&Method::GET, "/id/foo/bar"), Permission::Read);
+    }
+
     // ── Issue #163 regression: transaction API + /$/compact ────────────────────
 
     #[test]
