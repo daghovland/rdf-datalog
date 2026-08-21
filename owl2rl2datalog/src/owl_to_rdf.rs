@@ -58,11 +58,11 @@ use ingress::{
     IriReference, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE, OWL_ANNOTATED_TARGET,
     OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CLASS, OWL_DATATYPE_PROPERTY,
     OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
-    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY,
-    OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL,
-    OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY,
-    OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST,
-    RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
+    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_INVERSE_FUNCTIONAL_PROPERTY,
+    OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY,
+    OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY, OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY,
+    OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN,
+    RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
 };
 use owl_ontology::{
     Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
@@ -238,9 +238,7 @@ impl<'a> Translator<'a> {
     fn annotation_value(&mut self, value: &AnnotationValue) -> GraphElementId {
         match value {
             AnnotationValue::IriAnnotation(iri) => self.full_iri(iri),
-            AnnotationValue::IndividualAnnotation(ind) => {
-                intern_individual(self.datastore, ind)
-            }
+            AnnotationValue::IndividualAnnotation(ind) => intern_individual(self.datastore, ind),
             AnnotationValue::LiteralAnnotation(elem) => self.datastore.add_resource(elem.clone()),
         }
     }
@@ -380,9 +378,7 @@ impl<'a> Translator<'a> {
 
     fn axiom(&mut self, axiom: &Axiom) {
         match axiom {
-            Axiom::AxiomDeclaration((annotations, entity)) => {
-                self.declaration(entity, annotations)
-            }
+            Axiom::AxiomDeclaration((annotations, entity)) => self.declaration(entity, annotations),
             Axiom::AxiomClassAxiom(class_axiom) => self.class_axiom(class_axiom),
             Axiom::AxiomObjectPropertyAxiom(prop_axiom) => self.object_property_axiom(prop_axiom),
             Axiom::AxiomDataPropertyAxiom(prop_axiom) => self.data_property_axiom(prop_axiom),
@@ -462,9 +458,7 @@ impl<'a> Translator<'a> {
                     // expressions — needs the general blank-node structural
                     // encoding, deferred to
                     // https://github.com/daghovland/rdf-datalog/issues/509.
-                    None => {
-                        self.skip("DisjointUnion with complex class expression member", axiom)
-                    }
+                    None => self.skip("DisjointUnion with complex class expression member", axiom),
                 }
             }
             other => self.skip("class axiom", other),
@@ -535,14 +529,8 @@ impl<'a> Translator<'a> {
             ObjectPropertyAxiom::FunctionalObjectProperty(annotations, prop) => {
                 self.property_characteristic(prop, OWL_FUNCTIONAL_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::InverseFunctionalObjectProperty(annotations, prop) => {
-                self.property_characteristic(
-                    prop,
-                    OWL_INVERSE_FUNCTIONAL_PROPERTY,
-                    annotations,
-                    axiom,
-                )
-            }
+            ObjectPropertyAxiom::InverseFunctionalObjectProperty(annotations, prop) => self
+                .property_characteristic(prop, OWL_INVERSE_FUNCTIONAL_PROPERTY, annotations, axiom),
             ObjectPropertyAxiom::ReflexiveObjectProperty(annotations, prop) => {
                 self.property_characteristic(prop, OWL_REFLEXIVE_PROPERTY, annotations, axiom)
             }
@@ -641,9 +629,7 @@ impl<'a> Translator<'a> {
                     .collect();
                 self.chain(&ids, OWL_SAME_AS, annotations);
             }
-            Assertion::DifferentIndividuals(annotations, individuals)
-                if individuals.len() == 2 =>
-            {
+            Assertion::DifferentIndividuals(annotations, individuals) if individuals.len() == 2 => {
                 let ids: Vec<_> = individuals
                     .iter()
                     .map(|i| intern_individual(self.datastore, i))
@@ -1308,7 +1294,11 @@ mod tests {
         )]);
         assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
         assert_eq!(report.triples_added, 1);
-        assert_eq!(axiom_reification_count(&ds), 0, "no annotations, no reification");
+        assert_eq!(
+            axiom_reification_count(&ds),
+            0,
+            "no annotations, no reification"
+        );
     }
 
     #[test]
@@ -1362,7 +1352,11 @@ mod tests {
             .expect("owl:Axiom reification node must exist");
         let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
         let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
-        assert_eq!(quads.len(), 1, "reification node must carry the annotation triple");
+        assert_eq!(
+            quads.len(),
+            1,
+            "reification node must carry the annotation triple"
+        );
         assert_eq!(axiom_reification_count(&ds), 1);
     }
 
@@ -1390,12 +1384,10 @@ mod tests {
 
     #[test]
     fn equivalent_classes_annotations_repeat_on_every_chain_triple() {
-        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(
-            ClassAxiom::EquivalentClasses(
-                vec![annotation("source", "a good textbook")],
-                vec![class("A"), class("B"), class("C")],
-            ),
-        )]);
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(
+            vec![annotation("source", "a good textbook")],
+            vec![class("A"), class("B"), class("C")],
+        ))]);
         assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
         assert!(has_triple(&ds, &ex("A"), OWL_EQUIVALENT_CLASS, &ex("B")));
         assert!(has_triple(&ds, &ex("B"), OWL_EQUIVALENT_CLASS, &ex("C")));
