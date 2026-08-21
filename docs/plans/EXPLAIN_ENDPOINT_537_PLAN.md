@@ -254,7 +254,16 @@ feature area, e.g. `query_builder_sparql.rs`):
    order (least-selective-last), matching the existing
    `join_ordering.rs` unit tests' fixtures/expectations so the two don't
    silently drift apart.
-3. Normal (non-`explain`) query behavior completely unaffected: same
+3. Component-level reordering (`test_explain_hoists_constraining_bgp_before_union`):
+   a `UNION` written *before* a constraining BGP that shares its variable
+   must be reported *after* it in the plan, mirroring
+   `component_ordering::order_components`'s
+   `moves_constraining_bgp_before_union` fixture. This is the specific
+   class of pathology #533 actually reported (a component-level ordering
+   issue, not a BGP-internal one — see Decision 2's "Component-level
+   reordering must also be mirrored" note), so it gets its own test rather
+   than being assumed to follow from tests 1–2.
+4. Normal (non-`explain`) query behavior completely unaffected: same
    `sparql-results+json` body and status for an identical query with and
    without running through the `explain`-aware code path (i.e. issuing the
    same query both with and without `?explain=true` and diffing the

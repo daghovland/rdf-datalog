@@ -146,11 +146,21 @@ fn merge(mut item: PathItem, method: HttpMethod, operation: Operation) -> PathIt
 /// Build the SPARQL 1.1 Protocol query operations (shared by `/sparql` and
 /// `/{name}/sparql` / `/{name}/query`).
 fn sparql_query_path_item(dataset_scoped: bool) -> PathItem {
-    let mut params = vec![query_param(
-        "query",
-        "The SPARQL query string (SPARQL 1.1 Protocol §2.1.1/§2.1.2).",
-        false,
-    )];
+    let mut params = vec![
+        query_param(
+            "query",
+            "The SPARQL query string (SPARQL 1.1 Protocol §2.1.1/§2.1.2).",
+            false,
+        ),
+        query_param(
+            "explain",
+            "If `true`, return a JSON EXPLAIN report (query plan, join/component \
+             order, per-pattern index/cardinality estimate, total timing) instead \
+             of query results. Not a SPARQL 1.1 Protocol parameter; bypasses \
+             result content negotiation. Not yet supported together with `txId`.",
+            false,
+        ),
+    ];
     if dataset_scoped {
         params.insert(0, path_param("name", "Dataset name."));
     }
