@@ -74,11 +74,20 @@ Every axiom method that currently does `self.triple_p(s, PRED, o)` for its singl
 switches to also calling `self.emit_axiom_annotations(s, pred_id, o, annotations)` right after —
 `pred_id` is already resolved as part of `triple_p`, so a convenience wrapper
 `triple_p_annotated(subject, predicate_iri, obj, annotations)` folds both calls into one and is used
-at each of those single-triple call sites (`SubClassOf`, property domain/range/sub-property,
+at each of those single-triple call sites (`SubClassOf`, `ObjectPropertyDomain`/`Range`'s
+sibling forms on data properties and annotation properties, `SubObjectPropertyOf`,
 `InverseObjectProperties`, `DisjointClasses`/`DisjointObjectProperties`/`DisjointDataProperties`
 pairs, property characteristics via `type_triple`, `SubDataPropertyOf`, `DataPropertyDomain`,
 `DataPropertyRange`, `FunctionalDataProperty`, the three atomic `Assertion` triple kinds,
-`DifferentIndividuals` pair, declarations).
+`DifferentIndividuals` pair, declarations, and the four `AnnotationAxiom` forms).
+
+**Exception found during implementation:** `ObjectPropertyAxiom::ObjectPropertyDomain` and
+`::ObjectPropertyRange` are the only two axiom variants in the whole `owl_ontology` type hierarchy
+that do *not* carry a `Vec<Annotation>` field (every sibling variant does). There is nothing for
+`Translator::object_property_axiom` to thread through for these two, so they keep using the
+unannotated `triple_p` — filed as
+[#588](https://github.com/daghovland/rdf-datalog/issues/588) to add the missing field and wire it
+up once `owl_ontology` itself is fixed.
 
 For **chain-based** n-ary axioms (`EquivalentClasses`, `EquivalentObjectProperties`,
 `EquivalentDataProperties`, `SameIndividual`), `chain()` grows an `annotations: &[Annotation]`
@@ -133,6 +142,9 @@ Initially `#[ignore]`d, unignored one at a time during implementation:
 
 ## Out of scope / follow-ups
 
+* [#588](https://github.com/daghovland/rdf-datalog/issues/588): `owl_ontology`'s
+  `ObjectPropertyDomain`/`ObjectPropertyRange` lack a `Vec<Annotation>` field, unlike every other
+  axiom variant (see the "Exception found during implementation" note above).
 * `Axiom::AxiomDatatypeDefinition` annotations — `DatatypeDefinition` itself has no RDF triple
   encoding yet ([#512](https://github.com/daghovland/rdf-datalog/issues/512)), so its annotation
   handling waits on that.
