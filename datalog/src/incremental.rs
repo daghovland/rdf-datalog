@@ -4387,4 +4387,314 @@ mod tests {
             .unwrap();
         assert_eq!(added_again, 0);
     }
+
+    /// Reproduction attempt for a real-world deletion bug report (project #559/#533
+    /// investigation): manual testing against the Dexpi2Imf project's actual
+    /// `datalog/noaka_boundary.datalog` ruleset (public at
+    /// https://github.com/equinor/Dexpi2Imf/blob/main/datalog/noaka_boundary.datalog)
+    /// reportedly shows deleted base facts not properly cascading to delete
+    /// inferred facts. This test reconstructs that exact rule shape:
+    ///
+    /// Stratum 0: `isBoundaryOf[new,pkg] :- isBoundaryOf[node,pkg], hasPart[new,node]`
+    ///   (self-recursive transitive closure over an EDB `isBoundaryOf` seed).
+    /// Stratum 1: `isInPackage[node,pkg] :- selInternal[node,pkg]`
+    ///            `isInPackage[new,pkg] :- isInPackage[node,pkg], hasPart[new,node]`
+    ///            `isInPackage[new,pkg] :- isInPackage[node,pkg], adjacentTo[node,new],
+    ///                                      NOT isBoundaryOf[node,pkg]`
+    ///   (self-recursive, cross-predicate positive dependency on stratum-0
+    ///   `isBoundaryOf` via `hasPart`/R2, AND a negative dependency via R1 —
+    ///   i.e. `isInPackage` facts can be derived either through a positive
+    ///   cross-predicate edge (R2, `hasPart`) or gated by a negated cross-predicate
+    ///   edge (R1). Existing regression tests (`test_delete_base_fact_cascades_deep_chain`,
+    ///   `test_delete_base_fact_keeps_deep_diamond_via_longer_path`) only cover a single
+    ///   self-recursive predicate with no cross-predicate edge at all — this is the
+    ///   coverage gap this test targets.
+    ///
+    /// Oracle: after each deletion, compare `apply_deletions`'s result against a
+    /// from-scratch `IncrementalReasoner::new` rebuild over the post-delete base
+    /// facts — full-rebuild equivalence, not hand-enumerated expected facts, since
+    /// hand-enumerating a transitive+negated program's exact closure is error-prone.
+    #[test]
+    fn test_delete_base_fact_cross_predicate_cascade_matches_full_rebuild() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let has_part = mk_pred(&mut ds, "hasPart");
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let sel_internal = mk_pred(&mut ds, "selInternal");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+
+        // Nodes: node_a, node_b (= `a`, `b` from setup_store), plus node_c, node_d.
+        let node_c = mk_pred(&mut ds, "node_c");
+        let node_d = mk_pred(&mut ds, "node_d");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        // R4 (stratum 0): isBoundaryOf[new,pkg] :- isBoundaryOf[node,pkg], hasPart[new,node]
+        let r4 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_boundary_of),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("new".to_string()),
+                    predicate: Term::Resource(has_part),
+                    object: Term::Variable("node".to_string()),
+                }),
+            ],
+        };
+        // R3 (stratum 1): isInPackage[node,pkg] :- selInternal[node,pkg]
+        let r3 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(sel_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        // R2 (stratum 1): isInPackage[new,pkg] :- isInPackage[node,pkg], hasPart[new,node]
+        let r2 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("new".to_string()),
+                    predicate: Term::Resource(has_part),
+                    object: Term::Variable("node".to_string()),
+                }),
+            ],
+        };
+        // R1 (stratum 1): isInPackage[new,pkg] :- isInPackage[node,pkg],
+        //                  adjacentTo[node,new], NOT isBoundaryOf[node,pkg]
+        let r1 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("new".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let rules = vec![r4, r3, r2, r1];
+
+        // Padding: enough unrelated, independent selInternal/isInPackage facts that
+        // the two-fact retraction below stays under FALLBACK_THRESHOLD (25% of total
+        // derived facts) and actually exercises the incremental BF path rather than
+        // trivially-correct-by-construction full_rematerialise fallback.
+        let mut padding_facts = Vec::new();
+        for i in 0..20 {
+            let pad_node = mk_pred(&mut ds, &format!("pad_node_{i}"));
+            let pad_pkg = mk_pred(&mut ds, &format!("pad_pkg_{i}"));
+            let f = Quad {
+                triple_id: g,
+                subject: pad_node,
+                predicate: sel_internal,
+                obj: pad_pkg,
+            };
+            ds.named_graphs.add_quad(f);
+            padding_facts.push(f);
+        }
+
+        // Base facts:
+        //   selInternal(a, pkg)     -- seeds isInPackage(a,pkg) via R3
+        //   hasPart(d, a)           -- isInPackage(d,pkg) via R2 (independent of negation)
+        //   hasPart(c, a)           -- isBoundaryOf(c,pkg) via R4, once isBoundaryOf(a,pkg) exists
+        //   adjacentTo(a, b)        -- isInPackage(b,pkg) via R1 IF NOT isBoundaryOf(a,pkg)
+        //   isBoundaryOf(a, pkg)    -- EDB fact; currently blocks R1 for node a
+        let f_sel_internal = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: sel_internal,
+            obj: pkg,
+        };
+        let f_has_part_da = Quad {
+            triple_id: g,
+            subject: node_d,
+            predicate: has_part,
+            obj: a,
+        };
+        let f_has_part_ca = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: has_part,
+            obj: a,
+        };
+        let f_adjacent_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: adjacent_to,
+            obj: b,
+        };
+        let f_is_boundary_a = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        for f in [
+            f_sel_internal,
+            f_has_part_da,
+            f_has_part_ca,
+            f_adjacent_ab,
+            f_is_boundary_a,
+        ] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules.clone(), &mut ds).unwrap();
+
+        let is_in_package_a = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_in_package_b = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_in_package_d = Quad {
+            triple_id: g,
+            subject: node_d,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_boundary_c = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+
+        // Sanity-check the initial materialisation matches the hand-derived expectation.
+        assert!(
+            ds.named_graphs.contains(&is_in_package_a),
+            "a should be in package via R3"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_in_package_d),
+            "d should be in package via R2 (cross-predicate positive dependency)"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_b),
+            "b should NOT be in package yet: isBoundaryOf(a,pkg) blocks R1"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_boundary_c),
+            "c should be isBoundaryOf via R4 (same-predicate cascade over isBoundaryOf(a,pkg))"
+        );
+
+        // ── Control case: delete selInternal(a,pkg) — pure monotonic cross-predicate
+        // cascade. isInPackage(a,pkg) loses its only support and must be retracted,
+        // which must cascade to isInPackage(d,pkg) (which depended on it via R2).
+        // isBoundaryOf facts are untouched (independent derivation chain).
+        // Mirror sparql_endpoint's actual call sequence exactly
+        // (sparql_endpoint/src/sparql_update.rs's apply_prepared_update_with_options):
+        // it physically removes net_deletes from the live store via
+        // `store.remove_quad(q)` BEFORE calling `apply_reasoner_delta` /
+        // `reasoner.apply_deletions`, rather than leaving the quad present and
+        // letting `apply_deletions` do the removal as part of its own algorithm
+        // (which is what the rest of this test file's other deletion tests do,
+        // and what the doc comment on `apply_deletions` implicitly assumes).
+        ds.named_graphs.remove_quad(f_sel_internal);
+
+        let fallback_count_before = reasoner.fallback_count;
+        reasoner
+            .apply_deletions(&mut ds, &[f_sel_internal])
+            .unwrap();
+        assert_eq!(
+            reasoner.fallback_count, fallback_count_before,
+            "this test must exercise the incremental BF path, not full_rematerialise \
+             fallback (which would trivially be correct by construction and mask a \
+             real incremental-only bug) -- check FALLBACK_THRESHOLD against this \
+             fixture's PD/total ratio if this fails"
+        );
+
+        // Oracle: fresh rebuild from the base facts alone (minus the deleted one).
+        let mut ds_oracle_base = Datastore::new(100);
+        ds_oracle_base.resources = ds.resources.clone();
+        for f in [f_has_part_da, f_has_part_ca, f_adjacent_ab, f_is_boundary_a] {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        for &f in &padding_facts {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules.clone(), &mut ds_oracle_base).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&is_in_package_a),
+            ds_oracle_base.named_graphs.contains(&is_in_package_a),
+            "control case: isInPackage(a,pkg) retraction must match full-rebuild oracle"
+        );
+        assert_eq!(
+            ds.named_graphs.contains(&is_in_package_d),
+            ds_oracle_base.named_graphs.contains(&is_in_package_d),
+            "control case: isInPackage(d,pkg) cross-predicate cascade must match full-rebuild oracle"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_a),
+            "control case: isInPackage(a,pkg) must actually be retracted (not just match a buggy oracle)"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_d),
+            "control case: isInPackage(d,pkg) must actually be retracted (cross-predicate cascade)"
+        );
+        assert_eq!(
+            ds.named_graphs.contains(&is_boundary_c),
+            ds_oracle_base.named_graphs.contains(&is_boundary_c),
+            "control case: isBoundaryOf(c,pkg) must be unaffected, matching oracle"
+        );
+    }
 }
