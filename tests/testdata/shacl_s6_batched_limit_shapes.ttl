@@ -1,0 +1,16 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:ThingShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "tag flagged" ;
+        sh:select """
+            SELECT $this $value WHERE {
+                $this <http://example.org/ns#tag> $value .
+            }
+            LIMIT 1
+        """ ;
+    ] .

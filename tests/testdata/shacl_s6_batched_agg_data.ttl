@@ -1,0 +1,5 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:N0 a ex:Thing ; ex:tag "a0" .
+ex:N1 a ex:Thing ; ex:tag "a1", "b1" .
+ex:N2 a ex:Thing ; ex:tag "a2", "b2", "c2" .
