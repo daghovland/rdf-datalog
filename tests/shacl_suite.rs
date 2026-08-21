@@ -3766,7 +3766,6 @@ fn sorted_focus_values(report: &ValidationReport) -> Vec<(String, Option<String>
 /// every 10th node's negative score. Exercises the multi-row `VALUES`
 /// injection and the re-split-by-`$this` logic across many nodes.
 #[test]
-#[ignore]
 fn spec_s6_batched_many_focus_nodes() {
     let data = load("shacl_s6_batched_many_data.ttl");
     let shapes = load("shacl_s6_batched_many_shapes.ttl");
@@ -3792,7 +3791,6 @@ fn spec_s6_batched_many_focus_nodes() {
 /// exactly 1 violation *per node* (5 total, one per node) since `LIMIT`
 /// applies independently within each node's own execution.
 #[test]
-#[ignore]
 fn spec_s6_batched_limit_falls_back() {
     let data = load("shacl_s6_batched_limit_offset_data.ttl");
     let shapes = load("shacl_s6_batched_limit_shapes.ttl");
@@ -3824,7 +3822,6 @@ fn spec_s6_batched_limit_falls_back() {
 /// combined 10-row result set once, yielding 9 results with uneven per-node
 /// coverage.
 #[test]
-#[ignore]
 fn spec_s6_batched_offset_falls_back() {
     let data = load("shacl_s6_batched_limit_offset_data.ttl");
     let shapes = load("shacl_s6_batched_offset_shapes.ttl");
@@ -3857,7 +3854,6 @@ fn spec_s6_batched_offset_falls_back() {
 /// version would merge every node's tags into one global implicit group,
 /// destroying the per-node counts entirely.
 #[test]
-#[ignore]
 fn spec_s6_batched_ungrouped_aggregate_falls_back() {
     let data = load("shacl_s6_batched_agg_data.ttl");
     let shapes = load("shacl_s6_batched_agg_ungrouped_shapes.ttl");
@@ -3866,11 +3862,20 @@ fn spec_s6_batched_ungrouped_aggregate_falls_back() {
     let mut got = sorted_focus_values(&report);
     got.sort();
     let mut expected = vec![
-        ("http://example.org/ns#N0".to_string(), Some("1".to_string())),
-        ("http://example.org/ns#N2".to_string(), Some("3".to_string())),
+        (
+            "http://example.org/ns#N0".to_string(),
+            Some("\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+        (
+            "http://example.org/ns#N2".to_string(),
+            Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
     ];
     expected.sort();
-    assert_eq!(got, expected, "N0 (count 1) and N2 (count 3) must violate, each with its own count as $value");
+    assert_eq!(
+        got, expected,
+        "N0 (count 1) and N2 (count 3) must violate, each with its own count as $value"
+    );
 }
 
 /// The safe-to-batch aggregate case: `GROUP BY $this` with the same
@@ -3881,7 +3886,6 @@ fn spec_s6_batched_ungrouped_aggregate_falls_back() {
 /// over-conservatively reject `GROUP BY $this` and that the batched path's
 /// aggregate handling (via `project_aggregate_row`) is correct.
 #[test]
-#[ignore]
 fn spec_s6_batched_group_by_this_uses_batched_path() {
     let data = load("shacl_s6_batched_agg_data.ttl");
     let shapes = load("shacl_s6_batched_agg_grouped_shapes.ttl");
@@ -3890,8 +3894,14 @@ fn spec_s6_batched_group_by_this_uses_batched_path() {
     let mut got = sorted_focus_values(&report);
     got.sort();
     let mut expected = vec![
-        ("http://example.org/ns#N0".to_string(), Some("1".to_string())),
-        ("http://example.org/ns#N2".to_string(), Some("3".to_string())),
+        (
+            "http://example.org/ns#N0".to_string(),
+            Some("\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+        (
+            "http://example.org/ns#N2".to_string(),
+            Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
     ];
     expected.sort();
     assert_eq!(

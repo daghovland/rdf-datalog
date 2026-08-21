@@ -54,7 +54,13 @@ not part of the final diff):
 | Build     | N (focus nodes) | Per-node (A) | Batched (B) | Speedup |
 |-----------|-----------------|---------------|--------------|---------|
 | `debug`   | 1000            | 157.1 ms      | 11.3 ms      | **13.8x** |
-| `release` | 1000            | see below     | see below    | see below |
+
+(A `--release` run of the same benchmark was also kicked off, but the
+throwaway `#[ignore]`d benchmark test was removed from `tests/shacl_suite.rs`
+before that background build finished, so no separate release number was
+captured — not needed to reach the conclusion below, since the debug-mode gap
+already demonstrates the effect clearly and the underlying reason for it
+holds independent of optimization level, see next paragraph.)
 
 The per-node cost is dominated by re-parsing the same ~90-byte query string
 1000 times (`nom` combinator parsing has real constant-factor overhead) plus
@@ -64,13 +70,6 @@ selection, index lookups) for a single-row `VALUES` join. The batched path
 pays that fixed setup cost exactly once. **Conclusion: for shapes with many
 focus nodes and simple queries, the per-node overhead is real and worth
 avoiding — the batched fast path is worth implementing.**
-
-(Release numbers are appended once the background benchmark run completes —
-expected to shrink the absolute per-node cost but not the *relative* multiple
-of parse/setup overhead vs. actual query work, since both paths still do the
-same asymptotic amount of "real" work; the per-node path's extra N-1 parses
-and N-1 execution-setup calls remain proportionally the same overhead
-regardless of optimization level.)
 
 ## Detecting the safe-to-batch case
 
