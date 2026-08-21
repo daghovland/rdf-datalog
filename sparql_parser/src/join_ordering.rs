@@ -109,11 +109,72 @@ fn resolve_constant(term: &Term, datastore: &Datastore) -> Option<Option<dag_rdf
     }
 }
 
+/// Which `QuadTable` index (or combination) a triple pattern's cardinality
+/// estimate was computed from — the "which index was used" fact `EXPLAIN`
+/// (issue [#537](https://github.com/daghovland/rdf-datalog/issues/537))
+/// surfaces. Fieldless: purely a label for one of the seven match arms in
+/// [`cardinality_and_index`], so producing it costs nothing beyond the
+/// match that was already happening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexUsed {
+    /// Subject and predicate both constant, object variable: `subject_predicate_index`.
+    SubjectPredicate,
+    /// Predicate and object both constant, subject variable: `object_predicate_index`.
+    ObjectPredicate,
+    /// All three constant: the tighter of `subject_predicate_index` and
+    /// `object_predicate_index`.
+    SubjectPredicateObject,
+    /// Only the predicate constant: `predicate_index`.
+    Predicate,
+    /// Subject and object both constant, predicate variable: the tighter of
+    /// summed `subject_predicate_index`/`object_predicate_index` entries.
+    SubjectObject,
+    /// Only the subject constant: summed `subject_predicate_index` entries.
+    Subject,
+    /// Only the object constant: summed `object_predicate_index` entries.
+    Object,
+    /// No constants at all: `QuadTable::quad_count` (a full scan).
+    None,
+    /// A constant term never interned into the store — the pattern can
+    /// never match; no index lookup was performed.
+    Unmatchable,
+}
+
+impl IndexUsed {
+    /// Short human-readable label, used by `sparql_parser::explain`'s
+    /// `indexUsed` JSON field.
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            IndexUsed::SubjectPredicate => "subject_predicate",
+            IndexUsed::ObjectPredicate => "object_predicate",
+            IndexUsed::SubjectPredicateObject => "subject_predicate ∩ object_predicate",
+            IndexUsed::Predicate => "predicate",
+            IndexUsed::SubjectObject => "subject_predicate ∩ object_predicate (summed)",
+            IndexUsed::Subject => "subject_predicate (summed)",
+            IndexUsed::Object => "object_predicate (summed)",
+            IndexUsed::None => "full scan",
+            IndexUsed::Unmatchable => "unmatchable (constant never interned)",
+        }
+    }
+}
+
 /// Cardinality estimate using only the pattern's constant terms, via direct
 /// `.len()` lookups on `QuadTable`'s public index fields — no allocation,
 /// no `.collect()`. Returns 0 if a constant term doesn't resolve to a known
 /// resource (the pattern can never match).
 pub(crate) fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> usize {
+    cardinality_and_index(tp, datastore).0
+}
+
+/// As [`known_cardinality`], but also returns which index the estimate came
+/// from ([`IndexUsed`]) — the single source of truth both `order_patterns`'s
+/// cost ranking (via `known_cardinality` above) and `sparql_parser::explain`
+/// read from, so the two can never drift apart. See issue
+/// [#537](https://github.com/daghovland/rdf-datalog/issues/537).
+pub(crate) fn cardinality_and_index(
+    tp: &TriplePattern,
+    datastore: &Datastore,
+) -> (usize, IndexUsed) {
     let table = &datastore.named_graphs;
 
     let subject = resolve_constant(&tp.subject, datastore);
@@ -126,7 +187,7 @@ pub(crate) fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> us
         .into_iter()
         .any(|r| matches!(r, Some(None)))
     {
-        return 0;
+        return (0, IndexUsed::Unmatchable);
     }
 
     // Flatten `Option<Option<Id>>` to `Option<Id>`: `None` (variable) or
@@ -148,19 +209,28 @@ pub(crate) fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> us
                 .get(&o)
                 .and_then(|m| m.get(&p))
                 .map_or(0, |v| v.len());
-            sp.min(op)
+            (sp.min(op), IndexUsed::SubjectPredicateObject)
         }
-        (Some(s), Some(p), None) => table
-            .subject_predicate_index
-            .get(&s)
-            .and_then(|m| m.get(&p))
-            .map_or(0, |v| v.len()),
-        (None, Some(p), Some(o)) => table
-            .object_predicate_index
-            .get(&o)
-            .and_then(|m| m.get(&p))
-            .map_or(0, |v| v.len()),
-        (None, Some(p), None) => table.predicate_index.get(&p).map_or(0, |v| v.len()),
+        (Some(s), Some(p), None) => (
+            table
+                .subject_predicate_index
+                .get(&s)
+                .and_then(|m| m.get(&p))
+                .map_or(0, |v| v.len()),
+            IndexUsed::SubjectPredicate,
+        ),
+        (None, Some(p), Some(o)) => (
+            table
+                .object_predicate_index
+                .get(&o)
+                .and_then(|m| m.get(&p))
+                .map_or(0, |v| v.len()),
+            IndexUsed::ObjectPredicate,
+        ),
+        (None, Some(p), None) => (
+            table.predicate_index.get(&p).map_or(0, |v| v.len()),
+            IndexUsed::Predicate,
+        ),
         (Some(s), None, Some(o)) => {
             let s_sum = table
                 .subject_predicate_index
@@ -170,17 +240,23 @@ pub(crate) fn known_cardinality(tp: &TriplePattern, datastore: &Datastore) -> us
                 .object_predicate_index
                 .get(&o)
                 .map_or(0, |m| m.values().map(|v| v.len()).sum());
-            s_sum.min(o_sum)
+            (s_sum.min(o_sum), IndexUsed::SubjectObject)
         }
-        (Some(s), None, None) => table
-            .subject_predicate_index
-            .get(&s)
-            .map_or(0, |m| m.values().map(|v| v.len()).sum()),
-        (None, None, Some(o)) => table
-            .object_predicate_index
-            .get(&o)
-            .map_or(0, |m| m.values().map(|v| v.len()).sum()),
-        (None, None, None) => table.quad_count,
+        (Some(s), None, None) => (
+            table
+                .subject_predicate_index
+                .get(&s)
+                .map_or(0, |m| m.values().map(|v| v.len()).sum()),
+            IndexUsed::Subject,
+        ),
+        (None, None, Some(o)) => (
+            table
+                .object_predicate_index
+                .get(&o)
+                .map_or(0, |m| m.values().map(|v| v.len()).sum()),
+            IndexUsed::Object,
+        ),
+        (None, None, None) => (table.quad_count, IndexUsed::None),
     }
 }
 

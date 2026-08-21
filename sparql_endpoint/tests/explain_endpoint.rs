@@ -24,7 +24,6 @@ mod common;
 /// with exactly one pattern entry, rendering the pattern's subject/
 /// predicate/object as SPARQL-ish text.
 #[tokio::test]
-#[ignore = "not yet implemented, see docs/plans/EXPLAIN_ENDPOINT_537_PLAN.md"]
 async fn test_explain_single_pattern() {
     let turtle = r#"
         <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
@@ -34,12 +33,7 @@ async fn test_explain_single_pattern() {
     let sparql =
         "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
     let url = format!("{}&explain=true", server.sparql_query_url(sparql));
-    let resp = server
-        .client
-        .get(url)
-        .send()
-        .await
-        .expect("request failed");
+    let resp = server.client.get(url).send().await.expect("request failed");
 
     assert_eq!(resp.status(), 200);
     let ct = resp.headers()["content-type"].to_str().unwrap();
@@ -90,7 +84,6 @@ async fn test_explain_single_pattern() {
 /// query is written with `p2` first (the deliberately worst order); the
 /// explain plan must report `p1`'s pattern at position 0.
 #[tokio::test]
-#[ignore = "not yet implemented, see docs/plans/EXPLAIN_ENDPOINT_537_PLAN.md"]
 async fn test_explain_multi_pattern_join_order() {
     let mut turtle = String::new();
     turtle.push_str("<http://example.org/s1> <http://example.org/p1> <http://example.org/o1> .\n");
@@ -107,12 +100,7 @@ async fn test_explain_multi_pattern_join_order() {
         ?x <http://example.org/p1> ?y . \
     }";
     let url = format!("{}&explain=true", server.sparql_query_url(sparql));
-    let resp = server
-        .client
-        .get(url)
-        .send()
-        .await
-        .expect("request failed");
+    let resp = server.client.get(url).send().await.expect("request failed");
 
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("body must be JSON");
@@ -163,12 +151,7 @@ async fn test_normal_query_unaffected_by_explain_param_presence() {
         server.sparql_query_url(sparql),
         format!("{}&explain=false", server.sparql_query_url(sparql)),
     ] {
-        let resp = server
-            .client
-            .get(url)
-            .send()
-            .await
-            .expect("request failed");
+        let resp = server.client.get(url).send().await.expect("request failed");
 
         assert_eq!(resp.status(), 200);
         let ct = resp.headers()["content-type"].to_str().unwrap();

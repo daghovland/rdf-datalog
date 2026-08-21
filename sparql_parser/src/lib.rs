@@ -23,12 +23,14 @@ pub mod ast;
 mod component_ordering;
 pub mod deadline;
 pub mod execute;
+pub mod explain;
 mod join_ordering;
 pub use deadline::Deadline;
 pub use execute::{
     eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute,
     execute_with_base, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
 };
+pub use explain::{explain_query, query_type_label, ExplainPlan, PatternPlan, PlanNode};
 pub use ingress::NetworkPolicy;
 
 use crate::ast::*;
