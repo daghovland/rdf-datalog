@@ -158,7 +158,7 @@ async fn test_explain_hoists_constraining_bgp_before_union() {
     // Written with the UNION first (the pathological order); the smaller
     // constraining BGP (?s pc ?o2) shares `?s` with both union arms.
     let sparql = "SELECT ?s WHERE { \
-        { ?s <http://example.org/pa> ?o1 } UNION { ?s <http://example.org/pb> ?o1 } . \
+        { ?s <http://example.org/pa> ?o1 } UNION { ?s <http://example.org/pb> ?o1 } \
         ?s <http://example.org/pc> ?o2 . \
     }";
     let url = format!("{}&explain=true", server.sparql_query_url(sparql));
