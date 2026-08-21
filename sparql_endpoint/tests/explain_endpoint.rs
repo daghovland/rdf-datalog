@@ -129,6 +129,57 @@ async fn test_explain_multi_pattern_join_order() {
     assert_eq!(patterns[1]["estimatedCardinality"], 5);
 }
 
+/// Test case 2b — component-level reordering (join-reordering Phase C,
+/// issue #38/#173) must also show up in the explain plan, not just
+/// BGP-internal pattern order: a `UNION` written *before* a constraining
+/// BGP that shares its variable must be reported *after* it, mirroring
+/// `component_ordering::order_components`'s `moves_constraining_bgp_before_union`
+/// fixture (`sparql_parser/src/component_ordering.rs`). This is exactly the
+/// #533 pathology this endpoint exists to diagnose (see the plan doc,
+/// Decision 2).
+#[tokio::test]
+async fn test_explain_hoists_constraining_bgp_before_union() {
+    let mut turtle = String::new();
+    for i in 0..8 {
+        turtle.push_str(&format!(
+            "<http://example.org/s{i}> <http://example.org/pa> <http://example.org/oa> .\n"
+        ));
+        turtle.push_str(&format!(
+            "<http://example.org/s{i}> <http://example.org/pb> <http://example.org/ob> .\n"
+        ));
+    }
+    for i in 0..2 {
+        turtle.push_str(&format!(
+            "<http://example.org/s{i}> <http://example.org/pc> <http://example.org/oc> .\n"
+        ));
+    }
+    let server = common::TestServer::start(&turtle).await;
+
+    // Written with the UNION first (the pathological order); the smaller
+    // constraining BGP (?s pc ?o2) shares `?s` with both union arms.
+    let sparql = "SELECT ?s WHERE { \
+        { ?s <http://example.org/pa> ?o1 } UNION { ?s <http://example.org/pb> ?o1 } . \
+        ?s <http://example.org/pc> ?o2 . \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+
+    let plan = body["plan"].as_array().expect("plan must be an array");
+    assert_eq!(plan.len(), 2, "plan: {plan:?}");
+    assert_eq!(
+        plan[0]["kind"], "BGP",
+        "the constraining BGP must be reported first, matching \
+         component_ordering::order_components's actual evaluation order: {plan:?}"
+    );
+    assert_eq!(
+        plan[1]["kind"], "Union",
+        "the UNION must be reported after the constraint that feeds it: {plan:?}"
+    );
+}
+
 /// Test case 3 — normal (non-`explain`) query behavior is completely
 /// unaffected: identical rows, status, and content-type whether or not the
 /// `explain` code path exists, both with the parameter absent and with
