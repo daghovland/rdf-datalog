@@ -23,7 +23,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::reasoner::{DatalogProgram, ReasoningError};
 use crate::stratifier::RulePartitioner;
-use crate::types::{Derivation, DerivedFromIndex, Rule};
+use crate::types::{Derivation, DerivedFromIndex, Rule, RuleHead};
 use dag_rdf::{Datastore, Quad, QuadTable};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -195,6 +195,308 @@ impl IncrementalReasoner {
 
         // --- Forward phase ---
         self.forward_phase_rules(base, pd, &targets)
+    }
+
+    /// Add brand-new rules to an already-constructed reasoner, or re-enable
+    /// rules previously retracted via [`Self::apply_rule_deletions`], without
+    /// a full [`Self::new`] rebuild. The insertion-side counterpart to
+    /// [`Self::apply_rule_deletions`]. See
+    /// [`docs/plans/INCREMENTAL_RULE_INSERTION_474_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/INCREMENTAL_RULE_INSERTION_474_PLAN.md)
+    /// for the full design rationale; this doc comment summarises the
+    /// correctness contract.
+    ///
+    /// **What this accepts:** a rule in `new_rules` is classified as (a)
+    /// already present and enabled — silently a no-op (idempotent), (b)
+    /// present but disabled — **reactivated** in place, keeping its original
+    /// stratum, or (c) genuinely new — **appended** as one or more brand-new
+    /// final strata, sub-stratified among themselves.
+    ///
+    /// Both (b) and (c) are only accepted when they are **strictly
+    /// downstream** of everything already materialised: no rule that is (or
+    /// will become) enabled elsewhere in this reasoner may have a body atom —
+    /// positive or negative — unifiable with the (re)introduced rule's head.
+    /// If any such dependency edge exists, this returns
+    /// `Err(ReasoningError::NotStratifiable)` **without mutating anything** —
+    /// `self` and `base` are left exactly as they were, no rollback needed.
+    ///
+    /// This restriction is deliberately a strict "any edge" check rather than
+    /// "reject only negative edges" or a transitive reachability search: a
+    /// positive edge can chain into a negative one further downstream (rule A
+    /// feeds existing rule B positively, B feeds existing rule C, C negates
+    /// B's head — a one-hop, positive-only-tolerant check starting from A
+    /// would miss the B→C hazard entirely), and rejecting on *any* direct
+    /// edge sidesteps needing to search for that transitively: it forbids an
+    /// existing rule from consuming this rule's output at all, so there is no
+    /// downstream chain left to worry about. This is strictly more
+    /// conservative than the true minimum rejection set — some programs that
+    /// a full rebuild would happily stratify (by moving an existing rule to a
+    /// later stratum) are rejected here instead — but the check stays a
+    /// cheap, obviously-correct single pass over rule bodies (never
+    /// proportional to `base`'s fact count) instead of a graph search or a
+    /// stratum reshuffle. Callers that hit this can always fall back to a
+    /// full [`Self::new`] rebuild over the combined rule set.
+    ///
+    /// **Why an existing rule may never change stratum:** [`Derivation::rule_id`]
+    /// is an index into one specific program's `rules`; moving a rule to a
+    /// different program would require either physically removing it from
+    /// its old program (shifting every later index and corrupting *other*
+    /// rules' recorded derivations — exactly the bug `DatalogProgram`'s
+    /// `disabled_rules` field exists to avoid) or rebuilding that program from scratch (losing its
+    /// `derived_from` index, forcing an O(base facts) re-materialisation —
+    /// the very cost this method exists to avoid). So every existing rule's
+    /// program assignment is permanently fixed once it is first materialised;
+    /// this method's whole design follows from that constraint.
+    ///
+    /// **Correctness for the accepted class:** every fact newly present in
+    /// `base` after a successful call is one that a from-scratch
+    /// `IncrementalReasoner::new` over the combined rule set would also
+    /// derive, and nothing that from-scratch construction would derive is
+    /// missing. Reactivated rules are re-materialised via a full
+    /// `materialise_seminaive_tracked` on their own program, then their
+    /// output is fed forward through every later program in stratum order
+    /// (mirroring [`Self::apply_insertions`]'s cross-stratum delta
+    /// accumulation) so a later stratum can still legitimately consume a
+    /// reactivated rule's output positively. Freshly-appended strata are
+    /// materialised with `base` already containing the full existing
+    /// extensional + intensional closure, i.e. "materialize forward from the
+    /// new rules only, seeded against everything already derived".
+    ///
+    /// On any `Err(ReasoningError::Contradiction)` raised while
+    /// materialising a reactivated or freshly-appended program, `base` and
+    /// `self` are restored to exactly their pre-call state via a cheap
+    /// undo-log rollback (mirroring every other `IncrementalReasoner`
+    /// mutator's contract) — no [`Self::rebuild_from_base`] is required.
+    ///
+    /// Returns the number of new quads (derived, or re-derived by a
+    /// reactivated rule) added to `base`, mirroring
+    /// [`Self::apply_rule_deletions`]'s "count of facts affected" return
+    /// shape. Returns `Ok(0)` for an empty `new_rules` slice or when every
+    /// requested rule was already present and enabled.
+    pub fn apply_rule_insertions(
+        &mut self,
+        base: &mut Datastore,
+        new_rules: &[Rule],
+    ) -> Result<usize, ReasoningError> {
+        if new_rules.is_empty() {
+            return Ok(0);
+        }
+
+        // --- Step 0: classify each requested rule ---
+        let mut reactivate: Vec<(usize, usize)> = Vec::new();
+        let mut fresh_set: HashSet<Rule> = HashSet::new();
+        for r in new_rules {
+            let mut found_enabled = false;
+            let mut found_disabled: Option<(usize, usize)> = None;
+            'search: for (pi, program) in self.programs.iter().enumerate() {
+                for (rid, existing) in program.rules.iter().enumerate() {
+                    if existing == r {
+                        if program.is_rule_disabled(rid) {
+                            found_disabled = Some((pi, rid));
+                        } else {
+                            found_enabled = true;
+                        }
+                        break 'search;
+                    }
+                }
+            }
+            if found_enabled {
+                continue; // idempotent no-op: already active
+            }
+            if let Some(target) = found_disabled {
+                if !reactivate.contains(&target) {
+                    reactivate.push(target);
+                }
+                continue;
+            }
+            fresh_set.insert(r.clone());
+        }
+        let fresh: Vec<Rule> = fresh_set.into_iter().collect();
+
+        if reactivate.is_empty() && fresh.is_empty() {
+            return Ok(0);
+        }
+
+        // --- Step 1: conservative append-only stratifiability check ---
+        // (No mutation has happened yet, so a rejection here needs no rollback.)
+
+        // `existing_active`: every rule that either is currently enabled and
+        // not itself a reactivation target, or is a reactivation target
+        // (about to become enabled).
+        let reactivate_set: HashSet<(usize, usize)> = reactivate.iter().copied().collect();
+        let mut existing_active: Vec<Rule> = Vec::new();
+        for (pi, program) in self.programs.iter().enumerate() {
+            for (rid, r) in program.rules.iter().enumerate() {
+                let will_be_active =
+                    reactivate_set.contains(&(pi, rid)) || !program.is_rule_disabled(rid);
+                if will_be_active {
+                    existing_active.push(r.clone());
+                }
+            }
+        }
+
+        // Every rule being (re)introduced this call — fresh insertions and
+        // reactivations alike — must not be depended on (positively or
+        // negatively) by any other existing-active rule.
+        let mut reintroduced: Vec<Rule> = fresh.clone();
+        for &(pi, rid) in &reactivate {
+            reintroduced.push(self.programs[pi].rules[rid].clone());
+        }
+        for rule in &reintroduced {
+            if let RuleHead::NormalHead(ref head_pattern) = rule.head {
+                let others: Vec<Rule> = existing_active
+                    .iter()
+                    .filter(|r| *r != rule)
+                    .cloned()
+                    .collect();
+                let deps = crate::unification::depending_rules(&others, head_pattern);
+                if let Some(edge) = deps.first() {
+                    return Err(ReasoningError::NotStratifiable(format!(
+                        "cannot incrementally insert/reactivate rule without a full rebuild \
+                         (rule: {rule}): an existing, already-materialised rule already depends \
+                         on its head predicate (positively or negatively): {}. This incremental \
+                         path only accepts rules that are strictly downstream of everything \
+                         already materialised — retry via a full IncrementalReasoner::new \
+                         rebuild over the combined rule set instead.",
+                        edge.get_rule()
+                    )));
+                }
+            }
+        }
+
+        // Global stratifiability check (defense in depth): the combined
+        // rule set (existing-active + fresh) must be stratifiable at all.
+        // Given the check above already forbids any existing→fresh edge,
+        // this is not expected to newly fail — but it is cheap
+        // (rule-count-sized, not fact-count-sized) and validates the
+        // append-only reasoning above against the same stratifier
+        // `IncrementalReasoner::new` already trusts.
+        let combined: Vec<Rule> = existing_active
+            .iter()
+            .cloned()
+            .chain(fresh.iter().cloned())
+            .collect();
+        RulePartitioner::new(combined).order_rules()?;
+
+        // Sub-stratify the fresh rules among themselves.
+        let fresh_strata: Vec<Vec<Rule>> = if fresh.is_empty() {
+            Vec::new()
+        } else {
+            RulePartitioner::new(fresh.clone()).order_rules()?
+        };
+
+        // --- Step 2: mutate, tracking everything for rollback ---
+
+        // Build every fresh-stratum `DatalogProgram` BEFORE any mutation:
+        // `DatalogProgram::new` can fail with `Err(UnsafeRule)`, and doing
+        // this first keeps that a clean no-mutation `Err` like the
+        // stratifiability rejections above.
+        let mut fresh_programs: Vec<DatalogProgram> = Vec::with_capacity(fresh_strata.len());
+        for stratum in fresh_strata {
+            fresh_programs.push(DatalogProgram::new(stratum)?);
+        }
+
+        let quad_start = base.named_graphs.quad_count;
+        let orig_program_count = self.programs.len();
+        let mut reactivated_disabled: Vec<(usize, usize)> = Vec::new();
+        let mut tracked: Vec<(usize, Vec<(Quad, Derivation)>)> = Vec::new();
+
+        // Reactivate, then sweep the delta forward through every later
+        // program — mirroring `apply_insertions`'s cross-stratum
+        // accumulation — so a later stratum can still legitimately consume a
+        // reactivated rule's output positively.
+        for &(program_index, rule_id) in &reactivate {
+            self.programs[program_index].enable_rule(rule_id);
+            reactivated_disabled.push((program_index, rule_id));
+
+            let mut buf = Vec::new();
+            let result = self.programs[program_index].materialise_seminaive_tracked(base, &mut buf);
+            let mut delta_facts: Vec<Quad> = buf.iter().map(|(q, _)| *q).collect();
+            tracked.push((program_index, buf));
+            if let Err(e) = result {
+                self.undo_rule_insertions(
+                    base,
+                    quad_start,
+                    orig_program_count,
+                    &tracked,
+                    &reactivated_disabled,
+                );
+                return Err(e);
+            }
+
+            for later_index in (program_index + 1)..self.programs.len() {
+                if delta_facts.is_empty() {
+                    break;
+                }
+                let mut later_buf = Vec::new();
+                let result = self.programs[later_index].materialise_seminaive_tracked_from_facts(
+                    base,
+                    &mut later_buf,
+                    &delta_facts,
+                );
+                delta_facts.extend(later_buf.iter().map(|(q, _)| *q));
+                tracked.push((later_index, later_buf));
+                if let Err(e) = result {
+                    self.undo_rule_insertions(
+                        base,
+                        quad_start,
+                        orig_program_count,
+                        &tracked,
+                        &reactivated_disabled,
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        // Append and materialise the freshly-built strata, in order — `base`
+        // already contains the full existing closure (including anything
+        // the reactivation sweep above just added).
+        for program in fresh_programs {
+            self.programs.push(program);
+            let new_index = self.programs.len() - 1;
+            let mut buf = Vec::new();
+            let result = self.programs[new_index].materialise_seminaive_tracked(base, &mut buf);
+            tracked.push((new_index, buf));
+            if let Err(e) = result {
+                self.undo_rule_insertions(
+                    base,
+                    quad_start,
+                    orig_program_count,
+                    &tracked,
+                    &reactivated_disabled,
+                );
+                return Err(e);
+            }
+        }
+
+        Ok(base.named_graphs.quad_count - quad_start)
+    }
+
+    /// Undo exactly what [`Self::apply_rule_insertions`] changed during a
+    /// call that failed partway through materialisation: unrecord every
+    /// tracked `(Quad, Derivation)` entry, truncate `base` back to its
+    /// pre-call quad count, drop every freshly-appended program (truncating
+    /// `self.programs` back to its pre-call length), then re-disable every
+    /// rule this call reactivated — in that order, mirroring
+    /// [`Self::undo_rule_deletions`].
+    fn undo_rule_insertions(
+        &mut self,
+        base: &mut Datastore,
+        quad_start: usize,
+        orig_program_count: usize,
+        tracked: &[(usize, Vec<(Quad, Derivation)>)],
+        reactivated_disabled: &[(usize, usize)],
+    ) {
+        for (program_index, buf) in tracked {
+            for (q, d) in buf {
+                self.programs[*program_index].derived_from.unrecord(q, d);
+            }
+        }
+        base.named_graphs.truncate_to(quad_start);
+        self.programs.truncate(orig_program_count);
+        for &(program_index, rule_id) in reactivated_disabled {
+            self.programs[program_index].disable_rule(rule_id);
+        }
     }
 
     /// Apply a batch of base-fact insertions.
@@ -3435,5 +3737,654 @@ mod tests {
             "A->C must still be derived even though the caller pre-added A->B \
              to the store before calling apply_insertions"
         );
+    }
+
+    // ── apply_rule_insertions tests (#474) ──────────────────────────────
+
+    /// Adding a rule for an entirely disjoint predicate must derive its own
+    /// consequences without disturbing anything already in the closure.
+    ///
+    /// Setup: existing transitivity rule on `p`, materialised over A→B→C
+    /// (derives A→C). Insert an unrelated rule deriving `q` facts from `p2`
+    /// facts (no shared predicates in either direction). The new rule's
+    /// consequence must appear; the transitivity closure must be byte-for-
+    /// byte unaffected.
+    #[test]
+    fn test_apply_rule_insertions_no_interaction() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+        let q = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/q".to_string(),
+            )));
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        // Unrelated fact that will feed the new rule.
+        let fact_ab_p2 = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p2,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+        ds.named_graphs.add_quad(fact_ab_p2);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A->C should be derived before rule insertion"
+        );
+
+        // New rule: { ?x p2 ?y } => { ?x q ?y } -- disjoint from p/transitivity.
+        let q_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(q),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p2),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let added = reasoner
+            .apply_rule_insertions(&mut ds, &[q_rule])
+            .expect("disjoint rule insertion must not error");
+        assert_eq!(added, 1, "exactly one new q-fact should be derived");
+
+        let derived_ab_q = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: q,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_ab_q),
+            "new rule's own consequence must be derived"
+        );
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "pre-existing transitivity closure must be unaffected"
+        );
+    }
+
+    /// A newly inserted rule must be able to consume facts derived by an
+    /// *existing* rule (stratum > 0 output), not just raw base (EDB) facts —
+    /// this is the "sees everything already derived" guarantee the issue
+    /// requires.
+    ///
+    /// Setup: existing rule derives `mid(x,y)` from a base fact `base(x,y)`.
+    /// Insert a new rule deriving `top(x,y)` from `mid(x,y)` (an intensional
+    /// predicate the new rule never saw at construction time). `top` must be
+    /// derived after insertion.
+    #[test]
+    fn test_apply_rule_insertions_consumes_existing_derived_fact() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let base_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/base_pred".to_string(),
+            )));
+        let mid_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/mid_pred".to_string(),
+            )));
+        let top_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/top_pred".to_string(),
+            )));
+
+        let fact_base = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: base_pred,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_base);
+
+        // Existing rule: { ?x base_pred ?y } => { ?x mid_pred ?y }
+        let mid_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(mid_pred),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(base_pred),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        let mut reasoner = IncrementalReasoner::new(vec![mid_rule], &mut ds).unwrap();
+
+        let derived_mid = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: mid_pred,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_mid),
+            "mid_pred should already be derived (not an EDB fact)"
+        );
+
+        // New rule: { ?x mid_pred ?y } => { ?x top_pred ?y } -- consumes the
+        // *derived* fact, not the base fact.
+        let top_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(top_pred),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(mid_pred),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let added = reasoner
+            .apply_rule_insertions(&mut ds, &[top_rule])
+            .expect("rule consuming existing derived facts must not error");
+        assert_eq!(added, 1);
+
+        let derived_top = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: top_pred,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_top),
+            "new rule must be able to derive from an existing rule's output, \
+             not just raw base facts"
+        );
+    }
+
+    /// Inserting a rule whose head an *existing* rule already negates must be
+    /// rejected, and must not corrupt reasoner state.
+    ///
+    /// Setup: existing rule `flag(x,y) :- p(x,y), NOT blocked(x,y)`. Insert a
+    /// new rule that can produce `blocked` facts. The existing rule's already-
+    /// computed `NOT blocked` derivations would become stale if the new rule
+    /// were silently appended after it, so this must return
+    /// `Err(NotStratifiable)` and leave the reasoner's existing closure and
+    /// queries fully intact.
+    #[test]
+    fn test_apply_rule_insertions_rejects_when_existing_rule_negates_new_predicate() {
+        let (mut ds, g, a, p, b, _c) = setup_store();
+        let blocked_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/blocked".to_string(),
+            )));
+        let flag_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/flag".to_string(),
+            )));
+        let source_pred = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/source".to_string(),
+            )));
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        // Existing rule: flag(x,y) :- p(x,y), NOT blocked(x,y)
+        let flag_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(flag_pred),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(p),
+                    object: Term::Variable("y".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(blocked_pred),
+                    object: Term::Variable("y".to_string()),
+                }),
+            ],
+        };
+        let mut reasoner = IncrementalReasoner::new(vec![flag_rule], &mut ds).unwrap();
+
+        let derived_flag = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: flag_pred,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_flag),
+            "flag should be derived: NOT blocked currently succeeds"
+        );
+
+        // New rule that could produce `blocked` facts.
+        let blocked_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(blocked_pred),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(source_pred),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+
+        let result = reasoner.apply_rule_insertions(&mut ds, &[blocked_rule]);
+        match result {
+            Err(ReasoningError::NotStratifiable(_)) => {}
+            Ok(_) => panic!("expected Err(NotStratifiable), got Ok"),
+            Err(other) => panic!("expected Err(NotStratifiable), got {other:?}"),
+        }
+
+        // State must be fully intact: flag is still derived, and inserting a
+        // `source` fact still doesn't produce `blocked` (the rule was never
+        // wired in).
+        assert!(
+            ds.named_graphs.contains(&derived_flag),
+            "pre-existing derivation must survive the rejected insertion"
+        );
+        let fact_source = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: source_pred,
+            obj: b,
+        };
+        reasoner.apply_insertions(&mut ds, &[fact_source]).unwrap();
+        let would_be_blocked = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: blocked_pred,
+            obj: b,
+        };
+        assert!(
+            !ds.named_graphs.contains(&would_be_blocked),
+            "rejected rule must never have been wired in"
+        );
+    }
+
+    /// Mirrors the rejection above but with the direction reversed: an
+    /// *existing* rule positively consumes exactly the predicate a new rule's
+    /// head would (re)produce. Must also be rejected, even though no negation
+    /// is present anywhere -- pins down that the check rejects on *any*
+    /// dependency edge, not just negative ones.
+    ///
+    /// Setup: existing transitivity rule on `p`. Insert a new alias rule
+    /// `{ ?x p2 ?z } => { ?x p ?z }` -- its head is `p`, exactly the predicate
+    /// the existing transitivity rule's body positively consumes.
+    #[test]
+    fn test_apply_rule_insertions_rejects_when_existing_rule_positively_consumes_new_predicate() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let p2 = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/p2".to_string(),
+            )));
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(ds.named_graphs.contains(&derived_ac));
+
+        // New rule: { ?x p2 ?z } => { ?x p ?z } -- head `p` is consumed by
+        // the existing transitivity rule's body.
+        let alias_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p2),
+                object: Term::Variable("z".to_string()),
+            })],
+        };
+
+        let result = reasoner.apply_rule_insertions(&mut ds, &[alias_rule]);
+        match result {
+            Err(ReasoningError::NotStratifiable(_)) => {}
+            Ok(_) => panic!("expected Err(NotStratifiable), got Ok"),
+            Err(other) => panic!("expected Err(NotStratifiable), got {other:?}"),
+        }
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "pre-existing closure must survive the rejected insertion"
+        );
+    }
+
+    /// Re-adding a rule previously retracted via `apply_rule_deletions` must
+    /// re-derive its facts, and must go through the reactivation path (the
+    /// rule's original program/stratum), not append a brand-new stratum.
+    #[test]
+    fn test_apply_rule_insertions_reactivates_previously_deleted_rule() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        let transitivity = transitivity_rule(g, p);
+        let mut reasoner = IncrementalReasoner::new(vec![transitivity.clone()], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(ds.named_graphs.contains(&derived_ac));
+
+        reasoner
+            .apply_rule_deletions(&mut ds, std::slice::from_ref(&transitivity))
+            .expect("retraction must succeed");
+        assert!(
+            !ds.named_graphs.contains(&derived_ac),
+            "A->C should be gone after retraction"
+        );
+
+        let programs_before = reasoner.programs.len();
+
+        let added = reasoner
+            .apply_rule_insertions(&mut ds, &[transitivity])
+            .expect("reactivating a previously-deleted rule must not error");
+        assert_eq!(added, 1, "A->C should be re-derived");
+
+        assert!(
+            ds.named_graphs.contains(&derived_ac),
+            "A->C must be re-derived after reactivation"
+        );
+        assert_eq!(
+            reasoner.programs.len(),
+            programs_before,
+            "reactivation must reuse the rule's original stratum, not append a new one"
+        );
+    }
+
+    /// Regression test: reactivating a rule must go through the *same*
+    /// append-only safety check as a fresh insertion, so it can't silently
+    /// leave a stale negative derivation behind.
+    ///
+    /// Setup: stratum 0 `P(x) :- A(x)`; stratum 1 `R(x) :- NOT P(x)`.
+    /// Retracting `P :- A` (correctly) makes `R` derivable (NOT P succeeds).
+    /// Re-inserting `P :- A` must be rejected -- silently re-enabling it
+    /// would leave the now-stale `R` fact behind (over-derivation), since
+    /// semi-naive only adds and nothing would retract `R`.
+    #[test]
+    fn test_apply_rule_insertions_reactivation_rejects_stale_negation() {
+        let (mut ds, g, a, _p, _b, _c) = setup_store();
+        let pred_a = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/pred_a".to_string(),
+            )));
+        let pred_p = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/pred_p".to_string(),
+            )));
+        let pred_r = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/pred_r".to_string(),
+            )));
+        // A "domain" predicate purely to give `r_rule` a positive body atom
+        // to trigger from -- the forward-chaining engine only ever fires a
+        // rule off a *positive* body-atom match (see `get_rules_for_fact`),
+        // so a rule with only a `NotPattern` body atom and no positive one
+        // can never actually fire, regardless of `is_safe_rule`.
+        let pred_dom = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(
+                "http://example.org/pred_dom".to_string(),
+            )));
+
+        let fact_a = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: pred_a,
+            obj: a,
+        };
+        let fact_dom = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: pred_dom,
+            obj: a,
+        };
+        ds.named_graphs.add_quad(fact_a);
+        ds.named_graphs.add_quad(fact_dom);
+
+        // Stratum 0: P(x) :- A(x)
+        let p_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(pred_p),
+                object: Term::Variable("x".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(pred_a),
+                object: Term::Variable("x".to_string()),
+            })],
+        };
+        // Stratum 1: R(x) :- dom(x), NOT P(x)
+        let r_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(pred_r),
+                object: Term::Variable("x".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(pred_dom),
+                    object: Term::Variable("x".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("x".to_string()),
+                    predicate: Term::Resource(pred_p),
+                    object: Term::Variable("x".to_string()),
+                }),
+            ],
+        };
+
+        let mut reasoner = IncrementalReasoner::new(vec![p_rule.clone(), r_rule], &mut ds).unwrap();
+
+        let derived_p = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: pred_p,
+            obj: a,
+        };
+        let derived_r = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: pred_r,
+            obj: a,
+        };
+        assert!(ds.named_graphs.contains(&derived_p));
+        assert!(
+            !ds.named_graphs.contains(&derived_r),
+            "R should not hold while P does"
+        );
+
+        reasoner
+            .apply_rule_deletions(&mut ds, std::slice::from_ref(&p_rule))
+            .expect("retracting P must succeed");
+        assert!(!ds.named_graphs.contains(&derived_p));
+        assert!(
+            ds.named_graphs.contains(&derived_r),
+            "R should now be derived: NOT P succeeds once P is retracted"
+        );
+
+        let result = reasoner.apply_rule_insertions(&mut ds, &[p_rule]);
+        match result {
+            Err(ReasoningError::NotStratifiable(_)) => {}
+            Ok(_) => {
+                panic!("expected Err(NotStratifiable): reactivating P would leave stale R behind")
+            }
+            Err(other) => panic!("expected Err(NotStratifiable), got {other:?}"),
+        }
+        // State must remain exactly as it was before the rejected call.
+        assert!(!ds.named_graphs.contains(&derived_p));
+        assert!(ds.named_graphs.contains(&derived_r));
+    }
+
+    /// `apply_rule_insertions` with an empty slice is a no-op, mirroring
+    /// `apply_rule_deletions`'s `rules.is_empty()` short-circuit.
+    #[test]
+    fn test_apply_rule_insertions_empty_is_noop() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        let mut reasoner =
+            IncrementalReasoner::new(vec![transitivity_rule(g, p)], &mut ds).unwrap();
+        let added = reasoner.apply_rule_insertions(&mut ds, &[]).unwrap();
+        assert_eq!(added, 0);
+        let _ = c; // suppress unused warning if setup_store's c is unused here
+    }
+
+    /// Inserting a rule that already exists and is currently enabled is a
+    /// no-op, idempotent across repeat calls.
+    #[test]
+    fn test_apply_rule_insertions_duplicate_of_enabled_rule_is_noop() {
+        let (mut ds, g, a, p, b, c) = setup_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        let transitivity = transitivity_rule(g, p);
+        let mut reasoner = IncrementalReasoner::new(vec![transitivity.clone()], &mut ds).unwrap();
+
+        let derived_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: c,
+        };
+        assert!(ds.named_graphs.contains(&derived_ac));
+
+        let added = reasoner
+            .apply_rule_insertions(&mut ds, std::slice::from_ref(&transitivity))
+            .expect("re-inserting an already-enabled rule must not error");
+        assert_eq!(
+            added, 0,
+            "duplicate insertion of an enabled rule is a no-op"
+        );
+
+        // Repeat: still idempotent.
+        let added_again = reasoner
+            .apply_rule_insertions(&mut ds, &[transitivity])
+            .unwrap();
+        assert_eq!(added_again, 0);
     }
 }
