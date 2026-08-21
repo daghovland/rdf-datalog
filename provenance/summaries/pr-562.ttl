@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:562 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Make dagalog resource IRIs dereferenceable via SPARQL endpoint (#493)" ;
+    bl:number 562 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:493 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr562 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:493 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-19T19:38:40Z"^^xsd:dateTime .
+
+session:pr562Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #493 asked for dagalog resource IRIs (bl:Issue/bl:PullRequest/agp:AgentSession instances) to be dereferenceable via a 303-redirect pattern, with four explicitly open design questions (redirect target shape, content negotiation, where served from, auth). Investigation before implementing found two facts that reshaped scope: bl:Issue/bl:PullRequest individuals are minted as real github.com URLs (backlog/src/loader.rs::issue_iri), an authority dagalog does not own, so there is no dagalog.no-hosted resource IRI to attach a 303 source route to for them; and agp:AgentSession individuals are hash-URIs under /ns/agentprov/session#, which is the #441 fragment-stripping pattern, not the 303 pattern. Rather than narrowing scope to match only what exists, the generic mechanism the issue describes was still built and tested (GET /id/{*path} reconstructs a resource IRI from base_iri and 303s to /describe?uri=...), with the gap that nothing currently populates that namespace filed as a precise follow-up (#566) instead of silently narrowing what got built. A second investigation finding drove the core implementation choice: this repo's own provenance record (session:pr281Summary, surfaced via provenance/queries/run.sh) documents that SPARQL's DESCRIBE <iri> was deliberately made outbound-only in PR #281, pinned by a test. Reusing it as-is for /describe would have silently omitted the exact triples (e.g. an agp:AgentSession's agp:reasoningFor pointing at an issue) that motivate this feature, so /describe merges outbound and inbound quads itself off the store's subject/object indexes rather than delegating to Query::Describe. A third finding, that backlog/examples/snapshot.ttl (the only bl:/agp: instance data that exists) is never wired into the production --data file, meant the mechanism could not be end-to-end verified against live production data within this PR's scope; it was instead validated against fixture data mirroring the real shape, and the population gap was filed as its own follow-up (#565) rather than either blocking on it or silently skipping verification." ;
+    agp:reasoningFor ghpull:562 ;
+    agp:decisionPoint session:pr562Decision ;
+    prov:wasGeneratedBy session:pr562 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr562Decision a agp:Decision ;
+    agp:summaryText "No auth bypass for /describe or /id/*: both classify as an ordinary GET Read via auth::classify()'s existing fallthrough, with no Caddyfile carve-out and no special-case in auth_middleware." ;
+    agp:alternative "Carve /describe and /id/* out of forward_auth in deploy/Caddyfile, mirroring #441's treatment of /ns/backlog and /ns/agentprov (public, matching general Linked Data norms that external RDF clients should be able to follow links without authenticating). Rejected after reading deploy/Caddyfile in full: #441's routes serve static vocabulary files with no dataset content, so making them public leaks nothing about what is actually loaded; /describe serves live Datastore content, and this deployment's Caddyfile currently gates the entire SPARQL surface (including /sparql itself) behind forward_auth, so a public /describe would let an unauthenticated client read arbitrary dataset content that /sparql itself refuses to serve them -- defeating the point of gating /sparql at all. The task's own tie-breaker (dereferencing should inherit the dataset's existing read-auth requirement, not bypass it, when the dataset is not otherwise public) applied directly once the Caddyfile was actually checked rather than assumed." .

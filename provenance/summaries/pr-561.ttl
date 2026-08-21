@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #561 (issue #552). Timestamps below are real
+# (from `git log main..HEAD` on branch issue-552-dependabot).
+
+ghpull:561 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Add Dependabot config with 7-day cooldown" ;
+    bl:number 561 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:552 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr561 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:552 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-19T18:56:37Z"^^xsd:dateTime .
+
+session:pr561Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #552 asked for a Dependabot setup with roughly a 7-day cooldown, nothing more specific. Confirmed the repo is a single Cargo workspace rooted at '/' (Cargo.toml lists all crates as workspace members, root package is dagalog itself) before writing the config, so the cargo ecosystem entry uses directory '/'. Checked docs.github.com's dependabot.yml configuration-options reference directly (rather than guessing) to get the current 'cooldown' key syntax right, since it is a relatively new (2025) addition to the schema: a per-ecosystem 'cooldown.default-days' field, distinct from 'schedule.interval'. Added a second update entry for the github-actions ecosystem (weekly, same cooldown) as standard practice for keeping pinned Action versions current alongside crate dependencies -- not explicitly requested by the issue but low-cost and conventional, so kept rather than dropped for minimalism. Set open-pull-requests-limit to 10 per ecosystem so Dependabot cannot flood the repo with PRs in one run. Verified the YAML parses with a plain python3 yaml.safe_load, and confirmed via the CI workflow trigger (push to main, and pull_request with no branch restriction) that Dependabot-authored PRs will run through the exact same CI as any human PR with no extra wiring needed. No prior provenance was found for .github/dependabot.yml since it did not previously exist." ;
+    agp:reasoningFor ghpull:561 ;
+    prov:wasGeneratedBy session:pr561 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
