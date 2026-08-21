@@ -4834,7 +4834,12 @@ mod tests {
             predicate: is_boundary_of,
             obj: pkg,
         };
-        for f in [f_sel_internal, f_has_part_ca, f_adjacent_ab, f_is_boundary_a] {
+        for f in [
+            f_sel_internal,
+            f_has_part_ca,
+            f_adjacent_ab,
+            f_is_boundary_a,
+        ] {
             ds.named_graphs.add_quad(f);
         }
         // Padding to stay under FALLBACK_THRESHOLD and exercise the true
