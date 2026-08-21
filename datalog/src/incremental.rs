@@ -4697,4 +4697,223 @@ mod tests {
             "control case: isBoundaryOf(c,pkg) must be unaffected, matching oracle"
         );
     }
+
+    /// The discriminating case for the same bug report as
+    /// `test_delete_base_fact_cross_predicate_cascade_matches_full_rebuild`:
+    /// deleting a base fact that is the *witness blocking a negated body atom*
+    /// elsewhere in the program.
+    ///
+    /// Deleting `isBoundaryOf(a,pkg)` (an EDB fact) must:
+    /// 1. Retract `isBoundaryOf(c,pkg)` (R4's same-predicate positive cascade —
+    ///    the "easy" direction, likely already handled correctly).
+    /// 2. Cause `NOT isBoundaryOf(a,pkg)` to newly hold, so R1
+    ///    (`isInPackage[new,pkg] :- isInPackage[node,pkg], adjacentTo[node,new],
+    ///    NOT isBoundaryOf[node,pkg]`) can now fire for `node=a`, deriving the
+    ///    previously-absent `isInPackage(b,pkg)` — a fact becoming true *because
+    ///    of* a deletion, gated entirely through a `NotPattern` body atom.
+    ///
+    /// `apply_deletions`'s forward phase only re-derives facts already in PD
+    /// (the backward-phase BFS result). `backward_phase`'s reverse index is
+    /// built from `Derivation::body_witnesses` (see `build_reverse_index`),
+    /// and a `RuleAtom::NotPattern` atom contributes no witness (there is
+    /// nothing positive to record a dependency on). So `isInPackage(b,pkg)`
+    /// was never derived, was therefore never in the closure, and is
+    /// therefore never in PD — nothing seeds its (re-)derivation in the
+    /// forward phase. If that's the actual behavior, this test fails, which
+    /// would exactly match the real-world bug report (project #559/#533
+    /// investigation): a stale closure after a deletion, in the domain's own
+    /// terms ("deleting a boundary marking should reopen what's inside the
+    /// package," per `noaka_boundary.datalog`'s actual purpose) — the user
+    /// describes the symptom ("deletion doesn't propagate") without
+    /// necessarily knowing it's a missing *insertion* under negation, not a
+    /// missing retraction.
+    #[test]
+    fn test_delete_base_fact_that_blocks_negation_matches_full_rebuild() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let has_part = mk_pred(&mut ds, "hasPart");
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let sel_internal = mk_pred(&mut ds, "selInternal");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+        let node_c = mk_pred(&mut ds, "node_c");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        let r4 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_boundary_of),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("new".to_string()),
+                    predicate: Term::Resource(has_part),
+                    object: Term::Variable("node".to_string()),
+                }),
+            ],
+        };
+        let r3 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(sel_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        let r1 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("new".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let rules = vec![r4, r3, r1];
+
+        let f_sel_internal = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: sel_internal,
+            obj: pkg,
+        };
+        let f_has_part_ca = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: has_part,
+            obj: a,
+        };
+        let f_adjacent_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: adjacent_to,
+            obj: b,
+        };
+        let f_is_boundary_a = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        for f in [f_sel_internal, f_has_part_ca, f_adjacent_ab, f_is_boundary_a] {
+            ds.named_graphs.add_quad(f);
+        }
+        // Padding to stay under FALLBACK_THRESHOLD and exercise the true
+        // incremental path.
+        let mut padding_facts = Vec::new();
+        for i in 0..20 {
+            let pad_node = mk_pred(&mut ds, &format!("pad_node2_{i}"));
+            let pad_pkg = mk_pred(&mut ds, &format!("pad_pkg2_{i}"));
+            let f = Quad {
+                triple_id: g,
+                subject: pad_node,
+                predicate: sel_internal,
+                obj: pad_pkg,
+            };
+            ds.named_graphs.add_quad(f);
+            padding_facts.push(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules.clone(), &mut ds).unwrap();
+
+        let is_in_package_b = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_boundary_c = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_b),
+            "sanity: b must NOT be in package yet -- isBoundaryOf(a,pkg) blocks R1"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_boundary_c),
+            "sanity: c must be isBoundaryOf via R4"
+        );
+
+        let fallback_count_before = reasoner.fallback_count;
+        reasoner
+            .apply_deletions(&mut ds, &[f_is_boundary_a])
+            .unwrap();
+        assert_eq!(
+            reasoner.fallback_count, fallback_count_before,
+            "must exercise the incremental BF path, not the full_rematerialise fallback"
+        );
+
+        // Oracle: fresh rebuild from base facts minus the deleted one.
+        let mut ds_oracle_base = Datastore::new(100);
+        ds_oracle_base.resources = ds.resources.clone();
+        for f in [f_sel_internal, f_has_part_ca, f_adjacent_ab] {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        for &f in &padding_facts {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules, &mut ds_oracle_base).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&is_boundary_c),
+            ds_oracle_base.named_graphs.contains(&is_boundary_c),
+            "same-predicate cascade: isBoundaryOf(c,pkg) retraction must match oracle"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_boundary_c),
+            "same-predicate cascade: isBoundaryOf(c,pkg) must actually be retracted"
+        );
+        assert_eq!(
+            ds.named_graphs.contains(&is_in_package_b),
+            ds_oracle_base.named_graphs.contains(&is_in_package_b),
+            "negation-edge case: isInPackage(b,pkg) must match the full-rebuild oracle \
+             after deleting the fact that was blocking R1's NOT isBoundaryOf gate"
+        );
+        assert!(
+            ds_oracle_base.named_graphs.contains(&is_in_package_b),
+            "sanity: the oracle itself must derive isInPackage(b,pkg) once the block is gone"
+        );
+    }
 }
