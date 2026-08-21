@@ -68,10 +68,15 @@ before designing the report shape:
   seven cases on which of {subject, predicate, object} are constant genuinely
   registered in the datastore (`resolve_constant`, `join_ordering.rs:103`).
   EXPLAIN surfaces *which* of those seven cases fired (i.e. "which index was
-  used") by adding a small sibling function, `index_used_description`, in
-  the same module, matching on the same `(subject, predicate, object)`
-  triple `known_cardinality` already computes — not by inspecting
-  `datalog`/`execute` internals, since index selection for a BGP triple
+  used") without a second, drift-prone copy of the match: `known_cardinality`
+  is refactored into a thin wrapper around a new private
+  `cardinality_and_index(tp, datastore) -> (usize, IndexUsed)`, which holds
+  the exact match arms `known_cardinality` had (same hot-path behavior,
+  same signature for every existing caller) and additionally returns a
+  fieldless `IndexUsed` enum naming which arm fired. `known_cardinality`
+  becomes `cardinality_and_index(tp, datastore).0`; EXPLAIN reads `.1`. This
+  is not by inspecting `datalog`/`execute` internals, since index selection
+  for a BGP triple
   pattern is entirely decided in `join_ordering.rs`/`bgp.rs`, not in
   `datalog/src/datalog.rs` (that crate's `evaluate_pattern` is the Datalog
   *rule* evaluator, a separate code path from SPARQL BGP matching — SPARQL
@@ -102,6 +107,32 @@ before designing the report shape:
   sibling that provably binds one of its variables, which the empty-set
   approximation handles conservatively (never worse than reporting BGP-only
   selectivity) but not always exactly.
+
+  **Component-level reordering must also be mirrored, not just BGP-level.**
+  `eval_components_budgeted` (`execute/components.rs:58`) performs two purely
+  *static* transformations before evaluating any component list: it
+  stable-partitions `Filter` components to the end (lines 78–86, 124), and,
+  when `component_ordering::should_reorder(&non_filters)` (line 89) is true
+  (i.e. the list contains a `UNION`/`OPTIONAL`/`MINUS`), replaces the
+  evaluation order with `component_ordering::order_components(&non_filters,
+  &already_bound, &guaranteed_bound, datastore)` — Phase C of the
+  join-reordering epic (#35/#173), which hoists a constraining conjunct
+  ahead of a `UNION`/`OPTIONAL`/`MINUS` it shares variables with. At the
+  query's top level (and at the start of every independently-evaluated
+  scope — `UNION` arms, bare `Group` bodies, `MINUS`'s RHS, all of which
+  begin from `vec![HashMap::new()]` via `eval_independent_then_join`/
+  the `Minus` arm) both `already_bound` and `guaranteed_bound` are
+  genuinely `∅`, so this reordering is statically reproducible exactly, with
+  no approximation — the walk must call the same two functions with the
+  same empty sets, not just print components in source order. This is not
+  optional polish: per PR #173's provenance summary, #533's actual reported
+  pathology was exactly this class of problem (a `UNION` evaluated before a
+  constraining conjunct), so an EXPLAIN report that silently prints source
+  order would misrepresent the one failure mode this endpoint most needs to
+  surface. `OPTIONAL` bodies are the one case that isn't reproducible this
+  way (their inner components are seeded per-row with `sub.clone()`,
+  `execute/components.rs`'s `Optional` arm) — walked with the same `∅`
+  approximation as the BGP case above, for the same reason.
 
 - **Timing**: entirely separate from the static plan above, and zero-cost
   when `explain` isn't requested — it does not touch `eval_bgp`/
@@ -159,12 +190,56 @@ Non-`BGP` components appear as `{"kind": "Optional"/"Union"/"Filter"/...,
 `Filter`/`Bind`/`Values`/`PathPattern` carry a short `detail` string
 (rendered expression/path) instead of a `patterns` list.
 
+## Smaller decisions
+
+- **Execution error + explain.** The scenario EXPLAIN exists for (#533) is
+  exactly "this query is slow/times out" — the case where the caller most
+  wants the plan. So a failing execution (including the #372 cooperative
+  timeout, normally a bare `503` with no body) still returns the static
+  plan: `explain_query_response` computes the plan first (cheap, doesn't
+  execute anything), then attempts execution; on error the JSON response
+  carries the same HTTP status `query_execution_error_response` would have
+  used (503 for a timeout, 500 otherwise) plus `{"plan": [...], "error":
+  "...", "totalTimeMs": <elapsed before failure>}` — `rowCount` is omitted
+  in the error case.
+- **`txId` (transactional read) path.** `run_transactional_query`
+  (`query.rs:305`) duplicates the execution logic and does not call
+  `run_select_query`, so it does not see `explain` handling in this PR.
+  Rather than silently ignoring the parameter (which would look like a bug
+  to a caller combining the two), `explain=true` together with a `txId`
+  parameter returns `400 Bad Request` with a message pointing at the
+  follow-up issue tracking that combination (filed below).
+- **Form-body POST.** `explain` is read from the URL query-string
+  parameters only (`AxumQuery<HashMap<String, String>>`, same extraction
+  `txId` already uses), not from an `application/x-www-form-urlencoded`
+  request body. Documented in the handler's doc comment; a client using
+  form-encoded POST must pass `?explain=true` in the URL.
+- **Result-summary field varies by query type.** `rowCount` only makes
+  sense for `Select`. The report uses a query-type-appropriate field
+  instead of forcing one name: `rowCount` (Select), `result` (Ask, the
+  boolean), `tripleCount` (Construct/Describe).
+- **Same store-read guard.** `run_select_query` already holds
+  `state.store.read().await` across both plan computation and execution
+  (it's one `store` binding used throughout), so cardinalities/timing in
+  an EXPLAIN response describe a single, consistent store generation —
+  no separate read-lock acquisition needed for the plan step.
+
 ## Scope explicitly deferred (filed as follow-up issues)
 
 - Per-operator/per-stage timing (see Decision 2 above).
 - Using a non-empty, conservatively-computed `already_bound` set when
   walking sibling components for the static plan (see Decision 2's "Known
   limitation").
+- `explain=true` combined with `txId` (transactional reads) — see "Smaller
+  decisions" above.
+
+Filed as GitHub issues (unlabeled, Status Todo, project #11) at the point
+they were identified, per this repo's CLAUDE.md:
+[#572](https://github.com/daghovland/rdf-datalog/issues/572) (per-operator
+timing), [#573](https://github.com/daghovland/rdf-datalog/issues/573)
+(conservative static already-bound set), and
+[#574](https://github.com/daghovland/rdf-datalog/issues/574) (`explain` +
+`txId`).
 
 ## Test plan
 
