@@ -154,5 +154,5 @@ Initially `#[ignore]`d, unignored one at a time during implementation:
   unaffected by this change; once implemented they'll need the same `emit_axiom_annotations` hook
   threaded through, noted here for whoever picks those up.
 * Nested "annotations on annotations" (`owl:Annotation` reification, as opposed to `owl:Axiom`) has
-  no representation in `owl_ontology::Annotation` today and is not addressed by this plan; filed
-  separately if/when the type gains that nesting.
+  no representation in `owl_ontology::Annotation` today and is not addressed by this plan — filed as
+  [#589](https://github.com/daghovland/rdf-datalog/issues/589).

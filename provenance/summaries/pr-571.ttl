@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# issue-514-annotation-axioms).
+
+ghpull:571 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rdf: annotation axioms and axiom annotations (reification via owl:Axiom)" ;
+    bl:number 571 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:514 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr571 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:514 ;
+    prov:startedAtTime "2026-08-21T09:33:09Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-21T21:55:42Z"^^xsd:dateTime .
+
+session:pr571Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #514 (split from #373 item 7) asked for the RDF encoding of AnnotationAssertion, SubAnnotationPropertyOf, AnnotationPropertyDomain/Range, and axiom annotations in general (owl:Axiom reification for any axiom whose Vec<Annotation> is non-empty) in owl2rl2datalog's owl_to_rdf.rs Translator, which PR #370 had explicitly deferred. Fetched the live W3C mapping spec (owl2-mapping-to-rdf, Translation_of_Annotations) rather than working from memory, confirming three shapes: a single-triple axiom's annotations reify via one owl:Axiom blank node with owl:annotatedSource/Property/Target plus the annotation triples; an n-ary chain axiom (EquivalentClasses/SameIndividual with 3+ operands, encoded as pairwise triples) repeats the annotations on every chain triple, each getting its own reification node; and a list-object axiom (HasKey, DisjointUnion) reifies only the one main subject-predicate-list-head triple, never the rdf:first/rdf:rest cells. Implemented this as two shared Translator helpers (annotation_value for resolving AnnotationValue to a GraphElementId, and emit_axiom_annotations/triple_p_annotated for the reification itself, a no-op when the annotation vec is empty) threaded through every existing axiom-emitting method rather than duplicating the reification logic per call site, plus a new AnnotationAxiom dispatch arm (previously unhandled, falling into the catch-all skip). atomic_assertion_triple's return type changed from bool to Option<(subject, predicate, obj)> so Translator::assertion could reify ClassAssertion/ObjectPropertyAssertion/DataPropertyAssertion's own annotations without re-deriving the already-emitted triple; abox.rs's caller was updated to .is_some(). Followed PR #370's and #556's (HasKey) conventions for the Translator/RdfTranslationReport shape and the translate()/has_triple() test helpers." ;
+    agp:reasoningFor ghpull:571 ;
+    agp:decisionPoint session:pr571Decision ;
+    prov:wasGeneratedBy session:pr571 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr571Decision a agp:Decision ;
+    agp:summaryText "Two things surfaced only from the compiler, not from reading the type definitions up front: ObjectPropertyAxiom::ObjectPropertyDomain/ObjectPropertyRange are the only two axiom variants in owl_ontology that carry no Vec<Annotation> field at all (every sibling variant does), so those two arms had to keep the old unannotated triple_p call with an explanatory comment instead of switching to triple_p_annotated like everything else -- filed as a real follow-up issue (#588) rather than left as a code comment, per CLAUDE.md's rule that deferred work becomes a trackable issue, not just prose. Also caught by an initial test run, not code review: axiom_reification_count's `id_of(...).expect(\"owl:Axiom interned\")` panicked on ontologies with zero annotated axioms, because owl:Axiom is only ever interned once at least one gets reified -- the bug was in the test helper's assumption, not the Translator implementation, fixed by treating an un-interned owl:Axiom IRI as zero reifications rather than asserting it must exist." ;
+    agp:alternative "Considered giving ObjectPropertyDomain/ObjectPropertyRange the annotation treatment anyway by ignoring the missing field, but there was nothing to read the annotations from since the AST itself never captured them -- the gap is upstream in owl_ontology's type definition, not in this PR's translation logic, so it genuinely needs its own PR." .
