@@ -162,6 +162,16 @@ pub fn build_router(state: AppState) -> Router {
         // ── VoID dataset description (§4, P2) ───────────────────────────────
         .route("/.well-known/void", get(crate::void::void_handler))
         .route("/void", get(crate::void::void_handler))
+        // ── Dereferenceable resource IRIs (#493) ─────────────────────────────
+        // `/describe?uri=<encoded>` is the description endpoint; `/id/*` is
+        // a generic slash-URI namespace that 303-redirects into it. Both are
+        // plain GETs classified as `Permission::Read` by `auth::classify()`
+        // — deliberately NOT carved out of `forward_auth` the way #441's
+        // `/ns/*` vocabulary routes are, since these serve live dataset
+        // content rather than static files with no dataset content. See
+        // docs/plans/DEREFERENCEABLE_RESOURCE_IRIS_493_PLAN.md §4.
+        .route("/describe", get(crate::describe::describe_get))
+        .route("/id/{*path}", get(crate::describe::id_redirect_get))
         // ── Auth config (always public — no middleware) ───────────────────────
         .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
