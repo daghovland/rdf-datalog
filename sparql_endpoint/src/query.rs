@@ -703,7 +703,7 @@ async fn run_select_query(
 /// `?explain=true` combined with a `txId` (transactional read) parameter is
 /// not supported yet — `run_transactional_query` doesn't share
 /// `run_select_query`'s explain handling. See
-/// https://github.com/daghovland/rdf-datalog/issues/574.
+/// <https://github.com/daghovland/rdf-datalog/issues/574>.
 fn explain_with_tx_id_unsupported() -> Response {
     (
         StatusCode::BAD_REQUEST,
