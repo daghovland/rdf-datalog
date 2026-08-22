@@ -222,6 +222,14 @@ fn shacl_testdata_parses() {
         "shacl_s6_sparql_prefixes_shapes.ttl",
         "shacl_s5_sparql_target_data.ttl",
         "shacl_s5_sparql_target_shapes.ttl",
+        "shacl_s6_batched_many_data.ttl",
+        "shacl_s6_batched_many_shapes.ttl",
+        "shacl_s6_batched_limit_offset_data.ttl",
+        "shacl_s6_batched_limit_shapes.ttl",
+        "shacl_s6_batched_offset_shapes.ttl",
+        "shacl_s6_batched_agg_data.ttl",
+        "shacl_s6_batched_agg_ungrouped_shapes.ttl",
+        "shacl_s6_batched_agg_grouped_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -3732,5 +3740,172 @@ fn spec_s5_sparql_target() {
     assert_eq!(
         report.results[0].focus_node.as_deref(),
         Some("http://example.org/ns#Bob")
+    );
+}
+
+// ── #521: batched `sh:sparql` SELECT-constraint evaluation ─────────────────
+//
+// See docs/plans/SHACL_SPARQL_BATCHING_521_PLAN.md and
+// [#521](https://github.com/daghovland/rdf-datalog/issues/521).
+
+/// Collect `(focus_node, value)` pairs from a report, sorted, so assertions
+/// don't depend on the batched path's row order (not part of its correctness
+/// contract — see the plan doc's "Result ordering" section).
+fn sorted_focus_values(report: &ValidationReport) -> Vec<(String, Option<String>)> {
+    let mut v: Vec<(String, Option<String>)> = report
+        .results
+        .iter()
+        .map(|r| (r.focus_node.clone().unwrap_or_default(), r.value.clone()))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Core correctness of the batched fast path: 200 focus nodes, a simple
+/// `sh:sparql sh:select` constraint (no LIMIT/OFFSET/aggregate) flagging
+/// every 10th node's negative score. Exercises the multi-row `VALUES`
+/// injection and the re-split-by-`$this` logic across many nodes.
+#[test]
+fn spec_s6_batched_many_focus_nodes() {
+    let data = load("shacl_s6_batched_many_data.ttl");
+    let shapes = load("shacl_s6_batched_many_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(report.results.len(), 20, "every 10th of 200 nodes violates");
+    let focus_nodes: std::collections::BTreeSet<String> = report
+        .results
+        .iter()
+        .map(|r| r.focus_node.clone().unwrap_or_default())
+        .collect();
+    let expected: std::collections::BTreeSet<String> = (0..200)
+        .step_by(10)
+        .map(|i| format!("http://example.org/ns#N{i}"))
+        .collect();
+    assert_eq!(focus_nodes, expected);
+}
+
+/// A `LIMIT` inside the embedded query must keep the per-node fallback path:
+/// each of the 5 focus nodes has 2 `ex:tag` values, so a naively-batched
+/// `LIMIT 1` (applied once to the merged 10-row result set) would yield just
+/// 1 violation covering only 1 node, whereas per-node `LIMIT 1` yields
+/// exactly 1 violation *per node* (5 total, one per node) since `LIMIT`
+/// applies independently within each node's own execution.
+#[test]
+fn spec_s6_batched_limit_falls_back() {
+    let data = load("shacl_s6_batched_limit_offset_data.ttl");
+    let shapes = load("shacl_s6_batched_limit_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        5,
+        "LIMIT 1 must apply per-node (5 nodes x 1 row), not once globally"
+    );
+    let focus_nodes: std::collections::BTreeSet<String> = report
+        .results
+        .iter()
+        .map(|r| r.focus_node.clone().unwrap_or_default())
+        .collect();
+    let expected: std::collections::BTreeSet<String> = (0..5)
+        .map(|i| format!("http://example.org/ns#N{i}"))
+        .collect();
+    assert_eq!(
+        focus_nodes, expected,
+        "every node must be represented exactly once"
+    );
+}
+
+/// Same reasoning as `spec_s6_batched_limit_falls_back` but for `OFFSET`: 5
+/// nodes x 2 tags, `OFFSET 1` (no `LIMIT`) must skip the first row *per
+/// node's own execution*, yielding exactly 1 violation per node (5 total).
+/// A naively-batched `OFFSET 1` would instead skip only the first row of the
+/// combined 10-row result set once, yielding 9 results with uneven per-node
+/// coverage.
+#[test]
+fn spec_s6_batched_offset_falls_back() {
+    let data = load("shacl_s6_batched_limit_offset_data.ttl");
+    let shapes = load("shacl_s6_batched_offset_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        5,
+        "OFFSET 1 must apply per-node (5 nodes x 1 remaining row), not once globally"
+    );
+    let focus_nodes: std::collections::BTreeSet<String> = report
+        .results
+        .iter()
+        .map(|r| r.focus_node.clone().unwrap_or_default())
+        .collect();
+    let expected: std::collections::BTreeSet<String> = (0..5)
+        .map(|i| format!("http://example.org/ns#N{i}"))
+        .collect();
+    assert_eq!(
+        focus_nodes, expected,
+        "every node must be represented exactly once"
+    );
+}
+
+/// An aggregate with no `GROUP BY` at all must keep the per-node fallback:
+/// each of 3 focus nodes has a different `ex:tag` count (1, 2, 3), and the
+/// constraint flags nodes whose count isn't 2. Per-node, each execution's
+/// implicit single group covers only that node's own tags, so N0 (count 1)
+/// and N2 (count 3) violate while N1 (count 2) conforms. A naively-batched
+/// version would merge every node's tags into one global implicit group,
+/// destroying the per-node counts entirely.
+#[test]
+fn spec_s6_batched_ungrouped_aggregate_falls_back() {
+    let data = load("shacl_s6_batched_agg_data.ttl");
+    let shapes = load("shacl_s6_batched_agg_ungrouped_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    let mut got = sorted_focus_values(&report);
+    got.sort();
+    let mut expected = vec![
+        (
+            "http://example.org/ns#N0".to_string(),
+            Some("\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+        (
+            "http://example.org/ns#N2".to_string(),
+            Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(
+        got, expected,
+        "N0 (count 1) and N2 (count 3) must violate, each with its own count as $value"
+    );
+}
+
+/// The safe-to-batch aggregate case: `GROUP BY $this` with the same
+/// query/data shape as `spec_s6_batched_ungrouped_aggregate_falls_back`
+/// (COUNT != 2). Since every group is scoped to exactly one focus node's
+/// rows, batched execution must produce the *same* result as the ungrouped
+/// (per-node) case — this pins that the detection logic doesn't
+/// over-conservatively reject `GROUP BY $this` and that the batched path's
+/// aggregate handling (via `project_aggregate_row`) is correct.
+#[test]
+fn spec_s6_batched_group_by_this_uses_batched_path() {
+    let data = load("shacl_s6_batched_agg_data.ttl");
+    let shapes = load("shacl_s6_batched_agg_grouped_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    let mut got = sorted_focus_values(&report);
+    got.sort();
+    let mut expected = vec![
+        (
+            "http://example.org/ns#N0".to_string(),
+            Some("\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+        (
+            "http://example.org/ns#N2".to_string(),
+            Some("\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string()),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(
+        got, expected,
+        "GROUP BY $this must produce the same violations as the ungrouped/per-node case"
     );
 }

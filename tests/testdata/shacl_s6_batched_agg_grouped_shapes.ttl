@@ -1,0 +1,17 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+ex:ThingShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "must have exactly 2 tags" ;
+        sh:select """
+            SELECT $this (COUNT($v) AS $value) WHERE {
+                $this <http://example.org/ns#tag> $v .
+            }
+            GROUP BY $this
+            HAVING (COUNT($v) != 2)
+        """ ;
+    ] .

@@ -26,7 +26,7 @@ use crate::shapes::{ParsedShape, SparqlConstraint, SparqlQuery};
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
 use ingress::NetworkPolicy;
 use regex::Regex;
-use sparql_parser::ast::{Query, QueryComponent};
+use sparql_parser::ast::{Expression, GroupCondition, ProjectionElement, Query, QueryComponent};
 use sparql_parser::execute::{QueryResult, SolutionRow, execute_with_base};
 use sparql_parser::{ParserContext, parse_query};
 use std::collections::HashMap;
@@ -80,6 +80,119 @@ fn inject_this_value(mut query: Query, elem: GraphElement) -> Query {
         Query::Construct { .. } | Query::Describe { .. } => {}
     }
     query
+}
+
+/// Prepend a multi-row `VALUES ($this) { (<elem1>) (<elem2>) ... }` block to
+/// `query`'s `where_clause`, pre-binding `$this` to every one of `elems` in a
+/// single execution — the batched-fast-path counterpart of
+/// `inject_this_value`. Only meaningful for `Query::Select` (callers only use
+/// this when [`is_batchable`] has already confirmed the query is a `Select`).
+fn inject_this_values(mut query: Query, elems: &[GraphElement]) -> Query {
+    let rows = elems.iter().map(|e| vec![Some(e.clone())]).collect();
+    let values = QueryComponent::Values(vec!["this".to_string()], rows);
+    if let Query::Select { where_clause, .. } = &mut query {
+        where_clause.insert(0, values);
+    }
+    query
+}
+
+/// True if `expr` contains an aggregate function call anywhere within it
+/// (possibly nested inside arithmetic/function-call subexpressions) — SPARQL
+/// 1.1 §18.2.4.3's `AggregateExpr`, reachable from a projection expression,
+/// `HAVING`, or `ORDER BY`.
+fn expr_has_aggregate(expr: &Expression) -> bool {
+    match expr {
+        Expression::Aggregate(_) => true,
+        Expression::Binary(l, _, r) => expr_has_aggregate(l) || expr_has_aggregate(r),
+        Expression::Unary(_, inner) => expr_has_aggregate(inner),
+        Expression::FunctionCall(_, args) => args.iter().any(expr_has_aggregate),
+        Expression::In(inner, list) | Expression::NotIn(inner, list) => {
+            expr_has_aggregate(inner) || list.iter().any(expr_has_aggregate)
+        }
+        Expression::Variable(_) | Expression::Constant(_) => false,
+        // EXISTS/NOT EXISTS wrap a graph pattern, not an aggregate-bearing
+        // SELECT clause — a standalone aggregate cannot appear directly
+        // inside one (it would need its own SELECT), so nothing to recurse
+        // into here.
+        Expression::Exists(_) | Expression::NotExists(_) => false,
+    }
+}
+
+/// True iff `group_by` includes `$this` (the internal `?this` form) as one of
+/// its grouping keys — see [`is_batchable`]'s point on `GROUP BY`.
+fn grouped_by_this(group_by: &[GroupCondition]) -> bool {
+    group_by
+        .iter()
+        .any(|gc| matches!(&gc.expr, Expression::Variable(v) if v == "this"))
+}
+
+/// True iff `query`'s top-level clause is safe to evaluate once for every
+/// focus node in a single batched `VALUES ($this) { ... }` execution, rather
+/// than once per focus node. See
+/// `docs/plans/SHACL_SPARQL_BATCHING_521_PLAN.md`'s "Detecting the safe case"
+/// section for the full reasoning; summary:
+///
+/// - `LIMIT`/`OFFSET` apply once to the whole batched result set rather than
+///   once per focus node, so either makes batching unsafe.
+/// - An aggregate (in the projection, `HAVING`, or `ORDER BY`) with no
+///   `GROUP BY` implicitly aggregates the *entire* result set into one group
+///   (SPARQL 1.1 §11.4) — batched, that would mix every focus node's rows
+///   together, so this is unsafe.
+/// - A non-empty `GROUP BY` that does **not** include `$this` can merge rows
+///   from different focus nodes into the same group (even with no aggregate
+///   function involved, e.g. a `GROUP BY` used only to deduplicate), so this
+///   is unsafe too.
+/// - A `GROUP BY` that does include `$this` scopes every group to exactly one
+///   focus node's own rows, so it's safe (this is the case the issue calls
+///   out as *safe* to batch, unlike the other aggregate case).
+/// - `Query::Ask` (and any other non-`Select` variant) is always unsafe here:
+///   an `ASK` result has no `$this` binding to split rows by, so batching
+///   doesn't apply to `sh:ask` constraints (only `sh:select`, per the issue).
+fn is_batchable(query: &Query) -> bool {
+    let Query::Select {
+        projection,
+        having,
+        order_by,
+        group_by,
+        limit,
+        offset,
+        ..
+    } = query
+    else {
+        return false;
+    };
+    if limit.is_some() || offset.is_some() {
+        return false;
+    }
+    if !group_by.is_empty() {
+        return grouped_by_this(group_by);
+    }
+    let has_aggregate = projection.iter().any(|p| match p {
+        ProjectionElement::Expression(expr, _) => expr_has_aggregate(expr),
+        ProjectionElement::Variable(_) | ProjectionElement::Star => false,
+    }) || having.iter().any(expr_has_aggregate)
+        || order_by.iter().any(|oc| expr_has_aggregate(&oc.expression));
+    !has_aggregate
+}
+
+/// Ensure `$this` is present in `query`'s projection, appending a bare
+/// `?this` column if it's not already covered by `SELECT *` or an existing
+/// `this`-named column. The batched path needs `$this` in every output row
+/// to attribute it back to the right focus node — see
+/// `docs/plans/SHACL_SPARQL_BATCHING_521_PLAN.md`'s "Batched execution
+/// design" section for why this is safe to do unconditionally, including
+/// under `DISTINCT` and `GROUP BY`.
+fn ensure_this_projected(query: &mut Query) {
+    if let Query::Select { projection, .. } = query {
+        let has_this = projection.iter().any(|p| match p {
+            ProjectionElement::Star => true,
+            ProjectionElement::Variable(v) => v == "this",
+            ProjectionElement::Expression(_, alias) => alias == "this",
+        });
+        if !has_this {
+            projection.push(ProjectionElement::Variable("this".to_string()));
+        }
+    }
 }
 
 fn run_select(query: &Query, store: &Datastore) -> Result<Vec<SolutionRow>, String> {
@@ -176,12 +289,23 @@ fn eval_one_constraint(
     data: &Datastore,
 ) -> Result<Vec<ValidationResult>, String> {
     let query_text = build_query_text(&constraint.query);
-    let mut results = Vec::new();
+    let base_query = parse(&query_text)?;
 
+    if !constraint.is_ask && is_batchable(&base_query) {
+        return eval_batched_select(
+            shape,
+            constraint,
+            focus_nodes,
+            shapes_store,
+            data,
+            base_query,
+        );
+    }
+
+    let mut results = Vec::new();
     for &node_id in focus_nodes {
         let this_elem = data.resources.get_graph_element(node_id).clone();
-        let base_query = parse(&query_text)?;
-        let query = inject_this_value(base_query, this_elem);
+        let query = inject_this_value(base_query.clone(), this_elem);
 
         if constraint.is_ask {
             if !run_ask(&query, data)? {
@@ -197,13 +321,7 @@ fn eval_one_constraint(
             }
         } else {
             for row in run_select(&query, data)? {
-                let value = row.get("value").map(ge_display);
-                let path = row.get("path").and_then(|e| match e {
-                    GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => {
-                        Some(ShPath::Predicate(iri.0.clone()))
-                    }
-                    _ => None,
-                });
+                let (value, path) = row_value_and_path(&row);
                 results.push(make_result(
                     shape,
                     constraint,
@@ -217,6 +335,72 @@ fn eval_one_constraint(
         }
     }
     Ok(results)
+}
+
+/// The batched fast path for a `sh:sparql sh:select` constraint whose query
+/// has already been confirmed [`is_batchable`]: execute it once with all of
+/// `focus_nodes` bound via a multi-row `VALUES`, then re-split the resulting
+/// rows by their `$this` binding back into one `ValidationResult` per
+/// matching (focus node, row) pair — see
+/// `docs/plans/SHACL_SPARQL_BATCHING_521_PLAN.md`'s "Batched execution
+/// design" section.
+fn eval_batched_select(
+    shape: &ParsedShape,
+    constraint: &SparqlConstraint,
+    focus_nodes: &[GraphElementId],
+    shapes_store: &Datastore,
+    data: &Datastore,
+    mut query: Query,
+) -> Result<Vec<ValidationResult>, String> {
+    ensure_this_projected(&mut query);
+
+    let mut node_by_elem: HashMap<GraphElement, GraphElementId> =
+        HashMap::with_capacity(focus_nodes.len());
+    let mut elems: Vec<GraphElement> = Vec::with_capacity(focus_nodes.len());
+    for &node_id in focus_nodes {
+        let elem = data.resources.get_graph_element(node_id).clone();
+        node_by_elem.insert(elem.clone(), node_id);
+        elems.push(elem);
+    }
+
+    let query = inject_this_values(query, &elems);
+    let mut results = Vec::new();
+    for row in run_select(&query, data)? {
+        let Some(this_val) = row.get("this") else {
+            // The query's own body never bound `$this` in this row (e.g. the
+            // WHERE clause doesn't reference it at all) — shouldn't happen,
+            // since `ensure_this_projected` always adds it to the
+            // projection and the injected VALUES always binds it, but skip
+            // defensively rather than panic on an unattributable row.
+            continue;
+        };
+        let Some(&node_id) = node_by_elem.get(this_val) else {
+            continue;
+        };
+        let (value, path) = row_value_and_path(&row);
+        results.push(make_result(
+            shape,
+            constraint,
+            shapes_store,
+            data,
+            node_id,
+            value,
+            path,
+        ));
+    }
+    Ok(results)
+}
+
+/// Extract the `$value`/`$path` columns a SELECT constraint's result row
+/// conventionally carries (SHACL-AF §6.1) — shared by the per-node and
+/// batched execution paths.
+fn row_value_and_path(row: &SolutionRow) -> (Option<String>, Option<ShPath>) {
+    let value = row.get("value").map(ge_display);
+    let path = row.get("path").and_then(|e| match e {
+        GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => Some(ShPath::Predicate(iri.0.clone())),
+        _ => None,
+    });
+    (value, path)
 }
 
 #[allow(clippy::too_many_arguments)]
