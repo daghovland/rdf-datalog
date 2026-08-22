@@ -4921,4 +4921,245 @@ mod tests {
             "sanity: the oracle itself must derive isInPackage(b,pkg) once the block is gone"
         );
     }
+
+    /// Follow-up to `test_delete_base_fact_that_blocks_negation_matches_full_rebuild`,
+    /// per the user's clarification of the real Dexpi2Imf flow (project #591): in
+    /// production, `imf:adjacentTo` is not asserted directly -- it is itself an IDB
+    /// fact, **inferred by the IMF OWL ontology** (via `owl2rl2datalog`-generated
+    /// rules from lower-level terminal/connector structure) before the custom
+    /// `noaka_boundary.datalog`-style rules ever see it. The prior test used
+    /// `adjacentTo` as a plain EDB fact throughout -- this test instead derives it
+    /// from a lower-level `connectedVia` EDB relation via its own rule (R0, mirroring
+    /// how the IMF ontology's OWL-RL rules would derive `adjacentTo` transitively
+    /// from `imf:connectedTo`/terminal chains), stratified *earlier* than
+    /// `isInPackage`/`isBoundaryOf`, and everything else is otherwise identical to
+    /// the already-passing negation-edge test. If this fails where the EDB-adjacentTo
+    /// version passed, the bug is specifically in how a *derived* fact from one rule
+    /// source interacts with a `NOT`-gated rule from another rule source within the
+    /// same combined `IncrementalReasoner` -- exactly the two-ontology-plus-datalog-
+    /// rules flow the user described (select an internal node, mark a boundary, then
+    /// remove the boundary again).
+    #[test]
+    fn test_delete_boundary_with_owl_rl_derived_adjacent_to_matches_full_rebuild() {
+        let (mut ds, g, a, _p, b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let has_part = mk_pred(&mut ds, "hasPart");
+        let connected_via = mk_pred(&mut ds, "connectedVia"); // lower-level EDB relation
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo"); // now IDB, derived from connectedVia
+        let sel_internal = mk_pred(&mut ds, "selInternal");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+        let node_c = mk_pred(&mut ds, "node_c");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        // R0 (stratum 0, mirrors an OWL-RL-generated rule): adjacentTo[x,y] :- connectedVia[x,y]
+        let r0 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(adjacent_to),
+                object: Term::Variable("y".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(connected_via),
+                object: Term::Variable("y".to_string()),
+            })],
+        };
+        let r4 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_boundary_of),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("new".to_string()),
+                    predicate: Term::Resource(has_part),
+                    object: Term::Variable("node".to_string()),
+                }),
+            ],
+        };
+        let r3 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(sel_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        // R1: isInPackage[new,pkg] :- isInPackage[node,pkg], adjacentTo[node,new] (now IDB!), NOT isBoundaryOf[node,pkg]
+        let r1 = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("new".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("new".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let rules = vec![r0, r4, r3, r1];
+
+        let f_sel_internal = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: sel_internal,
+            obj: pkg,
+        };
+        let f_has_part_ca = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: has_part,
+            obj: a,
+        };
+        // The only change from the EDB version: adjacentTo(a,b) is now derived
+        // via connectedVia(a,b) + R0, instead of being asserted directly.
+        let f_connected_via_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: connected_via,
+            obj: b,
+        };
+        let f_is_boundary_a = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        for f in [
+            f_sel_internal,
+            f_has_part_ca,
+            f_connected_via_ab,
+            f_is_boundary_a,
+        ] {
+            ds.named_graphs.add_quad(f);
+        }
+        let mut padding_facts = Vec::new();
+        for i in 0..20 {
+            let pad_node = mk_pred(&mut ds, &format!("pad_node3_{i}"));
+            let pad_pkg = mk_pred(&mut ds, &format!("pad_pkg3_{i}"));
+            let f = Quad {
+                triple_id: g,
+                subject: pad_node,
+                predicate: sel_internal,
+                obj: pad_pkg,
+            };
+            ds.named_graphs.add_quad(f);
+            padding_facts.push(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules.clone(), &mut ds).unwrap();
+
+        let is_in_package_b = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_boundary_c = Quad {
+            triple_id: g,
+            subject: node_c,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        let f_adjacent_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: adjacent_to,
+            obj: b,
+        };
+        assert!(
+            ds.named_graphs.contains(&f_adjacent_ab),
+            "sanity: adjacentTo(a,b) must be derived (IDB) via R0 from connectedVia(a,b)"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_b),
+            "sanity: b must NOT be in package yet -- isBoundaryOf(a,pkg) blocks R1"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_boundary_c),
+            "sanity: c must be isBoundaryOf via R4"
+        );
+
+        let fallback_count_before = reasoner.fallback_count;
+        reasoner
+            .apply_deletions(&mut ds, &[f_is_boundary_a])
+            .unwrap();
+        assert_eq!(
+            reasoner.fallback_count, fallback_count_before,
+            "must exercise the incremental BF path, not the full_rematerialise fallback"
+        );
+
+        // adjacentTo(a,b) must survive -- only isBoundaryOf(a,pkg) was deleted, not
+        // connectedVia(a,b), so the IDB adjacentTo fact must still be derivable.
+        assert!(
+            ds.named_graphs.contains(&f_adjacent_ab),
+            "adjacentTo(a,b) must survive: its own support (connectedVia(a,b)) was not deleted"
+        );
+
+        let mut ds_oracle_base = Datastore::new(100);
+        ds_oracle_base.resources = ds.resources.clone();
+        for f in [f_sel_internal, f_has_part_ca, f_connected_via_ab] {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        for &f in &padding_facts {
+            ds_oracle_base.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules, &mut ds_oracle_base).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&is_boundary_c),
+            ds_oracle_base.named_graphs.contains(&is_boundary_c),
+            "same-predicate cascade: isBoundaryOf(c,pkg) retraction must match oracle"
+        );
+        assert_eq!(
+            ds.named_graphs.contains(&is_in_package_b),
+            ds_oracle_base.named_graphs.contains(&is_in_package_b),
+            "negation-edge case with IDB adjacentTo: isInPackage(b,pkg) must match the \
+             full-rebuild oracle after deleting the fact blocking R1's NOT isBoundaryOf gate"
+        );
+        assert!(
+            ds_oracle_base.named_graphs.contains(&is_in_package_b),
+            "sanity: the oracle itself must derive isInPackage(b,pkg) once the block is gone"
+        );
+    }
 }
