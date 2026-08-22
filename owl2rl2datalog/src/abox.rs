@@ -63,7 +63,7 @@ pub fn assert_abox(datastore: &mut Datastore, ontology: &Ontology) -> RdfTransla
         let Axiom::AxiomAssertion(assertion) = axiom else {
             continue;
         };
-        if atomic_assertion_triple(datastore, assertion) {
+        if atomic_assertion_triple(datastore, assertion).is_some() {
             report.triples_added += 1;
             continue;
         }

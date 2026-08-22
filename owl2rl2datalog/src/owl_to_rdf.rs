@@ -55,18 +55,19 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
-    IriReference, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_CLASS,
-    OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH,
-    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY,
-    OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL,
-    OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY,
-    OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST,
-    RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
+    IriReference, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE, OWL_ANNOTATED_TARGET,
+    OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CLASS, OWL_DATATYPE_PROPERTY,
+    OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
+    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_INVERSE_FUNCTIONAL_PROPERTY,
+    OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY,
+    OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY, OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY,
+    OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN,
+    RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
 };
 use owl_ontology::{
-    Assertion, Axiom, ClassAxiom, ClassExpression, DataProperty, DataPropertyAxiom, DataRange,
-    Entity, FullIri, Individual, ObjectPropertyAxiom, ObjectPropertyExpression, Ontology,
-    SubPropertyExpression,
+    Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
+    DataProperty, DataPropertyAxiom, DataRange, Entity, FullIri, Individual, ObjectPropertyAxiom,
+    ObjectPropertyExpression, Ontology, SubPropertyExpression,
 };
 
 /// What [`owl2rdf`] did, and what it could not do.
@@ -129,11 +130,17 @@ pub(crate) fn intern_individual(
 
 /// Emit the ground triple for an assertion that maps to exactly one triple.
 ///
-/// Returns `true` if `assertion` was one of the three single-ground-triple
-/// forms (`ClassAssertion` / `ObjectPropertyAssertion` / `DataPropertyAssertion`
-/// over named entities) and a triple was added, `false` otherwise. Shared by
+/// Returns `Some((subject, predicate, obj))` if `assertion` was one of the
+/// three single-ground-triple forms (`ClassAssertion` /
+/// `ObjectPropertyAssertion` / `DataPropertyAssertion` over named entities)
+/// and a triple was added, `None` otherwise. The returned ids let
+/// [`Translator::assertion`] attach an `owl:Axiom` reification for the
+/// assertion's own annotations without re-deriving the triple. Shared by
 /// [`owl2rdf`] and [`crate::assert_abox`] so the two never drift.
-pub(crate) fn atomic_assertion_triple(datastore: &mut Datastore, assertion: &Assertion) -> bool {
+pub(crate) fn atomic_assertion_triple(
+    datastore: &mut Datastore,
+    assertion: &Assertion,
+) -> Option<(GraphElementId, GraphElementId, GraphElementId)> {
     match assertion {
         Assertion::ClassAssertion(_, ClassExpression::ClassName(FullIri(class_iri)), ind) => {
             let subject = intern_individual(datastore, ind);
@@ -145,7 +152,7 @@ pub(crate) fn atomic_assertion_triple(datastore: &mut Datastore, assertion: &Ass
                 predicate,
                 obj,
             });
-            true
+            Some((subject, predicate, obj))
         }
         Assertion::ObjectPropertyAssertion(
             _,
@@ -161,7 +168,7 @@ pub(crate) fn atomic_assertion_triple(datastore: &mut Datastore, assertion: &Ass
                 predicate,
                 obj,
             });
-            true
+            Some((subject, predicate, obj))
         }
         Assertion::DataPropertyAssertion(_, FullIri(prop_iri), source, value) => {
             let subject = intern_individual(datastore, source);
@@ -172,9 +179,9 @@ pub(crate) fn atomic_assertion_triple(datastore: &mut Datastore, assertion: &Ass
                 predicate,
                 obj,
             });
-            true
+            Some((subject, predicate, obj))
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -225,6 +232,65 @@ impl<'a> Translator<'a> {
         self.triple_p(subject, RDF_TYPE, obj);
     }
 
+    /// Resolve an `AnnotationValue` to a `GraphElementId`: an IRI, a literal,
+    /// or an anonymous individual (interned the same way as any other
+    /// [`Individual`], via [`intern_individual`]).
+    fn annotation_value(&mut self, value: &AnnotationValue) -> GraphElementId {
+        match value {
+            AnnotationValue::IriAnnotation(iri) => self.full_iri(iri),
+            AnnotationValue::IndividualAnnotation(ind) => intern_individual(self.datastore, ind),
+            AnnotationValue::LiteralAnnotation(elem) => self.datastore.add_resource(elem.clone()),
+        }
+    }
+
+    /// `owl:Axiom` reification of the ground triple `(subject, predicate,
+    /// obj)`, per the W3C mapping's axiom-annotation rule
+    /// (<https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations>):
+    /// a fresh blank node typed `owl:Axiom`, `owl:annotatedSource` /
+    /// `owl:annotatedProperty` / `owl:annotatedTarget` triples pointing back
+    /// at the three components, and one triple per annotation `(_:x, AP,
+    /// T(av))` on that blank node.
+    ///
+    /// A no-op when `annotations` is empty — callers must never emit
+    /// spurious reification triples for an axiom that carries no
+    /// annotations.
+    fn emit_axiom_annotations(
+        &mut self,
+        subject: GraphElementId,
+        predicate: GraphElementId,
+        obj: GraphElementId,
+        annotations: &[Annotation],
+    ) {
+        if annotations.is_empty() {
+            return;
+        }
+        let reification = self.datastore.new_anonymous_blank_node();
+        self.type_triple(reification, OWL_AXIOM);
+        self.triple_p(reification, OWL_ANNOTATED_SOURCE, subject);
+        self.triple_p(reification, OWL_ANNOTATED_PROPERTY, predicate);
+        self.triple_p(reification, OWL_ANNOTATED_TARGET, obj);
+        for (ap, av) in annotations {
+            let ap_id = self.full_iri(ap);
+            let av_id = self.annotation_value(av);
+            self.triple(reification, ap_id, av_id);
+        }
+    }
+
+    /// `subject <predicate-iri> object`, interning the predicate IRI, plus
+    /// the `owl:Axiom` reification of that triple if `annotations` is
+    /// non-empty (see [`Translator::emit_axiom_annotations`]).
+    fn triple_p_annotated(
+        &mut self,
+        subject: GraphElementId,
+        predicate_iri: &str,
+        obj: GraphElementId,
+        annotations: &[Annotation],
+    ) {
+        let predicate = self.iri(predicate_iri);
+        self.triple(subject, predicate, obj);
+        self.emit_axiom_annotations(subject, predicate, obj, annotations);
+    }
+
     fn skip(&mut self, what: &str, detail: impl std::fmt::Debug) {
         let message = format!("{what}: {detail:?}");
         log::warn!("owl2rdf: no RDF encoding implemented yet for {message}");
@@ -263,9 +329,14 @@ impl<'a> Translator<'a> {
     /// axiom: a chain of binary triples. `rdf_owl_translator::rdf2owl` reads
     /// each such triple back as its own binary axiom, which is
     /// logically equivalent to the n-ary original.
-    fn chain(&mut self, items: &[GraphElementId], predicate_iri: &str) {
+    ///
+    /// `annotations` is repeated on every triple in the chain (each gets its
+    /// own `owl:Axiom` reification), per the mapping spec's §2.3.2: "each of
+    /// the RDF triples obtained by the translation of ax' is transformed...
+    /// and the annotations are repeated for each of the triples obtained".
+    fn chain(&mut self, items: &[GraphElementId], predicate_iri: &str, annotations: &[Annotation]) {
         for pair in items.windows(2) {
-            self.triple_p(pair[0], predicate_iri, pair[1]);
+            self.triple_p_annotated(pair[0], predicate_iri, pair[1], annotations);
         }
     }
 
@@ -307,19 +378,22 @@ impl<'a> Translator<'a> {
 
     fn axiom(&mut self, axiom: &Axiom) {
         match axiom {
-            Axiom::AxiomDeclaration((_, entity)) => self.declaration(entity),
+            Axiom::AxiomDeclaration((annotations, entity)) => self.declaration(entity, annotations),
             Axiom::AxiomClassAxiom(class_axiom) => self.class_axiom(class_axiom),
             Axiom::AxiomObjectPropertyAxiom(prop_axiom) => self.object_property_axiom(prop_axiom),
             Axiom::AxiomDataPropertyAxiom(prop_axiom) => self.data_property_axiom(prop_axiom),
             Axiom::AxiomAssertion(assertion) => self.assertion(assertion),
-            Axiom::AxiomHasKey(_, class_expr, obj_props, data_props) => {
-                self.has_key(axiom, class_expr, obj_props, data_props)
+            Axiom::AxiomHasKey(annotations, class_expr, obj_props, data_props) => {
+                self.has_key(axiom, class_expr, obj_props, data_props, annotations)
+            }
+            Axiom::AxiomAnnotationAxiom(annotation_axiom) => {
+                self.annotation_axiom(annotation_axiom)
             }
             other => self.skip("axiom", other),
         }
     }
 
-    fn declaration(&mut self, entity: &Entity) {
+    fn declaration(&mut self, entity: &Entity, annotations: &[Annotation]) {
         let (iri, type_iri) = match entity {
             Entity::ClassDeclaration(iri) => (iri, OWL_CLASS),
             Entity::ObjectPropertyDeclaration(iri) => (iri, OWL_OBJECT_PROPERTY),
@@ -336,51 +410,67 @@ impl<'a> Translator<'a> {
             }
         };
         let subject = self.full_iri(iri);
-        self.type_triple(subject, type_iri);
+        let type_id = self.iri(type_iri);
+        self.triple_p_annotated(subject, RDF_TYPE, type_id, annotations);
     }
 
     fn class_axiom(&mut self, axiom: &ClassAxiom) {
         match axiom {
-            ClassAxiom::SubClassOf(_, sub, sup) => {
+            ClassAxiom::SubClassOf(annotations, sub, sup) => {
                 match (self.named_class(sub), self.named_class(sup)) {
                     (Some(sub_id), Some(sup_id)) => {
-                        self.triple_p(sub_id, RDFS_SUB_CLASS_OF, sup_id)
+                        self.triple_p_annotated(sub_id, RDFS_SUB_CLASS_OF, sup_id, annotations)
                     }
                     _ => self.skip("SubClassOf with complex class expression", axiom),
                 }
             }
-            ClassAxiom::EquivalentClasses(_, classes) => match self.named_classes(classes) {
-                Some(ids) => self.chain(&ids, OWL_EQUIVALENT_CLASS),
-                None => self.skip("EquivalentClasses with complex class expression", axiom),
-            },
-            ClassAxiom::DisjointClasses(_, classes) if classes.len() == 2 => {
+            ClassAxiom::EquivalentClasses(annotations, classes) => {
                 match self.named_classes(classes) {
-                    Some(ids) => self.triple_p(ids[0], OWL_DISJOINT_WITH, ids[1]),
+                    Some(ids) => self.chain(&ids, OWL_EQUIVALENT_CLASS, annotations),
+                    None => self.skip("EquivalentClasses with complex class expression", axiom),
+                }
+            }
+            ClassAxiom::DisjointClasses(annotations, classes) if classes.len() == 2 => {
+                match self.named_classes(classes) {
+                    Some(ids) => {
+                        self.triple_p_annotated(ids[0], OWL_DISJOINT_WITH, ids[1], annotations)
+                    }
                     None => self.skip("DisjointClasses with complex class expression", axiom),
                 }
             }
             // n > 2 needs an `owl:AllDisjointClasses` blank node with an
             // `owl:members` rdf:List — deferred to
             // https://github.com/daghovland/rdf-datalog/issues/513.
-            ClassAxiom::DisjointUnion(_, class, members) => match self.named_classes(members) {
-                Some(ids) => {
-                    let class_id = self.full_iri(class);
-                    self.type_triple(class_id, OWL_CLASS);
-                    let list_head = self.rdf_list(&ids);
-                    self.triple_p(class_id, OWL_DISJOINT_UNION_OF, list_head);
+            ClassAxiom::DisjointUnion(annotations, class, members) => {
+                match self.named_classes(members) {
+                    Some(ids) => {
+                        let class_id = self.full_iri(class);
+                        self.type_triple(class_id, OWL_CLASS);
+                        let list_head = self.rdf_list(&ids);
+                        self.triple_p_annotated(
+                            class_id,
+                            OWL_DISJOINT_UNION_OF,
+                            list_head,
+                            annotations,
+                        );
+                    }
+                    // The disjoint union's members are themselves complex class
+                    // expressions — needs the general blank-node structural
+                    // encoding, deferred to
+                    // https://github.com/daghovland/rdf-datalog/issues/509.
+                    None => self.skip("DisjointUnion with complex class expression member", axiom),
                 }
-                // The disjoint union's members are themselves complex class
-                // expressions — needs the general blank-node structural
-                // encoding, deferred to
-                // https://github.com/daghovland/rdf-datalog/issues/509.
-                None => self.skip("DisjointUnion with complex class expression member", axiom),
-            },
+            }
             other => self.skip("class axiom", other),
         }
     }
 
     fn object_property_axiom(&mut self, axiom: &ObjectPropertyAxiom) {
         match axiom {
+            // `ObjectPropertyDomain`/`ObjectPropertyRange` have no
+            // `Vec<Annotation>` field in `owl_ontology::ObjectPropertyAxiom`
+            // (unlike every other variant here) — axiom annotations on these
+            // two forms have no source data to reify.
             ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) => {
                 match (self.named_object_property(prop), self.named_class(domain)) {
                     (Some(prop_id), Some(class_id)) => {
@@ -396,55 +486,65 @@ impl<'a> Translator<'a> {
                 }
             }
             ObjectPropertyAxiom::SubObjectPropertyOf(
-                _,
+                annotations,
                 SubPropertyExpression::SubObjectPropertyExpression(sub),
                 sup,
             ) => match (
                 self.named_object_property(sub),
                 self.named_object_property(sup),
             ) {
-                (Some(sub_id), Some(sup_id)) => self.triple_p(sub_id, RDFS_SUB_PROPERTY_OF, sup_id),
+                (Some(sub_id), Some(sup_id)) => {
+                    self.triple_p_annotated(sub_id, RDFS_SUB_PROPERTY_OF, sup_id, annotations)
+                }
                 _ => self.skip("SubObjectPropertyOf with complex expression", axiom),
             },
-            ObjectPropertyAxiom::EquivalentObjectProperties(_, props) => {
+            ObjectPropertyAxiom::EquivalentObjectProperties(annotations, props) => {
                 match self.named_object_properties(props) {
-                    Some(ids) => self.chain(&ids, OWL_EQUIVALENT_PROPERTY),
+                    Some(ids) => self.chain(&ids, OWL_EQUIVALENT_PROPERTY, annotations),
                     None => self.skip("EquivalentObjectProperties with complex expression", axiom),
                 }
             }
-            ObjectPropertyAxiom::DisjointObjectProperties(_, props) if props.len() == 2 => {
+            ObjectPropertyAxiom::DisjointObjectProperties(annotations, props)
+                if props.len() == 2 =>
+            {
                 match self.named_object_properties(props) {
-                    Some(ids) => self.triple_p(ids[0], OWL_PROPERTY_DISJOINT_WITH, ids[1]),
+                    Some(ids) => self.triple_p_annotated(
+                        ids[0],
+                        OWL_PROPERTY_DISJOINT_WITH,
+                        ids[1],
+                        annotations,
+                    ),
                     None => self.skip("DisjointObjectProperties with complex expression", axiom),
                 }
             }
-            ObjectPropertyAxiom::InverseObjectProperties(_, first, second) => match (
+            ObjectPropertyAxiom::InverseObjectProperties(annotations, first, second) => match (
                 self.named_object_property(first),
                 self.named_object_property(second),
             ) {
-                (Some(a), Some(b)) => self.triple_p(a, OWL_OBJECT_INVERSE_OF, b),
+                (Some(a), Some(b)) => {
+                    self.triple_p_annotated(a, OWL_OBJECT_INVERSE_OF, b, annotations)
+                }
                 _ => self.skip("InverseObjectProperties with complex expression", axiom),
             },
-            ObjectPropertyAxiom::FunctionalObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_FUNCTIONAL_PROPERTY, axiom)
+            ObjectPropertyAxiom::FunctionalObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_FUNCTIONAL_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::InverseFunctionalObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_INVERSE_FUNCTIONAL_PROPERTY, axiom)
+            ObjectPropertyAxiom::InverseFunctionalObjectProperty(annotations, prop) => self
+                .property_characteristic(prop, OWL_INVERSE_FUNCTIONAL_PROPERTY, annotations, axiom),
+            ObjectPropertyAxiom::ReflexiveObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_REFLEXIVE_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::ReflexiveObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_REFLEXIVE_PROPERTY, axiom)
+            ObjectPropertyAxiom::IrreflexiveObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_IRREFLEXIVE_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::IrreflexiveObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_IRREFLEXIVE_PROPERTY, axiom)
+            ObjectPropertyAxiom::SymmetricObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_SYMMETRIC_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::SymmetricObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_SYMMETRIC_PROPERTY, axiom)
+            ObjectPropertyAxiom::AsymmetricObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_ASYMMETRIC_PROPERTY, annotations, axiom)
             }
-            ObjectPropertyAxiom::AsymmetricObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_ASYMMETRIC_PROPERTY, axiom)
-            }
-            ObjectPropertyAxiom::TransitiveObjectProperty(_, prop) => {
-                self.property_characteristic(prop, OWL_TRANSITIVE_PROPERTY, axiom)
+            ObjectPropertyAxiom::TransitiveObjectProperty(annotations, prop) => {
+                self.property_characteristic(prop, OWL_TRANSITIVE_PROPERTY, annotations, axiom)
             }
             other => self.skip("object property axiom", other),
         }
@@ -454,68 +554,87 @@ impl<'a> Translator<'a> {
         &mut self,
         prop: &ObjectPropertyExpression,
         type_iri: &str,
+        annotations: &[Annotation],
         axiom: &ObjectPropertyAxiom,
     ) {
         match self.named_object_property(prop) {
-            Some(prop_id) => self.type_triple(prop_id, type_iri),
+            Some(prop_id) => {
+                let type_id = self.iri(type_iri);
+                self.triple_p_annotated(prop_id, RDF_TYPE, type_id, annotations)
+            }
             None => self.skip("property characteristic of complex expression", axiom),
         }
     }
 
     fn data_property_axiom(&mut self, axiom: &DataPropertyAxiom) {
         match axiom {
-            DataPropertyAxiom::SubDataPropertyOf(_, sub, sup) => {
+            DataPropertyAxiom::SubDataPropertyOf(annotations, sub, sup) => {
                 let sub_id = self.full_iri(sub);
                 let sup_id = self.full_iri(sup);
-                self.triple_p(sub_id, RDFS_SUB_PROPERTY_OF, sup_id);
+                self.triple_p_annotated(sub_id, RDFS_SUB_PROPERTY_OF, sup_id, annotations);
             }
-            DataPropertyAxiom::EquivalentDataProperties(_, props) => {
+            DataPropertyAxiom::EquivalentDataProperties(annotations, props) => {
                 let ids: Vec<_> = props.iter().map(|p| self.full_iri(p)).collect();
-                self.chain(&ids, OWL_EQUIVALENT_PROPERTY);
+                self.chain(&ids, OWL_EQUIVALENT_PROPERTY, annotations);
             }
-            DataPropertyAxiom::DisjointDataProperties(_, props) if props.len() == 2 => {
+            DataPropertyAxiom::DisjointDataProperties(annotations, props) if props.len() == 2 => {
                 let ids: Vec<_> = props.iter().map(|p| self.full_iri(p)).collect();
-                self.triple_p(ids[0], OWL_PROPERTY_DISJOINT_WITH, ids[1]);
+                self.triple_p_annotated(ids[0], OWL_PROPERTY_DISJOINT_WITH, ids[1], annotations);
             }
-            DataPropertyAxiom::DataPropertyDomain(_, prop, domain) => {
+            DataPropertyAxiom::DataPropertyDomain(annotations, prop, domain) => {
                 let prop_id = self.full_iri(prop);
                 match self.named_class(domain) {
-                    Some(class_id) => self.triple_p(prop_id, RDFS_DOMAIN, class_id),
+                    Some(class_id) => {
+                        self.triple_p_annotated(prop_id, RDFS_DOMAIN, class_id, annotations)
+                    }
                     None => self.skip("DataPropertyDomain with complex class expression", axiom),
                 }
             }
-            DataPropertyAxiom::DataPropertyRange(_, prop, DataRange::NamedDataRange(datatype)) => {
+            DataPropertyAxiom::DataPropertyRange(
+                annotations,
+                prop,
+                DataRange::NamedDataRange(datatype),
+            ) => {
                 let prop_id = self.full_iri(prop);
                 let range_id = self.full_iri(datatype);
-                self.triple_p(prop_id, RDFS_RANGE, range_id);
+                self.triple_p_annotated(prop_id, RDFS_RANGE, range_id, annotations);
             }
-            DataPropertyAxiom::FunctionalDataProperty(_, prop) => {
+            DataPropertyAxiom::FunctionalDataProperty(annotations, prop) => {
                 let prop_id = self.full_iri(prop);
-                self.type_triple(prop_id, OWL_FUNCTIONAL_PROPERTY);
+                let type_id = self.iri(OWL_FUNCTIONAL_PROPERTY);
+                self.triple_p_annotated(prop_id, RDF_TYPE, type_id, annotations);
             }
             other => self.skip("data property axiom", other),
         }
     }
 
     fn assertion(&mut self, assertion: &Assertion) {
-        if atomic_assertion_triple(self.datastore, assertion) {
+        if let Some((subject, predicate, obj)) = atomic_assertion_triple(self.datastore, assertion)
+        {
             self.report.triples_added += 1;
+            let annotations = match assertion {
+                Assertion::ClassAssertion(annotations, ..)
+                | Assertion::ObjectPropertyAssertion(annotations, ..)
+                | Assertion::DataPropertyAssertion(annotations, ..) => annotations,
+                _ => unreachable!("atomic_assertion_triple only succeeds for these three forms"),
+            };
+            self.emit_axiom_annotations(subject, predicate, obj, annotations);
             return;
         }
         match assertion {
-            Assertion::SameIndividual(_, individuals) => {
+            Assertion::SameIndividual(annotations, individuals) => {
                 let ids: Vec<_> = individuals
                     .iter()
                     .map(|i| intern_individual(self.datastore, i))
                     .collect();
-                self.chain(&ids, OWL_SAME_AS);
+                self.chain(&ids, OWL_SAME_AS, annotations);
             }
-            Assertion::DifferentIndividuals(_, individuals) if individuals.len() == 2 => {
+            Assertion::DifferentIndividuals(annotations, individuals) if individuals.len() == 2 => {
                 let ids: Vec<_> = individuals
                     .iter()
                     .map(|i| intern_individual(self.datastore, i))
                     .collect();
-                self.triple_p(ids[0], OWL_DIFFERENT_FROM, ids[1]);
+                self.triple_p_annotated(ids[0], OWL_DIFFERENT_FROM, ids[1], annotations);
             }
             other => self.skip("assertion", other),
         }
@@ -532,12 +651,19 @@ impl<'a> Translator<'a> {
     /// general blank-node structural encoding for class expressions, deferred
     /// to [#509](https://github.com/daghovland/rdf-datalog/issues/509); such
     /// an axiom is reported as skipped rather than translated.
+    ///
+    /// Only the main `T(C) owl:hasKey list-head` triple is reified when
+    /// `annotations` is non-empty — the `rdf:first`/`rdf:rest` list-cell
+    /// triples are emitted unchanged, per the mapping spec's §2.3.1 ("the
+    /// first triple... is the main triple... the other triples... are output
+    /// without any change").
     fn has_key(
         &mut self,
         axiom: &Axiom,
         class_expr: &ClassExpression,
         obj_props: &[ObjectPropertyExpression],
         data_props: &[DataProperty],
+        annotations: &[Annotation],
     ) {
         match (
             self.named_class(class_expr),
@@ -547,9 +673,40 @@ impl<'a> Translator<'a> {
                 let mut key_ids = obj_ids;
                 key_ids.extend(data_props.iter().map(|p| self.full_iri(p)));
                 let list_head = self.rdf_list(&key_ids);
-                self.triple_p(class_id, OWL_HAS_KEY, list_head);
+                self.triple_p_annotated(class_id, OWL_HAS_KEY, list_head, annotations);
             }
             _ => self.skip("HasKey with complex class expression", axiom),
+        }
+    }
+
+    /// `Axiom::AxiomAnnotationAxiom` dispatch: `AnnotationAssertion`,
+    /// `SubAnnotationPropertyOf`, `AnnotationPropertyDomain`,
+    /// `AnnotationPropertyRange` — all single-ground-triple forms per Table 1
+    /// of <https://www.w3.org/TR/owl2-mapping-to-rdf/>.
+    fn annotation_axiom(&mut self, axiom: &AnnotationAxiom) {
+        match axiom {
+            AnnotationAxiom::AnnotationAssertion(annotations, ap, subject, value) => {
+                let subject_id = self.datastore.add_resource(subject.clone());
+                let ap_id = self.full_iri(ap);
+                let value_id = self.datastore.add_resource(value.clone());
+                self.triple(subject_id, ap_id, value_id);
+                self.emit_axiom_annotations(subject_id, ap_id, value_id, annotations);
+            }
+            AnnotationAxiom::SubAnnotationPropertyOf(annotations, sub, sup) => {
+                let sub_id = self.full_iri(sub);
+                let sup_id = self.full_iri(sup);
+                self.triple_p_annotated(sub_id, RDFS_SUB_PROPERTY_OF, sup_id, annotations);
+            }
+            AnnotationAxiom::AnnotationPropertyDomain(annotations, ap, domain) => {
+                let ap_id = self.full_iri(ap);
+                let domain_id = self.full_iri(domain);
+                self.triple_p_annotated(ap_id, RDFS_DOMAIN, domain_id, annotations);
+            }
+            AnnotationAxiom::AnnotationPropertyRange(annotations, ap, range) => {
+                let ap_id = self.full_iri(ap);
+                let range_id = self.full_iri(range);
+                self.triple_p_annotated(ap_id, RDFS_RANGE, range_id, annotations);
+            }
         }
     }
 }
@@ -1050,5 +1207,222 @@ mod tests {
         ]);
         assert_eq!(report.triples_added, 0);
         assert_eq!(report.skipped.len(), 2, "skipped: {:?}", report.skipped);
+    }
+
+    // ── annotation axioms and axiom-annotation reification (#514) ─────────
+
+    /// How many `owl:Axiom`-typed reification nodes exist in the store.
+    fn axiom_reification_count(ds: &Datastore) -> usize {
+        // `owl:Axiom` is only ever interned once at least one annotated
+        // axiom has been translated — an ontology with none of those never
+        // mints it, so treat "not interned" as zero reifications rather than
+        // panicking.
+        let Some(axiom_type) = id_of(ds, &IriReference(OWL_AXIOM.to_owned())) else {
+            return 0;
+        };
+        let rdf_type = id_of(ds, &IriReference(RDF_TYPE.to_owned())).expect("rdf:type interned");
+        ds.quads_matching(None, None, Some(rdf_type), Some(axiom_type))
+            .len()
+    }
+
+    /// The `owl:Axiom` reification node for the ground triple `(s, p, o)`
+    /// (by id), if one exists (i.e. a blank node typed `owl:Axiom` with
+    /// matching `owl:annotatedSource` / `owl:annotatedProperty` /
+    /// `owl:annotatedTarget`).
+    fn find_reification_node_id(
+        ds: &Datastore,
+        s: GraphElementId,
+        p: GraphElementId,
+        o: GraphElementId,
+    ) -> Option<GraphElementId> {
+        let annotated_source =
+            id_of(ds, &IriReference(OWL_ANNOTATED_SOURCE.to_owned())).expect("interned");
+        let annotated_property =
+            id_of(ds, &IriReference(OWL_ANNOTATED_PROPERTY.to_owned())).expect("interned");
+        let annotated_target =
+            id_of(ds, &IriReference(OWL_ANNOTATED_TARGET.to_owned())).expect("interned");
+        ds.quads_matching(None, None, Some(annotated_source), Some(s))
+            .into_iter()
+            .map(|q| q.subject)
+            .find(|&node| {
+                !ds.quads_matching(None, Some(node), Some(annotated_property), Some(p))
+                    .is_empty()
+                    && !ds
+                        .quads_matching(None, Some(node), Some(annotated_target), Some(o))
+                        .is_empty()
+            })
+    }
+
+    /// The `owl:Axiom` reification node for the ground triple
+    /// `<subject-iri> <predicate-iri> <obj-iri>`, if one exists.
+    fn find_reification_node(
+        ds: &Datastore,
+        subject: &IriReference,
+        predicate_iri: &str,
+        obj: &IriReference,
+    ) -> Option<GraphElementId> {
+        let s = id_of(ds, subject)?;
+        let p = id_of(ds, &IriReference(predicate_iri.to_owned()))?;
+        let o = id_of(ds, obj)?;
+        find_reification_node_id(ds, s, p, o)
+    }
+
+    fn annotation(ap: &str, value: &str) -> Annotation {
+        (
+            full(ap),
+            AnnotationValue::LiteralAnnotation(GraphElement::GraphLiteral(
+                ingress::RdfLiteral::LangLiteral {
+                    lang: "en".to_owned(),
+                    literal: value.to_owned(),
+                },
+            )),
+        )
+    }
+
+    #[test]
+    fn annotation_assertion_on_named_individual_becomes_ground_triple() {
+        let (ds, report) = translate(vec![Axiom::AxiomAnnotationAxiom(
+            AnnotationAxiom::AnnotationAssertion(
+                vec![],
+                full("comment"),
+                GraphElement::NodeOrEdge(RdfResource::Iri(ex("fido"))),
+                GraphElement::GraphLiteral(ingress::RdfLiteral::LangLiteral {
+                    lang: "en".to_owned(),
+                    literal: "A good dog".to_owned(),
+                }),
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert_eq!(report.triples_added, 1);
+        assert_eq!(
+            axiom_reification_count(&ds),
+            0,
+            "no annotations, no reification"
+        );
+    }
+
+    #[test]
+    fn sub_annotation_property_of_becomes_rdfs_sub_property_of() {
+        let (ds, report) = translate(vec![Axiom::AxiomAnnotationAxiom(
+            AnnotationAxiom::SubAnnotationPropertyOf(vec![], full("shortComment"), full("comment")),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(
+            &ds,
+            &ex("shortComment"),
+            RDFS_SUB_PROPERTY_OF,
+            &ex("comment")
+        ));
+    }
+
+    #[test]
+    fn annotation_property_domain_and_range_become_rdfs_domain_and_range() {
+        let (ds, report) = translate(vec![
+            Axiom::AxiomAnnotationAxiom(AnnotationAxiom::AnnotationPropertyDomain(
+                vec![],
+                full("comment"),
+                full("Thing"),
+            )),
+            Axiom::AxiomAnnotationAxiom(AnnotationAxiom::AnnotationPropertyRange(
+                vec![],
+                full("comment"),
+                full("Literal"),
+            )),
+        ]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(&ds, &ex("comment"), RDFS_DOMAIN, &ex("Thing")));
+        assert!(has_triple(&ds, &ex("comment"), RDFS_RANGE, &ex("Literal")));
+    }
+
+    #[test]
+    fn subclassof_with_annotation_is_reified_via_owl_axiom() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![annotation("source", "a good textbook")],
+            class("Dog"),
+            class("Animal"),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(
+            &ds,
+            &ex("Dog"),
+            RDFS_SUB_CLASS_OF,
+            &ex("Animal")
+        ));
+        let node = find_reification_node(&ds, &ex("Dog"), RDFS_SUB_CLASS_OF, &ex("Animal"))
+            .expect("owl:Axiom reification node must exist");
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "reification node must carry the annotation triple"
+        );
+        assert_eq!(axiom_reification_count(&ds), 1);
+    }
+
+    #[test]
+    fn subclassof_with_empty_annotations_emits_no_reification() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("Dog"),
+            class("Animal"),
+        ))]);
+        assert_eq!(report.triples_added, 1);
+        assert!(report.skipped.is_empty());
+        assert!(has_triple(
+            &ds,
+            &ex("Dog"),
+            RDFS_SUB_CLASS_OF,
+            &ex("Animal")
+        ));
+        assert_eq!(
+            axiom_reification_count(&ds),
+            0,
+            "an axiom with no annotations must not get an owl:Axiom reification"
+        );
+    }
+
+    #[test]
+    fn equivalent_classes_annotations_repeat_on_every_chain_triple() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(
+            vec![annotation("source", "a good textbook")],
+            vec![class("A"), class("B"), class("C")],
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(&ds, &ex("A"), OWL_EQUIVALENT_CLASS, &ex("B")));
+        assert!(has_triple(&ds, &ex("B"), OWL_EQUIVALENT_CLASS, &ex("C")));
+        assert!(find_reification_node(&ds, &ex("A"), OWL_EQUIVALENT_CLASS, &ex("B")).is_some());
+        assert!(find_reification_node(&ds, &ex("B"), OWL_EQUIVALENT_CLASS, &ex("C")).is_some());
+        assert_eq!(
+            axiom_reification_count(&ds),
+            2,
+            "each chain triple gets its own owl:Axiom reification"
+        );
+    }
+
+    #[test]
+    fn has_key_with_annotation_reifies_only_the_main_triple() {
+        let (ds, report) = translate(vec![Axiom::AxiomHasKey(
+            vec![annotation("source", "a good textbook")],
+            class("Person"),
+            vec![obj_prop("hasSsn")],
+            vec![],
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head =
+            object_of(&ds, &ex("Person"), OWL_HAS_KEY).expect("owl:hasKey triple must exist");
+        let person_id = id_of(&ds, &ex("Person")).expect("Person interned");
+        let has_key_pred = id_of(&ds, &IriReference(OWL_HAS_KEY.to_owned())).expect("interned");
+        assert!(
+            find_reification_node_id(&ds, person_id, has_key_pred, list_head).is_some(),
+            "the main owl:hasKey triple must be reified"
+        );
+        assert_eq!(
+            axiom_reification_count(&ds),
+            1,
+            "only the main owl:hasKey triple is reified, not the rdf:List cells"
+        );
+        // Sanity: the list itself is unaffected by the annotation.
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("hasSsn")]);
     }
 }
