@@ -27,7 +27,7 @@ dag-rdf = { path = "../dag_rdf" }
 turtle = { path = "../turtle" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1.1"
 regex = "1"
 chrono = "0.4"
 log = "0.4"
