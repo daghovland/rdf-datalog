@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-num-bigint = "0.4.4"
+num-bigint = "0.5.1"
 chrono = { version = "0.4.20", features = ["serde"] }
 rust_decimal = "1.41"
 ordered-float = "5.3.0"
