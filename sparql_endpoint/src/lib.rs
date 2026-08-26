@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! SPARQL 1.1 HTTP endpoint + Fuseki-compatible admin API.
 
 pub mod admin;
+pub mod agentprov_session;
 pub mod auth;
 pub mod constraints;
 pub mod dataset_routes;

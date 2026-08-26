@@ -14,6 +14,10 @@
 #   /ns/backlog, /ns/agentprov -> static Turtle vocabulary files, served
 #                 directly (no auth, no redirect -- see #441 and
 #                 docs/plans/DEREFERENCEABLE_URIS_441_PLAN.md)
+#   /ns/agentprov/session -> proxied (no auth) to dagalog's own
+#                 GET /ns/agentprov/session route, the agp:AgentSession
+#                 hash-URI namespace document (see #567 and
+#                 docs/plans/AGENTPROV_SESSION_DEREF_567_PLAN.md)
 #   everything else -> forward_auth to oauth2-proxy first (redirects to
 #                 Google sign-in if not authenticated; on success, forwards
 #                 X-Auth-Request-* headers upstream), then:
@@ -88,6 +92,20 @@
 			header Content-Type "text/turtle; charset=utf-8"
 			file_server
 		}
+	}
+
+	# The agp:AgentSession hash-URI namespace document (#567). Unlike the two
+	# static blocks above, this is per-session content generated from the
+	# live Datastore -- proxied straight to dagalog's own
+	# `GET /ns/agentprov/session` route, which does its own content
+	# negotiation and always returns 200 (even an empty document is valid --
+	# see docs/plans/AGENTPROV_SESSION_DEREF_567_PLAN.md). Stays outside
+	# forward_auth for the same reason the two blocks above do: the
+	# underlying data (provenance/summaries/*.ttl) is already public, and an
+	# external RDF client dereferencing a session:* hash-URI can never sign
+	# in with Google.
+	handle /ns/agentprov/session {
+		reverse_proxy dagalog:3030
 	}
 
 	# Everything else requires a valid session first.
