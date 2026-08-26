@@ -89,13 +89,19 @@ fresh `owl:Class`/`owl:Restriction` blank node — no new minting primitive need
 
 Today `Translator::named_class` returns `Option<GraphElementId>` (`Some` for
 `ClassName`/`AnonymousClass`, `None` — meaning "caller must skip" — for anything complex). This PR
-adds a sibling, infallible `Translator::class_expression(&ClassExpression) -> GraphElementId` that:
+adds a sibling `Translator::class_expression(&ClassExpression) -> Option<GraphElementId>` (kept
+`Option`, not infallible, so a restriction on a still-unsupported `ObjectPropertyExpression`
+variant — `InverseObjectProperty`/`ObjectPropertyChain`, #510's scope — or a restriction over a
+complex `DataRange` (#512's scope) propagates `None` up through the recursion via `?` *before* any
+blank node or triple for the enclosing expression is minted, rather than emitting a
+partially-formed/orphaned blank node into the datastore) that:
 
 * delegates to `named_class` for the two atomic cases,
 * recurses into itself for nested `ClassExpression` operands (union/intersection members,
   complement's operand, restriction's filler class), so `SubClassOf(A, ObjectUnionOf(B,
   ObjectIntersectionOf(C, D)))` "just works" without special-casing depth,
-* returns a fresh blank node per complex case per the tables above.
+* returns a fresh blank node per complex case per the tables above, or `None` if the expression
+  depends on a still-unsupported nested construct.
 
 `ClassAxiom::SubClassOf`/`EquivalentClasses`/`DisjointClasses`/`DisjointUnion`,
 `ObjectPropertyAxiom::ObjectPropertyDomain`/`Range`, `DataPropertyAxiom::DataPropertyDomain`,

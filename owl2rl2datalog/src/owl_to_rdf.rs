@@ -55,14 +55,19 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
-    IriReference, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE, OWL_ANNOTATED_TARGET,
-    OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CLASS, OWL_DATATYPE_PROPERTY,
-    OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
-    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_INVERSE_FUNCTIONAL_PROPERTY,
-    OWL_IRREFLEXIVE_PROPERTY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY,
-    OWL_PROPERTY_DISJOINT_WITH, OWL_REFLEXIVE_PROPERTY, OWL_SAME_AS, OWL_SYMMETRIC_PROPERTY,
-    OWL_TRANSITIVE_PROPERTY, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN,
-    RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF,
+    IriReference, OWL_ALL_VALUES_FROM, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE,
+    OWL_ANNOTATED_TARGET, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM,
+    OWL_CARDINALITY, OWL_CLASS, OWL_COMPLEMENT_OF, OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM,
+    OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY,
+    OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_HAS_SELF, OWL_HAS_VALUE, OWL_INTERSECTION_OF,
+    OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY, OWL_MAX_CARDINALITY,
+    OWL_MAX_QUALIFIED_CARDINALITY, OWL_MIN_CARDINALITY, OWL_MIN_QUALIFIED_CARDINALITY,
+    OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_ON_CLASS,
+    OWL_ON_DATA_RANGE, OWL_ON_PROPERTIES, OWL_ON_PROPERTY, OWL_ONE_OF, OWL_PROPERTY_DISJOINT_WITH,
+    OWL_QUALIFIED_CARDINALITY, OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION, OWL_SAME_AS,
+    OWL_SOME_VALUES_FROM, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, OWL_UNION_OF, RDF_FIRST,
+    RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF,
+    RDFS_SUB_PROPERTY_OF, RdfLiteral, XSD_NON_NEGATIVE_INTEGER,
 };
 use owl_ontology::{
     Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
@@ -360,8 +365,12 @@ impl<'a> Translator<'a> {
 
     /// Resolve every element of a list of class expressions, or `None` if any
     /// of them is complex.
-    fn named_classes(&mut self, exprs: &[ClassExpression]) -> Option<Vec<GraphElementId>> {
-        exprs.iter().map(|e| self.named_class(e)).collect()
+    /// Resolve every element of a list of class expressions via the general
+    /// [`Translator::class_expression`] resolver, so complex members are
+    /// translated (blank-node encoded) rather than causing the whole axiom
+    /// to be skipped. `None` if any element is unsupported.
+    fn class_expressions(&mut self, exprs: &[ClassExpression]) -> Option<Vec<GraphElementId>> {
+        exprs.iter().map(|e| self.class_expression(e)).collect()
     }
 
     fn named_object_properties(
@@ -372,6 +381,261 @@ impl<'a> Translator<'a> {
             .iter()
             .map(|p| self.named_object_property(p))
             .collect()
+    }
+
+    // ── complex class-expression blank-node encoding (#509) ────────────────
+    //
+    // <https://www.w3.org/TR/owl2-mapping-to-rdf/> §2.1's "Translation of
+    // Class Expressions" table. See
+    // docs/plans/OWL2RDF_COMPLEX_CLASS_EXPRESSIONS_PLAN.md for the exact
+    // triple shapes and citations.
+
+    /// A `"n"^^xsd:nonNegativeInteger` literal node for a cardinality value.
+    ///
+    /// Distinct from the codebase's default `RdfLiteral::IntegerLiteral`
+    /// mapping (`xsd:integer`) — the spec requires `xsd:nonNegativeInteger`
+    /// specifically for every cardinality-restriction triple.
+    fn non_negative_integer(&mut self, n: &impl std::fmt::Display) -> GraphElementId {
+        self.datastore
+            .add_resource(dag_rdf::GraphElement::GraphLiteral(
+                RdfLiteral::TypedLiteral {
+                    type_iri: IriReference(XSD_NON_NEGATIVE_INTEGER.to_owned()),
+                    literal: n.to_string(),
+                },
+            ))
+    }
+
+    /// A fresh `owl:Restriction` blank node with `owl:onProperty T(OPE)`, or
+    /// `None` if `ope` is a still-unsupported expression (inverse property /
+    /// property chain, [#510](https://github.com/daghovland/rdf-datalog/issues/510)).
+    fn object_restriction_node(
+        &mut self,
+        ope: &ObjectPropertyExpression,
+    ) -> Option<GraphElementId> {
+        let prop_id = self.named_object_property(ope)?;
+        let node = self.datastore.new_anonymous_blank_node();
+        self.type_triple(node, OWL_RESTRICTION);
+        self.triple_p(node, OWL_ON_PROPERTY, prop_id);
+        Some(node)
+    }
+
+    /// A fresh `owl:Restriction` blank node with `owl:onProperty T(DPE)` for
+    /// a single data property, or `owl:onProperties T(SEQ DPE1 ... DPEn)`
+    /// (an `rdf:List`) for two or more, per the spec's `DataSomeValuesFrom`/
+    /// `DataAllValuesFrom` rows.
+    fn data_restriction_node(&mut self, props: &[DataProperty]) -> GraphElementId {
+        let node = self.datastore.new_anonymous_blank_node();
+        self.type_triple(node, OWL_RESTRICTION);
+        let ids: Vec<_> = props.iter().map(|p| self.full_iri(p)).collect();
+        if let [only] = ids[..] {
+            self.triple_p(node, OWL_ON_PROPERTY, only);
+        } else {
+            let list_head = self.rdf_list(&ids);
+            self.triple_p(node, OWL_ON_PROPERTIES, list_head);
+        }
+        node
+    }
+
+    /// `T(DR)` for a `DataRange`: just the datatype IRI for a named
+    /// datatype. A complex `DataRange` (`DataUnionOf`, `DataIntersectionOf`,
+    /// `DataComplementOf`, `DataOneOf`, `DatatypeRestriction`) has no RDF
+    /// encoding yet — that's [#512](https://github.com/daghovland/rdf-datalog/issues/512)'s
+    /// scope, not this issue's — so this returns `None` for those.
+    fn named_data_range(&mut self, range: &DataRange) -> Option<GraphElementId> {
+        match range {
+            DataRange::NamedDataRange(datatype) => Some(self.full_iri(datatype)),
+            _ => None,
+        }
+    }
+
+    /// Build an `owl:Class` blank node `_:x rdf:type owl:Class ;
+    /// <predicate-iri> T(SEQ members...)` for `ObjectUnionOf`/
+    /// `ObjectIntersectionOf`. `None` if any member is itself unsupported.
+    fn class_expression_list(
+        &mut self,
+        members: &[ClassExpression],
+        predicate_iri: &str,
+    ) -> Option<GraphElementId> {
+        let ids: Option<Vec<_>> = members.iter().map(|m| self.class_expression(m)).collect();
+        let ids = ids?;
+        let list_head = self.rdf_list(&ids);
+        let node = self.datastore.new_anonymous_blank_node();
+        self.type_triple(node, OWL_CLASS);
+        self.triple_p(node, predicate_iri, list_head);
+        Some(node)
+    }
+
+    /// The node id of any class expression — named or complex — building
+    /// the spec's blank-node structural encoding recursively for complex
+    /// cases. `None` if `expr` (or a nested part of it) mentions a construct
+    /// with no RDF encoding yet (a complex `DataRange`, or an
+    /// `ObjectPropertyExpression` other than a named/anonymous property) —
+    /// kept fallible so those propagate up via `?` *before* any blank node
+    /// for the enclosing expression is minted, rather than leaving a
+    /// partially-formed node in the datastore.
+    fn class_expression(&mut self, expr: &ClassExpression) -> Option<GraphElementId> {
+        if let Some(id) = self.named_class(expr) {
+            return Some(id);
+        }
+        match expr {
+            ClassExpression::ClassName(_) | ClassExpression::AnonymousClass(_) => {
+                unreachable!("named_class handles both atomic cases above")
+            }
+            ClassExpression::ObjectUnionOf(members) => {
+                self.class_expression_list(members, OWL_UNION_OF)
+            }
+            ClassExpression::ObjectIntersectionOf(members) => {
+                self.class_expression_list(members, OWL_INTERSECTION_OF)
+            }
+            ClassExpression::ObjectComplementOf(inner) => {
+                let inner_id = self.class_expression(inner)?;
+                let node = self.datastore.new_anonymous_blank_node();
+                self.type_triple(node, OWL_CLASS);
+                self.triple_p(node, OWL_COMPLEMENT_OF, inner_id);
+                Some(node)
+            }
+            ClassExpression::ObjectOneOf(individuals) => {
+                let ids: Vec<_> = individuals
+                    .iter()
+                    .map(|i| intern_individual(self.datastore, i))
+                    .collect();
+                let list_head = self.rdf_list(&ids);
+                let node = self.datastore.new_anonymous_blank_node();
+                self.type_triple(node, OWL_CLASS);
+                self.triple_p(node, OWL_ONE_OF, list_head);
+                Some(node)
+            }
+            ClassExpression::ObjectSomeValuesFrom(ope, filler) => {
+                let filler_id = self.class_expression(filler)?;
+                let node = self.object_restriction_node(ope)?;
+                self.triple_p(node, OWL_SOME_VALUES_FROM, filler_id);
+                Some(node)
+            }
+            ClassExpression::ObjectAllValuesFrom(ope, filler) => {
+                let filler_id = self.class_expression(filler)?;
+                let node = self.object_restriction_node(ope)?;
+                self.triple_p(node, OWL_ALL_VALUES_FROM, filler_id);
+                Some(node)
+            }
+            ClassExpression::ObjectHasValue(ope, individual) => {
+                let value_id = intern_individual(self.datastore, individual);
+                let node = self.object_restriction_node(ope)?;
+                self.triple_p(node, OWL_HAS_VALUE, value_id);
+                Some(node)
+            }
+            ClassExpression::ObjectHasSelf(ope) => {
+                let node = self.object_restriction_node(ope)?;
+                let true_id = self
+                    .datastore
+                    .add_resource(dag_rdf::GraphElement::GraphLiteral(
+                        RdfLiteral::BooleanLiteral(true),
+                    ));
+                self.triple_p(node, OWL_HAS_SELF, true_id);
+                Some(node)
+            }
+            ClassExpression::ObjectMinCardinality(n, ope) => {
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MIN_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::ObjectMaxCardinality(n, ope) => {
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MAX_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::ObjectExactCardinality(n, ope) => {
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::ObjectMinQualifiedCardinality(n, ope, on_class) => {
+                let on_class_id = self.class_expression(on_class)?;
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MIN_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_CLASS, on_class_id);
+                Some(node)
+            }
+            ClassExpression::ObjectMaxQualifiedCardinality(n, ope, on_class) => {
+                let on_class_id = self.class_expression(on_class)?;
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MAX_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_CLASS, on_class_id);
+                Some(node)
+            }
+            ClassExpression::ObjectExactQualifiedCardinality(n, ope, on_class) => {
+                let on_class_id = self.class_expression(on_class)?;
+                let node = self.object_restriction_node(ope)?;
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_CLASS, on_class_id);
+                Some(node)
+            }
+            ClassExpression::DataSomeValuesFrom(props, range) => {
+                let range_id = self.named_data_range(range)?;
+                let node = self.data_restriction_node(props);
+                self.triple_p(node, OWL_SOME_VALUES_FROM, range_id);
+                Some(node)
+            }
+            ClassExpression::DataAllValuesFrom(props, range) => {
+                let range_id = self.named_data_range(range)?;
+                let node = self.data_restriction_node(props);
+                self.triple_p(node, OWL_ALL_VALUES_FROM, range_id);
+                Some(node)
+            }
+            ClassExpression::DataHasValue(prop, value) => {
+                let value_id = self.datastore.add_resource(value.clone());
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                self.triple_p(node, OWL_HAS_VALUE, value_id);
+                Some(node)
+            }
+            ClassExpression::DataMinCardinality(n, prop) => {
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MIN_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::DataMaxCardinality(n, prop) => {
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MAX_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::DataExactCardinality(n, prop) => {
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_CARDINALITY, n_id);
+                Some(node)
+            }
+            ClassExpression::DataMinQualifiedCardinality(n, prop, range) => {
+                let range_id = self.named_data_range(range)?;
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MIN_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_DATA_RANGE, range_id);
+                Some(node)
+            }
+            ClassExpression::DataMaxQualifiedCardinality(n, prop, range) => {
+                let range_id = self.named_data_range(range)?;
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_MAX_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_DATA_RANGE, range_id);
+                Some(node)
+            }
+            ClassExpression::DataExactQualifiedCardinality(n, prop, range) => {
+                let range_id = self.named_data_range(range)?;
+                let node = self.data_restriction_node(std::slice::from_ref(prop));
+                let n_id = self.non_negative_integer(n);
+                self.triple_p(node, OWL_QUALIFIED_CARDINALITY, n_id);
+                self.triple_p(node, OWL_ON_DATA_RANGE, range_id);
+                Some(node)
+            }
+        }
     }
 
     // ── axiom dispatch ───────────────────────────────────────────────────
@@ -417,32 +681,32 @@ impl<'a> Translator<'a> {
     fn class_axiom(&mut self, axiom: &ClassAxiom) {
         match axiom {
             ClassAxiom::SubClassOf(annotations, sub, sup) => {
-                match (self.named_class(sub), self.named_class(sup)) {
+                match (self.class_expression(sub), self.class_expression(sup)) {
                     (Some(sub_id), Some(sup_id)) => {
                         self.triple_p_annotated(sub_id, RDFS_SUB_CLASS_OF, sup_id, annotations)
                     }
-                    _ => self.skip("SubClassOf with complex class expression", axiom),
+                    _ => self.skip("SubClassOf with unsupported class expression", axiom),
                 }
             }
             ClassAxiom::EquivalentClasses(annotations, classes) => {
-                match self.named_classes(classes) {
+                match self.class_expressions(classes) {
                     Some(ids) => self.chain(&ids, OWL_EQUIVALENT_CLASS, annotations),
-                    None => self.skip("EquivalentClasses with complex class expression", axiom),
+                    None => self.skip("EquivalentClasses with unsupported class expression", axiom),
                 }
             }
             ClassAxiom::DisjointClasses(annotations, classes) if classes.len() == 2 => {
-                match self.named_classes(classes) {
+                match self.class_expressions(classes) {
                     Some(ids) => {
                         self.triple_p_annotated(ids[0], OWL_DISJOINT_WITH, ids[1], annotations)
                     }
-                    None => self.skip("DisjointClasses with complex class expression", axiom),
+                    None => self.skip("DisjointClasses with unsupported class expression", axiom),
                 }
             }
             // n > 2 needs an `owl:AllDisjointClasses` blank node with an
             // `owl:members` rdf:List — deferred to
             // https://github.com/daghovland/rdf-datalog/issues/513.
             ClassAxiom::DisjointUnion(annotations, class, members) => {
-                match self.named_classes(members) {
+                match self.class_expressions(members) {
                     Some(ids) => {
                         let class_id = self.full_iri(class);
                         self.type_triple(class_id, OWL_CLASS);
@@ -454,11 +718,10 @@ impl<'a> Translator<'a> {
                             annotations,
                         );
                     }
-                    // The disjoint union's members are themselves complex class
-                    // expressions — needs the general blank-node structural
-                    // encoding, deferred to
-                    // https://github.com/daghovland/rdf-datalog/issues/509.
-                    None => self.skip("DisjointUnion with complex class expression member", axiom),
+                    None => self.skip(
+                        "DisjointUnion with unsupported class expression member",
+                        axiom,
+                    ),
                 }
             }
             other => self.skip("class axiom", other),
@@ -472,17 +735,23 @@ impl<'a> Translator<'a> {
             // (unlike every other variant here) — axiom annotations on these
             // two forms have no source data to reify.
             ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) => {
-                match (self.named_object_property(prop), self.named_class(domain)) {
+                match (
+                    self.named_object_property(prop),
+                    self.class_expression(domain),
+                ) {
                     (Some(prop_id), Some(class_id)) => {
                         self.triple_p(prop_id, RDFS_DOMAIN, class_id)
                     }
-                    _ => self.skip("ObjectPropertyDomain with complex expression", axiom),
+                    _ => self.skip("ObjectPropertyDomain with unsupported expression", axiom),
                 }
             }
             ObjectPropertyAxiom::ObjectPropertyRange(prop, range) => {
-                match (self.named_object_property(prop), self.named_class(range)) {
+                match (
+                    self.named_object_property(prop),
+                    self.class_expression(range),
+                ) {
                     (Some(prop_id), Some(class_id)) => self.triple_p(prop_id, RDFS_RANGE, class_id),
-                    _ => self.skip("ObjectPropertyRange with complex expression", axiom),
+                    _ => self.skip("ObjectPropertyRange with unsupported expression", axiom),
                 }
             }
             ObjectPropertyAxiom::SubObjectPropertyOf(
@@ -583,11 +852,14 @@ impl<'a> Translator<'a> {
             }
             DataPropertyAxiom::DataPropertyDomain(annotations, prop, domain) => {
                 let prop_id = self.full_iri(prop);
-                match self.named_class(domain) {
+                match self.class_expression(domain) {
                     Some(class_id) => {
                         self.triple_p_annotated(prop_id, RDFS_DOMAIN, class_id, annotations)
                     }
-                    None => self.skip("DataPropertyDomain with complex class expression", axiom),
+                    None => self.skip(
+                        "DataPropertyDomain with unsupported class expression",
+                        axiom,
+                    ),
                 }
             }
             DataPropertyAxiom::DataPropertyRange(
@@ -622,6 +894,25 @@ impl<'a> Translator<'a> {
             return;
         }
         match assertion {
+            // `atomic_assertion_triple` only handles a `ClassExpression::ClassName`
+            // subject; a complex (non-atomic) class expression still needs the
+            // general blank-node structural encoding — the other half of
+            // #366 (https://github.com/daghovland/rdf-datalog/issues/366),
+            // fixed by #509 (https://github.com/daghovland/rdf-datalog/issues/509).
+            Assertion::ClassAssertion(annotations, class_expr, ind) => {
+                match self.class_expression(class_expr) {
+                    Some(class_id) => {
+                        let subject = intern_individual(self.datastore, ind);
+                        let type_id = self.iri(RDF_TYPE);
+                        self.triple(subject, type_id, class_id);
+                        self.emit_axiom_annotations(subject, type_id, class_id, annotations);
+                    }
+                    None => self.skip(
+                        "ClassAssertion with unsupported class expression",
+                        assertion,
+                    ),
+                }
+            }
             Assertion::SameIndividual(annotations, individuals) => {
                 let ids: Vec<_> = individuals
                     .iter()
@@ -647,10 +938,9 @@ impl<'a> Translator<'a> {
     /// simply the class IRI — no blank node is needed for the subject side,
     /// only for the `rdf:List` cells encoding the key properties.
     ///
-    /// A `C` that is itself a complex (non-atomic) class expression needs the
-    /// general blank-node structural encoding for class expressions, deferred
-    /// to [#509](https://github.com/daghovland/rdf-datalog/issues/509); such
-    /// an axiom is reported as skipped rather than translated.
+    /// A `C` that is itself a complex (non-atomic) class expression is
+    /// resolved via [`Translator::class_expression`], the general blank-node
+    /// structural encoding ([#509](https://github.com/daghovland/rdf-datalog/issues/509)).
     ///
     /// Only the main `T(C) owl:hasKey list-head` triple is reified when
     /// `annotations` is non-empty — the `rdf:first`/`rdf:rest` list-cell
@@ -666,7 +956,7 @@ impl<'a> Translator<'a> {
         annotations: &[Annotation],
     ) {
         match (
-            self.named_class(class_expr),
+            self.class_expression(class_expr),
             self.named_object_properties(obj_props),
         ) {
             (Some(class_id), Some(obj_ids)) => {
@@ -675,7 +965,7 @@ impl<'a> Translator<'a> {
                 let list_head = self.rdf_list(&key_ids);
                 self.triple_p_annotated(class_id, OWL_HAS_KEY, list_head, annotations);
             }
-            _ => self.skip("HasKey with complex class expression", axiom),
+            _ => self.skip("HasKey with unsupported class expression", axiom),
         }
     }
 
@@ -847,13 +1137,13 @@ mod tests {
     }
 
     /// A `DisjointUnion` whose members include a complex (non-atomic) class
-    /// expression cannot be encoded without the general blank-node structural
-    /// mapping — deferred to
-    /// [#509](https://github.com/daghovland/rdf-datalog/issues/509) — and
-    /// must be reported as skipped rather than partially/incorrectly emitted.
+    /// expression is now translated via the general blank-node structural
+    /// mapping ([#509](https://github.com/daghovland/rdf-datalog/issues/509)):
+    /// the complex member becomes its own `owl:Class`/`owl:unionOf` blank
+    /// node inside the outer `owl:disjointUnionOf` list.
     #[test]
-    fn disjoint_union_with_complex_member_is_reported_not_silently_dropped() {
-        let (_ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
+    fn disjoint_union_with_complex_member_is_now_translated() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
             vec![],
             full("Pet"),
             vec![
@@ -861,8 +1151,51 @@ mod tests {
                 ClassExpression::ObjectUnionOf(vec![class("Cat"), class("Bird")]),
             ],
         ))]);
-        assert_eq!(report.triples_added, 0);
-        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head = object_of(&ds, &ex("Pet"), OWL_DISJOINT_UNION_OF)
+            .expect("owl:disjointUnionOf triple must exist");
+        let first_quads = ds.quads_matching(
+            None,
+            Some(list_head),
+            id_of(&ds, &IriReference(RDF_FIRST.to_owned())),
+            None,
+        );
+        assert_eq!(first_quads.len(), 1);
+        let dog_id = id_of(&ds, &ex("Dog")).expect("Dog interned");
+        assert_eq!(
+            first_quads[0].obj, dog_id,
+            "first member is the named class"
+        );
+        let rest_quads = ds.quads_matching(
+            None,
+            Some(list_head),
+            id_of(&ds, &IriReference(RDF_REST.to_owned())),
+            None,
+        );
+        assert_eq!(rest_quads.len(), 1);
+        let second_cell = rest_quads[0].obj;
+        let second_first = ds.quads_matching(
+            None,
+            Some(second_cell),
+            id_of(&ds, &IriReference(RDF_FIRST.to_owned())),
+            None,
+        );
+        assert_eq!(second_first.len(), 1);
+        let union_node = second_first[0].obj;
+        let union_list_head = ds
+            .quads_matching(
+                None,
+                Some(union_node),
+                id_of(&ds, &IriReference(OWL_UNION_OF.to_owned())),
+                None,
+            )
+            .first()
+            .expect("nested owl:unionOf triple must exist")
+            .obj;
+        assert_eq!(
+            read_rdf_list(&ds, union_list_head),
+            vec![ex("Cat"), ex("Bird")]
+        );
     }
 
     #[test]
@@ -1169,28 +1502,59 @@ mod tests {
         );
     }
 
-    /// `HasKey` on a complex (non-named) class expression needs the general
-    /// blank-node structural encoding — deferred to
-    /// [#509](https://github.com/daghovland/rdf-datalog/issues/509) — and
-    /// must be reported as skipped rather than partially/incorrectly emitted.
+    /// `HasKey` on a complex (non-named) class expression is now translated
+    /// via the general blank-node structural encoding
+    /// ([#509](https://github.com/daghovland/rdf-datalog/issues/509)).
     #[test]
-    fn has_key_on_complex_class_expression_is_reported_not_silently_dropped() {
-        let (_ds, report) = translate(vec![Axiom::AxiomHasKey(
+    fn has_key_on_complex_class_expression_is_now_translated() {
+        let (ds, report) = translate(vec![Axiom::AxiomHasKey(
             vec![],
             ClassExpression::ObjectUnionOf(vec![class("Person"), class("Organization")]),
             vec![obj_prop("hasSsn")],
             vec![],
         )]);
-        assert_eq!(report.triples_added, 0);
-        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let restriction_type = id_of(&ds, &IriReference(OWL_CLASS.to_owned())).expect("interned");
+        let union_pred = id_of(&ds, &IriReference(OWL_UNION_OF.to_owned())).expect("interned");
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let union_nodes = ds.quads_matching(None, None, Some(type_pred), Some(restriction_type));
+        let union_node = union_nodes
+            .iter()
+            .find(|q| {
+                !ds.quads_matching(None, Some(q.subject), Some(union_pred), None)
+                    .is_empty()
+            })
+            .expect("owl:Class blank node with owl:unionOf must exist")
+            .subject;
+        let list_head = ds
+            .quads_matching(None, Some(union_node), Some(union_pred), None)
+            .first()
+            .expect("owl:unionOf triple")
+            .obj;
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("Person"), ex("Organization")]
+        );
+        // `owl:hasKey`'s subject is the union blank node, not a named IRI,
+        // so it's looked up directly by subject id rather than via
+        // `object_of` (which resolves a subject IRI).
+        let has_key_pred = id_of(&ds, &IriReference(OWL_HAS_KEY.to_owned())).expect("interned");
+        let has_key_quads = ds.quads_matching(None, Some(union_node), Some(has_key_pred), None);
+        assert_eq!(
+            has_key_quads.len(),
+            1,
+            "the union blank node carries owl:hasKey"
+        );
+        assert_eq!(read_rdf_list(&ds, has_key_quads[0].obj), vec![ex("hasSsn")]);
     }
 
-    /// Axioms whose RDF encoding is not implemented yet must be *reported*,
-    /// not silently dropped — the reporting half of
-    /// [#366](https://github.com/daghovland/rdf-datalog/issues/366).
+    /// Axioms mentioning a complex class expression are now translated via
+    /// the general blank-node structural encoding
+    /// ([#509](https://github.com/daghovland/rdf-datalog/issues/509)) rather
+    /// than being reported as skipped.
     #[test]
-    fn complex_expressions_are_reported_not_silently_dropped() {
-        let (_ds, report) = translate(vec![
+    fn subclassof_and_class_assertion_with_complex_class_expression_are_now_translated() {
+        let (ds, report) = translate(vec![
             Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
                 vec![],
                 class("Dog"),
@@ -1205,8 +1569,39 @@ mod tests {
                 Individual::NamedIndividual(full("fido")),
             )),
         ]);
-        assert_eq!(report.triples_added, 0);
-        assert_eq!(report.skipped.len(), 2, "skipped: {:?}", report.skipped);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head = object_of(&ds, &ex("Dog"), RDFS_SUB_CLASS_OF)
+            .expect("Dog rdfs:subClassOf <restriction> triple must exist");
+        let some_values_from =
+            id_of(&ds, &IriReference(OWL_SOME_VALUES_FROM.to_owned())).expect("interned");
+        let filler = ds
+            .quads_matching(None, Some(list_head), Some(some_values_from), None)
+            .first()
+            .expect("owl:someValuesFrom triple")
+            .obj;
+        assert_eq!(filler, id_of(&ds, &ex("Animal")).expect("Animal interned"));
+
+        let fido_id = id_of(&ds, &ex("fido")).expect("fido interned");
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let type_quads = ds.quads_matching(None, Some(fido_id), Some(type_pred), None);
+        let union_pred = id_of(&ds, &IriReference(OWL_UNION_OF.to_owned())).expect("interned");
+        let union_node = type_quads
+            .iter()
+            .find(|q| {
+                !ds.quads_matching(None, Some(q.obj), Some(union_pred), None)
+                    .is_empty()
+            })
+            .expect("fido rdf:type <union blank node> triple must exist")
+            .obj;
+        let union_list_head = ds
+            .quads_matching(None, Some(union_node), Some(union_pred), None)
+            .first()
+            .expect("owl:unionOf triple")
+            .obj;
+        assert_eq!(
+            read_rdf_list(&ds, union_list_head),
+            vec![ex("Dog"), ex("Cat")]
+        );
     }
 
     // ── annotation axioms and axiom-annotation reification (#514) ─────────
@@ -1424,5 +1819,428 @@ mod tests {
         );
         // Sanity: the list itself is unaffected by the annotation.
         assert_eq!(read_rdf_list(&ds, list_head), vec![ex("hasSsn")]);
+    }
+
+    // ── complex class-expression blank-node encoding (#509) ────────────────
+
+    /// Resolve `A rdfs:subClassOf <blank node>` for a `SubClassOf(A, expr)`
+    /// axiom, returning the blank node's id. Shared by the tests below,
+    /// which each build one `SubClassOf` axiom whose superclass is the
+    /// expression under test.
+    fn sub_class_of_node(ds: &Datastore, sub_iri: &IriReference) -> GraphElementId {
+        object_of(ds, sub_iri, RDFS_SUB_CLASS_OF).expect("A rdfs:subClassOf <node> must exist")
+    }
+
+    /// The single object of `subject <predicate-iri> ?object`, panicking if
+    /// there isn't exactly one.
+    fn single_object_by_id(
+        ds: &Datastore,
+        subject: GraphElementId,
+        predicate_iri: &str,
+    ) -> GraphElementId {
+        let predicate = id_of(ds, &IriReference(predicate_iri.to_owned())).expect("interned");
+        let quads = ds.quads_matching(None, Some(subject), Some(predicate), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "expected exactly one {predicate_iri} triple"
+        );
+        quads[0].obj
+    }
+
+    #[test]
+    fn object_union_of_becomes_owl_class_with_union_of_list() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectUnionOf(vec![class("B"), class("C")]),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let owl_class = id_of(&ds, &IriReference(OWL_CLASS.to_owned())).expect("interned");
+        assert!(
+            !ds.quads_matching(None, Some(node), Some(type_pred), Some(owl_class))
+                .is_empty(),
+            "blank node must be typed owl:Class"
+        );
+        let list_head = single_object_by_id(&ds, node, OWL_UNION_OF);
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("B"), ex("C")]);
+    }
+
+    #[test]
+    fn object_intersection_of_becomes_owl_class_with_intersection_of_list() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectIntersectionOf(vec![class("B"), class("C")]),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let list_head = single_object_by_id(&ds, node, OWL_INTERSECTION_OF);
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("B"), ex("C")]);
+    }
+
+    #[test]
+    fn object_complement_of_becomes_owl_class_with_complement_of() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectComplementOf(Box::new(class("B"))),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let complement = single_object_by_id(&ds, node, OWL_COMPLEMENT_OF);
+        assert_eq!(complement, id_of(&ds, &ex("B")).expect("B interned"));
+    }
+
+    #[test]
+    fn object_one_of_becomes_owl_class_with_one_of_list() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectOneOf(vec![
+                Individual::NamedIndividual(full("i1")),
+                Individual::NamedIndividual(full("i2")),
+            ]),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let list_head = single_object_by_id(&ds, node, OWL_ONE_OF);
+        assert_eq!(read_rdf_list(&ds, list_head), vec![ex("i1"), ex("i2")]);
+    }
+
+    #[test]
+    fn object_some_values_from_becomes_owl_restriction() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectSomeValuesFrom(obj_prop("hasPet"), Box::new(class("Dog"))),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let restriction = id_of(&ds, &IriReference(OWL_RESTRICTION.to_owned())).expect("interned");
+        assert!(
+            !ds.quads_matching(None, Some(node), Some(type_pred), Some(restriction))
+                .is_empty()
+        );
+        let on_prop = single_object_by_id(&ds, node, OWL_ON_PROPERTY);
+        assert_eq!(on_prop, id_of(&ds, &ex("hasPet")).expect("hasPet interned"));
+        let filler = single_object_by_id(&ds, node, OWL_SOME_VALUES_FROM);
+        assert_eq!(filler, id_of(&ds, &ex("Dog")).expect("Dog interned"));
+    }
+
+    #[test]
+    fn object_all_values_from_becomes_owl_restriction() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectAllValuesFrom(obj_prop("hasPet"), Box::new(class("Dog"))),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let filler = single_object_by_id(&ds, node, OWL_ALL_VALUES_FROM);
+        assert_eq!(filler, id_of(&ds, &ex("Dog")).expect("Dog interned"));
+    }
+
+    #[test]
+    fn object_has_value_becomes_owl_restriction() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectHasValue(
+                obj_prop("hasPet"),
+                Individual::NamedIndividual(full("fido")),
+            ),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let value = single_object_by_id(&ds, node, OWL_HAS_VALUE);
+        assert_eq!(value, id_of(&ds, &ex("fido")).expect("fido interned"));
+    }
+
+    #[test]
+    fn object_has_self_becomes_owl_restriction_with_true_literal() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectHasSelf(obj_prop("hasPet")),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let has_self_pred = id_of(&ds, &IriReference(OWL_HAS_SELF.to_owned())).expect("interned");
+        let quads = ds.quads_matching(None, Some(node), Some(has_self_pred), None);
+        assert_eq!(quads.len(), 1);
+        let elem = ds.resources.get_graph_element(quads[0].obj);
+        assert_eq!(
+            elem,
+            &dag_rdf::GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true))
+        );
+    }
+
+    #[test]
+    fn object_unqualified_cardinality_restrictions_become_owl_restriction() {
+        let (ds, report) = translate(vec![
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Min"),
+                ClassExpression::ObjectMinCardinality(2.into(), obj_prop("hasPet")),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Max"),
+                ClassExpression::ObjectMaxCardinality(3.into(), obj_prop("hasPet")),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Exact"),
+                ClassExpression::ObjectExactCardinality(1.into(), obj_prop("hasPet")),
+            )),
+        ]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let min_node = sub_class_of_node(&ds, &ex("Min"));
+        let min_val = single_object_by_id(&ds, min_node, OWL_MIN_CARDINALITY);
+        let elem = ds.resources.get_graph_element(min_val);
+        assert_eq!(
+            elem,
+            &dag_rdf::GraphElement::GraphLiteral(RdfLiteral::TypedLiteral {
+                type_iri: IriReference(XSD_NON_NEGATIVE_INTEGER.to_owned()),
+                literal: "2".to_owned(),
+            })
+        );
+        let max_node = sub_class_of_node(&ds, &ex("Max"));
+        single_object_by_id(&ds, max_node, OWL_MAX_CARDINALITY);
+        let exact_node = sub_class_of_node(&ds, &ex("Exact"));
+        single_object_by_id(&ds, exact_node, OWL_CARDINALITY);
+    }
+
+    #[test]
+    fn object_qualified_cardinality_restrictions_use_on_class() {
+        let (ds, report) = translate(vec![
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Min"),
+                ClassExpression::ObjectMinQualifiedCardinality(
+                    2.into(),
+                    obj_prop("hasPet"),
+                    Box::new(class("Dog")),
+                ),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Max"),
+                ClassExpression::ObjectMaxQualifiedCardinality(
+                    3.into(),
+                    obj_prop("hasPet"),
+                    Box::new(class("Dog")),
+                ),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Exact"),
+                ClassExpression::ObjectExactQualifiedCardinality(
+                    1.into(),
+                    obj_prop("hasPet"),
+                    Box::new(class("Dog")),
+                ),
+            )),
+        ]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let min_node = sub_class_of_node(&ds, &ex("Min"));
+        single_object_by_id(&ds, min_node, OWL_MIN_QUALIFIED_CARDINALITY);
+        let on_class = single_object_by_id(&ds, min_node, OWL_ON_CLASS);
+        assert_eq!(on_class, id_of(&ds, &ex("Dog")).expect("Dog interned"));
+        let max_node = sub_class_of_node(&ds, &ex("Max"));
+        single_object_by_id(&ds, max_node, OWL_MAX_QUALIFIED_CARDINALITY);
+        single_object_by_id(&ds, max_node, OWL_ON_CLASS);
+        let exact_node = sub_class_of_node(&ds, &ex("Exact"));
+        single_object_by_id(&ds, exact_node, OWL_QUALIFIED_CARDINALITY);
+        single_object_by_id(&ds, exact_node, OWL_ON_CLASS);
+    }
+
+    #[test]
+    fn data_some_values_from_single_property_uses_on_property() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::DataSomeValuesFrom(
+                vec![full("age")],
+                DataRange::NamedDataRange(FullIri(IriReference(
+                    "http://www.w3.org/2001/XMLSchema#integer".to_owned(),
+                ))),
+            ),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let on_prop = single_object_by_id(&ds, node, OWL_ON_PROPERTY);
+        assert_eq!(on_prop, id_of(&ds, &ex("age")).expect("age interned"));
+        let filler = single_object_by_id(&ds, node, OWL_SOME_VALUES_FROM);
+        assert_eq!(
+            filler,
+            id_of(
+                &ds,
+                &IriReference("http://www.w3.org/2001/XMLSchema#integer".to_owned())
+            )
+            .expect("xsd:integer interned")
+        );
+    }
+
+    #[test]
+    fn data_some_values_from_multiple_properties_uses_on_properties_list() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::DataSomeValuesFrom(
+                vec![full("firstName"), full("lastName")],
+                DataRange::NamedDataRange(FullIri(IriReference(
+                    "http://www.w3.org/2001/XMLSchema#string".to_owned(),
+                ))),
+            ),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = sub_class_of_node(&ds, &ex("A"));
+        let list_head = single_object_by_id(&ds, node, OWL_ON_PROPERTIES);
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("firstName"), ex("lastName")]
+        );
+    }
+
+    #[test]
+    fn data_cardinality_restrictions_become_owl_restriction() {
+        let integer = || {
+            DataRange::NamedDataRange(FullIri(IriReference(
+                "http://www.w3.org/2001/XMLSchema#integer".to_owned(),
+            )))
+        };
+        let (ds, report) = translate(vec![
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Min"),
+                ClassExpression::DataMinCardinality(2.into(), full("age")),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("MinQ"),
+                ClassExpression::DataMinQualifiedCardinality(2.into(), full("age"), integer()),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Max"),
+                ClassExpression::DataMaxCardinality(3.into(), full("age")),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("MaxQ"),
+                ClassExpression::DataMaxQualifiedCardinality(3.into(), full("age"), integer()),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("Exact"),
+                ClassExpression::DataExactCardinality(1.into(), full("age")),
+            )),
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+                vec![],
+                class("ExactQ"),
+                ClassExpression::DataExactQualifiedCardinality(1.into(), full("age"), integer()),
+            )),
+        ]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let min_node = sub_class_of_node(&ds, &ex("Min"));
+        single_object_by_id(&ds, min_node, OWL_MIN_CARDINALITY);
+        let min_q_node = sub_class_of_node(&ds, &ex("MinQ"));
+        single_object_by_id(&ds, min_q_node, OWL_MIN_QUALIFIED_CARDINALITY);
+        single_object_by_id(&ds, min_q_node, OWL_ON_DATA_RANGE);
+        let max_node = sub_class_of_node(&ds, &ex("Max"));
+        single_object_by_id(&ds, max_node, OWL_MAX_CARDINALITY);
+        let max_q_node = sub_class_of_node(&ds, &ex("MaxQ"));
+        single_object_by_id(&ds, max_q_node, OWL_MAX_QUALIFIED_CARDINALITY);
+        single_object_by_id(&ds, max_q_node, OWL_ON_DATA_RANGE);
+        let exact_node = sub_class_of_node(&ds, &ex("Exact"));
+        single_object_by_id(&ds, exact_node, OWL_CARDINALITY);
+        let exact_q_node = sub_class_of_node(&ds, &ex("ExactQ"));
+        single_object_by_id(&ds, exact_q_node, OWL_QUALIFIED_CARDINALITY);
+        single_object_by_id(&ds, exact_q_node, OWL_ON_DATA_RANGE);
+    }
+
+    /// A restriction whose `DataRange` is itself complex (not a plain named
+    /// datatype) has no RDF encoding yet — that structural mapping is
+    /// [#512](https://github.com/daghovland/rdf-datalog/issues/512)'s scope,
+    /// not this issue's — so it must be reported skipped, not
+    /// partially/incorrectly emitted.
+    #[test]
+    fn data_restriction_with_complex_data_range_is_reported_not_silently_dropped() {
+        let (_ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::DataSomeValuesFrom(
+                vec![full("age")],
+                DataRange::DataUnionOf(vec![
+                    DataRange::NamedDataRange(FullIri(IriReference(
+                        "http://www.w3.org/2001/XMLSchema#integer".to_owned(),
+                    ))),
+                    DataRange::NamedDataRange(FullIri(IriReference(
+                        "http://www.w3.org/2001/XMLSchema#string".to_owned(),
+                    ))),
+                ]),
+            ),
+        ))]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
+    }
+
+    /// Recursion: a union containing an intersection must translate the
+    /// nested intersection as its own `owl:Class` blank node inside the
+    /// outer union's `rdf:List`, not just one level deep.
+    #[test]
+    fn nested_union_of_union_and_intersection_recurses() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+            vec![],
+            class("A"),
+            ClassExpression::ObjectUnionOf(vec![
+                class("B"),
+                ClassExpression::ObjectIntersectionOf(vec![class("C"), class("D")]),
+            ]),
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let outer_node = sub_class_of_node(&ds, &ex("A"));
+        let outer_list_head = single_object_by_id(&ds, outer_node, OWL_UNION_OF);
+
+        let nil = id_of(&ds, &IriReference(RDF_NIL.to_owned())).expect("rdf:nil interned");
+        let first_pred = id_of(&ds, &IriReference(RDF_FIRST.to_owned())).expect("rdf:first");
+        let rest_pred = id_of(&ds, &IriReference(RDF_REST.to_owned())).expect("rdf:rest");
+
+        let first_cell_first =
+            ds.quads_matching(None, Some(outer_list_head), Some(first_pred), None);
+        assert_eq!(first_cell_first.len(), 1);
+        assert_eq!(
+            first_cell_first[0].obj,
+            id_of(&ds, &ex("B")).expect("B interned"),
+            "first union member is the named class B"
+        );
+
+        let rest = ds.quads_matching(None, Some(outer_list_head), Some(rest_pred), None);
+        assert_eq!(rest.len(), 1);
+        let second_cell = rest[0].obj;
+        assert_ne!(second_cell, nil);
+
+        let second_first = ds.quads_matching(None, Some(second_cell), Some(first_pred), None);
+        assert_eq!(second_first.len(), 1);
+        let intersection_node = second_first[0].obj;
+
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let owl_class = id_of(&ds, &IriReference(OWL_CLASS.to_owned())).expect("interned");
+        assert!(
+            !ds.quads_matching(
+                None,
+                Some(intersection_node),
+                Some(type_pred),
+                Some(owl_class)
+            )
+            .is_empty()
+        );
+        let inner_list_head = single_object_by_id(&ds, intersection_node, OWL_INTERSECTION_OF);
+        assert_eq!(read_rdf_list(&ds, inner_list_head), vec![ex("C"), ex("D")]);
     }
 }
