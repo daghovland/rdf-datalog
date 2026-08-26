@@ -9,39 +9,70 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/is_turtle_file.sh
+source "$SCRIPT_DIR/lib/is_turtle_file.sh"
+
 DEST="tests/testdata"
 mkdir -p "$DEST"
 
 # ── Gene Ontology ────────────────────────────────────────────────────────────
 # Source: https://geneontology.org/docs/download-ontology/
-# The OWL/XML release is converted to Turtle via Apache Jena's riot tool.
-# If riot is not available, the Turtle release can be downloaded directly.
+# There is no direct Turtle release: https://current.geneontology.org/ontology/go.ttl
+# and http://purl.obolibrary.org/obo/go.ttl both 403/404 as of writing. The only
+# release available is OWL/XML (go.owl, despite the .owl extension — it is NOT
+# Turtle), which must be converted to Turtle via Apache Jena's riot tool.
+#
+# go.ttl is validated before being accepted (see is_turtle_file below) so a
+# corrupted or half-written file — e.g. a riot crash, or (the historical bug,
+# https://github.com/daghovland/rdf-datalog/issues/569) go.owl.xml mistakenly
+# saved as go.ttl — cannot get silently reused by a later "already present" skip.
 GO_TTL="$DEST/go.ttl"
 
 if [ -f "$GO_TTL" ]; then
-    echo "go.ttl already present, skipping download."
+    if is_turtle_file "$GO_TTL"; then
+        echo "go.ttl already present, skipping download."
+    else
+        echo "ERROR: $GO_TTL exists but does not look like Turtle (starts with XML)."
+        echo "  This is the failure mode of https://github.com/daghovland/rdf-datalog/issues/569 —"
+        echo "  delete it and re-run this script:"
+        echo "    rm $GO_TTL && bash $0"
+        exit 1
+    fi
 else
-    # Try the Turtle release first (no riot required)
-    GO_TTL_URL="https://current.geneontology.org/ontology/go.owl"
+    GO_OWL_XML_URL="https://current.geneontology.org/ontology/go.owl"
     GO_OWL_XML="$DEST/go.owl.xml"
+    GO_TTL_TMP="$DEST/.go.ttl.tmp"
 
     echo "Downloading Gene Ontology OWL/XML …"
-    curl -fL --progress-bar -o "$GO_OWL_XML" "$GO_TTL_URL"
+    curl -fL --progress-bar -o "$GO_OWL_XML" "$GO_OWL_XML_URL"
 
     if command -v riot &>/dev/null; then
         echo "Converting OWL/XML → Turtle with riot …"
-        riot --output=TURTLE "$GO_OWL_XML" > "$GO_TTL"
+        rm -f "$GO_TTL_TMP"
+        riot --output=TURTLE "$GO_OWL_XML" > "$GO_TTL_TMP"
+        if ! is_turtle_file "$GO_TTL_TMP"; then
+            echo "ERROR: riot produced output that doesn't look like Turtle."
+            rm -f "$GO_TTL_TMP"
+            exit 1
+        fi
+        # Move into place only once conversion is known-good, so a riot crash or
+        # a bad conversion never leaves a corrupt file at $GO_TTL for a later run
+        # to silently accept via the "already present" check above.
+        mv "$GO_TTL_TMP" "$GO_TTL"
         rm -f "$GO_OWL_XML"
         echo "go.ttl written."
     else
         echo ""
         echo "WARNING: 'riot' (Apache Jena) not found."
-        echo "  Install it from https://jena.apache.org/download/ and re-run, OR"
-        echo "  download the Turtle release directly:"
-        echo "    curl -fL -o $GO_TTL https://current.geneontology.org/ontology/go.owl"
-        echo "  (some releases expose a .ttl, check https://current.geneontology.org/ontology/)"
+        echo "  Install it from https://jena.apache.org/download/ and re-run."
+        echo "  There is no direct Turtle release to fall back to — the only"
+        echo "  published Gene Ontology release is OWL/XML, which riot must convert."
+        echo "  Do NOT copy/rename go.owl(.xml) to go.ttl — it is RDF/XML, not"
+        echo "  Turtle, and the Turtle parser will fail on it "
+        echo "  (see https://github.com/daghovland/rdf-datalog/issues/569)."
         echo ""
-        echo "go.owl.xml saved to $GO_OWL_XML — convert manually."
+        echo "go.owl.xml saved to $GO_OWL_XML — convert manually with riot once installed."
         exit 1
     fi
 fi
