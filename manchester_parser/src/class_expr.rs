@@ -45,8 +45,8 @@ use crate::iri::{ParserContext, iri};
 use crate::literal::literal;
 use crate::property_expr::object_property_expression;
 use crate::tokens::{keyword, punct, sp, tok};
-use nom::Parser;
 use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::multi::{many0, separated_list1};
 use nom::sequence::delimited;
@@ -197,8 +197,8 @@ fn object_restriction_tail<'a>(
             {
                 let prop = prop.clone();
                 move |input: &'a str| {
-                    let (input, n) =
-                        nom::sequence::preceded(keyword("exactly"), unsigned_integer).parse(input)?;
+                    let (input, n) = nom::sequence::preceded(keyword("exactly"), unsigned_integer)
+                        .parse(input)?;
                     let (input, filler) = nom::combinator::opt(primary(ctx)).parse(input)?;
                     Ok((
                         input,
@@ -213,7 +213,8 @@ fn object_restriction_tail<'a>(
                     ))
                 }
             },
-        )).parse(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -272,8 +273,8 @@ fn data_restriction_tail<'a>(
             {
                 let prop = prop.clone();
                 move |input: &'a str| {
-                    let (input, n) =
-                        nom::sequence::preceded(keyword("exactly"), unsigned_integer).parse(input)?;
+                    let (input, n) = nom::sequence::preceded(keyword("exactly"), unsigned_integer)
+                        .parse(input)?;
                     let (input, filler) = nom::combinator::opt(data_range(ctx)).parse(input)?;
                     Ok((
                         input,
@@ -286,7 +287,8 @@ fn data_restriction_tail<'a>(
                     ))
                 }
             },
-        )).parse(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -301,7 +303,8 @@ fn restriction<'a>(
         if let Ok((rest, prop)) = nom::sequence::preceded(
             nom::combinator::peek(keyword("inverse")),
             object_property_expression(ctx),
-        ).parse(input)
+        )
+        .parse(input)
         {
             return object_restriction_tail(ctx, prop)(rest);
         }
@@ -312,14 +315,16 @@ fn restriction<'a>(
             if literal_follows(after_value) {
                 return nom::combinator::map(literal(ctx), |lit| {
                     ClassExpression::DataHasValue(name.clone(), lit)
-                }).parse(after_value);
+                })
+                .parse(after_value);
             }
             return nom::combinator::map(individual(ctx), |ind| {
                 ClassExpression::ObjectHasValue(
                     owl_ontology::ObjectPropertyExpression::NamedObjectProperty(name.clone()),
                     ind,
                 )
-            }).parse(after_value);
+            })
+            .parse(after_value);
         }
         if ctx.is_known_data_property(&(name.0).0) {
             data_restriction_tail(ctx, name)(rest)
@@ -346,7 +351,8 @@ fn atomic<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str,
             ),
             delimited(punct('('), description(ctx), punct(')')),
             nom::combinator::map(iri(ctx), ClassExpression::ClassName),
-        )).parse(input)
+        ))
+        .parse(input)
     }
 }
 

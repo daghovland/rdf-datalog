@@ -16,8 +16,8 @@ Contact: hovlanddag@gmail.com
 use crate::iri::{ParserContext, iri, node_id};
 use crate::literal::literal;
 use crate::tokens::{keyword, punct};
-use nom::Parser;
 use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::multi::separated_list1;
 use owl_ontology::{Annotation, AnnotationValue, Individual};
@@ -36,7 +36,8 @@ pub(crate) fn annotation<'a>(
                 ))
             }),
             nom::combinator::map(iri(ctx), AnnotationValue::IriAnnotation),
-        )).parse(input)?;
+        ))
+        .parse(input)?;
         Ok((input, (prop, value)))
     }
 }
@@ -49,7 +50,8 @@ pub(crate) fn opt_leading_annotations<'a>(
     move |input: &'a str| match nom::sequence::preceded(
         keyword("Annotations:"),
         separated_list1(punct(','), annotation(ctx)),
-    ).parse(input)
+    )
+    .parse(input)
     {
         Ok((rest, anns)) => Ok((rest, anns)),
         Err(_) => Ok((input, Vec::new())),
@@ -66,7 +68,8 @@ pub(crate) fn annotations_section<'a>(
         nom::sequence::preceded(
             keyword("Annotations:"),
             separated_list1(punct(','), annotation(ctx)),
-        ).parse(input)
+        )
+        .parse(input)
     }
 }
 

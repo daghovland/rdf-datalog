@@ -33,7 +33,8 @@ fn parse_iri_ref(input: &str) -> IResult<&str, IriReference> {
     map(
         delimited(char('<'), take_while(|c: char| c != '>'), char('>')),
         |iri: &str| IriReference(iri.to_string()),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn parse_prefix_decl(input: &str) -> IResult<&str, (String, String)> {
@@ -75,7 +76,8 @@ fn parse_quoted_string(input: &str) -> IResult<&str, String> {
     map(
         delimited(char('"'), take_while(|c: char| c != '"'), char('"')),
         |s: &str| s.to_string(),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 /// Parse a literal: a quoted string, optionally followed by `^^datatype`
@@ -98,7 +100,8 @@ fn parse_literal<'a>(
         let (input, lang) = opt(preceded(
             char('@'),
             take_while1(|c: char| c.is_alphanumeric() || c == '-'),
-        )).parse(input)?;
+        ))
+        .parse(input)?;
         if let Some(lang) = lang {
             return Ok((
                 input,
@@ -167,7 +170,8 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
             map(parse_blank_node_label, Term::BlankNode),
             map(parse_prefixed_name(ctx), Term::Iri),
             map(parse_iri_ref, Term::Iri),
-        )).parse(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -203,7 +207,8 @@ fn parse_list_literal<'a>(ctx: &'a ParserContext, input: &'a str) -> IResult<&'a
             pair(multispace0, char(')')),
         ),
         Argument::List,
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn parse_argument<'a>(ctx: &'a ParserContext, input: &'a str) -> IResult<&'a str, Argument> {
@@ -212,14 +217,16 @@ fn parse_argument<'a>(ctx: &'a ParserContext, input: &'a str) -> IResult<&'a str
         parse_list_expand,
         |i| parse_list_literal(ctx, i),
         map(parse_term(ctx), Argument::Term),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 fn parse_expander(input: &str) -> IResult<&str, Expander> {
     alt((
         map(tag("cross"), |_| Expander::Cross),
         map(tag("zipMin"), |_| Expander::ZipMin),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 /// Parse a bare instance call (no expander): `prefixed:Name(arg, …)`.
@@ -236,7 +243,8 @@ fn parse_instance<'a>(
                 parse_argument(ctx, i)
             }),
             pair(multispace0, char(')')),
-        ).parse(input)?;
+        )
+        .parse(input)?;
         Ok((
             input,
             Instance {
@@ -271,7 +279,8 @@ fn parse_instance_list<'a>(
             pair(char('{'), multispace0),
             comma_separated0(parse_body_instance(ctx)),
             pair(multispace0, char('}')),
-        ).parse(input)
+        )
+        .parse(input)
     }
 }
 
@@ -285,7 +294,8 @@ fn parse_template_def<'a>(
             pair(char('['), multispace0),
             comma_separated0(parse_parameter(ctx)),
             pair(multispace0, char(']')),
-        ).parse(input)?;
+        )
+        .parse(input)?;
         let (input, _) = multispace0(input)?;
         let (input, _) = tag("::")(input)?;
         let (input, _) = multispace0(input)?;
@@ -320,20 +330,22 @@ fn parse_statement<'a>(
                 terminated(parse_instance(ctx), pair(multispace0, char('.'))),
                 Statement::Instance,
             ),
-        )).parse(input)
+        ))
+        .parse(input)
     }
 }
 
 /// Parse a stOTTR source file (template definitions and/or instances).
 pub fn parse_stottr(input: &str) -> Result<StottrDocument, OttrError> {
-    let (rest, decls) = many0(delimited(multispace0, parse_prefix_decl, multispace0)).parse(input)
+    let (rest, decls) = many0(delimited(multispace0, parse_prefix_decl, multispace0))
+        .parse(input)
         .map_err(|e: nom::Err<nom::error::Error<&str>>| OttrError::Parse(format!("{e:?}")))?;
     let prefixes = decls.into_iter().collect();
     let ctx = ParserContext { prefixes };
 
-    let (rest, statements) =
-        many0(delimited(multispace0, parse_statement(&ctx), multispace0)).parse(rest)
-            .map_err(|e: nom::Err<nom::error::Error<&str>>| OttrError::Parse(format!("{e:?}")))?;
+    let (rest, statements) = many0(delimited(multispace0, parse_statement(&ctx), multispace0))
+        .parse(rest)
+        .map_err(|e: nom::Err<nom::error::Error<&str>>| OttrError::Parse(format!("{e:?}")))?;
 
     if !rest.trim().is_empty() {
         return Err(OttrError::Parse(format!(
