@@ -104,7 +104,7 @@ All code changes (bug fixes, features) follow this workflow:
 - `scripts/new-provenance-summary.sh <PR#> <issue#> <branch>` — scaffolds a `provenance/summaries/pr-<N>.ttl` file (prefixes, `PullRequest`/`AgentSession` triples, real timestamps from `git log <branch>`) with a `TODO` placeholder for the actual `summaryText`/`decisionPoint` prose, which must still be written by hand per [`docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md`](docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md).
 - `scripts/set-issue-status.sh <issue#> <Todo|Agent|"In Progress"|Review|Done>` — sets the Dagalog project's Status field via the Projects v2 GraphQL API (not a label). Agents use this at step 1 (`In Progress`, before delegating) and step 6 (`Review`, once CI is green) of the workflow above; `Todo`/`Agent`/`Done` are set by the user, not agents.
 
-Exception: trivial single-file documentation updates (like this one) may be committed directly to main without a worktree or PR.
+There is no exception for "trivial" changes, including documentation-only ones: every change goes through worktree → branch → PR, no direct pushes to `main`.
 
 ## Commands
 
