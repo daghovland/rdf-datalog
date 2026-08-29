@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log origin/main..HEAD` on branch
+# issue-560-perf-runner-script).
+
+ghpull:610 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "scripts: add performance-suite runner capturing RSS/timing/system-info" ;
+    bl:number 610 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:560 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr610 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:560 ;
+    prov:startedAtTime "2026-08-29T07:47:56Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-29T07:47:56Z"^^xsd:dateTime .
+
+session:pr610Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #560 asked for a one-shot runner script for a short-lived, expensive rented box (e.g. Hetzner) that runs the large-ontology performance tests and Criterion benchmarks that don't fit the normal 3.7GB dev box's RAM. The core constraint driving the design was durability: since the rental is short and expensive, results must be captured completely on the first run, with nothing lost to a forgotten --nocapture flag or an un-copied target/criterion/ before teardown. The script therefore tees every command's combined stdout+stderr to a single timestamped, gitignored log file rather than relying on the operator to redirect output manually, and writes a system-info header up front (uname, nproc, free, df, rustc/cargo versions, git HEAD) so a run is self-describing without needing to cross-reference separate notes. Only one existing test (gene_ontology_memory_profile) self-reports RSS via /proc/self/status; rather than instrumenting every test/bench to do the same (explicitly out of scope per the issue), the script wraps each cargo invocation in /usr/bin/time -v, which reports peak RSS and wall time uniformly regardless of what the test itself prints. Because that flag is GNU-time-specific (BSD time on macOS lacks -v), the script checks for -v support up front and fails loudly with a clear message rather than silently producing a log with no memory figures -- appropriate since this is explicitly a Linux-only tool for the rented box, not a portable utility. Validation was done end-to-end for the mechanics only (missing-testdata triggers download_test_ontologies.sh; present testdata skips it; header writes correctly; the wrapped cargo test starts) since the full ignored suite requires the RAM this dev box doesn't have -- exactly the constraint the issue exists to work around." ;
+    agp:reasoningFor ghpull:610 ;
+    prov:wasGeneratedBy session:pr610 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

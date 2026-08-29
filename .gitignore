@@ -31,6 +31,9 @@ target
 /tests/testdata/wikidata-sample.nt
 /tests/testdata/dblp-sample.nt
 
+# Performance suite run logs (scripts/run_performance_suite.sh)
+/perf-run-*.log
+
 # Public-deployment secrets (see deploy/*.example templates) -- never commit
 # real OAuth client secrets, cookie secrets, or the authenticated-emails
 # allowlist.
