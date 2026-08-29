@@ -2026,7 +2026,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.6",
+ "rand 0.8.8",
  "smallvec",
  "zeroize",
 ]
@@ -2198,7 +2198,7 @@ checksum = "a04761319ef84de1f59782f189d072cbfc3a9a40c4e8bded8667202fbd35b02a"
 dependencies = [
  "oxilangtag",
  "oxiri",
- "rand 0.8.6",
+ "rand 0.8.8",
  "thiserror 2.0.20",
 ]
 
@@ -2593,9 +2593,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.6"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -2988,7 +2988,7 @@ dependencies = [
  "borsh",
  "bytes",
  "num-traits",
- "rand 0.8.6",
+ "rand 0.8.8",
  "rkyv",
  "serde",
  "serde_json",
@@ -3508,7 +3508,8 @@ dependencies = [
  "log",
  "ottr",
  "owl2rl2datalog",
- "rand 0.8.6",
+ "rand 0.10.2",
+ "rand_core 0.6.4",
  "rdf-owl-translator",
  "redb",
  "reqwest",
@@ -3550,7 +3551,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "ordered-float 4.6.0",
  "oxiri",
- "rand 0.8.6",
+ "rand 0.10.2",
  "regex",
  "rust_decimal",
  "sha1",
