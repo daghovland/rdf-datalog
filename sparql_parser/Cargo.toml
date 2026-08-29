@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nom = "7.1"
+nom = "8.0"
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
 iri-string = "0.7"

@@ -7,6 +7,6 @@ edition = "2024"
 ingress = { path = "../ingress" }
 dag-rdf = { path = "../dag_rdf" }
 turtle = { path = "../turtle" }
-nom = "7.1"
+nom = "8.0"
 thiserror = "2"
 log = "0.4"
