@@ -13,6 +13,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::tokens::{identifier, is_ident_char, punct, sp, tok};
 use ingress::IriReference;
+use nom::Parser;
 use nom::IResult;
 use owl_ontology::FullIri;
 use std::cell::{Cell, RefCell};

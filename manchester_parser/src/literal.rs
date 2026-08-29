@@ -14,6 +14,7 @@ Contact: hovlanddag@gmail.com
 use crate::iri::{ParserContext, iri};
 use crate::tokens::{sp, tok};
 use ingress::{GraphElement, RdfLiteral};
+use nom::Parser;
 use nom::IResult;
 use num_bigint::BigInt;
 use ordered_float::OrderedFloat;

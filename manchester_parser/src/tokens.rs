@@ -12,6 +12,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! See [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](../../../docs/plans/MANCHESTER_SYNTAX_PLAN.md).
 
+use nom::Parser;
 use nom::IResult;
 
 /// Skip zero or more whitespace characters or `#`-to-end-of-line comments.

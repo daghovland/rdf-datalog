@@ -14,6 +14,7 @@ Contact: hovlanddag@gmail.com
 //! `docs/plans/MANCHESTER_SYNTAX_PLAN.md`.
 
 use crate::iri::{ParserContext, iri};
+use nom::Parser;
 use nom::IResult;
 use owl_ontology::DataRange;
 

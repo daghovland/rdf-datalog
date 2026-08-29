@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 //! `individual ::= individualIRI | nodeID`
 
 use crate::iri::{ParserContext, iri, node_id};
+use nom::Parser;
 use nom::IResult;
 use nom::branch::alt;
 use owl_ontology::Individual;
@@ -22,7 +23,7 @@ pub(crate) fn individual<'a>(
                 Individual::AnonymousIndividual(ctx.anon_individual_for_label(&label))
             }),
             nom::combinator::map(iri(ctx), Individual::NamedIndividual),
-        ))(input)
+        )).parse(input)
     }
 }
 

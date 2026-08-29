@@ -29,6 +29,7 @@ mod serialize;
 mod tokens;
 
 use iri::ParserContext;
+use nom::Parser;
 use nom::multi::many0;
 use owl_ontology::Ontology;
 
@@ -93,25 +94,25 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
     let ctx = ParserContext::new();
 
     let (input, ()) = tokens::sp(input).map_err(fail)?;
-    let (input, _prefixes) = many0(prefix_declaration(&ctx))(input).map_err(fail)?;
+    let (input, _prefixes) = many0(prefix_declaration(&ctx)).parse(input).map_err(fail)?;
 
     prescan_data_properties(&ctx, input);
 
     let (input, _) = tokens::keyword("Ontology:")(input).map_err(fail)?;
-    let (input, ontology_iri) = nom::combinator::opt(iri::full_iri)(input).map_err(fail)?;
+    let (input, ontology_iri) = nom::combinator::opt(iri::full_iri).parse(input).map_err(fail)?;
     let (input, version_iri) = if ontology_iri.is_some() {
-        nom::combinator::opt(iri::full_iri)(input).map_err(fail)?
+        nom::combinator::opt(iri::full_iri).parse(input).map_err(fail)?
     } else {
         (input, None)
     };
 
-    let (input, imports) = many0(import_decl(&ctx))(input).map_err(fail)?;
+    let (input, imports) = many0(import_decl(&ctx)).parse(input).map_err(fail)?;
 
     let (input, annotation_sections) =
-        many0(annotation::annotations_section(&ctx))(input).map_err(fail)?;
+        many0(annotation::annotations_section(&ctx)).parse(input).map_err(fail)?;
     let ontology_annotations = annotation_sections.into_iter().flatten().collect();
 
-    let (input, frame_axioms) = many0(frame::any_frame(&ctx))(input).map_err(fail)?;
+    let (input, frame_axioms) = many0(frame::any_frame(&ctx)).parse(input).map_err(fail)?;
     let axioms = frame_axioms.into_iter().flatten().collect();
 
     let (input, ()) = tokens::sp(input).map_err(fail)?;

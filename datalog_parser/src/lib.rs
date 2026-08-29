@@ -54,6 +54,7 @@ use dag_rdf::{
     DEFAULT_GRAPH_ELEMENT_ID, Datastore, IriReference, QuadPattern, RdfLiteral, RdfResource, Term,
 };
 use datalog::types::{Rule, RuleAtom, RuleHead};
+use nom::Parser;
 use nom::{
     IResult,
     bytes::complete::{take_while, take_while1},
@@ -241,7 +242,7 @@ fn parse_prefix_decl(input: &str) -> IResult<&str, (String, String)> {
     let (input, _) = multispace0(input)?;
     let (input, iri) = parse_absolute_iri_str(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, _) = opt(char('.'))(input)?;
+    let (input, _) = opt(char('.')).parse(input)?;
     Ok((input, (name.to_string(), iri)))
 }
 
@@ -250,14 +251,14 @@ fn parse_base_decl(input: &str) -> IResult<&str, String> {
     let (input, _) = multispace1(input)?;
     let (input, iri) = parse_absolute_iri_str(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, _) = opt(char('.'))(input)?;
+    let (input, _) = opt(char('.')).parse(input)?;
     Ok((input, iri))
 }
 
 fn parse_version_decl(input: &str) -> IResult<&str, ()> {
     let (input, _) = alt_keyword(input, &["@version", "VERSION", "version"])?;
     let (input, _) = take_while(|c| c != '.' && c != '\n')(input)?;
-    let (input, _) = opt(char('.'))(input)?;
+    let (input, _) = opt(char('.')).parse(input)?;
     Ok((input, ()))
 }
 
@@ -452,7 +453,7 @@ fn parse_predicate_first<'i>(
     let (input, _) = multispace0(input)?;
 
     if input.starts_with(',') {
-        let (input, _) = pair(char(','), multispace0)(input)?;
+        let (input, _) = pair(char(','), multispace0).parse(input)?;
         let (input, second_arg) = parse_term(input, ctx)?;
         let (input, _) = multispace0(input)?;
         let (input, _) = char(']')(input)?;
@@ -515,7 +516,7 @@ fn parse_rule<'i>(input: &'i str, ctx: &ParserContext) -> IResult<&'i str, Parse
     let (input, _) = multispace0(input)?;
 
     if input.starts_with(":-") {
-        let (input, _) = pair(char(':'), char('-'))(input)?;
+        let (input, _) = pair(char(':'), char('-')).parse(input)?;
         let (input, _) = multispace0(input)?;
         let (input, body) = parse_body(input, ctx)?;
         let (input, _) = multispace0(input)?;
