@@ -2026,7 +2026,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.8",
+ "rand 0.8.6",
  "smallvec",
  "zeroize",
 ]
@@ -2191,14 +2191,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54b4ed3a7192fa19f5f48f99871f2755047fabefd7f222f12a1df1773796a102"
 
 [[package]]
+name = "oxiri"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b6bd0ef560f078e41ce2ebf370cce217e7fb2c3695ffa87541151c9de94e83a"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "oxrdf"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a04761319ef84de1f59782f189d072cbfc3a9a40c4e8bded8667202fbd35b02a"
 dependencies = [
  "oxilangtag",
- "oxiri",
- "rand 0.8.8",
+ "oxiri 0.2.11",
+ "rand 0.8.6",
  "thiserror 2.0.20",
 ]
 
@@ -2209,7 +2218,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0afd5c28e4a399c57ee2bc3accd40c7b671fdc7b6537499f14e95b265af7d7e0"
 dependencies = [
  "oxilangtag",
- "oxiri",
+ "oxiri 0.2.11",
  "rand 0.9.4",
  "thiserror 2.0.20",
 ]
@@ -2222,7 +2231,7 @@ checksum = "f03fd471bd54c23d76631c0a2677aa4bb308d905f6e491ee35dcb0732b7c5c6c"
 dependencies = [
  "memchr",
  "oxilangtag",
- "oxiri",
+ "oxiri 0.2.11",
  "oxrdf 0.3.3",
  "thiserror 2.0.20",
 ]
@@ -2593,9 +2602,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.8"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -2988,7 +2997,7 @@ dependencies = [
  "borsh",
  "bytes",
  "num-traits",
- "rand 0.8.8",
+ "rand 0.8.6",
  "rkyv",
  "serde",
  "serde_json",
@@ -3550,7 +3559,7 @@ dependencies = [
  "nom",
  "num-bigint 0.5.1",
  "ordered-float 4.6.0",
- "oxiri",
+ "oxiri 0.3.1",
  "rand 0.10.2",
  "regex",
  "rust_decimal",
