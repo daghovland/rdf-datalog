@@ -282,7 +282,7 @@ mod tests {
             .add_node_resource(RdfResource::Iri(IriReference(
                 "http://example.org/base3".to_string(),
             )));
-        let blocked = ds
+        let _blocked = ds
             .resources
             .add_node_resource(RdfResource::Iri(IriReference(
                 "http://example.org/blocked".to_string(),
@@ -474,8 +474,7 @@ mod tests {
         let mut reasoner =
             IncrementalReasoner::new(vec![a_rule.clone(), b_rule.clone()], &mut ds).unwrap();
 
-        let outcome =
-            apply_ruleset_diff(&mut reasoner, &mut ds, &[a_rule, c_rule]).unwrap();
+        let outcome = apply_ruleset_diff(&mut reasoner, &mut ds, &[a_rule, c_rule]).unwrap();
 
         assert!(
             !outcome.rebuilt,
@@ -588,8 +587,7 @@ mod tests {
         let mut reasoner =
             IncrementalReasoner::new(vec![a_rule.clone(), b_rule.clone()], &mut ds).unwrap();
 
-        let outcome =
-            apply_ruleset_diff(&mut reasoner, &mut ds, &[a_rule, b_rule]).unwrap();
+        let outcome = apply_ruleset_diff(&mut reasoner, &mut ds, &[a_rule, b_rule]).unwrap();
 
         assert!(!outcome.rebuilt, "an unchanged ruleset must be a no-op");
         assert!(ds.named_graphs.contains(&quad(g, a, q1, b)));
