@@ -1423,7 +1423,8 @@ fn resolve_iri(base: Option<&str>, raw: &str) -> Result<String, oxiri::IriParseE
         return Ok(raw.to_string());
     };
     let base_iri = oxiri::Iri::parse(base)?;
-    Ok(base_iri.resolve(raw)?.into_inner())
+    let raw_ref = oxiri::IriRef::parse(raw)?;
+    Ok(base_iri.resolve(&raw_ref)?.into_inner())
 }
 
 /// Parse the local part of a SPARQL 1.1 prefixed name (PN_LOCAL).
