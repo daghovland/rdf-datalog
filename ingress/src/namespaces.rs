@@ -51,8 +51,8 @@ pub const OWL_DIFFERENT_FROM: &str = "http://www.w3.org/2002/07/owl#differentFro
 pub const OWL_ONTOLOGY: &str = "http://www.w3.org/2002/07/owl#Ontology";
 /// The IRI for imports.
 pub const OWL_IMPORT: &str = "http://www.w3.org/2002/07/owl#imports";
-/// The IRI for versionIri.
-pub const OWL_VERSION_IRI: &str = "http://www.w3.org/2002/07/owl#versionIri";
+/// The IRI for versionIRI.
+pub const OWL_VERSION_IRI: &str = "http://www.w3.org/2002/07/owl#versionIRI";
 /// The IRI for OntologyProperty.
 pub const OWL_ONTOLOGY_PROPERTY: &str = "http://www.w3.org/2002/07/owl#OntologyProperty";
 /// The IRI for AnnotationProperty.
