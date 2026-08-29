@@ -172,6 +172,17 @@ pub fn build_router(state: AppState) -> Router {
         // docs/plans/DEREFERENCEABLE_RESOURCE_IRIS_493_PLAN.md §4.
         .route("/describe", get(crate::describe::describe_get))
         .route("/id/{*path}", get(crate::describe::id_redirect_get))
+        // ── agp:AgentSession hash-URI namespace document (#567) ──────────────
+        // Unlike `/describe`/`/id/*` above, this route is classified `Read`
+        // here too but is additionally carved out of `forward_auth` at the
+        // Caddy edge (see deploy/Caddyfile), since it only ever exposes
+        // `session:*` triples -- content whose entire purpose is public
+        // dereferenceability, same as #441's `/ns/*` vocabulary routes. See
+        // docs/plans/AGENTPROV_SESSION_DEREF_567_PLAN.md.
+        .route(
+            "/ns/agentprov/session",
+            get(crate::agentprov_session::agentprov_session_document_get),
+        )
         // ── Auth config (always public — no middleware) ───────────────────────
         .route("/auth/config", get(crate::auth::auth_config_handler))
         // ── Frontend + legacy upload ─────────────────────────────────────────
