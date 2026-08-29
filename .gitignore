@@ -39,3 +39,5 @@ target
 # allowlist.
 /deploy/.env
 /deploy/authenticated-emails.txt
+target-local/
+.private-target/

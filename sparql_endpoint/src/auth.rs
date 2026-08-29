@@ -977,7 +977,8 @@ mod tests {
 
     fn test_keys() -> &'static TestKeyPair {
         TEST_KEYS.get_or_init(|| {
-            let mut rng = rand::rngs::OsRng;
+            // rsa 0.9.x requires the rand_core 0.6 RngCore trait, not the rand 0.10 one.
+            let mut rng = rand_core::OsRng;
             let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key gen");
             let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).expect("PKCS8 PEM");
             let public_pem = private_key

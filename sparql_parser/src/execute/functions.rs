@@ -688,8 +688,8 @@ pub(crate) fn eval_fn_rand(
     _sub: &PartialSub,
     _datastore: &Datastore,
 ) -> Option<GraphElement> {
-    use rand::Rng;
-    let v: f64 = rand::thread_rng().gen();
+    use rand::RngExt;
+    let v: f64 = rand::rng().random();
     Some(GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(
         v.into(),
     )))
