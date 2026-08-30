@@ -242,7 +242,7 @@ into `GraphElement` elsewhere.
 | `Prefix(...)`, `Ontology(...)` header incl. IRI/version IRI, `Import(...)` | Yes | |
 | `Declaration(...)` for all six `Entity` variants | Yes | |
 | Class expressions: all keyword forms listed above (object + data, incl. qualified/unqualified cardinalities, `ObjectOneOf`, `ObjectHasSelf`) | Yes | |
-| Data ranges: `Datatype`, `DataIntersectionOf`, `DataUnionOf`, `DataComplementOf`, `DataOneOf`, `DatatypeRestriction` | Yes | full coverage — functional syntax makes these mechanical, unlike Manchester's deferral (#157) |
+| Data ranges: `Datatype`, `DataIntersectionOf`, `DataUnionOf`, `DataComplementOf`, `DataOneOf`, `DatatypeRestriction` | Yes | full coverage — functional syntax makes these mechanical, unlike Manchester's deferral (#157); landed in phase 11, after the #180-mandated tier (phases 1–10) is complete — see "Phases" below |
 | `ObjectInverseOf` | Yes | |
 | `SubObjectPropertyOf` incl. `ObjectPropertyChain` LHS | Yes | |
 | All class/object-property/data-property axiom keywords listed above | Yes | |
@@ -287,18 +287,52 @@ deferring these same constructs in Manchester.
 
 Each phase is implemented fully (all its tests green, `cargo clippy -p
 owl-functional-parser --all-targets -- -D warnings` clean) before moving to
-the next, per CLAUDE.md's TDD protocol.
+the next, per CLAUDE.md's TDD protocol. Phases 1–10 deliver exactly the
+issue #180 tier (declarations, class/property/datatype axioms, ABox
+assertions — the same coverage tier as Manchester's initial landing #139);
+phase 11 is the extra breadth this syntax's unambiguous grammar makes cheap
+(compound data ranges, property chains, `HasKey`). This ordering is
+deliberate: **if work is interrupted after any phase through 10, the branch
+already satisfies #180's stated scope** — the phase-3 data-range work is
+trimmed to the named-datatype case only (sufficient for
+`DataSomeValuesFrom`/`DataPropertyRange`/`DatatypeDefinition` to parse) so
+nothing "extra" lands before the mandated tier is complete.
 
 1. **Ontology header** — `Prefix(...)` (incl. default `:` prefix), `Ontology(...)` with optional IRI/version IRI, `Import(...)`, empty ontology body. Establishes `ParserContext`, `tokens.rs`, `iri.rs`.
 2. **Literals, individuals, declarations** — `literal.rs`, `individual.rs`, `Declaration(...)` for all six `Entity` variants (tested via minimal `Ontology(... Declaration(Class(:C)) ...)` documents).
-3. **Property expressions & data ranges** — `property_expr.rs` (`ObjectInverseOf`, `ObjectPropertyChain`), `data_range.rs` (full grammar incl. `DataOneOf`/`DatatypeRestriction`/`DataComplementOf`/intersection/union).
-4. **Class expressions** — `class_expr.rs`'s full keyword set: boolean combinators, `ObjectOneOf`, all restriction forms (qualified/unqualified cardinalities, `ObjectHasSelf`, data restrictions). Tested via minimal `SubClassOf(:C <expr>)` axioms so results assert against `ClassAxiom::SubClassOf`.
+3. **Property expressions & named-datatype data ranges** — `property_expr.rs` (`ObjectInverseOf`); `data_range.rs` limited to `DataRange ::= Datatype` (bare named datatype only — `DataIntersectionOf`/`DataUnionOf`/`DataComplementOf`/`DataOneOf`/`DatatypeRestriction` moved to phase 11).
+4. **Class expressions** — `class_expr.rs`'s full keyword set: boolean combinators, `ObjectOneOf`, all restriction forms (qualified/unqualified cardinalities, `ObjectHasSelf`, data restrictions over named-datatype ranges). Tested via minimal `SubClassOf(:C <expr>)` axioms so results assert against `ClassAxiom::SubClassOf`.
 5. **Class axioms** — `SubClassOf`, `EquivalentClasses`, `DisjointClasses`, `DisjointUnion`.
-6. **Object property axioms** — all keywords in §9.2, incl. `SubObjectPropertyOf` with an `ObjectPropertyChain` LHS.
-7. **Data property axioms, `DatatypeDefinition`, `HasKey`** — §9.3–§9.5.
+6. **Object property axioms** — all keywords in §9.2 except `ObjectPropertyChain` as a `SubObjectPropertyOf` LHS (moved to phase 11); `SubObjectPropertyOf` in this phase only accepts a single `ObjectPropertyExpression` LHS. `ObjectPropertyDomain`/`ObjectPropertyRange` drop any `axiomAnnotations` with `log::warn!` — see "Type-model gaps" below; not a bug, a scoped limitation of the current `owl_ontology::ObjectPropertyAxiom` shape.
+7. **Data property axioms, `DatatypeDefinition`** — §9.3–§9.4. `HasKey` (§9.5) moved to phase 11.
 8. **Assertions** — all seven ABox assertion keywords (§9.6), incl. anonymous individuals.
 9. **Annotation axioms + nested annotations** — `AnnotationAssertion`, `SubAnnotationPropertyOf`, `AnnotationPropertyDomain`/`Range`; verify `axiomAnnotations` attach correctly to axioms from earlier phases (re-test an axiom with a preceding `Annotation(...)`).
-10. **Full-document integration** — a larger end-to-end test assembling a multi-axiom ontology (adapted from the pizza-style example above) and checking the full `Vec<Axiom>`.
+10. **Full-document integration** — a larger end-to-end test assembling a multi-axiom ontology (adapted from the pizza-style example above) and checking the full `Vec<Axiom>`, using only the phase 1–9 construct set.
+11. **Extended constructs** (append-only, beyond #180's mandated tier — the "materially larger fraction of the OWL 2 model" this plan's intro describes): full `DataRange` grammar (`DataIntersectionOf`/`DataUnionOf`/`DataComplementOf`/`DataOneOf`/`DatatypeRestriction`), `ObjectPropertyChain` as a `SubObjectPropertyOf` LHS, `HasKey`.
+
+## Type-model gaps found while parsing (not new `owl_ontology` types)
+
+- **`ObjectPropertyAxiom::ObjectPropertyDomain`/`ObjectPropertyRange` have no
+  `Vec<Annotation>` slot** (`owl_ontology/src/axioms.rs` lines 169–172),
+  unlike every other `ObjectPropertyAxiom` variant. The functional-syntax
+  grammar technically allows `axiomAnnotations` on both. Rather than widen
+  the shared `owl_ontology` enum for this parser alone, any
+  `axiomAnnotations` present on these two keywords are dropped with a
+  `log::warn!` (matching this crate family's existing convention — see
+  `manchester_parser`'s serializer — for constructs the target type model
+  can't fully represent). Widening the enum, if wanted later, is an
+  `owl_ontology`-crate change and out of scope for a parser-only PR.
+- **`AnnotationAxiom::AnnotationAssertion`'s subject/value are
+  `GraphElement`, not `Individual`/`Iri`.** An `_:x` anonymous-individual
+  subject is lowered the same way `manchester_parser` already bridges
+  anonymous individuals into `GraphElement` (see `manchester_parser/src/annotation.rs`,
+  `literal.rs`) — reusing that scheme rather than inventing a second one, so
+  the two parsers produce value-equal `Ontology`s for logically equivalent
+  documents.
+- **`Ontology` derives neither `PartialEq` nor `Debug`.** Tests assert on
+  `.axioms`, `.version`, `.annotations`, `.directly_imports_documents`
+  individually (as `owl_ontology/src/ontology.rs`'s own unit tests already
+  do), not via a whole-struct `assert_eq!`.
 
 ---
 
