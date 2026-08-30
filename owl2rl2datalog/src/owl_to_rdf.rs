@@ -2502,13 +2502,12 @@ mod tests {
         let (ds, report) = ontology_translate(&ontology);
         assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
         assert_eq!(report.triples_added, 0);
-        let owl_ontology_id =
-            id_of(&ds, &IriReference(OWL_ONTOLOGY.to_owned())).expect("owl:Ontology interned");
-        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        // Nothing at all was emitted (not even interning owl:Ontology's IRI,
+        // since it's never used as a triple component), so there must be no
+        // quads whatsoever in the datastore.
         assert!(
-            ds.quads_matching(None, None, Some(type_pred), Some(owl_ontology_id))
-                .is_empty(),
-            "no node anywhere should be typed owl:Ontology"
+            ds.quads_matching(None, None, None, None).is_empty(),
+            "a fully bare anonymous ontology must produce zero triples"
         );
     }
 }
