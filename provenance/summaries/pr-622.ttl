@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# issue-568-rules-endpoint-incremental).
+
+ghpull:622 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: incremental rule insertion/deletion for POST /{dataset}/rules (#568)" ;
+    bl:number 622 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:568 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr622 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:568 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-30T08:57:32Z"^^xsd:dateTime .
+
+session:pr622Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #568 asked for POST /{dataset}/rules to stop doing a full IncrementalReasoner rebuild on every ruleset change, since #474 had already added apply_rule_insertions/apply_rule_deletions as genuinely incremental primitives but left the HTTP layer untouched. The plan (docs/plans/RULES_ENDPOINT_INCREMENTAL_568_PLAN.md) had already been written and tests stubbed before this session picked the branch back up; this session's own work was mostly the second half of TDD -- unignoring and implementing diff_rulesets and apply_ruleset_diff against the stubbed tests, adding IncrementalReasoner::active_rules() as the missing accessor the diff needed, then merging in two weeks of upstream main (no conflicts) before opening the PR. The dispatch/fallback contract from the plan was followed as written: diff old vs new rulesets by value equality, attempt deletions-then-insertions incrementally, and on any ReasoningError from that attempt (not just NotStratifiable) fall back to the pre-#568 full-rebuild path so the HTTP caller never sees a hard failure for a ruleset that a rebuild could stratify. Local cargo clippy passed before pushing, but CI's toolchain (1.95) enforces a newer lint (clippy::cloned_ref_to_slice_refs) the local cache didn't have, which failed one test helper; fixed with std::slice::from_ref and a small restructure to avoid a borrow/move conflict, then re-verified green in CI rather than trusting the local run." ;
+    agp:reasoningFor ghpull:622 ;
+    prov:wasGeneratedBy session:pr622 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr622Summary agp:decisionPoint session:pr622Decision .
+
+session:pr622Decision a agp:Decision ;
+    agp:summaryText "On any Err from the incremental deletions/insertions attempt (not only ReasoningError::NotStratifiable), abort and fall back to the full-rebuild path, discarding whatever partial state the aborted attempt left in the live reasoner. Correctness relies on apply_rule_deletions/apply_rule_insertions only ever touching derived (intensional) quads, never extensional ones, so the fallback's extensional-only rebuild is unaffected by the aborted attempt regardless of which error variant triggered it." ;
+    agp:alternative "Special-case only NotStratifiable as the recoverable/fallback-worthy error and surface every other ReasoningError variant as a hard HTTP failure. Rejected as needless complexity: the endpoint's only real correctness obligation is that the resulting reasoner matches the requested ruleset, which the full-rebuild fallback always satisfies regardless of the error variant, so narrowing the catch would only add a maintenance burden (keeping a special-case list in sync with ReasoningError's variants) without a matching benefit." .
