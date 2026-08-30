@@ -346,7 +346,8 @@ mod tests {
         let q1 = base1; // placeholder distinct id, not queried in this test
         let a_rule = derive_rule(g, base1, q1);
         let b_rule = derive_rule(g, base2, q1);
-        let (added, removed) = diff_rulesets(&[a_rule.clone()], &[a_rule, b_rule.clone()]);
+        let new_rules = [a_rule.clone(), b_rule.clone()];
+        let (added, removed) = diff_rulesets(std::slice::from_ref(&a_rule), &new_rules);
         assert_eq!(added, vec![b_rule]);
         assert!(removed.is_empty());
     }
