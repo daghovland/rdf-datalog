@@ -291,7 +291,8 @@ async fn oidc_wrong_signing_key_returns_401() {
     let server = start_oidc_server(&mock).await;
 
     // Generate a second key pair unknown to the server.
-    let mut rng = rand::rngs::OsRng;
+    // rsa 0.9.x requires the rand_core 0.6 RngCore trait, not the rand 0.10 one.
+    let mut rng = rand_core::OsRng;
     let evil_key = RsaPrivateKey::new(&mut rng, 2048).expect("evil RSA key");
     let evil_pem = evil_key.to_pkcs8_pem(LineEnding::LF).expect("PKCS8 PEM");
     let evil_enc = EncodingKey::from_rsa_pem(evil_pem.as_bytes()).unwrap();

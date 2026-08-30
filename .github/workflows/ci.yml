@@ -104,6 +104,26 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── Provenance/backlog SHACL validation ─────────────────────────────────────
+  # Dedicated job so a shape violation shows up as its own named status check
+  # instead of being buried inside the generic "Unit & Integration Tests" job.
+  # Covers `provenance/summaries/*.ttl` against `backlog/ontology/agentprov-shapes.ttl`
+  # (tests/provenance_queries.rs and tests/agentprov_ontology.rs) and the backlog
+  # example snapshot against `backlog/ontology/shapes.ttl` (tests/backlog_ontology.rs).
+  provenance-shacl:
+    name: Provenance SHACL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: provenance-shacl
+      - name: cargo test — provenance & backlog SHACL validation
+        run: cargo test --test provenance_queries --test backlog_ontology --test agentprov_ontology
+
   # ── IMF performance tests ───────────────────────────────────────────────────
   # Downloads imf.ttl and runs the IMF ontology pipeline tests.
   # Kept as a separate job so a slow download does not block the core test suite.
