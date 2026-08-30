@@ -15,12 +15,13 @@ Contact: hovlanddag@gmail.com
 
 use crate::iri::{ParserContext, iri};
 use nom::IResult;
+use nom::Parser;
 use owl_ontology::DataRange;
 
 pub(crate) fn data_range<'a>(
     ctx: &'a ParserContext,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, DataRange> {
-    nom::combinator::map(iri(ctx), DataRange::NamedDataRange)
+    move |input| nom::combinator::map(iri(ctx), DataRange::NamedDataRange).parse(input)
 }
 
 #[cfg(test)]
