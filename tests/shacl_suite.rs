@@ -3181,11 +3181,12 @@ fn path_cache_correctness_matches_expected_closure() {
     let cache = shacl::path::PathCache::new();
 
     let id = |name: &str| shacl::graph::lookup_iri(&data, &ex(name)).unwrap();
-    let as_set = |node: dag_rdf::GraphElementId| -> std::collections::HashSet<dag_rdf::GraphElementId> {
-        shacl::path::values_from(&data, node, &path, &cache)
-            .into_iter()
-            .collect()
-    };
+    let as_set =
+        |node: dag_rdf::GraphElementId| -> std::collections::HashSet<dag_rdf::GraphElementId> {
+            shacl::path::values_from(&data, node, &path, &cache)
+                .into_iter()
+                .collect()
+        };
 
     assert_eq!(
         as_set(id("Alice")),

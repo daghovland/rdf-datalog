@@ -113,15 +113,8 @@ pub fn eval_all(
             // `ParsedPropShape` at all, so property-shape-scoped sh:and/or/not
             // were silently dropped during parsing. See
             // https://github.com/daghovland/rdf-datalog/issues/311.
-            let new = eval_prop_combinators(
-                shape.idx,
-                prop,
-                &targets,
-                data,
-                shapes_store,
-                work,
-                cache,
-            );
+            let new =
+                eval_prop_combinators(shape.idx, prop, &targets, data, shapes_store, work, cache);
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
                     v,
@@ -1003,8 +996,14 @@ fn shape_conforms_for_node(
             continue;
         }
         for constraint in &prop.constraints {
-            if !constraint_conforms(constraint, node, Some(&prop.path), data, shapes_store, cache)
-            {
+            if !constraint_conforms(
+                constraint,
+                node,
+                Some(&prop.path),
+                data,
+                shapes_store,
+                cache,
+            ) {
                 return false;
             }
         }

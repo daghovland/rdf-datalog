@@ -421,9 +421,12 @@ fn transitive_closure(
 /// `shacl::validate` call and dropped at the end of it, so it can never
 /// leak a `GraphElementId` (meaningful only relative to the `Datastore` it
 /// was interned from) across two different validation runs.
+/// A compound path's per-subject value index — see [`PathCache`].
+type PathIndex = HashMap<GraphElementId, Vec<GraphElementId>>;
+
 #[derive(Default)]
 pub struct PathCache {
-    compound: RefCell<HashMap<ShPath, Rc<HashMap<GraphElementId, Vec<GraphElementId>>>>>,
+    compound: RefCell<HashMap<ShPath, Rc<PathIndex>>>,
     hits: Cell<usize>,
     misses: Cell<usize>,
 }
@@ -446,17 +449,13 @@ impl PathCache {
 
     /// The per-subject index for `path`'s full extension over `data`,
     /// computing and caching it on first use.
-    fn index_for(
-        &self,
-        data: &Datastore,
-        path: &ShPath,
-    ) -> Rc<HashMap<GraphElementId, Vec<GraphElementId>>> {
+    fn index_for(&self, data: &Datastore, path: &ShPath) -> Rc<PathIndex> {
         if let Some(index) = self.compound.borrow().get(path) {
             self.hits.set(self.hits.get() + 1);
             return Rc::clone(index);
         }
         self.misses.set(self.misses.get() + 1);
-        let mut index: HashMap<GraphElementId, Vec<GraphElementId>> = HashMap::new();
+        let mut index: PathIndex = HashMap::new();
         for (s, o) in pairs(data, path) {
             index.entry(s).or_default().push(o);
         }
