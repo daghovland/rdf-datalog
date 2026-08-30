@@ -644,6 +644,33 @@ impl IncrementalReasoner {
         Ok(())
     }
 
+    /// Every rule currently enabled in this reasoner (across all strata, in
+    /// program/stratum order), cloned. Excludes rules disabled via
+    /// [`Self::apply_rule_deletions`] — a disabled rule is not part of the
+    /// "current ruleset" from a caller's point of view, since it derives
+    /// nothing and [`Self::apply_rule_insertions`] treats re-adding it as a
+    /// reactivation rather than a no-op.
+    ///
+    /// Intended for callers (e.g. `sparql_endpoint`'s `POST /{dataset}/rules`,
+    /// see [#568](https://github.com/daghovland/rdf-datalog/issues/568)) that
+    /// need to diff a freshly-parsed ruleset against what this reasoner is
+    /// currently running, to decide which rules to pass to
+    /// [`Self::apply_rule_insertions`]/[`Self::apply_rule_deletions`] instead
+    /// of always doing a full [`Self::new`] rebuild.
+    pub fn active_rules(&self) -> Vec<Rule> {
+        self.programs
+            .iter()
+            .flat_map(|program| {
+                program
+                    .rules
+                    .iter()
+                    .enumerate()
+                    .filter(|(rid, _)| !program.is_rule_disabled(*rid))
+                    .map(|(_, rule)| rule.clone())
+            })
+            .collect()
+    }
+
     /// Sum of `materialise_calls` across all strata's `DatalogProgram`s.
     ///
     /// Test-only instrumentation proving which rollback path actually ran on
