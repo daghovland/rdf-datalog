@@ -17,7 +17,7 @@ regex = "1"
 hex = "0.4"
 rand = "0.10"
 sha2 = { version = "0.10", features = ["force-soft"] }
-sha1 = "0.10"
+sha1 = "0.11"
 md5 = "0.8"
 uuid = { version = "1", features = ["v4"] }
 rust_decimal = "1"
