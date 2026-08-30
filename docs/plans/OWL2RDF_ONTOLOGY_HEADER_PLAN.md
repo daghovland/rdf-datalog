@@ -39,9 +39,22 @@ _:x owl:imports importedOntologyIRI1 .
 ```
 
 — a fresh blank node `_:x` stands in for the (absent) ontology IRI as the subject of every header
-triple. Note this means `T(O)` **always** emits at least the `rdf:type owl:Ontology` triple, even
-for a completely bare anonymous ontology with no imports/version/annotations/axioms — this isn't
-a special case to skip, it's the base case of the rule.
+triple. The literal spec text means `T(O)` **always** emits at least the `rdf:type owl:Ontology`
+triple, even for a completely bare anonymous ontology with no imports/version/annotations/axioms.
+
+**Deliberate deviation from the literal base case**: this implementation does *not* emit that
+lone blank-node triple when the ontology is anonymous *and* has no imports *and* no annotations.
+Reason: `rdf_owl_translator::rdf2owl` produces exactly this shape
+(`OntologyVersion::UnNamedOntology`, empty imports/annotations) for plain RDF that never declared
+`<x> rdf:type owl:Ontology` anywhere — i.e. RDF data that was never an "OWL ontology document" in
+the first place, just facts. Always synthesizing the blank node here would silently add a node
+that was never in the source data on every such round trip
+(`rdf2owl` → `owl2rdf`), breaking `tests/manchester_roundtrip.rs`'s
+`rdf_starting_roundtrip_preserves_graph_isomorphism` graph-isomorphism check — this was caught by
+actually running that test, not anticipated up front. A bare, unattached blank node carries no
+information a caller couldn't already infer from `ontology.version` being `UnNamedOntology` with
+empty imports/annotations, so suppressing it loses nothing. See `Translator::ontology_header`'s
+doc comment for the same reasoning in code.
 
 Ontology-level `Annotation(...)` elements (this codebase's `Ontology::annotations` field) map
 through the general `TANN` annotation function the same way axiom annotations do, but as **plain,
@@ -60,7 +73,13 @@ return value (the header node id — either the ontology IRI's node or the fresh
 available if a later change wants to attach more things to it.
 
 ```rust
-fn ontology_header(&mut self, ontology: &Ontology) -> GraphElementId {
+fn ontology_header(&mut self, ontology: &Ontology) -> Option<GraphElementId> {
+    let bare_anonymous = matches!(ontology.version, OntologyVersion::UnNamedOntology)
+        && ontology.directly_imports_documents.is_empty()
+        && ontology.annotations.is_empty();
+    if bare_anonymous {
+        return None;
+    }
     let subject = match &ontology.version {
         OntologyVersion::UnNamedOntology => self.datastore.new_anonymous_blank_node(),
         OntologyVersion::NamedOntology(iri) => self.iri(&iri.0),
@@ -80,12 +99,29 @@ fn ontology_header(&mut self, ontology: &Ontology) -> GraphElementId {
         let av_id = self.annotation_value(av);
         self.triple(subject, ap_id, av_id);
     }
-    subject
+    Some(subject)
 }
 ```
 
-called as `let _header = translator.ontology_header(ontology);` at the top of `owl2rdf`, before
-the existing axiom loop.
+called as `translator.ontology_header(ontology);` at the top of `owl2rdf`, before the existing
+axiom loop (the `Option` return is unused there today, kept for a future caller).
+
+## Reverse-direction fix: `rdf_owl_translator` must not re-materialize the header as a spurious axiom
+
+Emitting `<ontologyIRI> rdf:type owl:Ontology` exposed a latent gap on the read side, again found
+by actually running the round-trip tests rather than anticipated up front:
+`rdf_owl_translator::translator::extract_ontology_name` already correctly special-cases this
+triple (has since before this PR) to populate `Ontology::version`/`directly_imports_documents` —
+but `axiom_parser.rs`'s generic `rdf:type` dispatch (`extract_axiom`) had no matching special case,
+so the same `<ontologyIRI> rdf:type owl:Ontology` triple *also* fell through to the catch-all
+"ClassAssertion" arm, producing a bogus
+`ClassAssertion(ClassName(owl:Ontology), NamedIndividual(ontologyIRI))` axiom — i.e. "the ontology
+IRI is an individual of class `owl:Ontology`" — alongside the correct header extraction. Fixed by
+adding an explicit `o if o == ids.owl_ontology_id => None` arm in `axiom_parser.rs`'s `extract_axiom`,
+right before the generic ClassAssertion fallback, so the triple is consumed exactly once (by
+`extract_ontology_name`) and never double-materialized as an axiom. `owl:versionIRI`/`owl:imports`
+triples needed no equivalent fix — they were never in `axiom_structural_predicate_ids`'s scanned
+predicate set to begin with, so `extract_axioms_indexed` never saw them at all.
 
 ## Pre-existing bug found and fixed in the same PR
 
@@ -105,15 +141,11 @@ pure bugfix with no compensating breakage.
 
 ## Effect on existing `owl2rdf` unit tests
 
-Because `T(O)` always emits at least the `rdf:type owl:Ontology` header triple — including for a
-bare anonymous ontology with no imports — every existing `owl_to_rdf.rs` unit test that goes
-through the `translate(axioms)` helper (which wraps axioms in
-`Ontology::new(vec![], OntologyVersion::UnNamedOntology, vec![], axioms)`) gains exactly one
-extra triple. Every `assert_eq!(report.triples_added, N)` in that test module moves to `N + 1`.
-This is intentional: `owl2rdf` translates a whole `Ontology`, not just its axiom list, so these
-counts were undercounting relative to the full `T` function all along — the header was simply
-unimplemented. Each changed assertion is checked individually to confirm it moved by exactly 1
-before this PR is pushed.
+None, by design. Every existing `owl_to_rdf.rs` unit test goes through the `translate(axioms)`
+helper, which wraps axioms in
+`Ontology::new(vec![], OntologyVersion::UnNamedOntology, vec![], axioms)` — a bare anonymous
+ontology, exactly the case `ontology_header` deliberately suppresses (see above). Their
+`assert_eq!(report.triples_added, N)` counts are unchanged.
 
 ## Test cases (initially `#[ignore]`d, one unignored per implementation step)
 
@@ -136,6 +168,9 @@ by) are added.
    subject of every header triple, not just the type declaration).
 5. **Combination**: named ontology with `versionIRI` *and* multiple imports *and* an ontology-level
    annotation, all together — checks the triples don't interfere/overwrite each other.
+6. **Bare anonymous ontology** (no IRI, no imports, no annotations) — emits *nothing*: no header
+   triple at all, `triples_added` stays 0. This is the deviation from the literal spec base case
+   described above.
 
 ## Scope boundary
 

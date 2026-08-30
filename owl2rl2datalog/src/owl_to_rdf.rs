@@ -664,16 +664,42 @@ impl<'a> Translator<'a> {
     /// per the W3C mapping's `T(Ontology(...))` rule
     /// (<https://www.w3.org/TR/owl2-mapping-to-rdf/> §2.1, Table 1). See
     /// docs/plans/OWL2RDF_ONTOLOGY_HEADER_PLAN.md for the exact triple
-    /// shapes and citations.
+    /// shapes and citations, including a deliberate, documented deviation
+    /// from the literal spec text for the fully-bare anonymous case (below).
     ///
-    /// Always emits at least the `rdf:type owl:Ontology` triple, even for a
-    /// completely bare anonymous ontology with no imports/version/
-    /// annotations — that's the spec's base case, not a special case to
-    /// skip. An anonymous ontology (no ontology IRI) gets a fresh blank
-    /// node as its header subject, which every other header triple then
-    /// hangs off of, per the spec's `_:x` rule. Returns that subject id, in
-    /// case a future caller wants to attach more to the same node.
-    fn ontology_header(&mut self, ontology: &Ontology) -> GraphElementId {
+    /// A *named* (or versioned) ontology always gets at least the
+    /// `rdf:type owl:Ontology` triple, since there's a real IRI to make a
+    /// statement about. An *anonymous* ontology with something to attach
+    /// (imports and/or annotations) gets a fresh blank node as its header
+    /// subject, per the spec's `_:x` rule, with every header triple hanging
+    /// off that same node — this is the case exercised by
+    /// `anonymous_ontology_gets_type_declaration_and_imports_on_blank_node`.
+    ///
+    /// A **completely bare anonymous ontology** (no IRI, no imports, no
+    /// annotations) emits *nothing at all* — deliberately not the literal
+    /// spec base case of a lone `_:x rdf:type owl:Ontology` triple. Plain
+    /// RDF that never declared itself an OWL ontology document in the first
+    /// place (no `<x> rdf:type owl:Ontology` triple anywhere) parses via
+    /// `rdf_owl_translator::rdf2owl` into exactly this shape
+    /// (`OntologyVersion::UnNamedOntology`, no imports/annotations); always
+    /// synthesizing a content-free blank node here would silently add an
+    /// `owl:Ontology` node on every such round trip that was never actually
+    /// present in the source data, breaking graph-isomorphism round-trip
+    /// tests (`rdf_starting_roundtrip_preserves_graph_isomorphism` in
+    /// `tests/manchester_roundtrip.rs`) for no informational gain — a bare
+    /// unattached blank node carries nothing a caller could not already
+    /// infer from `ontology.version` being `UnNamedOntology` with empty
+    /// imports/annotations.
+    ///
+    /// Returns the header subject id, if one was created, in case a future
+    /// caller wants to attach more to the same node.
+    fn ontology_header(&mut self, ontology: &Ontology) -> Option<GraphElementId> {
+        let bare_anonymous = matches!(ontology.version, OntologyVersion::UnNamedOntology)
+            && ontology.directly_imports_documents.is_empty()
+            && ontology.annotations.is_empty();
+        if bare_anonymous {
+            return None;
+        }
         let subject = match &ontology.version {
             OntologyVersion::UnNamedOntology => self.datastore.new_anonymous_blank_node(),
             OntologyVersion::NamedOntology(iri) => self.iri(&iri.0),
@@ -693,7 +719,7 @@ impl<'a> Translator<'a> {
             let av_id = self.annotation_value(av);
             self.triple(subject, ap_id, av_id);
         }
-        subject
+        Some(subject)
     }
 
     fn declaration(&mut self, entity: &Entity, annotations: &[Annotation]) {
@@ -1155,9 +1181,8 @@ mod tests {
         let list_head = object_of(&ds, &ex("Pet"), OWL_DISJOINT_UNION_OF)
             .expect("owl:disjointUnionOf triple must exist");
         assert_eq!(read_rdf_list(&ds, list_head), vec![ex("Dog"), ex("Cat")]);
-        // ontology header (rdf:type owl:Ontology) + rdf:type owl:Class +
-        // owl:disjointUnionOf + 2 list cells * 2 triples
-        assert_eq!(report.triples_added, 7);
+        // rdf:type owl:Class + owl:disjointUnionOf + 2 list cells * 2 triples
+        assert_eq!(report.triples_added, 6);
     }
 
     #[test]
@@ -1245,7 +1270,7 @@ mod tests {
             class("Dog"),
             class("Animal"),
         ))]);
-        assert_eq!(report.triples_added, 2);
+        assert_eq!(report.triples_added, 1);
         assert!(report.skipped.is_empty());
         assert!(has_triple(
             &ds,
@@ -1267,9 +1292,8 @@ mod tests {
                 vec![class("A"), class("B"), class("C")],
             )),
         ]);
-        // ontology header + one triple for the binary axiom, two for the
-        // ternary chain
-        assert_eq!(report.triples_added, 4);
+        // one triple for the binary axiom, two for the ternary chain
+        assert_eq!(report.triples_added, 3);
         assert!(has_triple(
             &ds,
             &ex("Dog"),
@@ -1286,7 +1310,7 @@ mod tests {
             vec![],
             vec![class("Dog"), class("Cat")],
         ))]);
-        assert_eq!(report.triples_added, 2);
+        assert_eq!(report.triples_added, 1);
         assert!(has_triple(&ds, &ex("Dog"), OWL_DISJOINT_WITH, &ex("Cat")));
     }
 
@@ -1302,7 +1326,7 @@ mod tests {
                 class("Animal"),
             )),
         ]);
-        assert_eq!(report.triples_added, 3);
+        assert_eq!(report.triples_added, 2);
         assert!(has_triple(&ds, &ex("hasPet"), RDFS_DOMAIN, &ex("Person")));
         assert!(has_triple(&ds, &ex("hasPet"), RDFS_RANGE, &ex("Animal")));
     }
@@ -1320,7 +1344,7 @@ mod tests {
                 Individual::NamedIndividual(full("fido")),
             )),
         ]);
-        assert_eq!(report.triples_added, 7);
+        assert_eq!(report.triples_added, 6);
         assert!(has_triple(
             &ds,
             &ex("Dog"),
@@ -1385,7 +1409,7 @@ mod tests {
                 obj_prop("siblingOf"),
             )),
         ]);
-        assert_eq!(report.triples_added, 6);
+        assert_eq!(report.triples_added, 5);
         assert!(has_triple(
             &ds,
             &ex("hasDog"),
@@ -1443,7 +1467,7 @@ mod tests {
                 full("age"),
             )),
         ]);
-        assert_eq!(report.triples_added, 5);
+        assert_eq!(report.triples_added, 4);
         assert!(has_triple(&ds, &ex("age"), RDFS_DOMAIN, &ex("Person")));
         assert!(has_triple(
             &ds,
@@ -1489,7 +1513,7 @@ mod tests {
                 ],
             )),
         ]);
-        assert_eq!(report.triples_added, 4);
+        assert_eq!(report.triples_added, 3);
         assert!(has_triple(&ds, &ex("fido"), RDF_TYPE, &ex("Dog")));
         assert!(has_triple(&ds, &ex("alice"), EX_HAS_PET, &ex("fido")));
         assert!(has_triple(&ds, &ex("fido"), OWL_SAME_AS, &ex("rex")));
@@ -1514,8 +1538,8 @@ mod tests {
         let list_head =
             object_of(&ds, &ex("Person"), OWL_HAS_KEY).expect("owl:hasKey triple must exist");
         assert_eq!(read_rdf_list(&ds, list_head), vec![ex("hasSsn")]);
-        // ontology header + owl:hasKey + 1 list cell (rdf:first + rdf:rest)
-        assert_eq!(report.triples_added, 4);
+        // owl:hasKey + 1 list cell (rdf:first + rdf:rest) = 3 triples
+        assert_eq!(report.triples_added, 3);
     }
 
     /// A mix of object and data properties: the `rdf:List` must preserve
@@ -1729,7 +1753,7 @@ mod tests {
             ),
         )]);
         assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
-        assert_eq!(report.triples_added, 2);
+        assert_eq!(report.triples_added, 1);
         assert_eq!(
             axiom_reification_count(&ds),
             0,
@@ -1803,7 +1827,7 @@ mod tests {
             class("Dog"),
             class("Animal"),
         ))]);
-        assert_eq!(report.triples_added, 2);
+        assert_eq!(report.triples_added, 1);
         assert!(report.skipped.is_empty());
         assert!(has_triple(
             &ds,
@@ -2227,7 +2251,7 @@ mod tests {
                 ]),
             ),
         ))]);
-        assert_eq!(report.triples_added, 1);
+        assert_eq!(report.triples_added, 0);
         assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
     }
 
@@ -2302,9 +2326,12 @@ mod tests {
     }
 
     /// The id of the single node typed `owl:Ontology` in `ds`. Used for the
-    /// anonymous-ontology cases, where the header's subject is a fresh
-    /// blank node with no IRI to look up by. Panics if there isn't exactly
-    /// one such node, since every `owl2rdf` call emits exactly one header.
+    /// anonymous-ontology-with-imports-or-annotations case, where the
+    /// header's subject is a fresh blank node with no IRI to look up by.
+    /// Panics if there isn't exactly one such node — callers only reach for
+    /// this helper when they know their ontology isn't the fully-bare
+    /// anonymous case that emits no header at all (see
+    /// `bare_anonymous_ontology_gets_no_header_at_all`).
     fn header_node(ds: &Datastore) -> GraphElementId {
         let type_pred = id_of(ds, &IriReference(RDF_TYPE.to_owned())).expect("rdf:type interned");
         let owl_ontology =
@@ -2459,5 +2486,29 @@ mod tests {
         );
         // type + version + import + annotation
         assert_eq!(report.triples_added, 4);
+    }
+
+    /// A completely bare anonymous ontology (no IRI, no imports, no
+    /// annotations) — as produced by `rdf_owl_translator::rdf2owl` on plain
+    /// RDF that never declared itself an OWL ontology document in the
+    /// first place — must not gain a synthetic `_:x rdf:type owl:Ontology`
+    /// node it never had. See `ontology_header`'s doc comment for the full
+    /// rationale (this is a deliberate deviation from the literal spec
+    /// text, driven by `rdf_starting_roundtrip_preserves_graph_isomorphism`
+    /// in `tests/manchester_roundtrip.rs`).
+    #[test]
+    fn bare_anonymous_ontology_gets_no_header_at_all() {
+        let ontology = Ontology::new(vec![], OntologyVersion::UnNamedOntology, vec![], vec![]);
+        let (ds, report) = ontology_translate(&ontology);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert_eq!(report.triples_added, 0);
+        let owl_ontology_id =
+            id_of(&ds, &IriReference(OWL_ONTOLOGY.to_owned())).expect("owl:Ontology interned");
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        assert!(
+            ds.quads_matching(None, None, Some(type_pred), Some(owl_ontology_id))
+                .is_empty(),
+            "no node anywhere should be typed owl:Ontology"
+        );
     }
 }
