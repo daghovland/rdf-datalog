@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# issue-558-shacl-path-caching).
+
+ghpull:613 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: cache compound sh:path extension per validation run (#558)" ;
+    bl:number 613 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:558 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr613 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:558 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-30T08:35:55Z"^^xsd:dateTime .
+
+session:pr613Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #558 flagged that shacl::path::values_from recomputes a compound sh:path's whole graph extension via pairs() on every call, and evaluate.rs's values_for calls it once per focus node at 8 call sites -- O(focus_nodes x store size) for any shape with a compound path (sequence/alternative/inverse/zeroOrOne/oneOrMore/zeroOrMore). The issue explicitly asked for a scope check before implementing: was this only reachable through synthetic/theoretical shapes, or did real shapes hit it? Grepping tests/testdata/w3c_shacl found 13 W3C SHACL suite fixtures using compound paths, and tracing translate.rs showed its resolve_one_path already materializes a compound path into a synthetic predicate in `work` once per property shape -- but that route is Phase 1 (Datalog rule generation) only; evaluate.rs's Phase 2 constraint evaluation deliberately reads the original `data` store directly (so synthetic predicates never leak into constraint checks), so it never benefits from that materialization. The finding was confirmed real, not just theoretical. Implemented a PathCache: a HashMap<ShPath, Rc<HashMap<subject,Vec<object>>>> wrapped in a RefCell with hit/miss counters, created once per shacl::validate call and threaded by reference through the 8-function call chain from evaluate::eval_all down to values_for/path::values_from. The Rc-wrapping was deliberate -- shape conformance checking recurses (sh:node/sh:qualifiedValueShape evaluate a value against an inner shape that can itself reference the same or another compound path), so a lookup can be re-entered while an outer one is 'in progress'; returning an owned Rc clone and dropping the RefCell borrow immediately avoids a runtime borrow-check panic that a long-lived Ref would risk. Correctness was validated by confirming all 175 shacl_suite tests and all 10 w3c_shacl_suite tests (including every compound-path W3C fixture) pass unchanged, plus two new targeted tests: one asserting PathCache actually gets reused (misses stays 1, hits grows across focus nodes) and one asserting cached values_from returns the exact expected path closure." ;
+    agp:decisionPoint session:pr613Decision ;
+    agp:reasoningFor ghpull:613 ;
+    prov:wasGeneratedBy session:pr613 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr613Decision a agp:Decision ;
+    agp:summaryText "Chose to thread an explicit &PathCache parameter through the evaluate.rs call chain (eval_all -> eval_prop_constraint/eval_prop_combinators/eval_xone -> eval_node_shape/eval_qualified_value/shape_conforms_for_node -> prop_combinators_conform/constraint_conforms -> values_for -> path::values_from), created fresh per shacl::validate call and dropped at the end of it." ;
+    agp:alternative "Considered a thread_local! cache instead, reasoned as safe because eval_all is synchronous and non-yielding so no other task could interleave on the same OS thread mid-call. Rejected on review: the real hazard isn't concurrent interleaving, it's data identity -- GraphElementId is only meaningful relative to the Datastore it was interned from, cargo test runs many validate() calls with different Datastores on shared worker threads, and a thread_local cache keyed only on ShPath would implicitly also be keyed on 'whichever Datastore ran last on this thread', silently returning plausible-looking wrong ids across two different validation runs -- exactly the class of caching bug the issue warned was worse than the original slow-but-correct behavior. A borrow-checked reference tied to the same lifetime as data makes that bug unrepresentable; a thread_local would only hide it." .
