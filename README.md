@@ -254,7 +254,11 @@ evaluate_rules(rules, &mut ds);
 
 Use `--ontology` on the CLI to apply reasoning before running a query. Ontologies written
 in OWL 2 Manchester Syntax (`.omn`) parse directly to the same `Ontology` type via the
-`manchester_parser` crate, so they reason identically.
+`manchester_parser` crate, so they reason identically. OWL 2 Functional-Style Syntax
+(`.ofn`) ontologies parse to the same `Ontology` type too, via the `owl_functional_parser`
+crate (see [`docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`](docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md));
+CLI/notebook-kernel wiring for `.ofn` is tracked in
+[#633](https://github.com/daghovland/rdf-datalog/issues/633).
 
 **Proven by:** [`tests/owl_integration.rs`](tests/owl_integration.rs) (`cargo test --test owl_integration`)
 and [`tests/manchester_owl_reasoning.rs`](tests/manchester_owl_reasoning.rs).
