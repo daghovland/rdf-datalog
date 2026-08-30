@@ -583,7 +583,8 @@ fn pre_compute_violations(
             ));
         }
     }
-    let phase2_viols = evaluate::eval_all(parsed, data, shapes_store, work);
+    let path_cache = path::PathCache::new();
+    let phase2_viols = evaluate::eval_all(parsed, data, shapes_store, work, &path_cache);
     viol_preds.extend(phase2_viols);
     viol_preds
 }

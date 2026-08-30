@@ -16,11 +16,12 @@ Contact: hovlanddag@gmail.com
 //! both consumers, but used differently by each, since they need different
 //! things and mutate at different scopes:
 //! - `evaluate.rs` (direct, Phase 2 constraint evaluation, read-only against
-//!   the original data graph) calls [`values_from`], which re-evaluates
-//!   `pairs` per focus node with no stored predicate — this also covers
-//!   `sh:not`/`sh:and`/`sh:or` inner shapes, which are re-parsed ad hoc via
-//!   `shapes::parse_one_shape` and so have nowhere stable to cache a
-//!   resolved id against.
+//!   the original data graph) calls [`values_from`], which resolves a
+//!   compound path's extension once per validation run via a [`PathCache`]
+//!   threaded down from `shacl::validate`, reused across every focus node
+//!   and every shape (including `sh:not`/`sh:and`/`sh:or` inner shapes,
+//!   re-parsed ad hoc via `shapes::parse_one_shape`) that references the
+//!   same path — see [#558](https://github.com/daghovland/rdf-datalog/issues/558).
 //! - `translate.rs` (Datalog rule generation, Phase 1) calls
 //!   [`resolve_one_path`], which materializes the extension as ground
 //!   triples in `work` under a fresh synthetic predicate, once per
@@ -34,7 +35,9 @@ use crate::{graph, vocab};
 use dag_rdf::ingress::Triple;
 use dag_rdf::{Datastore, GraphElementId};
 use ingress::{RDF_FIRST, RDF_NIL, RDF_REST};
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Prefix for synthetic predicates materializing a compound `sh:path`'s
 /// extension in `work` (see [`resolve_one_path`]) — Datalog's own working
@@ -388,17 +391,100 @@ fn transitive_closure(
     result
 }
 
+/// Per-validation-run cache of a compound `sh:path`'s resolved extension,
+/// shared across every focus node and every property/inner shape that
+/// evaluates the same path during one `shacl::validate` call. See
+/// [#558](https://github.com/daghovland/rdf-datalog/issues/558) and
+/// [`docs/plans/SHACL_PATH_CACHING_558_PLAN.md`](../../docs/plans/SHACL_PATH_CACHING_558_PLAN.md).
+///
+/// Only compound paths are ever inserted — a bare `ShPath::Predicate` never
+/// reaches this cache; it stays on [`values_from`]'s already-indexed fast
+/// path via `Datastore::get_triples_with_subject_predicate`, unchanged.
+///
+/// Keyed on the full `ShPath` value (structural `Eq`/`Hash` — see the plan
+/// doc's "cache key correctness" section for why two structurally-identical
+/// paths parsed from different shapes-graph blank nodes safely share one
+/// entry), storing a per-subject index (`HashMap<subject, Vec<object>>`)
+/// rather than the flat pair set `pairs` returns, so a per-focus-node lookup
+/// is a single hash lookup instead of an `O(extension)` linear scan. Values
+/// are `Rc`-wrapped so a lookup can clone the `Rc` and drop the `RefCell`
+/// borrow immediately, before the caller iterates — required because shape
+/// conformance checking recurses (e.g. `sh:node`/`sh:qualifiedValueShape`
+/// evaluating a value against an inner shape that itself has a property with
+/// a compound path), so a lookup can be re-entered while an outer one is
+/// still logically "in progress"; a long-lived borrow across that would trip
+/// `RefCell`'s runtime borrow check.
+///
+/// Safe only because `data` is `&`-borrowed (never mutated) for the entire
+/// span a `PathCache` is alive — see the plan doc for the full argument.
+/// Never a `static`/`thread_local!`: one instance is created per
+/// `shacl::validate` call and dropped at the end of it, so it can never
+/// leak a `GraphElementId` (meaningful only relative to the `Datastore` it
+/// was interned from) across two different validation runs.
+/// A compound path's per-subject value index — see [`PathCache`].
+type PathIndex = HashMap<GraphElementId, Vec<GraphElementId>>;
+
+#[derive(Default)]
+pub struct PathCache {
+    compound: RefCell<HashMap<ShPath, Rc<PathIndex>>>,
+    hits: Cell<usize>,
+    misses: Cell<usize>,
+}
+
+impl PathCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of times a compound path's index was found already cached.
+    pub fn hits(&self) -> usize {
+        self.hits.get()
+    }
+
+    /// Number of times a compound path's index had to be computed (via
+    /// [`pairs`]) because it wasn't cached yet.
+    pub fn misses(&self) -> usize {
+        self.misses.get()
+    }
+
+    /// The per-subject index for `path`'s full extension over `data`,
+    /// computing and caching it on first use.
+    fn index_for(&self, data: &Datastore, path: &ShPath) -> Rc<PathIndex> {
+        if let Some(index) = self.compound.borrow().get(path) {
+            self.hits.set(self.hits.get() + 1);
+            return Rc::clone(index);
+        }
+        self.misses.set(self.misses.get() + 1);
+        let mut index: PathIndex = HashMap::new();
+        for (s, o) in pairs(data, path) {
+            index.entry(s).or_default().push(o);
+        }
+        let index = Rc::new(index);
+        self.compound
+            .borrow_mut()
+            .insert(path.clone(), Rc::clone(&index));
+        index
+    }
+}
+
 /// All values reachable from `node` by following `path` in `data`. The
 /// direct-evaluation (Phase 2, `evaluate.rs`) counterpart of
 /// `resolve_one_path` — used wherever a property shape's path-traversed
 /// values are needed for constraint checking that isn't compiled to
-/// Datalog. Purely read-only: a compound path's extension is recomputed
-/// from `data` on every call rather than cached, since `evaluate.rs`'s
-/// per-focus-node evaluation (including ad hoc re-parsing of inner shapes
-/// via `shapes::parse_one_shape`, e.g. from `sh:not`/`sh:and`/`sh:or`
-/// references) has no stable place to cache a resolved predicate id
-/// against. Test-suite-sized graphs only, per [`pairs`].
-pub fn values_from(data: &Datastore, node: GraphElementId, path: &ShPath) -> Vec<GraphElementId> {
+/// Datalog. A bare predicate path is always evaluated directly via the
+/// already-indexed `get_triples_with_subject_predicate` (ignoring `cache`
+/// entirely — nothing to gain by caching an already-indexed lookup); a
+/// compound path's extension is resolved once per validation run via
+/// `cache` and reused across every focus node and shape that references it,
+/// rather than recomputed from `data` on every call. See [`PathCache`] and
+/// [#558](https://github.com/daghovland/rdf-datalog/issues/558).
+/// Test-suite-sized graphs only, per [`pairs`].
+pub fn values_from(
+    data: &Datastore,
+    node: GraphElementId,
+    path: &ShPath,
+    cache: &PathCache,
+) -> Vec<GraphElementId> {
     match path {
         ShPath::Predicate(iri) => {
             let Some(pred_id) = graph::lookup_iri(data, iri) else {
@@ -408,11 +494,11 @@ pub fn values_from(data: &Datastore, node: GraphElementId, path: &ShPath) -> Vec
                 .map(|t| t.obj)
                 .collect()
         }
-        _ => pairs(data, path)
-            .into_iter()
-            .filter(|(s, _)| *s == node)
-            .map(|(_, o)| o)
-            .collect(),
+        _ => cache
+            .index_for(data, path)
+            .get(&node)
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
