@@ -258,6 +258,16 @@ pub fn extract_axiom(
                         ObjectPropertyAxiom::TransitiveObjectProperty(axiom_anns, ope),
                     ))
                 }
+                // `<iri> rdf:type owl:Ontology`: the ontology header
+                // declaration, already consumed by
+                // `translator::extract_ontology_name` into the resulting
+                // `Ontology`'s `version` field
+                // ([#515](https://github.com/daghovland/rdf-datalog/issues/515)).
+                // Not a per-axiom construct — must not also fall through to
+                // the generic ClassAssertion arm below, which would
+                // spuriously assert "this ontology IRI is an individual of
+                // class owl:Ontology".
+                o if o == ids.owl_ontology_id => None,
                 _ => {
                     // ClassAssertion: :x rdf:type C
                     // Preserve original semantics: blank-node objects return None.

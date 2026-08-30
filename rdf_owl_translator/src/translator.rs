@@ -78,7 +78,7 @@ fn extract_ontology_version_iri(
         .get_triples_with_subject_predicate(ontology_iri_id, ids.owl_version_iri_id)
         .collect();
     if triples.len() > 1 {
-        log::warn!("Multiple owl:versionIri triples found – using first");
+        log::warn!("Multiple owl:versionIRI triples found – using first");
     }
     triples
         .first()
