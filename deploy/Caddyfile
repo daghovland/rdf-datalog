@@ -42,6 +42,19 @@
 		reverse_proxy oauth2-proxy:4180
 	}
 
+	# Keycloak (#532), same reasoning as /oauth2/* above: its own
+	# login/token/JWKS endpoints must be reachable directly, unauthenticated
+	# -- both the browser (during the OIDC redirect dance) and oauth2-proxy/
+	# dagalog themselves (server-side, fetching JWKS/exchanging tokens) need
+	# this. NOTE: this also exposes Keycloak's own admin console
+	# (/auth/admin/*) publicly, protected only by Keycloak's own admin
+	# login -- accepted for the initial rollout; IP-restricting the admin
+	# console specifically is a reasonable follow-up hardening step, not a
+	# blocker for getting Keycloak working.
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+
 	# Vocabulary/ontology IRIs (#441) must also stay outside forward_auth,
 	# for a different reason: they exist to be dereferenced by arbitrary
 	# external RDF clients/crawlers that will never sign in with Google.

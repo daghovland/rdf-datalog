@@ -24,6 +24,7 @@ use crate::literal::literal;
 use crate::property_expr::object_property_expression;
 use crate::tokens::{keyword, punct};
 use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::multi::{many0, separated_list1};
 use owl_ontology::{
@@ -46,7 +47,8 @@ where
             let (i, anns) = opt_leading_annotations(ctx)(i)?;
             let (i, val) = item(i)?;
             Ok((i, (anns, val)))
-        })(input)
+        })
+        .parse(input)
     }
 }
 
@@ -97,7 +99,8 @@ fn class_section<'a>(
                 ),
                 |(anns, list)| ClassSection::DisjointUnionOf(anns, list),
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -107,7 +110,7 @@ pub(crate) fn class_frame<'a>(
     move |input: &'a str| {
         let (input, _) = keyword("Class:")(input)?;
         let (input, class_iri) = iri(ctx)(input)?;
-        let (input, sections) = many0(class_section(ctx))(input)?;
+        let (input, sections) = many0(class_section(ctx)).parse(input)?;
 
         let mut decl_annotations = Vec::new();
         let mut axioms = Vec::new();
@@ -201,7 +204,8 @@ fn object_property_characteristic<'a>(
                 let prop = prop.clone();
                 move |_| ObjectPropertyAxiom::IrreflexiveObjectProperty(anns.clone(), prop.clone())
             }),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -269,7 +273,8 @@ fn object_property_section<'a>(
                 ),
                 ObjectPropertySection::InverseOf,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -280,7 +285,8 @@ pub(crate) fn object_property_frame<'a>(
         let (input, _) = keyword("ObjectProperty:")(input)?;
         let (input, prop_iri) = iri(ctx)(input)?;
         let self_prop = ObjectPropertyExpression::NamedObjectProperty(prop_iri.clone());
-        let (input, sections) = many0(object_property_section(ctx, self_prop.clone()))(input)?;
+        let (input, sections) =
+            many0(object_property_section(ctx, self_prop.clone())).parse(input)?;
 
         let mut decl_annotations = Vec::new();
         let mut axioms = Vec::new();
@@ -411,7 +417,8 @@ fn data_property_section<'a>(
                 nom::sequence::preceded(keyword("DisjointWith:"), annotated_list(ctx, iri(ctx))),
                 DataPropertySection::DisjointWith,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -421,7 +428,7 @@ pub(crate) fn data_property_frame<'a>(
     move |input: &'a str| {
         let (input, _) = keyword("DataProperty:")(input)?;
         let (input, prop_iri) = iri(ctx)(input)?;
-        let (input, sections) = many0(data_property_section(ctx))(input)?;
+        let (input, sections) = many0(data_property_section(ctx)).parse(input)?;
 
         let mut decl_annotations = Vec::new();
         let mut axioms = Vec::new();
@@ -503,7 +510,7 @@ fn fact<'a>(
     ctx: &'a ParserContext,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, (bool, FullIri, FactTarget)> {
     move |input: &'a str| {
-        let (input, negated) = nom::combinator::opt(keyword("not"))(input)?;
+        let (input, negated) = nom::combinator::opt(keyword("not")).parse(input)?;
         let (input, prop) = iri(ctx)(input)?;
         let (rest_ws, ()) = crate::tokens::sp(input)?;
         if crate::class_expr::literal_follows(rest_ws) {
@@ -547,7 +554,8 @@ fn individual_section<'a>(
                 ),
                 IndividualSection::DifferentFrom,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -557,7 +565,7 @@ pub(crate) fn individual_frame<'a>(
     move |input: &'a str| {
         let (input, _) = keyword("Individual:")(input)?;
         let (input, ind) = individual(ctx)(input)?;
-        let (input, sections) = many0(individual_section(ctx))(input)?;
+        let (input, sections) = many0(individual_section(ctx)).parse(input)?;
 
         let mut decl_annotations = Vec::new();
         let mut axioms = Vec::new();
@@ -665,7 +673,8 @@ fn annotation_property_section<'a>(
                 nom::sequence::preceded(keyword("SubPropertyOf:"), annotated_list(ctx, iri(ctx))),
                 AnnotationPropertySection::SubPropertyOf,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -675,7 +684,7 @@ pub(crate) fn annotation_property_frame<'a>(
     move |input: &'a str| {
         let (input, _) = keyword("AnnotationProperty:")(input)?;
         let (input, prop_iri) = iri(ctx)(input)?;
-        let (input, sections) = many0(annotation_property_section(ctx))(input)?;
+        let (input, sections) = many0(annotation_property_section(ctx)).parse(input)?;
 
         let mut decl_annotations = Vec::new();
         let mut axioms = Vec::new();
@@ -776,7 +785,8 @@ pub(crate) fn misc<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult
             ),
             equivalent_or_disjoint_properties(ctx, "EquivalentProperties:", true),
             equivalent_or_disjoint_properties(ctx, "DisjointProperties:", false),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -801,12 +811,13 @@ fn equivalent_or_disjoint_properties<'a>(
     move |input: &'a str| {
         let (input, (anns, first, rest)) = nom::sequence::preceded(
             keyword(kw),
-            nom::sequence::tuple((
+            (
                 opt_annotations(ctx),
                 iri(ctx),
                 many0(nom::sequence::preceded(punct(','), iri(ctx))),
-            )),
-        )(input)?;
+            ),
+        )
+        .parse(input)?;
         let mut all = vec![first.clone()];
         all.extend(rest);
         let axiom = if ctx.is_known_data_property(&(first.0).0) {
@@ -848,6 +859,7 @@ pub(crate) fn any_frame<'a>(
             individual_frame(ctx),
             annotation_property_frame(ctx),
             nom::combinator::map(misc(ctx), |a| vec![a]),
-        ))(input)
+        ))
+        .parse(input)
     }
 }

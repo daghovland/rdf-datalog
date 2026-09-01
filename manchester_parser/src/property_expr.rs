@@ -12,6 +12,7 @@ Contact: hovlanddag@gmail.com
 use crate::iri::{ParserContext, iri};
 use crate::tokens::keyword;
 use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use owl_ontology::ObjectPropertyExpression;
 
@@ -26,7 +27,8 @@ pub(crate) fn object_property_expression<'a>(
                 ))
             }),
             nom::combinator::map(iri(ctx), ObjectPropertyExpression::NamedObjectProperty),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 

@@ -36,6 +36,7 @@ pub fn eval_all(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    cache: &path::PathCache,
 ) -> Vec<(GraphElementId, ViolMeta)> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
@@ -84,6 +85,7 @@ pub fn eval_all(
                     shapes_store,
                     work,
                     &qvs_entries,
+                    cache,
                 );
                 viol_preds.extend(new.into_iter().map(|(v, component)| {
                     (
@@ -111,7 +113,8 @@ pub fn eval_all(
             // `ParsedPropShape` at all, so property-shape-scoped sh:and/or/not
             // were silently dropped during parsing. See
             // https://github.com/daghovland/rdf-datalog/issues/311.
-            let new = eval_prop_combinators(shape.idx, prop, &targets, data, shapes_store, work);
+            let new =
+                eval_prop_combinators(shape.idx, prop, &targets, data, shapes_store, work, cache);
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
                     v,
@@ -147,6 +150,7 @@ pub fn eval_all(
                 shapes_store,
                 work,
                 &[],
+                cache,
             );
             viol_preds.extend(new.into_iter().map(|(v, component)| {
                 (
@@ -156,37 +160,14 @@ pub fn eval_all(
             }));
         }
 
-        // sh:nodeKind at node shape level — check each target node itself.
-        // sh:value for a node-shape-scoped (pathless) constraint is the focus
-        // node itself (SHACL §4.1.3/§3.4.1, also §2.1.2) — e.g. `sh:targetNode
-        // "true"^^xsd:boolean ; sh:nodeKind sh:IRI` must report `sh:value
-        // "true"^^xsd:boolean`, not omit it. Previously used `nil` here (the
-        // "no value" sentinel), which under-reported this field for every
-        // node-shape sh:nodeKind violation. See
-        // https://github.com/daghovland/rdf-datalog/issues/310 and
-        // https://github.com/daghovland/rdf-datalog/issues/312.
-        if let Some(nk) = &shape.node_kind {
-            let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
-            for node in &targets {
-                if !matches_node_kind(data, *node, nk) {
-                    add_viol(work, *node, viol, *node);
-                }
-            }
-            viol_preds.push((
-                viol,
-                ViolMeta::new(
-                    shapes_store,
-                    shape,
-                    shape.shapes_id,
-                    None,
-                    vocab::CC_NODE_KIND,
-                ),
-            ));
-        }
+        // sh:nodeKind at node-shape (pathless) level is now generated as a
+        // Datalog FilterAtom rule by translate.rs::shapes_to_rules (see
+        // docs/plans/EXPRESSION_PLAN.md Phase E4 / #62) — `targets` (this
+        // function's per-node iteration) has no role here any more.
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
-            let new = eval_xone(shape, &targets, data, shapes_store, work);
+            let new = eval_xone(shape, &targets, data, shapes_store, work, cache);
             viol_preds.extend(new.into_iter().map(|v| {
                 (
                     v,
@@ -204,7 +185,7 @@ pub fn eval_all(
         if let Some(inner_ref) = &shape.not_inner {
             let viol = graph::intern_iri(work, &vocab::viol_not(shape.idx));
             for node in &targets {
-                if shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store) {
+                if shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store, cache) {
                     // Node-shape-level (pathless) violation: sh:value is the
                     // focus node itself. See
                     // https://github.com/daghovland/rdf-datalog/issues/309.
@@ -223,7 +204,7 @@ pub fn eval_all(
             let viol = graph::intern_iri(work, &vocab::viol_or(shape.idx));
             for node in &targets {
                 let any_conforms = shape.or_inners.iter().any(|inner_ref| {
-                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
+                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store, cache)
                 });
                 if !any_conforms {
                     // Node-shape-level (pathless) violation: sh:value is the
@@ -254,7 +235,7 @@ pub fn eval_all(
             let viol = graph::intern_iri(work, &vocab::viol_and(shape.idx));
             for node in &targets {
                 let all_conform = shape.and_inners.iter().all(|inner_ref| {
-                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
+                    shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store, cache)
                 });
                 if !all_conform {
                     add_viol(work, *node, viol, *node);
@@ -305,10 +286,12 @@ fn eval_prop_constraint(
     shapes_store: &Datastore,
     work: &mut Datastore,
     qvs_entries: &[(&path::ShPath, GraphElementId, usize)],
+    cache: &path::PathCache,
 ) -> Vec<(GraphElementId, &'static str)> {
     let ConstraintCoord { si, pi, ci } = coord;
     use shapes::PropConstraint::*;
-    let values_of = |node: GraphElementId| -> Vec<GraphElementId> { values_for(data, node, path) };
+    let values_of =
+        |node: GraphElementId| -> Vec<GraphElementId> { values_for(data, node, path, cache) };
     match constraint {
         // Phase 1 constraints are handled via Datalog — skip them here.
         MinCount(_) | MaxCount(_) | Class(_) | HasValue(_) | In(_) => vec![],
@@ -326,18 +309,12 @@ fn eval_prop_constraint(
             vec![(viol, constraint.component_iri())]
         }
 
-        // §4.1.3 sh:nodeKind
-        NodeKind(nk) => {
-            let viol = graph::intern_iri(work, &vocab::viol_node_kind(si, pi));
-            for node in targets {
-                for val in values_of(*node) {
-                    if !matches_node_kind(data, val, nk) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.1.3 sh:nodeKind — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 / #62); `matches_node_kind` itself is unchanged and still
+        // used by `constraint_conforms` below for inner-shape combinator
+        // checks (sh:and/or/not/xone/node/qualifiedValueShape).
+        NodeKind(_) => vec![],
 
         // §4.3 value range
         //
@@ -474,33 +451,11 @@ fn eval_prop_constraint(
             vec![(viol, constraint.component_iri())]
         }
 
-        // §4.4.4 sh:languageIn
-        LanguageIn(tags) => {
-            let tag_set: HashSet<String> = tags.iter().map(|t| t.to_lowercase()).collect();
-            let viol = graph::intern_iri(work, &vocab::viol_language_in(si, pi));
-            for node in targets {
-                for val in values_of(*node) {
-                    // Language-tagged literal whose tag is not in the allowed set → violation.
-                    // Non-language-tagged literals also violate (per SHACL spec §4.4.4).
-                    // Non-literals also violate — the spec's normative text is
-                    // "For each value node that is either not a literal or
-                    // that does not have a language tag matching ...", so a
-                    // non-literal value node is not out of scope, it always
-                    // violates. See
-                    // https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
-                    // and https://github.com/daghovland/rdf-datalog/issues/266.
-                    let violates = !matches!(
-                        data.resources.get_graph_element(val),
-                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
-                            if lang_matches(&tag_set, lang)
-                    );
-                    if violates {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.4.4 sh:languageIn — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 / #62); `lang_matches` itself is unchanged and still used
+        // by `constraint_conforms` below for inner-shape combinator checks.
+        LanguageIn(_) => vec![],
 
         // §4.4.5 sh:uniqueLang
         //
@@ -666,6 +621,7 @@ fn eval_prop_constraint(
             data,
             shapes_store,
             work,
+            cache,
         )
         .into_iter()
         .map(|v| (v, constraint.component_iri()))
@@ -710,6 +666,7 @@ fn eval_prop_constraint(
                 data,
                 shapes_store,
                 work,
+                cache,
             )
         }
 
@@ -731,6 +688,7 @@ fn eval_prop_constraint(
 // node itself (that's what the node-shape-scoped `eval_all` handling above,
 // and `eval_xone`/the inline sh:not/sh:or blocks in `eval_all`, are for). See
 // https://github.com/daghovland/rdf-datalog/issues/311.
+#[allow(clippy::too_many_arguments)]
 fn eval_prop_combinators(
     si: usize,
     prop: &shapes::ParsedPropShape,
@@ -738,6 +696,7 @@ fn eval_prop_combinators(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    cache: &path::PathCache,
 ) -> Vec<(GraphElementId, &'static str)> {
     let pi = prop.idx;
     let mut result = Vec::new();
@@ -745,8 +704,8 @@ fn eval_prop_combinators(
     if let Some(inner_ref) = &prop.not_inner {
         let viol = graph::intern_iri(work, &vocab::viol_prop_not(si, pi));
         for node in targets {
-            for val in values_for(data, *node, Some(&prop.path)) {
-                if shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store) {
+            for val in values_for(data, *node, Some(&prop.path), cache) {
+                if shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache) {
                     add_viol(work, *node, viol, val);
                 }
             }
@@ -757,9 +716,9 @@ fn eval_prop_combinators(
     if !prop.or_inners.is_empty() {
         let viol = graph::intern_iri(work, &vocab::viol_prop_or(si, pi));
         for node in targets {
-            for val in values_for(data, *node, Some(&prop.path)) {
+            for val in values_for(data, *node, Some(&prop.path), cache) {
                 let any_conforms = prop.or_inners.iter().any(|inner_ref| {
-                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
                 });
                 if !any_conforms {
                     add_viol(work, *node, viol, val);
@@ -772,9 +731,9 @@ fn eval_prop_combinators(
     if !prop.and_inners.is_empty() {
         let viol = graph::intern_iri(work, &vocab::viol_prop_and(si, pi));
         for node in targets {
-            for val in values_for(data, *node, Some(&prop.path)) {
+            for val in values_for(data, *node, Some(&prop.path), cache) {
                 let all_conform = prop.and_inners.iter().all(|inner_ref| {
-                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
                 });
                 if !all_conform {
                     add_viol(work, *node, viol, val);
@@ -787,12 +746,12 @@ fn eval_prop_combinators(
     if !prop.xone_inners.is_empty() {
         let viol = graph::intern_iri(work, &vocab::viol_prop_xone(si, pi));
         for node in targets {
-            for val in values_for(data, *node, Some(&prop.path)) {
+            for val in values_for(data, *node, Some(&prop.path), cache) {
                 let conforming_count = prop
                     .xone_inners
                     .iter()
                     .filter(|inner_ref| {
-                        shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                        shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
                     })
                     .count();
                 if conforming_count != 1 {
@@ -814,6 +773,7 @@ fn eval_xone(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    cache: &path::PathCache,
 ) -> Vec<GraphElementId> {
     let si = shape.idx;
     let viol = graph::intern_iri(work, &vocab::viol_xone(si));
@@ -823,7 +783,7 @@ fn eval_xone(
             .xone_inners
             .iter()
             .filter(|inner_ref| {
-                shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store)
+                shape_conforms_for_node(*node, inner_ref.shapes_id, data, shapes_store, cache)
             })
             .count();
         if conforming_count != 1 {
@@ -838,6 +798,7 @@ fn eval_xone(
 
 // ── sh:node ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn eval_node_shape(
     coord: ConstraintCoord,
     inner_shapes_id: GraphElementId,
@@ -846,11 +807,12 @@ fn eval_node_shape(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    cache: &path::PathCache,
 ) -> Vec<GraphElementId> {
     let viol = graph::intern_iri(work, &vocab::viol_node_shape(coord.si, coord.pi));
     for node in targets {
-        for val in values_for(data, *node, path) {
-            if !shape_conforms_for_node(val, inner_shapes_id, data, shapes_store) {
+        for val in values_for(data, *node, path, cache) {
+            if !shape_conforms_for_node(val, inner_shapes_id, data, shapes_store, cache) {
                 add_viol(work, *node, viol, val);
             }
         }
@@ -885,6 +847,7 @@ struct QualifiedSpec {
 /// rather than once and reused — a small, deliberate duplication of work in
 /// exchange for keeping each bound's check fully independent and simple to
 /// read; the target sets involved are validation-time, not hot-loop, sized.
+#[allow(clippy::too_many_arguments)]
 fn eval_qualified_value(
     coord: ConstraintCoord,
     spec: QualifiedSpec,
@@ -893,21 +856,21 @@ fn eval_qualified_value(
     data: &Datastore,
     shapes_store: &Datastore,
     work: &mut Datastore,
+    cache: &path::PathCache,
 ) -> Vec<(GraphElementId, &'static str)> {
     let nil = graph::intern_iri(work, vocab::INT_NIL);
     let mut result = Vec::new();
 
     let qualifying_count = |node: GraphElementId| -> u64 {
-        values_for(data, node, path)
+        values_for(data, node, path, cache)
             .iter()
             .filter(|&&val| {
-                shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store)
+                shape_conforms_for_node(val, spec.inner_shapes_id, data, shapes_store, cache)
                     // sh:qualifiedValueShapesDisjoint: a value conforming to
                     // a sibling qualified value shape doesn't count here.
-                    && !spec
-                        .sibling_ids
-                        .iter()
-                        .any(|&sib| shape_conforms_for_node(val, sib, data, shapes_store))
+                    && !spec.sibling_ids.iter().any(|&sib| {
+                        shape_conforms_for_node(val, sib, data, shapes_store, cache)
+                    })
             })
             .count() as u64
     };
@@ -959,6 +922,7 @@ fn shape_conforms_for_node(
     shape_id: GraphElementId,
     data: &Datastore,
     shapes_store: &Datastore,
+    cache: &path::PathCache,
 ) -> bool {
     let parsed = shapes::parse_one_shape(shapes_store, shape_id, 0);
 
@@ -981,40 +945,44 @@ fn shape_conforms_for_node(
             continue;
         }
         for constraint in &prop.constraints {
-            if !constraint_conforms(constraint, node, Some(&prop.path), data, shapes_store) {
+            if !constraint_conforms(
+                constraint,
+                node,
+                Some(&prop.path),
+                data,
+                shapes_store,
+                cache,
+            ) {
                 return false;
             }
         }
-        if !prop_combinators_conform(prop, node, data, shapes_store) {
+        if !prop_combinators_conform(prop, node, data, shapes_store, cache) {
             return false;
         }
     }
 
     for constraint in &parsed.node_constraints {
-        if !constraint_conforms(constraint, node, None, data, shapes_store) {
+        if !constraint_conforms(constraint, node, None, data, shapes_store, cache) {
             return false;
         }
     }
 
     if let Some(inner_ref) = &parsed.not_inner
-        && shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+        && shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store, cache)
     {
         return false;
     }
 
-    if !parsed
-        .and_inners
-        .iter()
-        .all(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
-    {
+    if !parsed.and_inners.iter().all(|inner_ref| {
+        shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store, cache)
+    }) {
         return false;
     }
 
     if !parsed.or_inners.is_empty()
-        && !parsed
-            .or_inners
-            .iter()
-            .any(|inner_ref| shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store))
+        && !parsed.or_inners.iter().any(|inner_ref| {
+            shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store, cache)
+        })
     {
         return false;
     }
@@ -1024,7 +992,7 @@ fn shape_conforms_for_node(
             .xone_inners
             .iter()
             .filter(|inner_ref| {
-                shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store)
+                shape_conforms_for_node(node, inner_ref.shapes_id, data, shapes_store, cache)
             })
             .count();
         if conforming_count != 1 {
@@ -1046,21 +1014,22 @@ fn prop_combinators_conform(
     node: GraphElementId,
     data: &Datastore,
     shapes_store: &Datastore,
+    cache: &path::PathCache,
 ) -> bool {
-    let values = values_for(data, node, Some(&prop.path));
+    let values = values_for(data, node, Some(&prop.path), cache);
 
     if let Some(inner_ref) = &prop.not_inner
-        && values
-            .iter()
-            .any(|&val| shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store))
+        && values.iter().any(|&val| {
+            shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
+        })
     {
         return false;
     }
 
     if !values.iter().all(|&val| {
-        prop.and_inners
-            .iter()
-            .all(|inner_ref| shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store))
+        prop.and_inners.iter().all(|inner_ref| {
+            shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
+        })
     }) {
         return false;
     }
@@ -1068,7 +1037,7 @@ fn prop_combinators_conform(
     if !prop.or_inners.is_empty()
         && !values.iter().all(|&val| {
             prop.or_inners.iter().any(|inner_ref| {
-                shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
             })
         })
     {
@@ -1080,7 +1049,7 @@ fn prop_combinators_conform(
             prop.xone_inners
                 .iter()
                 .filter(|inner_ref| {
-                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store)
+                    shape_conforms_for_node(val, inner_ref.shapes_id, data, shapes_store, cache)
                 })
                 .count()
                 == 1
@@ -1107,9 +1076,10 @@ fn constraint_conforms(
     path: Option<&path::ShPath>,
     data: &Datastore,
     shapes_store: &Datastore,
+    cache: &path::PathCache,
 ) -> bool {
     use shapes::PropConstraint::*;
-    let values = values_for(data, node, path);
+    let values = values_for(data, node, path, cache);
 
     match constraint {
         MinCount(n) => {
@@ -1260,7 +1230,7 @@ fn constraint_conforms(
         }
         NodeShape(inner_shapes_id) => values
             .iter()
-            .all(|&v| shape_conforms_for_node(v, *inner_shapes_id, data, shapes_store)),
+            .all(|&v| shape_conforms_for_node(v, *inner_shapes_id, data, shapes_store, cache)),
         // Note: `sh:qualifiedValueShapesDisjoint`'s sibling exclusion (see
         // `eval_qualified_value`) is not applied in this boolean early-exit
         // path — `constraint_conforms` only needs a yes/no answer for a
@@ -1276,7 +1246,7 @@ fn constraint_conforms(
         } => {
             let qualifying_count = values
                 .iter()
-                .filter(|&&v| shape_conforms_for_node(v, *shapes_id, data, shapes_store))
+                .filter(|&&v| shape_conforms_for_node(v, *shapes_id, data, shapes_store, cache))
                 .count() as u64;
             !min.is_some_and(|n| qualifying_count < n) && !max.is_some_and(|n| qualifying_count > n)
         }
@@ -1407,9 +1377,10 @@ fn values_for(
     data: &Datastore,
     node: GraphElementId,
     path: Option<&path::ShPath>,
+    cache: &path::PathCache,
 ) -> Vec<GraphElementId> {
     match path {
-        Some(p) => path::values_from(data, node, p),
+        Some(p) => path::values_from(data, node, p, cache),
         None => vec![node],
     }
 }

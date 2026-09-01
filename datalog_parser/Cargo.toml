@@ -7,5 +7,5 @@ edition = "2024"
 dag-rdf = { path = "../dag_rdf" }
 datalog = { path = "../datalog" }
 sparql-parser = { path = "../sparql_parser" }
-nom = "7.1"
+nom = "8.0"
 log = "0.4"

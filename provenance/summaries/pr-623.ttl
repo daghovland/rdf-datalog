@@ -1,0 +1,35 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+
+ghpull:623 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl2rdf: ontology header triples (owl:imports, owl:versionIRI, ontology IRI declaration)" ;
+    bl:number 623 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:515 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr623 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:515 ;
+    prov:startedAtTime "2026-08-13T22:23:27+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-30T09:11:17Z"^^xsd:dateTime .
+
+session:pr623Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #515 asked for the OWL 2 ontology header (ontology IRI declaration, owl:versionIRI, owl:imports) to be emitted by owl2rl2datalog::owl_to_rdf::owl2rdf, which previously only walked ontology.axioms and never touched Ontology's own version/imports/annotations fields. Fetched the W3C mapping spec's Table 1 T(Ontology(...)) row directly rather than trusting the issue's anchor text, since 'Translation of Ontology Headers' does not exist as a titled section in the current REC. Added a new Translator::ontology_header method called once per owl2rdf call. Two real bugs surfaced only by actually running the existing manchester_roundtrip.rs full-pipeline tests after wiring emission up, not anticipated from the plan: ingress::OWL_VERSION_IRI was misspelled owl#versionIri (lowercase), silently breaking version-IRI ingestion from every real Turtle fixture already in the repo; and rdf_owl_translator's generic rdf:type dispatch double-materialized the new header triple as a spurious ClassAssertion alongside the correct extract_ontology_name handling. Both fixed inline as small scoped corrections, matching the pattern already recorded in provenance for PR #433 on this same module." ;
+    agp:decisionPoint session:pr623Decision ;
+    agp:reasoningFor ghpull:623 ;
+    prov:wasGeneratedBy session:pr623 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr623Decision a agp:Decision ;
+    agp:summaryText "For a completely bare anonymous ontology (no IRI, no imports, no annotations), ontology_header emits nothing at all rather than the spec's literal base case of a lone _:x rdf:type owl:Ontology blank node." ;
+    agp:alternative "Initially implemented the literal spec reading — always emit at least the type triple, even for a fully bare anonymous ontology — since that is what Table 1's T(O) function says unconditionally. This broke tests/manchester_roundtrip.rs::rdf_starting_roundtrip_preserves_graph_isomorphism: plain RDF that never declared itself an OWL ontology document round-trips through rdf_owl_translator::rdf2owl into exactly this bare-anonymous shape, and always synthesizing the blank node silently added a node to the round-tripped graph that was never in the source data, failing the isomorphism check. Reverted to the suppressing behavior once the failure was traced to this specific case; a bare unattached blank node carries no information a caller could not already infer from Ontology::version being UnNamedOntology with empty imports/annotations, so nothing is actually lost." .

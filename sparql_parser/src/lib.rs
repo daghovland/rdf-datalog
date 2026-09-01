@@ -36,13 +36,14 @@ pub use ingress::NetworkPolicy;
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
 use ingress::{XSD_BOOLEAN, XSD_DECIMAL, XSD_INTEGER};
+use nom::Parser;
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_until, take_while, take_while1},
     character::complete::char,
     combinator::{map, opt},
     multi::{many0, separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, terminated},
     IResult,
 };
 use std::collections::HashMap;
@@ -231,7 +232,7 @@ fn parse_query_body<'a>(
                 let (rest, _) = sp(rest)?;
                 let (rest, dataset) = parse_dataset_clauses(ctx)(rest)?;
                 let (rest, _) = sp(rest)?;
-                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
+                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp)).parse(rest)?;
                 let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
                 let (rest, _) = sp(rest)?;
                 return Ok((
@@ -275,7 +276,7 @@ fn parse_query_body<'a>(
                 let (rest, _) = sp(rest)?;
                 let (rest, dataset) = parse_dataset_clauses(ctx)(rest)?;
                 let (rest, _) = sp(rest)?;
-                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
+                let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp)).parse(rest)?;
                 let (rest, where_clause) = parse_group_graph_pattern(ctx)(rest)?;
                 let (rest, _) = sp(rest)?;
                 return Ok((
@@ -306,7 +307,7 @@ fn parse_query_body<'a>(
                 let (rest, where_clause) = if rest.trim_start().starts_with("WHERE")
                     || rest.trim_start().starts_with('{')
                 {
-                    let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp))(rest)?;
+                    let (rest, _) = opt(terminated(tag_no_case("WHERE"), sp)).parse(rest)?;
                     let (rest, _) = sp(rest)?;
                     parse_group_graph_pattern(ctx)(rest)?
                 } else {
@@ -329,7 +330,7 @@ fn parse_query_body<'a>(
         let (input, _) = sp1(input)?;
 
         // DISTINCT keyword
-        let (input, distinct_opt) = opt(terminated(tag_no_case("DISTINCT"), sp1))(input)?;
+        let (input, distinct_opt) = opt(terminated(tag_no_case("DISTINCT"), sp1)).parse(input)?;
         let distinct = distinct_opt.is_some();
 
         // Projection: * or list of ?var
@@ -358,7 +359,7 @@ fn parse_query_body<'a>(
 
         // WHERE (optional keyword)
         let (input, _) = sp(input)?;
-        let (input, _) = opt(terminated(tag_no_case("WHERE"), sp))(input)?;
+        let (input, _) = opt(terminated(tag_no_case("WHERE"), sp)).parse(input)?;
 
         // Group graph pattern
         let (input, _) = sp(input)?;
@@ -391,7 +392,7 @@ fn parse_query_body<'a>(
         // boundary (including the subquery-scoping case) for free from the
         // exact same machinery that already evaluates an inline `VALUES`
         // block. See issue #200.
-        let (input, values_component) = opt(|i| parse_values(ctx)(i))(input)?;
+        let (input, values_component) = opt(|i| parse_values(ctx)(i)).parse(input)?;
         let (input, _) = sp(input)?;
         if let Some(values_component) = values_component {
             where_clause.push(values_component);
@@ -448,7 +449,7 @@ fn parse_prefix_decl<'a>(ctx: &mut ParserContext, input: &'a str) -> IResult<&'a
     let (input, _) = char(':')(input)?;
     let (input, _) = sp(input)?;
     let (input, iri) = parse_iri_ref_resolved(ctx, input)?;
-    let (input, _) = opt(char('.'))(input)?;
+    let (input, _) = opt(char('.')).parse(input)?;
     ctx.prefixes.insert(prefix_name.to_string(), iri.0);
     Ok((input, ()))
 }
@@ -467,7 +468,8 @@ fn parse_projection<'a>(
                 many0(terminated(move |i| parse_projection_element(ctx)(i), sp)),
                 |elems| elems,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -485,7 +487,7 @@ fn parse_projection_element<'a>(
                         preceded(
                             // sp because the expression parser eagerly consumes
                             // trailing whitespace; sp1 would always fail here.
-                            tuple((sp, tag_no_case("AS"), sp1, char('?'))),
+                            (sp, tag_no_case("AS"), sp1, char('?')),
                             parse_varname,
                         ),
                     ),
@@ -498,7 +500,8 @@ fn parse_projection_element<'a>(
                 preceded(char('?'), parse_varname),
                 ProjectionElement::Variable,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -546,7 +549,8 @@ fn parse_group_graph_pattern_contents<'a>(
                 let (r, inner) = preceded(
                     pair(tag_no_case("OPTIONAL"), sp),
                     parse_group_graph_pattern(ctx),
-                )(remaining)?;
+                )
+                .parse(remaining)?;
                 components.push(QueryComponent::Optional(inner));
                 remaining = r;
                 continue;
@@ -580,7 +584,8 @@ fn parse_group_graph_pattern_contents<'a>(
                 let (r, inner) = preceded(
                     pair(tag_no_case("MINUS"), sp),
                     parse_group_graph_pattern(ctx),
-                )(remaining)?;
+                )
+                .parse(remaining)?;
                 components.push(QueryComponent::Minus(inner));
                 remaining = r;
                 continue;
@@ -1052,10 +1057,8 @@ fn parse_path_alternative<'a>(
         // No trailing sp here — the caller (parse_triple_pattern_statement)
         // uses sp before checking for '|', so we don't want to eat the
         // space that belongs between the path and the object term.
-        let (input, rest) = many0(preceded(
-            tuple((sp, char('|'), sp)),
-            parse_path_sequence(ctx),
-        ))(input)?;
+        let (input, rest) =
+            many0(preceded((sp, char('|'), sp), parse_path_sequence(ctx))).parse(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, r| {
@@ -1070,9 +1073,10 @@ fn parse_path_sequence<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, PropertyPath> + 'a {
     move |input| {
         let (input, first) = parse_path_elt_or_inverse(ctx)(input)?;
-        let (input, rest) = many0(preceded(tuple((sp, char('/'), sp)), |i| {
+        let (input, rest) = many0(preceded((sp, char('/'), sp), |i| {
             parse_path_elt_or_inverse(ctx)(i)
-        }))(input)?;
+        }))
+        .parse(input)?;
         if rest.is_empty() {
             Ok((input, first))
         } else {
@@ -1093,7 +1097,8 @@ fn parse_path_elt_or_inverse<'a>(
                 |p| PropertyPath::Inverse(Box::new(p)),
             ),
             |i| parse_path_elt(ctx)(i),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -1112,7 +1117,8 @@ fn parse_path_elt<'a>(
             map(char('*'), |_| '*'),
             map(char('+'), |_| '+'),
             map(char('?'), |_| '?'),
-        )))(input)?;
+        )))
+        .parse(input)?;
         Ok((
             input,
             match mod_char {
@@ -1131,15 +1137,16 @@ fn parse_path_elt<'a>(
 fn parse_path_repeat_count(input: &str) -> IResult<&str, usize> {
     map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
         s.parse::<usize>().unwrap_or(usize::MAX)
-    })(input)
+    })
+    .parse(input)
 }
 
 fn parse_path_repeat(input: &str) -> IResult<&str, (usize, Option<usize>)> {
     let (input, _) = char('{')(input)?;
-    let (input, first) = opt(parse_path_repeat_count)(input)?;
-    let (input, comma) = opt(char(','))(input)?;
+    let (input, first) = opt(parse_path_repeat_count).parse(input)?;
+    let (input, comma) = opt(char(',')).parse(input)?;
     let (input, second) = if comma.is_some() {
-        opt(parse_path_repeat_count)(input)?
+        opt(parse_path_repeat_count).parse(input)?
     } else {
         (input, None)
     };
@@ -1182,7 +1189,8 @@ fn parse_path_primary<'a>(
             ),
             // IRI / 'a'
             map(|i| parse_path_iri(ctx)(i), PropertyPath::Iri),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -1217,7 +1225,8 @@ fn parse_path_iri<'a>(
             map(parse_prefixed_name(ctx), |iri| {
                 GraphElement::NodeOrEdge(RdfResource::Iri(iri))
             }),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -1229,11 +1238,12 @@ fn parse_path_negated_set<'a>(
         alt((
             delimited(
                 pair(char('('), sp),
-                separated_list0(tuple((sp, char('|'), sp)), |i| parse_path_iri(ctx)(i)),
+                separated_list0((sp, char('|'), sp), |i| parse_path_iri(ctx)(i)),
                 pair(sp, char(')')),
             ),
             map(|i| parse_path_iri(ctx)(i), |gel| vec![gel]),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -1332,7 +1342,8 @@ fn parse_term<'a>(ctx: &'a ParserContext) -> impl Fn(&'a str) -> IResult<&'a str
                     id,
                 )))
             }),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -1340,7 +1351,8 @@ fn parse_varname(input: &str) -> IResult<&str, String> {
     map(
         take_while1(|c: char| c.is_alphanumeric() || c == '_'),
         |s: &str| s.to_string(),
-    )(input)
+    )
+    .parse(input)
 }
 
 /// Parse the literal text of an IRIREF token (`<...>`) with no resolution
@@ -1349,7 +1361,8 @@ fn parse_iri_ref_literal(input: &str) -> IResult<&str, String> {
     map(
         delimited(char('<'), take_while(|c: char| c != '>'), char('>')),
         |iri: &str| iri.to_string(),
-    )(input)
+    )
+    .parse(input)
 }
 
 /// Parse an IRIREF token (`<...>`) and resolve it against the base IRI
@@ -1610,7 +1623,8 @@ fn parse_string_literal<'a>(
             parse_triple_single_quoted_string,
             parse_double_quoted_string,
             parse_single_quoted_string,
-        ))(input)?;
+        ))
+        .parse(input)?;
 
         // Optional language tag or datatype
         if input.starts_with('@') {
@@ -1626,7 +1640,8 @@ fn parse_string_literal<'a>(
         }
         if input.starts_with("^^") {
             let (input, _) = tag("^^")(input)?;
-            let (input, dt_iri) = alt((parse_iri_ref(ctx), parse_prefixed_name(ctx)))(input)?;
+            let (input, dt_iri) =
+                alt((parse_iri_ref(ctx), parse_prefixed_name(ctx))).parse(input)?;
             return Ok((
                 input,
                 RdfLiteral::TypedLiteral {
@@ -1718,10 +1733,11 @@ fn parse_single_quoted_string(input: &str) -> IResult<&str, String> {
 
 fn parse_numeric_literal(input: &str) -> IResult<&str, RdfLiteral> {
     // Optional sign
-    let (input, sign) = opt(alt((char('+'), char('-'))))(input)?;
+    let (input, sign) = opt(alt((char('+'), char('-')))).parse(input)?;
     // Integer or decimal
     let (input, integer_part) = take_while1(|c: char| c.is_ascii_digit())(input)?;
-    let (input, frac) = opt(pair(char('.'), take_while1(|c: char| c.is_ascii_digit())))(input)?;
+    let (input, frac) =
+        opt(pair(char('.'), take_while1(|c: char| c.is_ascii_digit()))).parse(input)?;
 
     let sign_str = match sign {
         Some('-') => "-",
@@ -1760,7 +1776,8 @@ fn parse_boolean_literal(input: &str) -> IResult<&str, RdfLiteral> {
             type_iri: IriReference(XSD_BOOLEAN.to_string()),
             literal: "false".to_string(),
         }),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_blank_node(input: &str) -> IResult<&str, u32> {
@@ -1819,7 +1836,8 @@ pub fn parse_rdf_literal_term(
         parse_string_literal(ctx),
         parse_numeric_literal,
         parse_boolean_literal,
-    ))(input);
+    ))
+    .parse(input);
     match result {
         Ok((rest, lit)) => Ok((input.len() - rest.len(), lit)),
         Err(e) => Err(format!("{e:?}")),
@@ -1838,7 +1856,8 @@ fn parse_or_expression<'a>(
     move |input| {
         let (input, left) = parse_and_expression(ctx)(input)?;
         let (input, _) = sp(input)?;
-        let (input, rest) = many0(preceded(pair(tag("||"), sp), parse_and_expression(ctx)))(input)?;
+        let (input, rest) =
+            many0(preceded(pair(tag("||"), sp), parse_and_expression(ctx))).parse(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, r| {
@@ -1857,7 +1876,8 @@ fn parse_and_expression<'a>(
         let (input, rest) = many0(preceded(
             pair(tag("&&"), sp),
             parse_relational_expression(ctx),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, r| {
@@ -1883,7 +1903,7 @@ fn parse_relational_expression<'a>(
                 .unwrap_or(false);
             if boundary {
                 if let Ok((rest2, _)) =
-                    preceded(sp1, tag_no_case::<_, _, nom::error::Error<&str>>("IN"))(rest)
+                    preceded(sp1, tag_no_case::<_, _, nom::error::Error<&str>>("IN")).parse(rest)
                 {
                     let kw_end = rest2
                         .chars()
@@ -1926,7 +1946,8 @@ fn parse_relational_expression<'a>(
                 map(tag("="), |_| BinaryOp::Eq),
             )),
             preceded(sp, |i| parse_additive_expression(ctx)(i)),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((
             input,
             match op_right {
@@ -1944,7 +1965,7 @@ fn parse_expression_list<'a>(
         let (input, _) = char('(')(input)?;
         let (input, _) = sp(input)?;
         let (input, list) =
-            separated_list0(tuple((sp, char(','), sp)), |i| parse_expression(ctx)(i))(input)?;
+            separated_list0((sp, char(','), sp), |i| parse_expression(ctx)(i)).parse(input)?;
         let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
         Ok((input, list))
@@ -1963,7 +1984,8 @@ fn parse_additive_expression<'a>(
                 map(char('-'), |_| BinaryOp::Sub),
             )),
             preceded(sp, |i| parse_multiplicative_expression(ctx)(i)),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, (op, r)| {
@@ -1985,7 +2007,8 @@ fn parse_multiplicative_expression<'a>(
                 map(char('/'), |_| BinaryOp::Div),
             )),
             preceded(sp, |i| parse_unary_expression(ctx)(i)),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((
             input,
             rest.into_iter().fold(left, |acc, (op, r)| {
@@ -2009,7 +2032,8 @@ fn parse_unary_expression<'a>(
                 |e| Expression::Unary(UnaryOp::Minus, Box::new(e)),
             ),
             |i| parse_primary_expression(ctx)(i),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -2035,7 +2059,7 @@ fn parse_primary_expression<'a>(
             // NOT EXISTS
             map(
                 preceded(
-                    tuple((tag_no_case("NOT"), sp1, tag_no_case("EXISTS"), sp)),
+                    (tag_no_case("NOT"), sp1, tag_no_case("EXISTS"), sp),
                     parse_group_graph_pattern(ctx),
                 ),
                 Expression::NotExists,
@@ -2069,7 +2093,8 @@ fn parse_primary_expression<'a>(
                 )),
                 Expression::Constant,
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -2090,7 +2115,8 @@ fn parse_function_call<'a>(
                 take_while1(|c: char| c.is_alphanumeric() || c == '_'),
                 |s: &str| s.to_string(),
             ),
-        ))(input)?;
+        ))
+        .parse(input)?;
 
         let (input, _) = sp(input)?;
         let (input, _) = char('(')(input)?;
@@ -2105,7 +2131,8 @@ fn parse_function_call<'a>(
             // Optional DISTINCT keyword
             let (input, distinct) = map(opt(terminated(tag_no_case("DISTINCT"), sp1)), |d| {
                 d.is_some()
-            })(input)?;
+            })
+            .parse(input)?;
 
             // COUNT(*) special form
             if fname_upper == "COUNT" && input.starts_with('*') {
@@ -2120,7 +2147,7 @@ fn parse_function_call<'a>(
 
             // GROUP_CONCAT optional separator: ; separator="sep"
             if fname_upper == "GROUP_CONCAT" {
-                let (input, sep) = opt(parse_group_concat_separator(ctx))(input)?;
+                let (input, sep) = opt(parse_group_concat_separator(ctx)).parse(input)?;
                 let sep = sep.unwrap_or_else(|| " ".to_string());
                 let (input, _) = sp(input)?;
                 let (input, _) = char(')')(input)?;
@@ -2145,7 +2172,8 @@ fn parse_function_call<'a>(
 
         // Regular function call
         let (input, args) =
-            separated_list0(pair(sp, pair(char(','), sp)), |i| parse_expression(ctx)(i))(input)?;
+            separated_list0(pair(sp, pair(char(','), sp)), |i| parse_expression(ctx)(i))
+                .parse(input)?;
         let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
 
@@ -2186,7 +2214,7 @@ fn parse_bind<'a>(
         let (input, _) = sp(input)?;
         let (input, _) = tag_no_case("AS")(input)?;
         let (input, _) = sp1(input)?;
-        let (input, var) = preceded(char('?'), parse_varname)(input)?;
+        let (input, var) = preceded(char('?'), parse_varname).parse(input)?;
         let (input, _) = sp(input)?;
         let (input, _) = char(')')(input)?;
         Ok((input, (expr, var)))
@@ -2223,14 +2251,15 @@ fn parse_values<'a>(
                 ),
                 |vars| (vars, true),
             ),
-        ))(input)?;
+        ))
+        .parse(input)?;
 
         let (input, _) = sp(input)?;
         let (input, _) = char('{')(input)?;
         let (input, _) = sp(input)?;
 
         // Rows
-        let (input, rows) = many0(parse_values_row(ctx, vars.len(), paren_vars))(input)?;
+        let (input, rows) = many0(parse_values_row(ctx, vars.len(), paren_vars)).parse(input)?;
 
         let (input, _) = sp(input)?;
         let (input, _) = char('}')(input)?;
@@ -2256,7 +2285,7 @@ fn parse_values_row<'a>(
             // (`VALUES (?x) { (v) }`).
             let (input, _) = char('(')(input)?;
             let (input, _) = sp(input)?;
-            let (input, vals) = separated_list0(sp1, parse_values_value(ctx))(input)?;
+            let (input, vals) = separated_list0(sp1, parse_values_value(ctx)).parse(input)?;
             let (input, _) = sp(input)?;
             let (input, _) = char(')')(input)?;
             let (input, _) = sp(input)?;
@@ -2278,7 +2307,8 @@ fn parse_values_value<'a>(
                 // but we treat it as UNDEF rather than failing the parse.
                 Term::Variable(_) | Term::TripleTerm(_) => None,
             }),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -2289,9 +2319,10 @@ fn parse_group_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<GroupCondition>> + 'a {
     move |input| {
         let (input, gb) = opt(preceded(
-            tuple((tag_no_case("GROUP"), sp1, tag_no_case("BY"), sp1)),
+            (tag_no_case("GROUP"), sp1, tag_no_case("BY"), sp1),
             separated_list1(sp1, |i| parse_group_condition(ctx)(i)),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((input, gb.unwrap_or_default()))
     }
 }
@@ -2319,7 +2350,7 @@ fn parse_group_condition<'a>(
                             // sp (not sp1): parse_expression eagerly consumes
                             // trailing whitespace, mirroring the projection
                             // `(?expr AS ?alias)` parser above.
-                            tuple((sp, tag_no_case("AS"), sp1, char('?'))),
+                            (sp, tag_no_case("AS"), sp1, char('?')),
                             parse_varname,
                         )),
                     ),
@@ -2331,7 +2362,8 @@ fn parse_group_condition<'a>(
                 |i| parse_expression(ctx)(i),
                 |expr| GroupCondition { expr, alias: None },
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -2341,7 +2373,8 @@ fn parse_having<'a>(
     move |input| {
         let (input, hv) = opt(preceded(pair(tag_no_case("HAVING"), sp1), |i| {
             parse_expression(ctx)(i)
-        }))(input)?;
+        }))
+        .parse(input)?;
         Ok((input, hv.map(|e| vec![e]).unwrap_or_default()))
     }
 }
@@ -2351,9 +2384,10 @@ fn parse_order_by<'a>(
 ) -> impl Fn(&'a str) -> IResult<&'a str, Vec<OrderCondition>> + 'a {
     move |input| {
         let (input, ob) = opt(preceded(
-            tuple((tag_no_case("ORDER"), sp1, tag_no_case("BY"), sp1)),
+            (tag_no_case("ORDER"), sp1, tag_no_case("BY"), sp1),
             separated_list1(sp1, parse_order_condition(ctx)),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((input, ob.unwrap_or_default()))
     }
 }
@@ -2384,7 +2418,8 @@ fn parse_order_condition<'a>(
                     ascending: true,
                 },
             ),
-        ))(input)
+        ))
+        .parse(input)
     }
 }
 
@@ -2395,7 +2430,8 @@ fn parse_limit_offset(keyword: &str) -> impl Fn(&str) -> IResult<&str, Option<u6
             map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
                 s.parse::<u64>().unwrap_or(0)
             }),
-        ))(input)?;
+        ))
+        .parse(input)?;
         Ok((input, val))
     }
 }

@@ -3097,6 +3097,123 @@ fn spath_one_or_more_path() {
     );
 }
 
+// ── PathCache: compound sh:path caching per validation run (#558) ───────────
+//
+// `path::values_from` recomputed a compound path's whole graph extension via
+// `pairs()` on every call — O(focus_nodes * store size) for a shape with a
+// compound path (sequence/alternative/inverse/zeroOrOne/oneOrMore/
+// zeroOrMore) and N focus nodes, since `evaluate.rs::values_for` is called
+// once per focus node at 8 call sites. See docs/plans/SHACL_PATH_CACHING_558_PLAN.md.
+//
+// These two tests exercise `path::values_from`/`PathCache` directly (not
+// through `shacl::validate`) for tight control over which nodes are queried
+// and in what order, using the same ex:parent chain as `spath_one_or_more_path`
+// above (ex:Alice -> ex:Bob -> ex:Carol -> ex:Dave, plus ex:Isolated with no
+// edges) so the expected `ex:parent+` closure per node is easy to state by
+// hand.
+
+/// Builds the same chain as `shacl_spath_one_or_more_data.ttl`
+/// (ex:Alice -[parent]-> ex:Bob -[parent]-> ex:Carol -[parent]-> ex:Dave,
+/// plus an unconnected ex:Isolated node) directly via `dag_rdf`/`shacl::graph`,
+/// so the reuse/correctness tests below don't need a shapes graph at all —
+/// they call `path::values_from` directly.
+fn one_or_more_parent_chain() -> (Datastore, ShPath) {
+    let mut ds = Datastore::new(1_000);
+    let parent = shacl::graph::intern_iri(&mut ds, &ex("parent"));
+    let pairs = [("Alice", "Bob"), ("Bob", "Carol"), ("Carol", "Dave")];
+    for (s, o) in pairs {
+        let s_id = shacl::graph::intern_iri(&mut ds, &ex(s));
+        let o_id = shacl::graph::intern_iri(&mut ds, &ex(o));
+        ds.add_triple(dag_rdf::ingress::Triple {
+            subject: s_id,
+            predicate: parent,
+            obj: o_id,
+        });
+    }
+    // ex:Isolated has no edges at all — still gets interned so it has a
+    // GraphElementId to query values_from with.
+    shacl::graph::intern_iri(&mut ds, &ex("Isolated"));
+    let path = ShPath::OneOrMore(Box::new(ShPath::Predicate(ex("parent"))));
+    (ds, path)
+}
+
+/// A `PathCache` shared across several `values_from` calls for the same
+/// compound path but different focus nodes must resolve the path's
+/// extension once (one miss) and reuse it for every subsequent focus node
+/// (a hit each), instead of recomputing `pairs()` from scratch per node —
+/// proving the cache is actually being reused, not just present and unused.
+/// Mirrors how `datalog::IncrementalReasoner` tests assert `fallback_count`
+/// to prove which code path ran.
+#[test]
+fn path_cache_reused_across_focus_nodes() {
+    let (data, path) = one_or_more_parent_chain();
+    let cache = shacl::path::PathCache::new();
+
+    let alice = shacl::graph::lookup_iri(&data, &ex("Alice")).unwrap();
+    let bob = shacl::graph::lookup_iri(&data, &ex("Bob")).unwrap();
+    let carol = shacl::graph::lookup_iri(&data, &ex("Carol")).unwrap();
+    let isolated = shacl::graph::lookup_iri(&data, &ex("Isolated")).unwrap();
+
+    assert_eq!(cache.misses(), 0);
+    assert_eq!(cache.hits(), 0);
+
+    let _ = shacl::path::values_from(&data, alice, &path, &cache);
+    assert_eq!(cache.misses(), 1, "first call for this path must be a miss");
+    assert_eq!(cache.hits(), 0);
+
+    let _ = shacl::path::values_from(&data, bob, &path, &cache);
+    let _ = shacl::path::values_from(&data, carol, &path, &cache);
+    let _ = shacl::path::values_from(&data, isolated, &path, &cache);
+    assert_eq!(
+        cache.misses(),
+        1,
+        "the same compound path, queried for three more focus nodes, must not recompute pairs() again"
+    );
+    assert_eq!(cache.hits(), 3);
+}
+
+/// `values_from` through a shared `PathCache` must still return exactly the
+/// same `ex:parent+` closure per node as the direct (uncached) evaluation —
+/// caching must never change results, only how many times `pairs()` runs.
+#[test]
+fn path_cache_correctness_matches_expected_closure() {
+    let (data, path) = one_or_more_parent_chain();
+    let cache = shacl::path::PathCache::new();
+
+    let id = |name: &str| shacl::graph::lookup_iri(&data, &ex(name)).unwrap();
+    let as_set =
+        |node: dag_rdf::GraphElementId| -> std::collections::HashSet<dag_rdf::GraphElementId> {
+            shacl::path::values_from(&data, node, &path, &cache)
+                .into_iter()
+                .collect()
+        };
+
+    assert_eq!(
+        as_set(id("Alice")),
+        std::collections::HashSet::from([id("Bob"), id("Carol"), id("Dave")]),
+        "ex:Alice's ex:parent+ closure is {{Bob, Carol, Dave}}"
+    );
+    assert_eq!(
+        as_set(id("Bob")),
+        std::collections::HashSet::from([id("Carol"), id("Dave")]),
+        "ex:Bob's ex:parent+ closure is {{Carol, Dave}}"
+    );
+    assert_eq!(
+        as_set(id("Carol")),
+        std::collections::HashSet::from([id("Dave")]),
+        "ex:Carol's ex:parent+ closure is {{Dave}}"
+    );
+    assert_eq!(
+        as_set(id("Isolated")),
+        std::collections::HashSet::new(),
+        "ex:Isolated has no ex:parent edges at all"
+    );
+    // Every one of the four focus-node queries above shares the same
+    // compound-path cache entry.
+    assert_eq!(cache.misses(), 1);
+    assert_eq!(cache.hits(), 3);
+}
+
 // ── report_to_datastore (#314) ──────────────────────────────────────────────
 //
 // `report_to_datastore` builds the SHACL validation-report graph as RDF quads

@@ -46,9 +46,54 @@ services:
     networks: [edge]
     restart: unless-stopped
 
+  # Self-hosted identity provider, replacing Google (#532). Runs entirely on
+  # this server (EU-hosted) -- no third-party identity account, and unlike
+  # Google, Keycloak lets us define real app roles (dagalog.Admin/Read/Write)
+  # that dagalog's own AuthConfig::Oidc mode can check, see docs/plans/AUTH.md.
+  keycloak-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: "${KEYCLOAK_DB_PASSWORD}"
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    networks: [edge]
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command: ["start", "--http-enabled=true", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: "jdbc:postgresql://keycloak-db:5432/keycloak"
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD}"
+      # Bootstrap admin account, for the one-time step of creating your own
+      # real user account through the admin console -- not meant for
+      # day-to-day sign-in.
+      KEYCLOAK_ADMIN: "${KEYCLOAK_ADMIN_USER}"
+      KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD}"
+      # Served under a path (not its own subdomain) via the same Caddy
+      # instance/domain/cert as everything else -- see Caddyfile's /auth/*
+      # route. KC_PROXY_HEADERS tells Keycloak to trust Caddy's
+      # X-Forwarded-* headers (Caddy terminates TLS; Keycloak itself only
+      # ever speaks plain HTTP inside the `edge` network).
+      KC_HOSTNAME: "https://${PUBLIC_DOMAIN}/auth"
+      KC_HTTP_RELATIVE_PATH: "/auth"
+      KC_PROXY_HEADERS: "xforwarded"
+    volumes:
+      - ./keycloak/dagalog-realm.json:/opt/keycloak/data/import/dagalog-realm.json:ro
+    networks: [edge]
+    restart: unless-stopped
+    depends_on: [keycloak-db]
+
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:latest
     environment:
+      # Phase 1 (#532): still Google, unchanged, while Keycloak is stood up
+      # and verified in parallel. Switched to Keycloak's OIDC provider only
+      # once that's confirmed working end-to-end.
       OAUTH2_PROXY_PROVIDER: "google"
       OAUTH2_PROXY_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID}"
       OAUTH2_PROXY_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET}"
@@ -70,6 +115,7 @@ services:
       - ./authenticated-emails.txt:/etc/oauth2-proxy/authenticated-emails.txt:ro
     networks: [edge]
     restart: unless-stopped
+    depends_on: [keycloak]
 
   caddy:
     image: caddy:2-alpine
@@ -96,3 +142,4 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  keycloak_db_data:

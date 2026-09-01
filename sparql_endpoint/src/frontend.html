@@ -202,13 +202,22 @@
                     color: #2b6cb0; pointer-events: none; }
     .drop-zone.drag-over .drop-overlay { display: flex; }
     /* ── Query builder ──────────────────────────────────────────────────────── */
-    .qb-canvas { display: flex; align-items: flex-start; gap: 0;
-                 overflow-x: auto; padding: 0.5rem 0 0.75rem; min-height: 80px; }
+    /* Cytoscape graph canvas (issue #47): the node cards below are rendered as
+       cytoscape-node-html-label overlays inside this container, so it needs a
+       concrete size/position like the other Cytoscape containers (#cy, #class-tree)
+       rather than the old flex-row layout. */
+    .qb-canvas { position: relative; width: 100%; height: 280px;
+                 border: 1px solid #eee; border-radius: 4px; overflow: hidden; }
+    /* Fixed width matches the underlying Cytoscape node's `width` style (170px)
+       so the HTML overlay never grows past the box edges/edges routed to
+       it; long IRIs wrap onto multiple lines instead of overflowing. */
     .node-card { background: #fff; border: 2px solid #ddd; border-radius: 6px;
-                 padding: 0.75rem 1rem; min-width: 160px; cursor: pointer; flex-shrink: 0; }
+                 padding: 0.6rem 0.75rem; width: 154px; box-sizing: border-box;
+                 cursor: pointer; overflow-wrap: break-word; }
     .node-card.active { border-color: #2b6cb0;
                         box-shadow: 0 0 0 3px rgba(43,108,176,.12); }
-    .node-card h3 { margin: 0 0 0.2rem; font-size: 0.9rem; color: #222; }
+    .node-card h3 { margin: 0 0 0.2rem; font-size: 0.8rem; color: #222;
+                     overflow-wrap: break-word; line-height: 1.15; }
     .node-card .node-var { font-size: 0.75rem; color: #888;
                             font-family: "Fira Mono","Consolas",monospace; }
     .qb-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
@@ -227,8 +236,6 @@
                     padding: 0.6rem; white-space: pre; overflow-x: auto;
                     min-height: 4rem; margin-bottom: 0.75rem; color: #222; }
     #qb-results { margin-top: 0.75rem; }
-    .node-arrow { display: flex; align-items: center; padding: 0 0.4rem;
-                  font-size: 0.75rem; color: #777; white-space: nowrap; flex-shrink: 0; }
     .btn-follow.linked { background: #e6f4ea; color: #276749; border-color: #9dd5b0; cursor: default; }
     .btn-remove-node { padding: 0.1rem 0.4rem; font-size: 0.72rem; background: #eee;
                        color: #666; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
@@ -659,6 +666,12 @@
     // <details>-based tree did depth-first top to bottom.
     const CLASS_DAGRE_LAYOUT_OPTIONS = {
       name: 'dagre', rankDir: 'BT', nodeSep: 40, rankSep: 70, animate: false, fit: true, padding: 30,
+    };
+    // Query builder canvas (issue #47): edges point from the node that
+    // discovered an object property to the node it links to, and rankDir 'LR'
+    // (left-to-right) mirrors the old horizontal node-card layout.
+    const QB_DAGRE_LAYOUT_OPTIONS = {
+      name: 'dagre', rankDir: 'LR', nodeSep: 30, rankSep: 90, animate: false, fit: true, padding: 20,
     };
     // Default page size applied to SELECT queries that carry no explicit
     // LIMIT/OFFSET, so a query over a large store returns a bounded first
@@ -1142,6 +1155,26 @@
         document.head.appendChild(dagreScript);
       }));
       return cytoscapeDagreLoading;
+    }
+
+    // Loads cytoscape-node-html-label, which lets a Cytoscape node render an
+    // arbitrary HTML overlay (used for the query-builder node cards, issue #47)
+    // instead of Cytoscape's own text-only node label.
+    let cytoscapeNodeHtmlLabelLoading = null;
+    function ensureCytoscapeNodeHtmlLabel() {
+      if (cytoscapeNodeHtmlLabelLoading) return cytoscapeNodeHtmlLabelLoading;
+      cytoscapeNodeHtmlLabelLoading = ensureCytoscape().then(() => new Promise((resolve, reject) => {
+        // The UMD bundle self-registers against the bare `cytoscape` global at
+        // load time (no separate window global of its own to probe), so once
+        // the script's onload fires, `cy.nodeHtmlLabel(...)` is available on
+        // any Cytoscape instance.
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/cytoscape-node-html-label@1.2.2/dist/cytoscape-node-html-label.min.js';
+        s.onload  = resolve;
+        s.onerror = () => reject(new Error('Could not load cytoscape-node-html-label from CDN'));
+        document.head.appendChild(s);
+      }));
+      return cytoscapeNodeHtmlLabelLoading;
     }
 
     async function showTab(name) {
@@ -1737,6 +1770,15 @@
     let qbActiveNode = null;   // currently focused node (property panes reflect this)
     let qbNodeSeq    = 0;      // counter for auto-naming linked nodes (n1, n2, …)
 
+    // Cytoscape instance backing the query-builder canvas (issue #47); kept
+    // separate from `cyInstance`/`classCyInstance` (the other two Cytoscape
+    // views) so none of the three clobber one another.
+    let qbCyInstance = null;
+    // The click listener on #node-canvas is delegated (attached once, matched
+    // against event targets) rather than re-attached per render, since the
+    // cytoscape-node-html-label overlay divs are recreated on every render.
+    let qbCanvasListenerAttached = false;
+
     function iriLocalName(iri) {
       const sep = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
       return iri.slice(sep + 1).toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'val';
@@ -1954,47 +1996,120 @@
 
     // ── Canvas rendering ───────────────────────────────────────────────────────
 
-    function renderQbNodeCanvas() {
+    // Finds a query-builder node by its (unique) varName — used by the
+    // delegated canvas click handler below to map a clicked HTML-label div
+    // back to the QueryNode it renders, since cytoscape-node-html-label
+    // templates only get plain node data, not a closure over the JS object.
+    function findQbNodeByVarName(root, varName) {
+      if (!root) return null;
+      if (root.varName === varName) return root;
+      for (const link of root.links) {
+        const found = findQbNodeByVarName(link.target, varName);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function qbCanvasClick(e) {
+      const removeBtn = e.target.closest('.btn-remove-node');
+      if (removeBtn) {
+        e.stopPropagation();
+        const node = findQbNodeByVarName(qbRootNode, removeBtn.dataset.var);
+        if (node) removeQbNode(node);
+        return;
+      }
+      const card = e.target.closest('.node-card');
+      if (card) {
+        const node = findQbNodeByVarName(qbRootNode, card.dataset.var);
+        if (node) setActiveNode(node);
+      }
+    }
+
+    function qbCardTemplate(node) {
+      const activeCls = node === qbActiveNode ? ' active' : '';
+      let html = '<div class="node-card' + activeCls + '" data-var="' + escHtml(node.varName) + '">'
+        + '<h3 title="' + escHtml(node.classIri) + '">' + escHtml(shortenIri(node.classIri)) + '</h3>'
+        + '<div class="node-var">?' + escHtml(node.varName) + '</div>';
+      if (node !== qbRootNode) {
+        html += '<div style="margin-top:0.35rem">'
+          + '<button type="button" class="btn-remove-node" data-var="' + escHtml(node.varName) + '">'
+          + '&times; Remove</button></div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    // Renders the query graph as a Cytoscape canvas: each QueryNode becomes a
+    // node (drawn via the cytoscape-node-html-label plugin, reusing the same
+    // .node-card markup/CSS the old flex-row layout used) and each
+    // object-property link becomes a labelled edge (issue #47).
+    async function renderQbNodeCanvas() {
       const canvas = document.getElementById('node-canvas');
+      if (qbCyInstance) { qbCyInstance.destroy(); qbCyInstance = null; window.qbCyInstance = null; }
       canvas.innerHTML = '';
       if (!qbRootNode) return;
-
-      function buildCard(node, parentLink) {
-        if (parentLink) {
-          const arrow = document.createElement('div');
-          arrow.className = 'node-arrow';
-          arrow.textContent = '── ' + shortenIri(parentLink.propIri) + ' ──►';
-          canvas.appendChild(arrow);
-        }
-        const card = document.createElement('div');
-        card.className = 'node-card' + (node === qbActiveNode ? ' active' : '');
-        card.addEventListener('click', () => setActiveNode(node));
-
-        const h3 = document.createElement('h3');
-        h3.textContent = shortenIri(node.classIri);
-        h3.title = node.classIri;
-
-        const varEl = document.createElement('div');
-        varEl.className = 'node-var';
-        varEl.textContent = '?' + node.varName;
-
-        card.append(h3, varEl);
-
-        if (node !== qbRootNode) {
-          const acts = document.createElement('div');
-          acts.style.cssText = 'margin-top:0.35rem';
-          const rmBtn = document.createElement('button');
-          rmBtn.className = 'btn-remove-node';
-          rmBtn.textContent = '× Remove';
-          rmBtn.addEventListener('click', e => { e.stopPropagation(); removeQbNode(node); });
-          acts.appendChild(rmBtn);
-          card.appendChild(acts);
-        }
-        canvas.appendChild(card);
-        for (const link of node.links) buildCard(link.target, link);
+      if (!qbCanvasListenerAttached) {
+        canvas.addEventListener('click', qbCanvasClick);
+        qbCanvasListenerAttached = true;
       }
 
-      buildCard(qbRootNode, null);
+      const nodes = [];
+      const edges = [];
+      let edgeSeq = 0;
+      (function walk(node, parentVarName, parentLinkProp) {
+        nodes.push({ group: 'nodes', data: { id: node.varName, node } });
+        if (parentVarName) {
+          edges.push({
+            group: 'edges',
+            data: {
+              id: 'qbe' + (edgeSeq++),
+              source: parentVarName,
+              target: node.varName,
+              label: shortenIri(parentLinkProp),
+            },
+          });
+        }
+        for (const link of node.links) walk(link.target, node.varName, link.propIri);
+      })(qbRootNode, null, null);
+
+      canvas.textContent = 'Rendering…';
+      try {
+        await ensureCytoscape();
+        await ensureCytoscapeDagre();
+        await ensureCytoscapeNodeHtmlLabel();
+      } catch (e) {
+        canvas.textContent = e.message;
+        return;
+      }
+      canvas.textContent = '';
+
+      qbCyInstance = cytoscape({
+        container: canvas,
+        elements: [...nodes, ...edges],
+        style: [
+          { selector: 'node', style: {
+            shape: 'rectangle', width: 170, height: 90,
+            'background-opacity': 0, 'border-width': 0,
+          }},
+          { selector: 'edge', style: {
+            label: 'data(label)', 'font-size': '9px', color: '#555',
+            'text-rotation': 'autorotate', 'text-background-color': '#fff',
+            'text-background-opacity': 0.85, 'text-background-padding': '2px',
+            'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+            'line-color': '#b0b0b0', 'target-arrow-color': '#b0b0b0',
+            'arrow-scale': 0.9, width: 1.5,
+          }},
+        ],
+        layout: QB_DAGRE_LAYOUT_OPTIONS,
+        boxSelectionEnabled: false,
+      });
+      window.qbCyInstance = qbCyInstance;
+
+      qbCyInstance.nodeHtmlLabel([{
+        query: 'node',
+        halign: 'center', valign: 'center', halignBox: 'center', valignBox: 'center',
+        tpl: data => qbCardTemplate(data.node),
+      }], { enablePointerEvents: true });
     }
 
     function setActiveNode(node) {
