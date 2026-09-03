@@ -47,6 +47,6 @@ rand = "0.10"
 # rsa 0.9.x still requires the rand_core 0.6 RngCore trait (rand 0.10 is built
 # on rand_core 0.9, which rsa 0.9.x does not implement against). Kept as a
 # separate pin purely to feed RsaPrivateKey::new in test key generation.
-rand_core = "0.6"
+rand_core = "0.10"
 base64 = "0.21"
 tempfile = "3"
