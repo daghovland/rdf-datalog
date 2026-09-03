@@ -366,10 +366,74 @@ already exist), so supporting it would require designing new
 `owl_ontology` types first — out of scope for a parser-only issue. Filed as
 a follow-up issue against this epic once this PR is under way.
 
+## Serialiser (`owl_functional_parser::serialize`)
+
+Tracked in issue [#181](https://github.com/daghovland/rdf-datalog/issues/181),
+follow-up to this parser (#180 / PR #627). Lives in
+`owl_functional_parser/src/serialize.rs`, exported as
+`owl_functional_parser::serialize`. Mirrors `manchester_parser::serialize`'s
+overall shape (see [`MANCHESTER_SYNTAX_PLAN.md`](MANCHESTER_SYNTAX_PLAN.md)'s
+own "Serialiser" section) in two specific ways — no `Prefix:`/prefix
+shortening (every IRI is emitted in full `<...>` form, since `Ontology`
+carries no prefix map) and the `log::warn!`-and-skip policy for anything the
+target syntax or `owl_ontology`'s type model can't represent — but the actual
+structure is **simpler** than Manchester's, for the same reason the parser
+itself was simpler to write in full: Functional-Style Syntax is
+axiom-per-axiom, not frame-per-entity, so there is no grouping pass. Each
+`owl_ontology::Axiom` maps to exactly one `Keyword(...)` line; the serializer
+walks `ontology.axioms` in order and emits one line per axiom, with no
+frame-subject bookkeeping, no "which entity does this belong to" grouping,
+and no declaration-annotation-folding concern (Manchester's trickiest
+serialization issue, from folding a frame's `Annotations:` section into a
+`Declaration`'s own annotations — doesn't exist here, since
+`Declaration(...)` is already its own one-line axiom).
+
+Because the parser (#180) covers a materially larger fraction of the OWL 2
+grammar than Manchester's initial landing (see this plan's own scope table
+above — full `ClassExpression`/`DataRange`/`ObjectPropertyExpression`
+grammars, `ObjectPropertyChain`, `HasKey`), the serializer's coverage is
+correspondingly wider: every construct the parser accepts, the serializer can
+emit, with two narrow exceptions (both true of Manchester's serializer too,
+for the analogous reason — the parser never *produces* these variants, so
+there is nothing to round-trip):
+
+- `ClassExpression::AnonymousClass` and
+  `ObjectPropertyExpression::AnonymousObjectProperty` — not produced by
+  either syntax's parser (there is no *concrete-syntax* production for an
+  anonymous class/object-property expression in OWL 2 at all; only
+  individuals can be anonymous). Skipped with `log::warn!` for a
+  hand-constructed `Ontology` that happens to use one.
+- `ObjectPropertyDomain`/`ObjectPropertyRange` carry no `Vec<Annotation>`
+  slot (see this plan's "Type-model gaps" section above), so there is
+  nothing to lose on serialization — the axiom simply has no annotations to
+  emit, which is not a skip, just an empty `axiomAnnotations` position.
+
+`AnnotationAssertion`'s `GraphElement` subject/value (the same type-model gap
+noted above) are formatted back into whichever Functional-Style Syntax
+production matches the concrete `GraphElement` variant: `NodeOrEdge(Iri(_))`
+→ a bare IRI, `NodeOrEdge(AnonymousBlankNode(_))` → `_:b<id>`,
+`GraphLiteral(_)` → a `Literal`. Any other `GraphElement` variant (there
+should be none reachable through this parser's own `annotation_subject`/
+`annotation_value_as_graph_element` productions) is skipped with
+`log::warn!` rather than panicking, so a hand-built `Ontology` with an
+unexpected shape still serializes the rest of the document.
+
+Anonymous individuals (`Individual::AnonymousIndividual(u32)`) serialize as
+`_:b<id>`. Since there is no entity-grouping pass here (unlike Manchester),
+axiom order — and therefore anonymous-individual first-occurrence order — is
+preserved exactly, so a round-trip always reproduces the same ids
+(Manchester's own limitation of testing only single-anonymous-individual
+fixtures does not apply here).
+
+Round-trip tests (parse → serialize → re-parse → compare axiom sets via
+`HashSet<owl_ontology::Axiom>`, same pattern as
+`manchester_parser/tests/serialize_roundtrip.rs`) live in
+`owl_functional_parser/tests/serialize_roundtrip.rs`.
+
 ## References
 
 - [OWL 2 Structural Specification and Functional-Style Syntax, W3C](https://www.w3.org/TR/owl2-syntax/)
 - Issue [#180](https://github.com/daghovland/rdf-datalog/issues/180) — this feature
-- Epic issue for the pairing serializer, #181 (not in scope here)
+- Issue [#181](https://github.com/daghovland/rdf-datalog/issues/181) — the pairing serializer, see "Serialiser" section above
 - `manchester_parser/` — sibling concrete-syntax parser this crate mirrors; see [`MANCHESTER_SYNTAX_PLAN.md`](MANCHESTER_SYNTAX_PLAN.md)
 - `sparql_parser/` and `datalog_parser/` — nom parser conventions this crate follows
