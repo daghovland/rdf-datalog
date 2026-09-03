@@ -161,7 +161,8 @@ dagalog (root binary + library)
 ├── sparql_parser/       — SPARQL 1.2 SELECT parser (nom) + executor
 ├── datalog_parser/      — Datalog rules parser (nom)
 ├── sparql_endpoint/     — HTTP SPARQL endpoint (axum + tokio)
-└── manchester_parser/   — OWL Manchester syntax parser (nom-based, `.omn` → `owl_ontology::Ontology`)
+├── manchester_parser/   — OWL Manchester syntax parser (nom-based, `.omn` → `owl_ontology::Ontology`)
+└── owl_functional_parser/ — OWL 2 Functional-Style Syntax parser (nom-based, `.ofn` → `owl_ontology::Ontology`)
 ```
 
 ## Architecture decisions
@@ -204,6 +205,9 @@ nom-based SPARQL 1.2 parser and in-memory executor. Supports: `SELECT`, `DESCRIB
 
 ### `manchester_parser` crate
 nom-based OWL 2 Manchester Syntax (`.omn`) parser producing an `owl_ontology::Ontology`. Covers ontology headers/prefixes/imports, entity frames (`Class:`, `ObjectProperty:`, `DataProperty:`, `Individual:`, `AnnotationProperty:`), common class expressions/restrictions, and the `Class:` frame's `DisjointUnionOf:` section. See [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](docs/plans/MANCHESTER_SYNTAX_PLAN.md) for the exact grammar subset in scope; remaining deferred productions (SWRL `Rule:` frames [#498](https://github.com/daghovland/rdf-datalog/issues/498), `HasKey:` [#499](https://github.com/daghovland/rdf-datalog/issues/499), property chains [#500](https://github.com/daghovland/rdf-datalog/issues/500), compound data ranges [#501](https://github.com/daghovland/rdf-datalog/issues/501), `Datatype:` frame [#502](https://github.com/daghovland/rdf-datalog/issues/502)) were split out of the original umbrella issue [#157](https://github.com/daghovland/rdf-datalog/issues/157).
+
+### `owl_functional_parser` crate
+nom-based [OWL 2 Functional-Style Syntax](https://www.w3.org/TR/owl2-syntax/) (`.ofn`) parser producing an `owl_ontology::Ontology` — the same target type `manchester_parser` produces, so downstream consumers (`owl2datalog`, reasoning) work unchanged regardless of concrete syntax. Because every Functional-Style Syntax production is an unambiguous `Keyword(args...)` s-expression (no precedence-climbing ladder like Manchester's `description`/`conjunction`/`primary`), this crate covers a materially larger fraction of the OWL 2 type model than Manchester's initial landing: all declarations, the full `ClassExpression`/`DataRange`/`ObjectPropertyExpression` grammars (including `ObjectPropertyChain`, `HasKey`, and compound data ranges), every class/object-property/data-property axiom keyword, `DatatypeDefinition`, and all seven ABox assertion forms. See [`docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`](docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md) for the exact grammar subset, phase breakdown, and two type-model limitations worth knowing: `ObjectPropertyDomain`/`ObjectPropertyRange` axiom annotations are dropped with `log::warn!` (`owl_ontology::ObjectPropertyAxiom` has no `Vec<Annotation>` slot on those two variants), and `AnnotationAssertion`'s subject/value are lowered to `ingress::GraphElement` (the type that axiom's fields actually carry) rather than a dedicated IRI/individual enum. SWRL `Rule(...)`/`DLSafeRule(...)` parsing (spec §11) is deferred to [#625](https://github.com/daghovland/rdf-datalog/issues/625) — `owl_ontology` has no representation for SWRL rules at all yet, unlike every other deferred construct. CLI/notebook-kernel wiring (mirroring Manchester's `.omn` support, [#161](https://github.com/daghovland/rdf-datalog/issues/161)) is tracked separately in [#633](https://github.com/daghovland/rdf-datalog/issues/633). The pairing serializer is tracked in [#181](https://github.com/daghovland/rdf-datalog/issues/181).
 
 ### Key design pattern
 All graph elements are interned through `GraphElementManager`: store a `GraphElement` → get back a `GraphElementId` (`u32`). Triples and Quads only hold IDs. Resolve IDs back to values via `get_graph_element` / `get_resource_triple` / `get_resource_quad`.

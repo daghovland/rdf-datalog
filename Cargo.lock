@@ -2222,6 +2222,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "owl-functional-parser"
+version = "0.1.0"
+dependencies = [
+ "dag-rdf",
+ "ingress",
+ "log",
+ "nom 8.0.0",
+ "num-bigint 0.5.1",
+ "ordered-float",
+ "owl-ontology",
+ "rust_decimal",
+]
+
+[[package]]
 name = "owl-ontology"
 version = "0.1.0"
 dependencies = [
