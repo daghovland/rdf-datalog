@@ -25,9 +25,6 @@ Contact: hovlanddag@gmail.com
 //! anonymous-individual first-occurrence order) is preserved exactly by this
 //! serializer (no entity-grouping pass — see the plan doc), so fixtures with
 //! more than one anonymous individual are not avoided here.
-//!
-//! Tests are `#[ignore]` pending implementation, per this repo's TDD
-//! protocol (`CLAUDE.md`): unignore one at a time.
 
 use owl_ontology::Axiom;
 use std::collections::HashSet;
@@ -52,22 +49,18 @@ fn assert_roundtrip(input: &str) -> String {
 // ── Header ────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_empty_unnamed_ontology() {
     assert_roundtrip("Ontology()");
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_named_ontology_with_version_iri() {
-    let text = assert_roundtrip(
-        "Ontology(<http://example.org/onto> <http://example.org/onto/1.0.0>)",
-    );
+    let text =
+        assert_roundtrip("Ontology(<http://example.org/onto> <http://example.org/onto/1.0.0>)");
     assert!(text.contains("http://example.org/onto"));
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_ontology_with_import() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -77,7 +70,6 @@ fn roundtrips_ontology_with_import() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_ontology_level_annotation() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -89,7 +81,6 @@ fn roundtrips_ontology_level_annotation() {
 // ── Declarations ─────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_all_six_declaration_kinds() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -104,7 +95,6 @@ fn roundtrips_all_six_declaration_kinds() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_declaration_with_annotation() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -116,7 +106,6 @@ fn roundtrips_declaration_with_annotation() {
 // ── Class expressions (via SubClassOf) ──────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_intersection_union_complement() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -127,7 +116,6 @@ fn roundtrips_intersection_union_complement() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_object_one_of() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -137,7 +125,6 @@ fn roundtrips_object_one_of() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_object_restrictions() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -150,7 +137,6 @@ fn roundtrips_object_restrictions() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_object_cardinalities_qualified_and_unqualified() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -162,20 +148,18 @@ fn roundtrips_object_cardinalities_qualified_and_unqualified() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_data_restrictions() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
              SubClassOf(<http://example.org/Adult> DataSomeValuesFrom(<http://example.org/hasAge> <http://www.w3.org/2001/XMLSchema#integer>))\n\
              SubClassOf(<http://example.org/Adult> DataHasValue(<http://example.org/hasAge> \"42\"^^<http://www.w3.org/2001/XMLSchema#integer>))\n\
              SubClassOf(<http://example.org/Adult> DataMinCardinality(1 <http://example.org/hasAge>))\n\
-             SubClassOf(<http://example.org/Adult> DataMaxQualifiedCardinality(3 <http://example.org/hasAge> <http://www.w3.org/2001/XMLSchema#integer>))\n\
+             SubClassOf(<http://example.org/Adult> DataMaxCardinality(3 <http://example.org/hasAge> <http://www.w3.org/2001/XMLSchema#integer>))\n\
          )",
     );
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_nested_class_expression() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -187,7 +171,6 @@ fn roundtrips_nested_class_expression() {
 // ── Class axioms ─────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_subclassof_with_annotation() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -197,7 +180,6 @@ fn roundtrips_subclassof_with_annotation() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_equivalent_and_disjoint_classes_nary() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -208,7 +190,6 @@ fn roundtrips_equivalent_and_disjoint_classes_nary() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_disjoint_union() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -220,7 +201,6 @@ fn roundtrips_disjoint_union() {
 // ── Object property axioms ──────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_object_property_domain_range() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -231,7 +211,6 @@ fn roundtrips_object_property_domain_range() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_object_property_characteristics() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -247,7 +226,6 @@ fn roundtrips_object_property_characteristics() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_sub_object_property_of() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -257,7 +235,6 @@ fn roundtrips_sub_object_property_of() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_sub_object_property_of_with_chain() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -267,7 +244,6 @@ fn roundtrips_sub_object_property_of_with_chain() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_equivalent_and_disjoint_object_properties() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -278,7 +254,6 @@ fn roundtrips_equivalent_and_disjoint_object_properties() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_inverse_object_properties_and_expression() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -291,7 +266,6 @@ fn roundtrips_inverse_object_properties_and_expression() {
 // ── Data property axioms + DatatypeDefinition ───────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_data_property_axioms() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -306,7 +280,6 @@ fn roundtrips_data_property_axioms() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_datatype_definition() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -318,7 +291,6 @@ fn roundtrips_datatype_definition() {
 // ── Compound data ranges ─────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_compound_data_ranges() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -332,7 +304,6 @@ fn roundtrips_compound_data_ranges() {
 // ── HasKey ───────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_has_key() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -344,7 +315,6 @@ fn roundtrips_has_key() {
 // ── Assertions ───────────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_all_assertion_kinds() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -360,7 +330,6 @@ fn roundtrips_all_assertion_kinds() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_anonymous_individuals() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -374,7 +343,6 @@ fn roundtrips_anonymous_individuals() {
 // ── Annotation axioms ────────────────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_annotation_assertion_iri_and_literal_and_anon_subject() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -386,7 +354,6 @@ fn roundtrips_annotation_assertion_iri_and_literal_and_anon_subject() {
 }
 
 #[test]
-#[ignore] // #181
 fn roundtrips_sub_annotation_property_of_domain_and_range() {
     assert_roundtrip(
         "Ontology(<http://example.org/onto>\n\
@@ -400,7 +367,6 @@ fn roundtrips_sub_annotation_property_of_domain_and_range() {
 // ── Full-document integration ───────────────────────────────────────────
 
 #[test]
-#[ignore] // #181
 fn roundtrips_pizza_style_multi_axiom_ontology() {
     assert_roundtrip(
         "Ontology(<http://example.org/pizza> <http://example.org/pizza/1.0>\n\
