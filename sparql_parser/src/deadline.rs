@@ -27,6 +27,7 @@ Contact: hovlanddag@gmail.com
 //! to completion) for zero overhead when no timeout is configured and no
 //! extra cost for the async runtime.
 
+use crate::error::ExecError;
 use std::time::{Duration, Instant};
 
 /// An absolute wall-clock deadline for a single query evaluation.
@@ -59,15 +60,13 @@ impl Deadline {
     /// Cheap check for use at a loop-iteration boundary.
     ///
     /// `Ok(())` if there is no configured deadline, or the deadline has not
-    /// yet passed. `Err` — with a message consistent with
-    /// `execute`/`execute_with_base`'s existing `Result<_, String>`
-    /// convention — once it has.
-    pub fn check(&self) -> Result<(), String> {
+    /// yet passed. [`ExecError::Timeout`] once it has passed.
+    pub fn check(&self) -> Result<(), ExecError> {
         match self.0 {
             None => Ok(()),
             Some(deadline) => {
                 if Instant::now() >= deadline {
-                    Err("query exceeded the configured timeout".to_string())
+                    Err(ExecError::Timeout)
                 } else {
                     Ok(())
                 }

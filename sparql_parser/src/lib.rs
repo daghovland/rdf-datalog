@@ -22,10 +22,12 @@ Contact: hovlanddag@gmail.com
 pub mod ast;
 mod component_ordering;
 pub mod deadline;
+pub mod error;
 pub mod execute;
 pub mod explain;
 mod join_ordering;
 pub use deadline::Deadline;
+pub use error::ExecError;
 pub use execute::{
     eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute,
     execute_with_base, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
