@@ -6,7 +6,7 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use crate::axioms::{Annotation, Axiom, Entity, FullIri};
+use crate::axioms::{Annotation, Axiom, Entity, FullIri, SwrlRule};
 use ingress::{IriReference, OntologyVersion, PrefixDeclaration};
 
 /// An OWL 2 ontology.
@@ -19,10 +19,17 @@ pub struct Ontology {
     pub annotations: Vec<Annotation>,
     /// User-supplied axioms (excludes built-in declarations; see [`Self::all_axioms`]).
     pub axioms: Vec<Axiom>,
+    /// SWRL rules (`Rule:` frames in Manchester Syntax). Held separately
+    /// from `axioms` — SWRL is a distinct W3C submission from OWL 2, not an
+    /// `Axiom` variant; see the "`Rule:` SWRL frames" addendum in
+    /// [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/MANCHESTER_SYNTAX_PLAN.md).
+    pub rules: Vec<SwrlRule>,
 }
 
 impl Ontology {
-    /// Constructs an ontology from its imports, version, annotations, and axioms.
+    /// Constructs an ontology from its imports, version, annotations, and
+    /// axioms. `rules` starts empty; attach SWRL rules afterwards via
+    /// [`Self::with_rules`].
     pub fn new(
         directly_imports_documents: Vec<IriReference>,
         version: OntologyVersion,
@@ -34,7 +41,15 @@ impl Ontology {
             version,
             annotations,
             axioms,
+            rules: Vec::new(),
         }
+    }
+
+    /// Builder-style setter for `rules`, so `Ontology::new`'s signature (and
+    /// every existing call site) stays unchanged.
+    pub fn with_rules(mut self, rules: Vec<SwrlRule>) -> Self {
+        self.rules = rules;
+        self
     }
 
     /// Remove the first axiom in `self.axioms` that is value-equal to `axiom`.
