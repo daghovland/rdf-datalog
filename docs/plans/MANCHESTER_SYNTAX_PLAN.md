@@ -201,7 +201,7 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | `conjunction`'s `classIRI 'that' ...` sugar | No | #157 |
 | Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | No | #157 |
 | `Datatype:` frame | No | #157 (depends on compound data ranges) |
-| `Rule:` (SWRL) frames | No | #157 |
+| `Rule:` (SWRL) frames | Yes | see addendum below; `HasKey:`/`SubPropertyChain:`/compound data ranges/`Datatype:` remain #157 follow-ups |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
 
 ---
@@ -410,6 +410,71 @@ Round-trip tests (parse → serialize → re-parse → compare axiom sets via
 ask) live in `manchester_parser/tests/serialize_roundtrip.rs`, covering the
 ontology header, each entity frame's sections, class-expression nesting,
 top-level `misc` forms, and a multi-frame integration fixture.
+
+## Addendum: `Rule:` SWRL frames (#498, item 1 of #157's original six)
+
+[#157](https://github.com/daghovland/rdf-datalog/issues/157) was split into
+five follow-up issues after `DisjointUnionOf:` (#503) shipped; this addendum
+covers [#498](https://github.com/daghovland/rdf-datalog/issues/498), SWRL
+`Rule:` frames. The remaining four (`HasKey:` #499, `SubPropertyChain:` #500,
+compound data ranges #501, `Datatype:` frame #502) stay out of scope here.
+
+SWRL ("Semantic Web Rule Language") is a separate W3C member submission, not
+part of OWL 2 itself — a `Rule:` frame's atoms don't fit any existing
+`owl_ontology::Axiom` variant, and `Axiom` is matched exhaustively (without a
+wildcard arm) in `owl2rl2datalog/src/owl_to_rdf.rs`'s RDF-translation walk, so
+adding an `Axiom::AxiomRule` variant would force every one of those matches to
+grow an arm for a construct they have no way to translate. Instead, rules are
+modeled as a value entirely separate from `Axiom`:
+`owl_ontology::SwrlRule { annotations, body: Vec<Atom>, head: Vec<Atom> }`,
+held in a new `Ontology.rules: Vec<SwrlRule>` field alongside (not inside)
+`Ontology.axioms`. `Ontology::new`'s signature is unchanged (`rules` starts
+empty); a `with_rules` builder method attaches them after construction, so no
+existing call site of `Ontology::new` needs to change.
+
+There's no single canonical Manchester-syntax grammar production for SWRL
+rules in the W3C Manchester Syntax spec itself (SWRL predates and is external
+to it); the de facto concrete syntax below is the "human-readable" form used
+by Protégé and OWL API tooling, and is what the pre-existing scaffolded test
+(`deferred_swrl_rule_frame`, now unignored) exercises:
+
+```
+rule       ::= 'Rule:' [annotations] atomList '->' atomList
+atomList   ::= atom { ',' atom }
+atom       ::= classAtom | genericAtom
+classAtom  ::= description '(' atomArg ')'
+genericAtom ::= iri '(' atomArg { ',' atomArg } ')'
+atomArg    ::= '?' identifier | literal | individual
+```
+
+`classAtom` is tried first (via the existing `class_expr::description`
+production, so compound class expressions like `(Person and Adult)(?p)` are
+accepted); a `genericAtom` covers everything else the concrete syntax can't
+disambiguate without semantic (declared-entity-type) information — object
+property atoms, data property atoms, and built-ins (e.g. `swrlb:greaterThan`)
+all share the identical `iri(arg, arg, ...)` shape. Because `classAtom` is
+tried first and any single-argument atom parses as a valid `description`,
+**every unary atom is represented as `Atom::ClassAtom`** — there is no
+reachable arity-1 `Atom::BuiltInAtom` or a data-range atom variant, so neither
+is declared. A `SameAs(x, y)`/`DifferentFrom(x, y)` atom form exists in some
+SWRL syntaxes but is not specially recognized here (`SameAs`/`DifferentFrom`
+are already reserved frame-section keywords per `tokens::RESERVED_SIMPLE_NAMES`
+and would need an unprefixed exception to reach as a bare `simpleIRI`
+predicate); it's out of scope, not silently mismodeled — there's no way to
+write it that this parser would try to accept.
+
+`AtomArg` is `Variable(String)` (the name without its `?`), `Literal(GraphElement)`,
+or `Individual(owl_ontology::Individual)` (covering plain and prefixed IRIs
+and blank nodes) — tried in that order, since a bare `?name` and a quoted/
+numeric literal are syntactically unambiguous, and anything else is an
+individual reference.
+
+`serialize.rs` emits each `Ontology.rules` entry as its own top-level
+`Rule:` line (atoms comma-joined, `->`, then the head atoms), using the same
+full-`<...>`-IRI emission the rest of the serializer uses; round-tripped
+through the parser, a class atom's predicate re-resolves via `description`'s
+`full_iri` path and a generic atom's via `iri`'s, so round-tripping is
+covered by `serialize_roundtrip.rs` alongside the other frame kinds.
 
 ## References
 
