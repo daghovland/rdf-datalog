@@ -254,8 +254,8 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
         }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
-            let ontology_doc = rdf_owl_translator::rdf2owl(ds)
-                .map_err(|e| CellError::Execution(e.to_string()))?;
+            let ontology_doc =
+                rdf_owl_translator::rdf2owl(ds).map_err(|e| CellError::Execution(e.to_string()))?;
             let rules = owl2rl2datalog::owl2datalog(&mut ds.resources, &ontology_doc.ontology);
             datalog::evaluate_rules(rules, ds).map_err(|e| CellError::Execution(e.to_string()))?;
             let added = ds.named_graphs.quad_count - before;
