@@ -141,7 +141,9 @@ fn fmt_rule(rule: &owl_ontology::SwrlRule) -> Option<String> {
 fn fmt_atom(atom: &owl_ontology::Atom) -> Option<String> {
     use owl_ontology::Atom;
     match atom {
-        Atom::ClassAtom(ce, arg) => Some(format!("{}({})", fmt_class_expr(ce)?, fmt_atom_arg(arg)?)),
+        Atom::ClassAtom(ce, arg) => {
+            Some(format!("{}({})", fmt_class_expr(ce)?, fmt_atom_arg(arg)?))
+        }
         Atom::PropertyAtom(iri, a, b) => Some(format!(
             "{}({}, {})",
             fmt_iri(iri),

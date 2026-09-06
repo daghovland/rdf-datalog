@@ -20,9 +20,9 @@ Contact: hovlanddag@gmail.com
 
 use ingress::{IriReference, OntologyVersion, RDFS, XSD};
 use owl_ontology::{
-    AnnotationAxiom, AnnotationValue, Assertion, Atom, AtomArg, Axiom, ClassAxiom,
-    ClassExpression, DataPropertyAxiom, DataRange, Entity, FullIri, Individual,
-    ObjectPropertyAxiom, ObjectPropertyExpression,
+    AnnotationAxiom, AnnotationValue, Assertion, Atom, AtomArg, Axiom, ClassAxiom, ClassExpression,
+    DataPropertyAxiom, DataRange, Entity, FullIri, Individual, ObjectPropertyAxiom,
+    ObjectPropertyExpression,
 };
 
 const EX: &str = "http://example.org/";
@@ -846,8 +846,7 @@ fn rule_frame_with_leading_annotations() {
 
 #[test]
 fn rule_frame_multiple_head_atoms() {
-    let onto =
-        manchester_parser::parse(&doc("Rule: Person(?p) -> Adult(?p), Human(?p)")).unwrap();
+    let onto = manchester_parser::parse(&doc("Rule: Person(?p) -> Adult(?p), Human(?p)")).unwrap();
     assert_eq!(onto.rules[0].head.len(), 2);
 }
 
@@ -858,14 +857,14 @@ fn rule_frame_can_be_interleaved_with_class_frames() {
     ))
     .unwrap();
     assert_eq!(onto.rules.len(), 1);
-    assert!(
-        onto.axioms
-            .contains(&Axiom::AxiomDeclaration((vec![], Entity::ClassDeclaration(iri("Person")))))
-    );
-    assert!(
-        onto.axioms
-            .contains(&Axiom::AxiomDeclaration((vec![], Entity::ClassDeclaration(iri("Adult")))))
-    );
+    assert!(onto.axioms.contains(&Axiom::AxiomDeclaration((
+        vec![],
+        Entity::ClassDeclaration(iri("Person"))
+    ))));
+    assert!(onto.axioms.contains(&Axiom::AxiomDeclaration((
+        vec![],
+        Entity::ClassDeclaration(iri("Adult"))
+    ))));
 }
 
 // ── Deferred grammar — tracked in #157 ────────────────────────────────────
@@ -935,4 +934,3 @@ fn deferred_datatype_facet_restriction() {
         ))
     )));
 }
-
