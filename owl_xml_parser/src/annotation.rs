@@ -65,9 +65,9 @@ pub(crate) fn parse_annotation(
             }
             "AbbreviatedIRI" => {
                 let text = child.text().unwrap_or("").trim();
-                let (prefix_name, local) = text.split_once(':').ok_or_else(|| {
-                    format!("<AbbreviatedIRI>{text}</AbbreviatedIRI> has no ':'")
-                })?;
+                let (prefix_name, local) = text
+                    .split_once(':')
+                    .ok_or_else(|| format!("<AbbreviatedIRI>{text}</AbbreviatedIRI> has no ':'"))?;
                 let ns = prefixes.get(prefix_name).ok_or_else(|| {
                     format!("<AbbreviatedIRI> uses undeclared prefix {prefix_name:?}")
                 })?;
@@ -83,7 +83,8 @@ pub(crate) fn parse_annotation(
         }
     }
 
-    let property = property.ok_or_else(|| "<Annotation> has no <AnnotationProperty>".to_string())?;
+    let property =
+        property.ok_or_else(|| "<Annotation> has no <AnnotationProperty>".to_string())?;
     let value = value.ok_or_else(|| "<Annotation> has no value element".to_string())?;
     Ok((property, value))
 }
@@ -98,12 +99,10 @@ mod tests {
 
     #[test]
     fn parses_literal_annotation() {
-        let d = doc(
-            r#"<Annotation>
+        let d = doc(r#"<Annotation>
                  <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
                  <Literal>hello</Literal>
-               </Annotation>"#,
-        );
+               </Annotation>"#);
         let (prop, value) = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
         assert_eq!(prop.0.0, "http://www.w3.org/2000/01/rdf-schema#comment");
         assert_eq!(

@@ -110,7 +110,9 @@ mod tests {
 
     #[test]
     fn rejects_non_ontology_root() {
-        let err = parse(r#"<?xml version="1.0"?><rdf:RDF xmlns:rdf="x"></rdf:RDF>"#).unwrap_err();
-        assert!(err.contains("Ontology"));
+        match parse(r#"<?xml version="1.0"?><rdf:RDF xmlns:rdf="x"></rdf:RDF>"#) {
+            Err(e) => assert!(e.contains("Ontology")),
+            Ok(_) => panic!("expected an error for a non-<Ontology> root"),
+        }
     }
 }

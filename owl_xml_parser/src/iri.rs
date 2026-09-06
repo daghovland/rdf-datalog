@@ -49,7 +49,10 @@ pub(crate) fn resolve_iri(node: roxmltree::Node, prefixes: &Prefixes) -> Result<
     }
     if let Some(abbrev) = node.attribute("abbreviatedIRI") {
         let (prefix_name, local) = abbrev.split_once(':').ok_or_else(|| {
-            format!("abbreviatedIRI {abbrev:?} on <{}> has no ':'", node.tag_name().name())
+            format!(
+                "abbreviatedIRI {abbrev:?} on <{}> has no ':'",
+                node.tag_name().name()
+            )
         })?;
         let ns = prefixes.get(prefix_name).ok_or_else(|| {
             format!(

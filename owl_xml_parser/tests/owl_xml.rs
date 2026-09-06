@@ -28,7 +28,6 @@ fn wrap(attrs: &str, body: &str) -> String {
 // --- Phase 2: ontology header ----------------------------------------------
 
 #[test]
-#[ignore] // #605
 fn empty_unnamed_ontology() {
     let onto = owl_xml_parser::parse(&wrap("", "")).unwrap();
     assert_eq!(onto.version, ingress::OntologyVersion::UnNamedOntology);
@@ -36,7 +35,6 @@ fn empty_unnamed_ontology() {
 }
 
 #[test]
-#[ignore] // #605
 fn named_ontology() {
     let onto =
         owl_xml_parser::parse(&wrap(r#"ontologyIRI="http://example.org/pizza""#, "")).unwrap();
@@ -48,7 +46,6 @@ fn named_ontology() {
 }
 
 #[test]
-#[ignore] // #605
 fn named_ontology_with_version_iri() {
     let onto = owl_xml_parser::parse(&wrap(
         r#"ontologyIRI="http://example.org/pizza" versionIRI="http://example.org/pizza/1.0""#,
@@ -68,13 +65,9 @@ fn named_ontology_with_version_iri() {
 // --- Phase 3: Prefix + Import -----------------------------------------------
 
 #[test]
-#[ignore] // #605
 fn import_declaration() {
-    let onto = owl_xml_parser::parse(&wrap(
-        "",
-        r#"<Import>http://example.org/imported</Import>"#,
-    ))
-    .unwrap();
+    let onto = owl_xml_parser::parse(&wrap("", r#"<Import>http://example.org/imported</Import>"#))
+        .unwrap();
     assert_eq!(
         onto.directly_imports_documents,
         vec![IriReference("http://example.org/imported".to_string())]
@@ -82,7 +75,6 @@ fn import_declaration() {
 }
 
 #[test]
-#[ignore] // #605
 fn multiple_imports() {
     let onto = owl_xml_parser::parse(&wrap(
         "",
@@ -99,7 +91,6 @@ fn multiple_imports() {
 }
 
 #[test]
-#[ignore] // #605
 fn prefix_declaration_used_by_declaration_abbreviated_iri() {
     let src = wrap(
         r#"ontologyIRI="http://example.org/pizza""#,
@@ -117,7 +108,6 @@ fn prefix_declaration_used_by_declaration_abbreviated_iri() {
 }
 
 #[test]
-#[ignore] // #605
 fn prefix_declaration_non_default_prefix() {
     let src = wrap(
         "",
@@ -136,7 +126,6 @@ fn prefix_declaration_non_default_prefix() {
 // --- Phase 4: Declaration, all six Entity variants --------------------------
 
 #[test]
-#[ignore] // #605
 fn declaration_class_full_iri() {
     let src = wrap(
         "",
@@ -154,7 +143,6 @@ fn declaration_class_full_iri() {
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_object_property() {
     let src = wrap(
         "",
@@ -170,7 +158,6 @@ fn declaration_object_property() {
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_data_property() {
     let src = wrap(
         "",
@@ -186,7 +173,6 @@ fn declaration_data_property() {
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_annotation_property() {
     let src = wrap(
         "",
@@ -197,14 +183,11 @@ fn declaration_annotation_property() {
         owl_ontology::Axiom::AxiomDeclaration((_, Entity::AnnotationPropertyDeclaration(p))) => {
             assert_eq!(*p, iri("http://www.w3.org/2000/01/rdf-schema#comment"));
         }
-        other => panic!(
-            "expected AxiomDeclaration(AnnotationPropertyDeclaration), got {other:?}"
-        ),
+        other => panic!("expected AxiomDeclaration(AnnotationPropertyDeclaration), got {other:?}"),
     }
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_named_individual() {
     let src = wrap(
         "",
@@ -223,7 +206,6 @@ fn declaration_named_individual() {
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_datatype() {
     let src = wrap(
         "",
@@ -239,7 +221,6 @@ fn declaration_datatype() {
 }
 
 #[test]
-#[ignore] // #605
 fn multiple_declarations_preserve_order() {
     let src = wrap(
         "",
@@ -254,7 +235,6 @@ fn multiple_declarations_preserve_order() {
 // --- Phase 5: annotations (ontology-level, and on a Declaration) -----------
 
 #[test]
-#[ignore] // #605
 fn ontology_level_annotation() {
     let src = wrap(
         "",
@@ -265,11 +245,13 @@ fn ontology_level_annotation() {
     );
     let onto = owl_xml_parser::parse(&src).unwrap();
     assert_eq!(onto.annotations.len(), 1);
-    assert_eq!(onto.annotations[0].0, iri("http://www.w3.org/2000/01/rdf-schema#comment"));
+    assert_eq!(
+        onto.annotations[0].0,
+        iri("http://www.w3.org/2000/01/rdf-schema#comment")
+    );
 }
 
 #[test]
-#[ignore] // #605
 fn declaration_with_leading_annotation() {
     let src = wrap(
         "",
@@ -295,7 +277,6 @@ fn declaration_with_leading_annotation() {
 // --- Phase 6: full-document integration -------------------------------------
 
 #[test]
-#[ignore] // #605
 fn pizza_style_header_integration() {
     let src = format!(
         r#"<?xml version="1.0"?><Ontology {NS} ontologyIRI="http://example.org/pizza">
