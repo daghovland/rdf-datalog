@@ -66,9 +66,11 @@ use std::collections::HashMap;
 
 /// Serialize `ontology` to OWL 2 Manchester Syntax text.
 ///
-/// Only `ontology.axioms` is serialized (not `ontology.all_axioms()`'s
-/// built-in `owl:Thing`/`xsd:integer`/... declarations, which are implicit
-/// and never need restating).
+/// `ontology.axioms` and `ontology.rules` are both serialized (not
+/// `ontology.all_axioms()`'s built-in `owl:Thing`/`xsd:integer`/...
+/// declarations, which are implicit and never need restating). Rules are
+/// emitted after every entity frame and `misc` line, each as its own
+/// top-level `Rule:` line.
 pub fn serialize(ontology: &Ontology) -> String {
     let mut out = String::new();
     emit_header(&mut out, ontology);
@@ -108,7 +110,58 @@ pub fn serialize(ontology: &Ontology) -> String {
     for line in &misc_lines {
         out.push_str(line);
     }
+    for rule in &ontology.rules {
+        if let Some(line) = fmt_rule(rule) {
+            out.push_str(&line);
+        }
+    }
     out
+}
+
+/// Emit a `Rule:` frame line, or `None` (with a `log::warn!`) if any atom
+/// argument or predicate can't be formatted (e.g. an annotation value or
+/// class expression outside this serializer's scope).
+fn fmt_rule(rule: &owl_ontology::SwrlRule) -> Option<String> {
+    let ann = ann_prefix(&rule.annotations)?;
+    let body: Option<Vec<String>> = rule.body.iter().map(fmt_atom).collect();
+    let head: Option<Vec<String>> = rule.head.iter().map(fmt_atom).collect();
+    match (body, head) {
+        (Some(body), Some(head)) => Some(format!(
+            "Rule: {ann}{} -> {}\n",
+            body.join(", "),
+            head.join(", ")
+        )),
+        _ => {
+            log_skip("Rule: atom outside serializer scope");
+            None
+        }
+    }
+}
+
+fn fmt_atom(atom: &owl_ontology::Atom) -> Option<String> {
+    use owl_ontology::Atom;
+    match atom {
+        Atom::ClassAtom(ce, arg) => Some(format!("{}({})", fmt_class_expr(ce)?, fmt_atom_arg(arg)?)),
+        Atom::PropertyAtom(iri, a, b) => Some(format!(
+            "{}({}, {})",
+            fmt_iri(iri),
+            fmt_atom_arg(a)?,
+            fmt_atom_arg(b)?
+        )),
+        Atom::BuiltInAtom(iri, args) => {
+            let items: Option<Vec<String>> = args.iter().map(fmt_atom_arg).collect();
+            Some(format!("{}({})", fmt_iri(iri), items?.join(", ")))
+        }
+    }
+}
+
+fn fmt_atom_arg(arg: &owl_ontology::AtomArg) -> Option<String> {
+    use owl_ontology::AtomArg;
+    match arg {
+        AtomArg::Variable(name) => Some(format!("?{name}")),
+        AtomArg::Literal(ge) => fmt_literal(ge),
+        AtomArg::Individual(ind) => Some(fmt_individual(ind)),
+    }
 }
 
 fn log_skip(reason: &str) {
