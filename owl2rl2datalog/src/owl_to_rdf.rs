@@ -795,27 +795,25 @@ impl<'a> Translator<'a> {
 
     fn object_property_axiom(&mut self, axiom: &ObjectPropertyAxiom) {
         match axiom {
-            // `ObjectPropertyDomain`/`ObjectPropertyRange` have no
-            // `Vec<Annotation>` field in `owl_ontology::ObjectPropertyAxiom`
-            // (unlike every other variant here) — axiom annotations on these
-            // two forms have no source data to reify.
-            ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) => {
+            ObjectPropertyAxiom::ObjectPropertyDomain(annotations, prop, domain) => {
                 match (
                     self.named_object_property(prop),
                     self.class_expression(domain),
                 ) {
                     (Some(prop_id), Some(class_id)) => {
-                        self.triple_p(prop_id, RDFS_DOMAIN, class_id)
+                        self.triple_p_annotated(prop_id, RDFS_DOMAIN, class_id, annotations)
                     }
                     _ => self.skip("ObjectPropertyDomain with unsupported expression", axiom),
                 }
             }
-            ObjectPropertyAxiom::ObjectPropertyRange(prop, range) => {
+            ObjectPropertyAxiom::ObjectPropertyRange(annotations, prop, range) => {
                 match (
                     self.named_object_property(prop),
                     self.class_expression(range),
                 ) {
-                    (Some(prop_id), Some(class_id)) => self.triple_p(prop_id, RDFS_RANGE, class_id),
+                    (Some(prop_id), Some(class_id)) => {
+                        self.triple_p_annotated(prop_id, RDFS_RANGE, class_id, annotations)
+                    }
                     _ => self.skip("ObjectPropertyRange with unsupported expression", axiom),
                 }
             }
@@ -1318,10 +1316,12 @@ mod tests {
     fn object_property_domain_and_range_become_rdfs_domain_and_range() {
         let (ds, report) = translate(vec![
             Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+                vec![],
                 obj_prop("hasPet"),
                 class("Person"),
             )),
             Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(
+                vec![],
                 obj_prop("hasPet"),
                 class("Animal"),
             )),
@@ -1329,6 +1329,29 @@ mod tests {
         assert_eq!(report.triples_added, 2);
         assert!(has_triple(&ds, &ex("hasPet"), RDFS_DOMAIN, &ex("Person")));
         assert!(has_triple(&ds, &ex("hasPet"), RDFS_RANGE, &ex("Animal")));
+    }
+
+    #[test]
+    fn object_property_domain_with_annotation_is_reified_via_owl_axiom() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::ObjectPropertyDomain(
+                vec![annotation("source", "a good textbook")],
+                obj_prop("hasPet"),
+                class("Person"),
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(&ds, &ex("hasPet"), RDFS_DOMAIN, &ex("Person")));
+        let node = find_reification_node(&ds, &ex("hasPet"), RDFS_DOMAIN, &ex("Person"))
+            .expect("owl:Axiom reification node must exist");
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "reification node must carry the annotation triple"
+        );
+        assert_eq!(axiom_reification_count(&ds), 1);
     }
 
     #[test]

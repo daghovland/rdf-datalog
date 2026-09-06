@@ -424,14 +424,16 @@ impl AnonRenumberer {
             // shapes except through `Vec<Annotation>` and (for `HasKey`) a
             // `ClassExpression`, both handled generically below.
             AxiomObjectPropertyAxiom(a) => AxiomObjectPropertyAxiom(match a {
-                owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain(p, c) => {
+                owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain(anns, p, c) => {
                     owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain(
+                        self.annotations(anns),
                         p.clone(),
                         self.class_expr(c),
                     )
                 }
-                owl_ontology::ObjectPropertyAxiom::ObjectPropertyRange(p, c) => {
+                owl_ontology::ObjectPropertyAxiom::ObjectPropertyRange(anns, p, c) => {
                     owl_ontology::ObjectPropertyAxiom::ObjectPropertyRange(
+                        self.annotations(anns),
                         p.clone(),
                         self.class_expr(c),
                     )

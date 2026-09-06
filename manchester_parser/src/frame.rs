@@ -294,19 +294,24 @@ pub(crate) fn object_property_frame<'a>(
             match section {
                 ObjectPropertySection::Annotations(anns) => decl_annotations.extend(anns),
                 ObjectPropertySection::Domain(list) => {
-                    for (_anns, expr) in list {
-                        // ObjectPropertyDomain carries no annotation slot in
-                        // the target model; per-item Annotations: are parsed
-                        // (for forward-compat) but discarded.
+                    for (anns, expr) in list {
                         axioms.push(Axiom::AxiomObjectPropertyAxiom(
-                            ObjectPropertyAxiom::ObjectPropertyDomain(self_prop.clone(), expr),
+                            ObjectPropertyAxiom::ObjectPropertyDomain(
+                                anns,
+                                self_prop.clone(),
+                                expr,
+                            ),
                         ));
                     }
                 }
                 ObjectPropertySection::Range(list) => {
-                    for (_anns, expr) in list {
+                    for (anns, expr) in list {
                         axioms.push(Axiom::AxiomObjectPropertyAxiom(
-                            ObjectPropertyAxiom::ObjectPropertyRange(self_prop.clone(), expr),
+                            ObjectPropertyAxiom::ObjectPropertyRange(
+                                anns,
+                                self_prop.clone(),
+                                expr,
+                            ),
                         ));
                     }
                 }
