@@ -23,7 +23,7 @@ use ingress::NetworkPolicy;
 use serde_json::json;
 use sparql_parser::execute::QueryResult;
 use sparql_parser::explain::{ExplainPlan, PlanNode, explain_query, query_type_label};
-use sparql_parser::{ast::Query, execute_with_base};
+use sparql_parser::{ExecError, ast::Query, execute_with_base};
 use std::time::{Duration, Instant};
 
 /// True iff the `explain` query parameter requests EXPLAIN output.
@@ -82,8 +82,8 @@ pub(crate) fn explain_query_response(
             }
             (StatusCode::OK, axum::Json(body)).into_response()
         }
-        Err(message) => {
-            let status = if message.contains("exceeded the configured timeout") {
+        Err(err) => {
+            let status = if matches!(err, ExecError::Timeout) {
                 StatusCode::SERVICE_UNAVAILABLE
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -92,7 +92,7 @@ pub(crate) fn explain_query_response(
                 "queryType": query_type,
                 "totalTimeMs": total_time_ms,
                 "plan": plan_json,
-                "error": message,
+                "error": err.to_string(),
             });
             (status, axum::Json(body)).into_response()
         }

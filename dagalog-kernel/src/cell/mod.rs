@@ -1,4 +1,54 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// An error dispatching a single notebook cell (see
+/// [`crate::sockets::dispatch_cell`]).
+///
+/// Before this, `dispatch_cell` collapsed every failure mode into a bare
+/// `Result<_, String>` — indistinguishable from each other except by
+/// matching substrings of the message. See
+/// [#460](https://github.com/daghovland/rdf-datalog/issues/460), part of
+/// the error-handling epic [#453](https://github.com/daghovland/rdf-datalog/issues/453).
+///
+/// `Execution` is a deliberately-scoped catch-all: the individual cell-type
+/// subsystems (`turtle_parser`, `rml`, `manchester_parser`, `shacl`, `ottr`,
+/// `datalog`, `rdf_owl_translator`, `sparql_parser`'s own errors) each
+/// already collapse to their own `String` inside `dagalog-kernel/src/cell/
+/// *.rs`. Fully typing every one of those is a separate, much larger effort
+/// — out of scope for #460, whose stated scope is `dispatch_cell` itself.
+#[derive(Debug)]
+pub enum CellError {
+    /// A `%%load`/`%%rml`/`%%manchester`/`%%validate`/`%%ottr` path argument
+    /// failed the traversal-safety check
+    /// ([#85](https://github.com/daghovland/rdf-datalog/issues/85)).
+    UnsafePath(&'static str),
+    /// Opening a file referenced by a cell magic failed.
+    Io {
+        /// The file name (not the full path — see [`check_path_safe`]'s doc
+        /// comment on why the full path/cwd is intentionally not echoed
+        /// back to the client).
+        file_name: String,
+        source: std::io::Error,
+    },
+    /// A parse or execution failure forwarded verbatim from whichever
+    /// cell-type subsystem ran (turtle/RML/Manchester/SHACL/OTTR/Datalog/
+    /// reasoning/SPARQL).
+    Execution(String),
+}
+
+impl fmt::Display for CellError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CellError::UnsafePath(msg) => write!(f, "{msg}"),
+            CellError::Io { file_name, source } => {
+                write!(f, "cannot open file '{file_name}': {source}")
+            }
+            CellError::Execution(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CellError {}
 
 /// Verify that `untrusted` is a safe, confined relative path.
 ///
@@ -14,19 +64,17 @@ use std::path::{Path, PathBuf};
 /// working directory so that callers cannot use it as an information oracle.
 /// See [#85](https://github.com/daghovland/rdf-datalog/issues/85) and
 /// [#90](https://github.com/daghovland/rdf-datalog/issues/90).
-pub fn check_path_safe(untrusted: &Path) -> Result<(), String> {
+pub fn check_path_safe(untrusted: &Path) -> Result<(), CellError> {
     if untrusted.is_absolute() {
-        return Err(
-            "absolute paths are not allowed in cell magic arguments; use a relative path"
-                .to_string(),
-        );
+        return Err(CellError::UnsafePath(
+            "absolute paths are not allowed in cell magic arguments; use a relative path",
+        ));
     }
     for component in untrusted.components() {
         if component == std::path::Component::ParentDir {
-            return Err(
-                "path traversal sequences ('..') are not allowed in cell magic arguments"
-                    .to_string(),
-            );
+            return Err(CellError::UnsafePath(
+                "path traversal sequences ('..') are not allowed in cell magic arguments",
+            ));
         }
     }
     Ok(())

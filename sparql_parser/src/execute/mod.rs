@@ -36,6 +36,7 @@ use crate::ast::{
     ProjectionElement, PropertyPath, Query, QueryComponent, Term, TriplePattern, UnaryOp,
 };
 use crate::deadline::Deadline;
+use crate::error::ExecError;
 use aggregates::{
     elem_has_aggregate, eval_expr_in_group, eval_having_expr, group_by_solutions,
     project_aggregate_row,
@@ -183,7 +184,7 @@ pub fn execute(
     query: &Query,
     datastore: &Datastore,
     network: NetworkPolicy,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, ExecError> {
     execute_with_base(query, datastore, network, None, None)
 }
 
@@ -212,7 +213,7 @@ pub fn execute_with_base(
     network: NetworkPolicy,
     base: Option<&str>,
     timeout: Option<Duration>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, ExecError> {
     let _base_guard = BaseGuard::install(base);
     let deadline = Deadline::from_timeout(timeout);
     execute_inner(query, datastore, network, &deadline)
@@ -223,7 +224,7 @@ fn execute_inner(
     datastore: &Datastore,
     network: NetworkPolicy,
     deadline: &Deadline,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, ExecError> {
     let where_clause = match query {
         Query::Select { where_clause, .. } => where_clause.as_slice(),
         Query::Ask { where_clause, .. } => where_clause.as_slice(),
@@ -235,11 +236,9 @@ fn execute_inner(
     match network {
         NetworkPolicy::Deny => {
             if let Some(endpoint) = first_non_silent_service(where_clause) {
-                return Err(format!(
-                    "SERVICE <{endpoint:?}> was rejected: remote network access is disabled. \
-                     Start the server with --network=allow to enable federated queries. \
-                     See https://github.com/daghovland/rdf-datalog/issues/51"
-                ));
+                return Err(ExecError::ServiceDenied {
+                    endpoint: format!("{endpoint:?}"),
+                });
             }
             // SILENT SERVICE still returns empty — the SPARQL spec mandates this.
         }
@@ -249,11 +248,7 @@ fn execute_inner(
         }
         NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => {
             if first_non_silent_service(where_clause).is_some() {
-                return Err(
-                    "SERVICE federation is not yet implemented even with --network=allow. \
-                     Track progress at https://github.com/daghovland/rdf-datalog/issues/51"
-                        .to_string(),
-                );
+                return Err(ExecError::ServiceNotImplemented);
             }
         }
     }
@@ -775,7 +770,7 @@ fn execute_select_inner(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     let Query::Select {
         projection,
         where_clause,

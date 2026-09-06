@@ -234,8 +234,8 @@ fn service_non_silent_returns_error() {
         Ok(_) => panic!("non-SILENT SERVICE must return an error"),
     };
     assert!(
-        err.contains("was rejected") || err.contains("SERVICE"),
-        "unexpected error message: {err}"
+        matches!(err, sparql_parser::ExecError::ServiceDenied { .. }),
+        "unexpected error variant: {err:?}"
     );
 }
 

@@ -17,7 +17,7 @@ pub(crate) fn eval_bgp(
     active_graph: &ActiveGraph,
     budget: Option<usize>,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     let already_bound: HashSet<String> = solutions
         .first()
         .map(|sub| sub.keys().cloned().collect())
@@ -85,7 +85,7 @@ pub(crate) fn eval_triple_pattern(
     active_graph: &ActiveGraph,
     budget: Option<usize>,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     // RDF 1.2 triple-term subject: `<<( s p o )>> pred obj`. Resolve the
     // embedded pattern against `reified_triples` first (yielding one or more
     // candidate triple-term `GraphElementId`s plus any bindings for
@@ -145,7 +145,7 @@ pub(crate) fn eval_triple_pattern_core(
     active_graph: &ActiveGraph,
     budget: Option<usize>,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
         if let Term::Constant(gel) = term {

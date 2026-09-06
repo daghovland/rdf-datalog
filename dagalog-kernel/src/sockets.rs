@@ -3,7 +3,7 @@ use dag_rdf::Datastore;
 use zeromq::{Socket, SocketRecv, SocketSend};
 
 use crate::cell::{
-    CellType, check_path_safe,
+    CellError, CellType, check_path_safe,
     datalog::execute_datalog,
     detect_cell_type,
     manchester::execute_manchester_file,
