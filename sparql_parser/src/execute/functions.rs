@@ -6,7 +6,7 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-use super::casts::{cast_to_xsd_boolean, eval_xsd_cast};
+use super::casts::{cast_to_xsd_boolean, eval_xsd_cast, parse_xsd_boolean_lexical};
 use super::expressions::{
     classify_numeric, eval_expression_value_inner, eval_string_predicate, numeric_lit_to_element,
     NumericLit,
@@ -1062,6 +1062,27 @@ pub(crate) fn eval_function_bool(
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
             eval_string_predicate(upper.as_str(), args, sub, datastore)
         }
+        // Non-standard internal extension (#631, not a real SPARQL/XPath
+        // builtin — see the "RDFox extensions" note in
+        // docs/plans/EXPRESSION_PLAN.md): `IS_LEXICALLY_VALID(value, dtIri)`
+        // tests whether `value`'s lexical form actually conforms to the XSD
+        // datatype named by the IRI constant `dtIri`, mirroring
+        // `shacl::evaluate::is_well_formed_lexical` exactly. Added
+        // specifically so `sh:datatype`'s ported FilterAtom rule
+        // (`translate.rs::datatype_expr`) can express "ill-formed lexical
+        // form ⇒ violation" (#325) without changing `DATATYPE()`'s own
+        // spec-correct semantics (which only compares the nominal type IRI)
+        // or the existing `xsd:*(...)` cast functions' established lenient
+        // casting behavior.
+        "IS_LEXICALLY_VALID" => {
+            let el = eval_expression_value_inner(args.first()?, sub, datastore)?;
+            let dt_el = eval_expression_value_inner(args.get(1)?, sub, datastore)?;
+            let dt_iri = match &dt_el {
+                GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => iri.0.as_str(),
+                _ => return None,
+            };
+            Some(is_well_formed_lexical(&el, dt_iri))
+        }
         "BOUND" => {
             if let Some(Expression::Variable(v)) = args.first() {
                 Some(sub.contains_key(v))
@@ -1186,6 +1207,20 @@ pub(crate) fn element_to_bool(el: &GraphElement) -> Option<bool> {
     }
 }
 
+/// SPARQL 1.1 §17.4.3's `STR()` (and, sharing this helper, `REGEX()`'s text
+/// argument): the lexical form of any literal, or the IRI itself for an IRI
+/// term. Widened (#631) to cover every `RdfLiteral` variant — not just the
+/// string-shaped ones (`LiteralString`/`LangLiteral`/`TypedLiteral`) — since
+/// natively-typed numeric/boolean/date/time literals (`IntegerLiteral`,
+/// `BooleanLiteral`, `DecimalLiteral`, `FloatLiteral`, `DoubleLiteral`,
+/// `DateLiteral`, `DateTimeLiteral`, `TimeLiteral`) are still literals with a
+/// well-defined lexical form per spec. Before this, `STR()`/`REGEX()` on such
+/// a value silently failed to resolve (`None`) regardless of the actual
+/// lexical form — the gap that would have made a ported `sh:pattern`
+/// FilterAtom rule (`REGEX(STR(v), pattern)`) never match a numeric/date-
+/// typed SHACL value node. Returns `None` only for blank nodes and triple
+/// terms, which have no lexical form. See
+/// <https://github.com/daghovland/rdf-datalog/issues/631>.
 pub(crate) fn graph_element_to_string(el: &GraphElement) -> Option<String> {
     match el {
         GraphElement::GraphLiteral(RdfLiteral::LiteralString(s)) => Some(s.clone()),
@@ -1195,6 +1230,14 @@ pub(crate) fn graph_element_to_string(el: &GraphElement) -> Option<String> {
         GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) => {
             Some(literal.clone())
         }
+        GraphElement::GraphLiteral(RdfLiteral::IntegerLiteral(n)) => Some(n.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)) => Some(b.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::DecimalLiteral(d)) => Some(d.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::FloatLiteral(f)) => Some(f.0.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::DoubleLiteral(d)) => Some(d.0.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::DateLiteral(d)) => Some(d.to_string()),
+        GraphElement::GraphLiteral(RdfLiteral::DateTimeLiteral(dt)) => Some(dt.to_rfc3339()),
+        GraphElement::GraphLiteral(RdfLiteral::TimeLiteral(t)) => Some(t.to_string()),
         GraphElement::NodeOrEdge(dag_rdf::RdfResource::Iri(iri)) => Some(iri.0.clone()),
         _ => None,
     }
@@ -1363,40 +1406,174 @@ pub(crate) fn simple_or_xsd_string_value(lit: &RdfLiteral) -> Option<&str> {
     }
 }
 
+/// A literal classified for the SPARQL `<`/`>`/`<=`/`>=` relational
+/// operators (SPARQL 1.1 §17.1/§17.3): numeric-numeric, simple-literal/
+/// `xsd:string`-string (codepoint collation), `xsd:boolean`-boolean, and
+/// `xsd:date`/`xsd:dateTime`-date/dateTime pairs are comparable; anything
+/// else — including a cross-class pair, e.g. a number vs. a date, or two
+/// `TypedLiteral`s of unrelated datatypes that happen to share a lexical
+/// form — is not. Mirrors `shacl::evaluate::SparqlCmpValue` (#631, following
+/// #62/#632's Phase E4 plan) so `compare_graph_elements` — used generically
+/// by every FILTER `<`/`>`/`<=`/`>=`, `ORDER BY`, and `MIN`/`MAX` aggregate —
+/// has the same type-strictness `sh:minInclusive`/`sh:maxInclusive`/
+/// `sh:minExclusive`/`sh:maxExclusive`'s ported `FilterAtom` rules depend on
+/// to avoid regressing #303/#322/#325 (previously, any two literals that
+/// weren't both numeric fell back to comparing their raw lexical text
+/// regardless of datatype, so e.g. `"2020-01-01"^^xsd:date` and
+/// `"2019-01-01"^^xsd:string` compared as ordered instead of incomparable).
+enum ComparableKind {
+    Numeric(f64),
+    Str(String),
+    Bool(bool),
+    Date(chrono::NaiveDate),
+    DateTime(chrono::DateTime<chrono::Utc>),
+    DateTimeNaive(chrono::NaiveDateTime),
+}
+
+/// Classify a literal for `compare_graph_elements`. Returns `None` for a
+/// literal shape/datatype that isn't one of the comparable classes above
+/// (e.g. a language-tagged literal, or a `TypedLiteral` with an unrecognized
+/// datatype IRI) — the caller then correctly treats the pair as
+/// incomparable rather than guessing.
+fn classify_comparable(lit: &RdfLiteral) -> Option<ComparableKind> {
+    if let Some(f) = literal_to_f64(lit) {
+        return Some(ComparableKind::Numeric(f));
+    }
+    match lit {
+        RdfLiteral::LiteralString(s) => Some(ComparableKind::Str(s.clone())),
+        RdfLiteral::BooleanLiteral(b) => Some(ComparableKind::Bool(*b)),
+        RdfLiteral::DateLiteral(d) => Some(ComparableKind::Date(*d)),
+        RdfLiteral::DateTimeLiteral(dt) => Some(ComparableKind::DateTime(*dt)),
+        RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_STRING => {
+            Some(ComparableKind::Str(literal.clone()))
+        }
+        RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_BOOLEAN => {
+            parse_xsd_boolean_lexical(literal).map(ComparableKind::Bool)
+        }
+        RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_DATE => {
+            parse_xsd_date_lexical(literal).map(ComparableKind::Date)
+        }
+        RdfLiteral::TypedLiteral { type_iri, literal } if type_iri.0 == XSD_DATE_TIME => {
+            if let Ok(dt) = literal.parse::<chrono::DateTime<chrono::Utc>>() {
+                Some(ComparableKind::DateTime(dt))
+            } else {
+                literal
+                    .parse::<chrono::NaiveDateTime>()
+                    .ok()
+                    .map(ComparableKind::DateTimeNaive)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Parse an `xsd:date` lexical form, tolerating an optional trailing
+/// timezone fragment (`Z` or `±HH:MM`) that `xsd:date`'s lexical space
+/// permits but `chrono::NaiveDate::from_str` rejects outright. Mirrors
+/// `shacl::evaluate::parse_xsd_date_lexical` exactly (kept as a separate
+/// copy rather than a shared dependency — `shacl` depends on
+/// `sparql_parser`, not the reverse).
+fn parse_xsd_date_lexical(s: &str) -> Option<chrono::NaiveDate> {
+    if let Ok(d) = s.parse::<chrono::NaiveDate>() {
+        return Some(d);
+    }
+    let date_part = if let Some(stripped) = s.strip_suffix('Z') {
+        stripped
+    } else if s.len() > 6 && s.is_char_boundary(s.len() - 6) {
+        let (head, tail) = s.split_at(s.len() - 6);
+        if (tail.starts_with('+') || tail.starts_with('-')) && tail.as_bytes()[3] == b':' {
+            head
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    date_part.parse::<chrono::NaiveDate>().ok()
+}
+
+/// Whether `el`'s lexical form is actually valid for `dt_iri` — used by the
+/// internal `IS_LEXICALLY_VALID` FILTER function (#631) that backs
+/// `sh:datatype`'s ported FilterAtom rule. Mirrors
+/// `shacl::evaluate::is_well_formed_lexical` exactly (kept as a separate
+/// copy rather than a shared dependency — `shacl` depends on
+/// `sparql_parser`, not the reverse): only `TypedLiteral` needs checking —
+/// every other `RdfLiteral` variant (`BooleanLiteral`, `IntegerLiteral`, …)
+/// is an already-parsed native representation whose lexical form is valid by
+/// construction. Scoped to the datatypes actually exercised by the W3C
+/// SHACL suite's ill-formed-literal fixtures (`xsd:byte`, `xsd:boolean`,
+/// `xsd:integer`, `xsd:decimal`, `xsd:float`, `xsd:double`, `xsd:date`,
+/// `xsd:dateTime`) plus the other integer facets, rather than a general XSD
+/// facet validator — datatypes not listed here are assumed well-formed
+/// (matching prior `shacl` behavior). A non-literal `el` is treated as
+/// well-formed here too — defensive only, since the caller's
+/// `DATATYPE(v) = D` conjunct already excludes non-literals before this
+/// check is reached. See <https://www.w3.org/TR/shacl/#DatatypeConstraintComponent>
+/// and <https://github.com/daghovland/rdf-datalog/issues/318>,
+/// <https://github.com/daghovland/rdf-datalog/issues/631>.
+fn is_well_formed_lexical(el: &GraphElement, dt_iri: &str) -> bool {
+    let GraphElement::GraphLiteral(RdfLiteral::TypedLiteral { literal, .. }) = el else {
+        return true;
+    };
+    let trimmed = literal.trim();
+    match dt_iri {
+        "http://www.w3.org/2001/XMLSchema#boolean" => {
+            matches!(trimmed, "true" | "false" | "1" | "0")
+        }
+        "http://www.w3.org/2001/XMLSchema#byte" => trimmed.parse::<i8>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#short" => trimmed.parse::<i16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#int" => trimmed.parse::<i32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#long" => trimmed.parse::<i64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#integer" => trimmed.parse::<i128>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#nonNegativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n >= 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#positiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n > 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#nonPositiveInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n <= 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#negativeInteger" => {
+            trimmed.parse::<i128>().is_ok_and(|n| n < 0)
+        }
+        "http://www.w3.org/2001/XMLSchema#unsignedByte" => trimmed.parse::<u8>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedShort" => trimmed.parse::<u16>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedInt" => trimmed.parse::<u32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#unsignedLong" => trimmed.parse::<u64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#decimal" => trimmed.parse::<f64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#float" => trimmed.parse::<f32>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#double" => trimmed.parse::<f64>().is_ok(),
+        "http://www.w3.org/2001/XMLSchema#date" => parse_xsd_date_lexical(trimmed).is_some(),
+        "http://www.w3.org/2001/XMLSchema#dateTime" => {
+            trimmed.parse::<chrono::DateTime<chrono::Utc>>().is_ok()
+                || trimmed.parse::<chrono::NaiveDateTime>().is_ok()
+        }
+        _ => true,
+    }
+}
+
 /// Compare graph elements for FILTER relational operators.
 /// Returns negative, 0, positive, or None if not comparable.
 pub(crate) fn compare_graph_elements(a: &GraphElement, b: &GraphElement) -> Option<i32> {
     use dag_rdf::GraphElement::GraphLiteral;
-    use std::cmp::Ordering::*;
-    if let (GraphLiteral(a_lit), GraphLiteral(b_lit)) = (a, b) {
-        // Try numeric comparison first
-        if let (Some(af), Some(bf)) = (literal_to_f64(a_lit), literal_to_f64(b_lit)) {
-            return af.partial_cmp(&bf).map(|o| match o {
-                Less => -1,
-                Equal => 0,
-                Greater => 1,
-            });
-        }
-        // String literal comparison
-        let a_str = match a_lit {
-            RdfLiteral::LiteralString(s) => Some(s.as_str()),
-            RdfLiteral::TypedLiteral { literal, .. } => Some(literal.as_str()),
-            _ => None,
-        };
-        let b_str = match b_lit {
-            RdfLiteral::LiteralString(s) => Some(s.as_str()),
-            RdfLiteral::TypedLiteral { literal, .. } => Some(literal.as_str()),
-            _ => None,
-        };
-        if let (Some(a_s), Some(b_s)) = (a_str, b_str) {
-            return Some(match a_s.cmp(b_s) {
-                Less => -1,
-                Equal => 0,
-                Greater => 1,
-            });
-        }
-    }
-    None
+    let (GraphLiteral(a_lit), GraphLiteral(b_lit)) = (a, b) else {
+        return None;
+    };
+    let ord = match (classify_comparable(a_lit)?, classify_comparable(b_lit)?) {
+        (ComparableKind::Numeric(x), ComparableKind::Numeric(y)) => x.partial_cmp(&y)?,
+        (ComparableKind::Str(x), ComparableKind::Str(y)) => x.cmp(&y),
+        (ComparableKind::Bool(x), ComparableKind::Bool(y)) => x.cmp(&y),
+        (ComparableKind::Date(x), ComparableKind::Date(y)) => x.cmp(&y),
+        (ComparableKind::DateTime(x), ComparableKind::DateTime(y)) => x.cmp(&y),
+        (ComparableKind::DateTimeNaive(x), ComparableKind::DateTimeNaive(y)) => x.cmp(&y),
+        _ => return None,
+    };
+    Some(match ord {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    })
 }
 
 // ── CONSTRUCT helpers ─────────────────────────────────────────────────────────
