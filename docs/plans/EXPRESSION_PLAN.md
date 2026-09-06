@@ -172,6 +172,60 @@ comparator and string-coercion functions are brought up to full SPARQL 1.1 §17.
 fidelity for XSD-typed literals (a `sparql_parser` fix, not a `shacl` one), and (b) a
 per-pair-multiplicity rule-generation pattern exists for `sh:lessThan`-shaped constraints.
 
+### Phase E4 continued — #631: datatype/range/pattern
+
+`sh:lessThan`/`sh:lessThanOrEquals` are split out to a separate follow-up,
+[#637](https://github.com/daghovland/rdf-datalog/issues/637) — they need a
+per-pair-multiplicity rule-generation mechanism (#343), which is an
+expressiveness gap, not just a fidelity gap, and is a materially different
+piece of work from the other three constraint kinds.
+
+This phase (#631, narrowed to the three that only need fidelity fixes) ports
+`sh:datatype`, `sh:minInclusive`/`sh:maxInclusive`/`sh:minExclusive`/
+`sh:maxExclusive`, and `sh:pattern`, after three `sparql_parser` changes:
+
+1. **`compare_graph_elements`** (`sparql_parser/src/execute/functions.rs`):
+   rewritten to be type-aware like `shacl::evaluate::sparql_compare` —
+   classifies each literal operand as Numeric / Str (simple or
+   `xsd:string`) / Bool / Date / DateTime(tz) / DateTimeNaive and only
+   compares within the same class, returning `None` (incomparable) across
+   classes — instead of the old fallback to naive lexical-text comparison
+   for any two non-numeric literals regardless of datatype (the exact bug
+   class `sh:minInclusive` &c. must not regress — see #303/#322/#325).
+2. **`graph_element_to_string`** (same file): widened to cover every
+   `RdfLiteral` variant's lexical form (`IntegerLiteral`, `BooleanLiteral`,
+   `DecimalLiteral`, `FloatLiteral`, `DoubleLiteral`, `DateLiteral`,
+   `DateTimeLiteral`, `TimeLiteral`), not just the string-shaped ones —
+   both `STR()` (spec requires it work on any literal) and `REGEX()`'s text
+   argument go through this, and it's exactly the gap that would have made
+   `sh:pattern` silently never match a numeric/date-typed value node.
+3. **New internal-only function `IS_LEXICALLY_VALID(value, dtIri)`**
+   (`sparql_parser/src/execute/functions.rs`, dispatched in
+   `eval_function_bool`): not a real SPARQL/XPath builtin — a non-standard
+   extension (in the spirit of the "RDFox extensions" note earlier in this
+   doc), added so `sh:datatype`'s FilterAtom rule can express "ill-formed
+   lexical form ⇒ violation" (#325) without changing `DATATYPE()`'s own
+   spec-correct semantics (which only compares the nominal type IRI, never
+   lexical well-formedness) or the existing `xsd:*(...)` cast functions'
+   established lenient behavior. Ports
+   `shacl::evaluate::is_well_formed_lexical`'s exact per-datatype-IRI checks.
+   Rule shape: `FILTER(!(DATATYPE(v) = D && IS_LEXICALLY_VALID(v, D)))`.
+
+`shacl::evaluate::is_well_formed_lexical`/`sparql_compare`/`lexical_form`
+themselves are NOT deleted — `constraint_conforms` (the recursive
+`sh:and`/`sh:or`/`sh:not`/`sh:xone`/`sh:node`/`sh:qualifiedValueShape`
+conformance checker) still calls them directly, same as `matches_node_kind`/
+`lang_matches` were kept after #62.
+
+**Files:** `sparql_parser/src/execute/functions.rs`, `shacl/src/translate.rs`,
+`shacl/src/evaluate.rs`.
+
+**Tests:** existing SHACL tests (including `tests/w3c_shacl_suite.rs`, no
+skip-list changes) plus new `tests/sparql12_suite.rs` coverage for the
+`compare_graph_elements`/`graph_element_to_string` fidelity fixes.
+
+---
+
 **Files:** `shacl/src/translate.rs` (adds `NodeKind`/`LanguageIn` rule generation),
 `shacl/src/evaluate.rs` (removes the now-redundant `eval_prop_constraint` arms for those two
 — `matches_node_kind`/`lang_matches` themselves stay, still used by `constraint_conforms`).
