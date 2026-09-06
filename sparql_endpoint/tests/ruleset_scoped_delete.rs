@@ -98,7 +98,12 @@ async fn test_post_ruleset_id_new_dataset_creates_reasoner() {
         .send()
         .await
         .expect("rules post failed");
-    assert_eq!(resp.status(), 200, "POST /rules/a failed: {}", resp.status());
+    assert_eq!(
+        resp.status(),
+        200,
+        "POST /rules/a failed: {}",
+        resp.status()
+    );
 
     assert!(
         ask(
@@ -132,8 +137,22 @@ async fn test_delete_ruleset_id_removes_only_that_rulesets_derivations() {
             .expect("rules post failed");
         assert_eq!(resp.status(), 200, "POST /rules/{id} failed");
     }
-    assert!(ask(&server, "newds", &format!("ASK {{ <{EX_ALICE}> <{RDF_TYPE}> <{EX_EMPLOYEE}> }}")).await);
-    assert!(ask(&server, "newds", &format!("ASK {{ <{EX_ALICE}> <{RDF_TYPE}> <{EX_CONTRACTOR}> }}")).await);
+    assert!(
+        ask(
+            &server,
+            "newds",
+            &format!("ASK {{ <{EX_ALICE}> <{RDF_TYPE}> <{EX_EMPLOYEE}> }}")
+        )
+        .await
+    );
+    assert!(
+        ask(
+            &server,
+            "newds",
+            &format!("ASK {{ <{EX_ALICE}> <{RDF_TYPE}> <{EX_CONTRACTOR}> }}")
+        )
+        .await
+    );
 
     let resp = server
         .client
@@ -141,7 +160,12 @@ async fn test_delete_ruleset_id_removes_only_that_rulesets_derivations() {
         .send()
         .await
         .expect("delete failed");
-    assert_eq!(resp.status(), 200, "DELETE /rules/a failed: {}", resp.status());
+    assert_eq!(
+        resp.status(),
+        200,
+        "DELETE /rules/a failed: {}",
+        resp.status()
+    );
 
     assert!(
         !ask(

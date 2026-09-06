@@ -35,13 +35,13 @@ Contact: hovlanddag@gmail.com
 //! [#568](https://github.com/daghovland/rdf-datalog/issues/568).
 
 use crate::AppState;
+use crate::registry::DatasetEntry;
 use axum::{
     Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use crate::registry::DatasetEntry;
 use dag_rdf::{Datastore, Quad, QuadTable};
 use datalog::{IncrementalReasoner, Rule};
 use std::collections::{HashMap, HashSet};
