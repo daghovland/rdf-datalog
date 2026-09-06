@@ -299,4 +299,35 @@ mod tests {
             CellType::OttrFile(PathBuf::from("templates/person.stottr"))
         );
     }
+
+    // ── CellError ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn unsafe_path_variant_is_matchable() {
+        let err = check_path_safe(Path::new("/etc/passwd")).unwrap_err();
+        assert!(matches!(err, CellError::UnsafePath(_)));
+    }
+
+    #[test]
+    fn unsafe_path_display_does_not_echo_input_path() {
+        let err = check_path_safe(Path::new("/etc/passwd")).unwrap_err();
+        assert!(!err.to_string().contains("/etc"));
+    }
+
+    #[test]
+    fn io_variant_display_includes_file_name_and_source() {
+        let err = CellError::Io {
+            file_name: "mapping.ttl".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("mapping.ttl"));
+        assert!(msg.contains("no such file"));
+    }
+
+    #[test]
+    fn execution_variant_forwards_subsystem_message() {
+        let err = CellError::Execution("Turtle parse error: unexpected token".to_string());
+        assert_eq!(err.to_string(), "Turtle parse error: unexpected token");
+    }
 }

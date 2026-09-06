@@ -191,11 +191,15 @@ enum CellOutput {
     Empty,
 }
 
-fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, String> {
+fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, CellError> {
     match cell_type {
         CellType::Empty => Ok(CellOutput::Empty),
-        CellType::Sparql(code) => execute_sparql(ds, &code).map(CellOutput::Rich),
-        CellType::Turtle(src) => execute_turtle(ds, &src).map(CellOutput::Stream),
+        CellType::Sparql(code) => execute_sparql(ds, &code)
+            .map(CellOutput::Rich)
+            .map_err(CellError::Execution),
+        CellType::Turtle(src) => execute_turtle(ds, &src)
+            .map(CellOutput::Stream)
+            .map_err(CellError::Execution),
         CellType::Load(path) => {
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
@@ -203,24 +207,27 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             let before = ds.named_graphs.quad_count;
             let file = std::fs::File::open(&path).map_err(|e| {
                 log::error!("cannot open {}: {}", path.display(), e);
-                let name = path
+                let file_name = path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .unwrap_or("<file>");
-                format!("cannot open file '{name}'")
+                    .unwrap_or("<file>")
+                    .to_string();
+                CellError::Io {
+                    file_name,
+                    source: e,
+                }
             })?;
             let reader = std::io::BufReader::new(file);
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             match ext {
-                "trig" => {
-                    turtle::parse_trig(ds, reader).map_err(|e| format!("TriG parse error: {e}"))?
-                }
+                "trig" => turtle::parse_trig(ds, reader)
+                    .map_err(|e| CellError::Execution(format!("TriG parse error: {e}")))?,
                 "nt" => turtle::parse_ntriples(ds, reader)
-                    .map_err(|e| format!("N-Triples parse error: {e}"))?,
+                    .map_err(|e| CellError::Execution(format!("N-Triples parse error: {e}")))?,
                 "nq" => turtle::parse_nquads(ds, reader)
-                    .map_err(|e| format!("N-Quads parse error: {e}"))?,
+                    .map_err(|e| CellError::Execution(format!("N-Quads parse error: {e}")))?,
                 _ => turtle::parse_turtle(ds, reader)
-                    .map_err(|e| format!("Turtle parse error: {e}"))?,
+                    .map_err(|e| CellError::Execution(format!("Turtle parse error: {e}")))?,
             }
             let added = ds.named_graphs.quad_count - before;
             Ok(CellOutput::Stream(format!(
@@ -233,19 +240,24 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
-            execute_rml(ds, &path).map(CellOutput::Stream)
+            execute_rml(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
         }
         CellType::Manchester(path) => {
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
-            execute_manchester_file(ds, &path).map(CellOutput::Stream)
+            execute_manchester_file(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
         }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
-            let ontology_doc = rdf_owl_translator::rdf2owl(ds).map_err(|e| e.to_string())?;
+            let ontology_doc = rdf_owl_translator::rdf2owl(ds)
+                .map_err(|e| CellError::Execution(e.to_string()))?;
             let rules = owl2rl2datalog::owl2datalog(&mut ds.resources, &ontology_doc.ontology);
-            datalog::evaluate_rules(rules, ds).map_err(|e| e.to_string())?;
+            datalog::evaluate_rules(rules, ds).map_err(|e| CellError::Execution(e.to_string()))?;
             let added = ds.named_graphs.quad_count - before;
             Ok(CellOutput::Stream(format!(
                 "Reasoning complete. {} triple{} added.",
@@ -253,19 +265,27 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
                 if added == 1 { "" } else { "s" }
             )))
         }
-        CellType::Datalog(src) => execute_datalog(ds, &src).map(CellOutput::Stream),
+        CellType::Datalog(src) => execute_datalog(ds, &src)
+            .map(CellOutput::Stream)
+            .map_err(CellError::Execution),
         CellType::Validate(path) => {
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
-            execute_validate(ds, &path).map(CellOutput::Stream)
+            execute_validate(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
         }
-        CellType::OttrInline(src) => execute_ottr_inline(ds, &src).map(CellOutput::Stream),
+        CellType::OttrInline(src) => execute_ottr_inline(ds, &src)
+            .map(CellOutput::Stream)
+            .map_err(CellError::Execution),
         CellType::OttrFile(path) => {
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
-            execute_ottr_file(ds, &path).map(CellOutput::Stream)
+            execute_ottr_file(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
         }
     }
 }
@@ -315,7 +335,7 @@ async fn handle_execute(
         },
         Ok(_) => {}
         Err(ref e) => {
-            let _ = send_error_output(iopub, e, req_header, key).await;
+            let _ = send_error_output(iopub, &e.to_string(), req_header, key).await;
         }
     }
 

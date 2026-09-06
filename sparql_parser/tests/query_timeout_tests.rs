@@ -100,8 +100,8 @@ fn transitive_closure_path_pattern_respects_timeout() {
         Err(e) => e,
     };
     assert!(
-        err.contains("timeout"),
-        "expected a timeout-shaped error message, got: {err:?}"
+        matches!(err, sparql_parser::ExecError::Timeout),
+        "expected ExecError::Timeout, got: {err:?}"
     );
 }
 
