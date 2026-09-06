@@ -41,9 +41,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
+use crate::registry::DatasetEntry;
 use dag_rdf::{Datastore, Quad, QuadTable};
 use datalog::{IncrementalReasoner, Rule};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -137,6 +138,81 @@ fn apply_ruleset_diff(
     }
 }
 
+/// Apply `combined` as the dataset's new live ruleset, via the smallest
+/// sound path: empty -> unload (strip to extensional facts, drop the
+/// reasoner entirely); non-empty with an existing reasoner ->
+/// [`apply_ruleset_diff`]; non-empty with no reasoner yet -> lazily create
+/// one via [`full_rebuild`].
+///
+/// On failure (the new combined ruleset is contradictory over the dataset's
+/// current base facts), `entry`/`store` are left exactly as they were before
+/// the call — mirroring `apply_ruleset_diff`'s/`full_rebuild`'s own
+/// rollback contracts — and a human-readable error message is returned for
+/// the caller to wrap in a `409`.
+async fn apply_combined_ruleset(
+    entry: &DatasetEntry,
+    store: &mut Datastore,
+    combined: &[Rule],
+) -> Result<(), String> {
+    if combined.is_empty() {
+        // No rules at all: unload — no reasoner, and any previously-derived
+        // facts are stripped back to extensional-only (there is no diff to
+        // apply against "no rules").
+        let base_facts: Vec<Quad> = store.named_graphs.extensional_quads().collect();
+        let hint = base_facts.len() as u32;
+        store.named_graphs = QuadTable::new(hint);
+        for q in base_facts {
+            store.named_graphs.add_quad(q);
+        }
+        *entry.reasoner.write().await = None;
+        return Ok(());
+    }
+
+    let existing_reasoner = entry.reasoner.read().await.clone();
+    if let Some(reasoner_arc) = existing_reasoner {
+        let mut reasoner = reasoner_arc.lock().await;
+        apply_ruleset_diff(&mut reasoner, store, combined).map_err(|e| e.to_string())?;
+    } else {
+        let new_reasoner = full_rebuild(store, combined).map_err(|e| e.to_string())?;
+        *entry.reasoner.write().await = Some(Arc::new(Mutex::new(new_reasoner)));
+    }
+    Ok(())
+}
+
+/// The deduplicated union of every ruleset id's rules in `map`, except
+/// `exclude_id` — "what should the live combined ruleset contain if
+/// `exclude_id` were replaced/removed", by `Rule` value-equality. Used by
+/// both `POST /{dataset}/rules/{id}` (unioned with the request body's newly
+/// parsed rules) and `DELETE /{dataset}/rules/{id}` (used as-is: the
+/// combined ruleset after removing `id` entirely).
+fn union_other_rulesets(map: &HashMap<String, Vec<Rule>>, exclude_id: &str) -> Vec<Rule> {
+    let mut seen: HashSet<Rule> = HashSet::new();
+    let mut result = Vec::new();
+    for (id, rules) in map.iter() {
+        if id == exclude_id {
+            continue;
+        }
+        for r in rules {
+            if seen.insert(r.clone()) {
+                result.push(r.clone());
+            }
+        }
+    }
+    result
+}
+
+/// Append `extra` to `base`, skipping any rule already present in `base` by
+/// value-equality (so a rule shared with another still-live ruleset isn't
+/// duplicated in the combined set passed to [`apply_ruleset_diff`]).
+fn merge_rules_into(base: &mut Vec<Rule>, extra: &[Rule]) {
+    let mut seen: HashSet<Rule> = base.iter().cloned().collect();
+    for r in extra {
+        if seen.insert(r.clone()) {
+            base.push(r.clone());
+        }
+    }
+}
+
 pub async fn dataset_rules_post(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -182,55 +258,146 @@ pub async fn dataset_rules_post(
     };
     let rules_loaded = rules.len();
 
-    if rules_loaded == 0 {
-        // Empty ruleset: unload — no reasoner at all, matching the
-        // no-`--rules` startup state. Also strips any previously-derived
-        // facts back to extensional-only, mirroring the full-rebuild path
-        // (there is no diff to apply against "no rules" — this is not an
-        // "add these rules" request, so it always takes this unconditional
-        // path, never the incremental one).
-        let base_facts: Vec<Quad> = store.named_graphs.extensional_quads().collect();
-        let hint = base_facts.len() as u32;
-        store.named_graphs = QuadTable::new(hint);
-        for q in base_facts {
-            store.named_graphs.add_quad(q);
-        }
-        *entry.reasoner.write().await = None;
-        return (StatusCode::OK, Json(serde_json::json!({"rules_loaded": 0}))).into_response();
+    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &rules).await {
+        return (
+            StatusCode::CONFLICT,
+            format!("New ruleset is contradictory over the dataset's existing data: {e}"),
+        )
+            .into_response();
     }
 
-    // Snapshot whether a reasoner already exists (and grab its Arc) before
-    // deciding the path: an existing reasoner is updated in place via the
-    // diff/incremental-or-fallback path (`apply_ruleset_diff`); a dataset
-    // with no reasoner yet has nothing to diff against, so it always takes
-    // the unconditional full-rebuild path, matching pre-#568 behavior.
-    let existing_reasoner = entry.reasoner.read().await.clone();
-    if let Some(reasoner_arc) = existing_reasoner {
-        let mut reasoner = reasoner_arc.lock().await;
-        if let Err(e) = apply_ruleset_diff(&mut reasoner, &mut store, &rules) {
-            return (
-                StatusCode::CONFLICT,
-                format!("New ruleset is contradictory over the dataset's existing data: {e}"),
-            )
-                .into_response();
-        }
-    } else {
-        let new_reasoner = match full_rebuild(&mut store, &rules) {
-            Ok(r) => r,
-            Err(e) => {
-                return (
-                    StatusCode::CONFLICT,
-                    format!("New ruleset is contradictory over the dataset's existing data: {e}"),
-                )
-                    .into_response();
-            }
-        };
-        *entry.reasoner.write().await = Some(Arc::new(Mutex::new(new_reasoner)));
-    }
+    // This is a full replace: it discards *all* previously-loaded rules
+    // regardless of source, so no named ruleset id (from
+    // `POST /{dataset}/rules/{id}`, #473) can meaningfully survive it —
+    // clear the id-scoped bookkeeping too. See
+    // `docs/plans/RULESET_SCOPED_DELETE_473_PLAN.md`.
+    entry.rulesets.write().await.clear();
 
     (
         StatusCode::OK,
         Json(serde_json::json!({"rules_loaded": rules_loaded})),
+    )
+        .into_response()
+}
+
+/// `POST /{dataset}/rules/{ruleset-id}` — load/replace *one named ruleset's*
+/// rules within the dataset's live combined ruleset, leaving every other
+/// named ruleset (and any rules loaded via the plain no-id
+/// `POST /{dataset}/rules`, until the next full-replace) untouched.
+///
+/// See `docs/plans/RULESET_SCOPED_DELETE_473_PLAN.md` for the full design.
+pub async fn dataset_rules_id_post(
+    State(state): State<AppState>,
+    Path((name, ruleset_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+
+    let ct = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !(ct.is_empty() || ct.contains("text/x-datalog") || ct.contains("text/plain")) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Content-Type must be text/x-datalog or text/plain",
+        )
+            .into_response();
+    }
+
+    let Some(entry) = state.registry.read().await.get_entry(&name) else {
+        return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
+    };
+
+    let body_str = match String::from_utf8(body.to_vec()) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid UTF-8 in rules body").into_response(),
+    };
+
+    // Same lock-across-parse-and-rebuild rationale as `dataset_rules_post`.
+    let mut store = entry.store.write().await;
+    let rules = match datalog_parser::parse(&body_str, &mut store) {
+        Ok(r) => r,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("Datalog parse error: {e}")).into_response();
+        }
+    };
+    let rules_loaded = rules.len();
+
+    let mut rulesets = entry.rulesets.write().await;
+    let mut combined = union_other_rulesets(&rulesets, &ruleset_id);
+    merge_rules_into(&mut combined, &rules);
+
+    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &combined).await {
+        return (
+            StatusCode::CONFLICT,
+            format!("New ruleset is contradictory over the dataset's existing data: {e}"),
+        )
+            .into_response();
+    }
+
+    if rules.is_empty() {
+        // Same-id replace with an empty body: unload just this id.
+        rulesets.remove(&ruleset_id);
+    } else {
+        rulesets.insert(ruleset_id.clone(), rules);
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"rules_loaded": rules_loaded, "ruleset_id": ruleset_id})),
+    )
+        .into_response()
+}
+
+/// `DELETE /{dataset}/rules/{ruleset-id}` — retract exactly the named
+/// ruleset's rules from the dataset's live combined ruleset. A rule that
+/// also belongs to a *different* still-live ruleset id survives (and its
+/// derivations remain materialised), since it's still present in the
+/// recomputed combined ruleset via that other id.
+///
+/// `404` if the dataset doesn't exist, or if `ruleset_id` was never loaded
+/// (or was already deleted) for this dataset.
+pub async fn dataset_rules_id_delete(
+    State(state): State<AppState>,
+    Path((name, ruleset_id)): Path<(String, String)>,
+) -> axum::response::Response {
+    if state.config.read_only {
+        return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
+    }
+
+    let Some(entry) = state.registry.read().await.get_entry(&name) else {
+        return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
+    };
+
+    let mut store = entry.store.write().await;
+    let mut rulesets = entry.rulesets.write().await;
+
+    if !rulesets.contains_key(&ruleset_id) {
+        return (StatusCode::NOT_FOUND, "Ruleset not found").into_response();
+    }
+
+    let combined = union_other_rulesets(&rulesets, &ruleset_id);
+
+    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &combined).await {
+        return (
+            StatusCode::CONFLICT,
+            format!("Remaining ruleset is contradictory over the dataset's existing data: {e}"),
+        )
+            .into_response();
+    }
+
+    let removed = rulesets
+        .remove(&ruleset_id)
+        .expect("checked contains_key above");
+    let rules_removed = removed.len();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"rules_removed": rules_removed, "ruleset_id": ruleset_id})),
     )
         .into_response()
 }

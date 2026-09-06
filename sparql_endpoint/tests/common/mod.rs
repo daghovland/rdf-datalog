@@ -596,6 +596,13 @@ impl TestServer {
         format!("{}/{name}/rules", self.base_url)
     }
 
+    /// `POST/DELETE /{name}/rules/{ruleset-id}` — load/replace or retract one
+    /// named ruleset within a dataset's live Datalog ruleset (#473).
+    pub fn dataset_rules_id_url(&self, dataset: &str, ruleset_id: &str) -> String {
+        let name = dataset.trim_start_matches('/');
+        format!("{}/{name}/rules/{ruleset_id}", self.base_url)
+    }
+
     /// `POST /{name}/rml` — apply an RML mapping (multipart/form-data) to a dataset.
     pub fn dataset_rml_url(&self, dataset: &str) -> String {
         let name = dataset.trim_start_matches('/');
