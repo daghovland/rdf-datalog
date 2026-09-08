@@ -20,7 +20,7 @@ Contact: hovlanddag@gmail.com
 
 use ingress::{IriReference, OntologyVersion, RDFS, XSD};
 use owl_ontology::{
-    AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
+    AnnotationAxiom, AnnotationValue, Assertion, Atom, AtomArg, Axiom, ClassAxiom, ClassExpression,
     DataPropertyAxiom, DataRange, Entity, FullIri, Individual, ObjectPropertyAxiom,
     ObjectPropertyExpression,
 };
@@ -774,6 +774,99 @@ Individual: Margherita
     );
 }
 
+// ── `Rule:` SWRL frames (#498) ──────────────────────────────────────────
+
+#[test]
+fn rule_frame_class_and_property_and_builtin_atoms() {
+    let onto = manchester_parser::parse(&doc(
+        "Rule: Person(?p), hasAge(?p, ?a), greaterThan(?a, 18) -> Adult(?p)",
+    ))
+    .expect("SWRL Rule: frames are now supported (#498)");
+    assert_eq!(onto.rules.len(), 1);
+    let rule = &onto.rules[0];
+    assert!(rule.annotations.is_empty());
+    assert_eq!(
+        rule.body,
+        vec![
+            Atom::ClassAtom(cls("Person"), AtomArg::Variable("p".to_string())),
+            Atom::PropertyAtom(
+                iri("hasAge"),
+                AtomArg::Variable("p".to_string()),
+                AtomArg::Variable("a".to_string())
+            ),
+            Atom::PropertyAtom(
+                iri("greaterThan"),
+                AtomArg::Variable("a".to_string()),
+                AtomArg::Literal(ingress::GraphElement::GraphLiteral(
+                    ingress::RdfLiteral::IntegerLiteral(18.into())
+                ))
+            ),
+        ]
+    );
+    assert_eq!(
+        rule.head,
+        vec![Atom::ClassAtom(
+            cls("Adult"),
+            AtomArg::Variable("p".to_string())
+        )]
+    );
+}
+
+#[test]
+fn rule_frame_with_named_individual_argument() {
+    let onto = manchester_parser::parse(&doc("Rule: Person(Alice) -> Adult(Alice)")).unwrap();
+    assert_eq!(onto.rules.len(), 1);
+    let rule = &onto.rules[0];
+    assert_eq!(
+        rule.body,
+        vec![Atom::ClassAtom(
+            cls("Person"),
+            AtomArg::Individual(Individual::NamedIndividual(iri("Alice")))
+        )]
+    );
+    assert_eq!(
+        rule.head,
+        vec![Atom::ClassAtom(
+            cls("Adult"),
+            AtomArg::Individual(Individual::NamedIndividual(iri("Alice")))
+        )]
+    );
+}
+
+#[test]
+fn rule_frame_with_leading_annotations() {
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("Rule: Annotations: rdfs:comment \"age rule\" Person(?p) -> Adult(?p)")
+    ))
+    .unwrap();
+    assert_eq!(onto.rules.len(), 1);
+    assert_eq!(onto.rules[0].annotations.len(), 1);
+}
+
+#[test]
+fn rule_frame_multiple_head_atoms() {
+    let onto = manchester_parser::parse(&doc("Rule: Person(?p) -> Adult(?p), Human(?p)")).unwrap();
+    assert_eq!(onto.rules[0].head.len(), 2);
+}
+
+#[test]
+fn rule_frame_can_be_interleaved_with_class_frames() {
+    let onto = manchester_parser::parse(&doc(
+        "Class: Person\nRule: Person(?p) -> Adult(?p)\nClass: Adult",
+    ))
+    .unwrap();
+    assert_eq!(onto.rules.len(), 1);
+    assert!(onto.axioms.contains(&Axiom::AxiomDeclaration((
+        vec![],
+        Entity::ClassDeclaration(iri("Person"))
+    ))));
+    assert!(onto.axioms.contains(&Axiom::AxiomDeclaration((
+        vec![],
+        Entity::ClassDeclaration(iri("Adult"))
+    ))));
+}
+
 // ── Deferred grammar — tracked in #157 ────────────────────────────────────
 //
 // These document grammar productions this parser deliberately does not
@@ -840,13 +933,4 @@ fn deferred_datatype_facet_restriction() {
             DataRange::DatatypeRestriction(_, _)
         ))
     )));
-}
-
-#[test]
-#[ignore] // #157: SWRL `Rule:` frames are not parsed.
-fn deferred_swrl_rule_frame() {
-    manchester_parser::parse(&doc(
-        "Rule: Person(?p), hasAge(?p, ?a), greaterThan(?a, 18) -> Adult(?p)",
-    ))
-    .expect("SWRL Rule: frames are not yet supported (#157)");
 }
