@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #638 (issue #605), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps below are real
+# (from `git log main..HEAD` on branch feat/605-owlxml-plan-core).
+
+ghpull:638 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "OWL/XML: plan doc + core structure (Ontology header, Prefix, Declaration)" ;
+    bl:number 638 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:605 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr638 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:605 ;
+    prov:startedAtTime "2026-09-01T14:05:20+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-06T12:23:10Z"^^xsd:dateTime .
+
+session:pr638Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #605 asked for docs/plans/OWL_XML_PLAN.md plus the outermost layer of a new OWL/XML parser: the <Ontology> root, <Prefix>/<Import>, ontology-level <Annotation>, and <Declaration> for all six Entity variants. Per the issue, checked provenance on the two sibling alternate-syntax parsers (manchester_parser, owl_functional_parser) before starting; the branch also caught up to origin/main mid-task via a merge, which brought owl_functional_parser's own source in as a second, closer template (its unambiguous Keyword(args...) shape resembles OWL/XML elements far more than Manchester's precedence-climbing frame grammar does). The one real design decision: XML parsing library choice. quick-xml (a streaming pull-parser) was rejected in favor of roxmltree (a read-only DOM) because OWL/XML's payload is deeply nested class-expression trees (flagged explicitly in follow-up issue #606's own description as bug-prone) — a DOM lets recursive-descent functions walk roxmltree::Node::children() directly, mirroring the sibling parsers' one-function-per-production style, instead of hand-maintaining a stack over a flat event stream. Since the whole document parses into a tree up front, no ParserContext interior-mutability cell was needed either (unlike the two nom-based siblings): prefixes are collected once into a plain HashMap and threaded by reference. Followed strict TDD: plan doc first, then all 17 integration tests (one per grammar production/phase) written and ignored, then implemented phase by phase until green. Two environmental red herrings surfaced during the quality gate and were confirmed (not fixed) as pre-existing/transient rather than caused by this change: a stale-fingerprint phantom compile error in unrelated crates (owl2rl2datalog, rdf_owl_translator) from the shared CARGO_TARGET_DIR across concurrent worktrees, resolved by touching the complained-about files per CLAUDE.md's documented hazard; and a SIGKILL on sparql-endpoint's query_timeout test traced to the build host running low on memory under many concurrent agent builds, not reproduced on GitHub Actions CI." ;
+    agp:reasoningFor ghpull:638 ;
+    prov:wasGeneratedBy session:pr638 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr638Summary agp:decisionPoint session:pr638Decision .
+
+session:pr638Decision a agp:Decision ;
+    agp:summaryText "Chose roxmltree (a one-shot read-only DOM parse) over quick-xml (a streaming pull-parser/Reader+Event API) for owl_xml_parser, even though neither was yet a workspace dependency. roxmltree::Document::parse builds the whole tree up front, so recursive-descent functions (entity(node), declaration(node), and later class_expression(node) in #606) can walk node.children() directly -- the same one-function-per-production shape manchester_parser and owl_functional_parser already use, just replacing 'parse next paren-form' with 'look at next child element'. No ParserContext interior mutability is needed either, since nothing is written mid-parse." ;
+    agp:alternative "quick-xml was the other option actually considered (it is the more commonly recommended lightweight Rust XML crate and was flagged as a candidate in the issue body). Rejected because its core API is an event stream (StartElement/Text/EndElement), which is a good fit for large flat documents but pushes the caller to hand-maintain an explicit stack to reconstruct nesting -- exactly the shape #606 (class expressions/axioms) needs, since a union containing an intersection containing a restriction is normal OWL/XML and was called out by #606 itself as the likely source of recursive-descent bugs." .
