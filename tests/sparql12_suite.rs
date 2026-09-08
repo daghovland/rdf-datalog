@@ -4334,3 +4334,112 @@ SELECT ?s ?v
             .collect::<Vec<_>>()
     );
 }
+
+// ── #631: `compare_graph_elements`/`graph_element_to_string` fidelity ──────
+//
+// These back the `sh:datatype`/range-constraint/`sh:pattern` FilterAtom
+// rules ported in shacl/src/translate.rs (issue #631, follow-up to #62/#632)
+// — see docs/plans/EXPRESSION_PLAN.md's "Phase E4 continued" section.
+
+/// SPARQL 1.1 §17.3: two literals of genuinely different, unordered
+/// datatypes must not be comparable via `<`/`>` — comparing them must
+/// produce a type error, not a same-lexical-form-ish string comparison.
+/// `"2020-01-01"^^xsd:date` and `"2019-01-01"^^xsd:string` are lexically
+/// ordered as `date > string` (`"2020..." > "2019..."` by codepoint), which
+/// the old naive-string fallback in `compare_graph_elements` would have
+/// wrongly reported as a real `>` — masking exactly the bug class #303/#322/
+/// #325 fixed for SHACL's own `sparql_compare`.
+#[test]
+fn regression_631_compare_cross_datatype_is_incomparable() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX : <http://example.org/>
+:s :a "2020-01-01"^^xsd:date .
+:s :b "2019-01-01"^^xsd:string .
+"#,
+    );
+    let sparql = r#"
+PREFIX : <http://example.org/>
+ASK { :s :a ?a . :s :b ?b . FILTER(?a > ?b) }
+"#;
+    assert!(
+        !query_ask(&ds, sparql),
+        "an xsd:date and an xsd:string operand must be incomparable via '>', \
+         not compared by naive lexical text"
+    );
+}
+
+/// Companion sanity check: same-kind comparisons (numeric, and now also
+/// boolean, which the old `compare_graph_elements` didn't recognize at all —
+/// only `LiteralString`/`TypedLiteral` reached its string-comparison
+/// fallback, never `BooleanLiteral`) must still work correctly after the
+/// type-aware rewrite.
+#[test]
+fn regression_631_compare_same_kind_still_works() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX : <http://example.org/>
+:s :n 3 .
+:s :m 5 .
+:s :bf "false"^^xsd:boolean .
+:s :bt "true"^^xsd:boolean .
+"#,
+    );
+    assert!(
+        query_ask(
+            &ds,
+            "PREFIX : <http://example.org/> ASK { :s :n ?a . :s :m ?b . FILTER(?a < ?b) }"
+        ),
+        "numeric comparison must still work"
+    );
+    assert!(
+        query_ask(
+            &ds,
+            "PREFIX : <http://example.org/> ASK { :s :bf ?a . :s :bt ?b . FILTER(?a < ?b) }"
+        ),
+        "xsd:boolean false < true must now be comparable (SPARQL 1.1 §17.1's \
+         boolean ordering; previously unsupported by compare_graph_elements)"
+    );
+}
+
+/// `STR()` (and, by the same shared `graph_element_to_string` helper,
+/// `REGEX()`'s text argument) must work on any literal per SPARQL 1.1
+/// §17.4.3's definition — including natively-typed numeric/boolean/date
+/// literals, not just string/lang/TypedLiteral-shaped ones. This is what
+/// `sh:pattern`'s ported FilterAtom rule (`REGEX(STR(v), pattern)`) depends
+/// on for a value node with e.g. an `xsd:integer` or `xsd:date` datatype.
+#[test]
+fn regression_631_str_and_regex_cover_native_literal_kinds() {
+    let ds = parse_inline_ttl(
+        r#"
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX : <http://example.org/>
+:s :n 42 .
+:s :b true .
+"#,
+    );
+    assert!(
+        query_ask(
+            &ds,
+            r#"PREFIX : <http://example.org/> ASK { :s :n ?v . FILTER(STR(?v) = "42") }"#
+        ),
+        "STR() of a native IntegerLiteral must be its lexical form"
+    );
+    assert!(
+        query_ask(
+            &ds,
+            r#"PREFIX : <http://example.org/> ASK { :s :n ?v . FILTER(REGEX(STR(?v), "^4")) }"#
+        ),
+        "REGEX() must be able to match against a native IntegerLiteral's \
+         lexical form via STR(), not silently fail to resolve the text arg"
+    );
+    assert!(
+        query_ask(
+            &ds,
+            r#"PREFIX : <http://example.org/> ASK { :s :b ?v . FILTER(STR(?v) = "true") }"#
+        ),
+        "STR() of a native BooleanLiteral must be its lexical form"
+    );
+}

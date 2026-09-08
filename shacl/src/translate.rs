@@ -27,6 +27,7 @@ Contact: hovlanddag@gmail.com
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
 use crate::ViolMeta;
+use crate::evaluate::regex_with_flags;
 use crate::graph;
 use crate::shapes::{ElemValue, NodeKindValue, ParsedShape, PropConstraint, Target};
 use crate::vocab::*;
@@ -676,15 +677,176 @@ fn prop_constraint_rules(
             vec![viol]
         }
 
+        // §4.1.2 sh:datatype — ported to a FilterAtom-guarded Datalog rule
+        // (#631, following #62/#632's Phase E4 pattern).
+        // `DATATYPE(v) = D` alone would miss #325's lexical-well-formedness
+        // requirement (a `TypedLiteral` tagged `D` whose lexical form doesn't
+        // actually parse under `D`, e.g. `"aldi"^^xsd:integer`, must still
+        // violate) — `IS_LEXICALLY_VALID` is a non-standard internal
+        // extension added specifically for this (see its doc comment in
+        // sparql_parser/src/execute/functions.rs) that ports
+        // `has_datatype`/`is_well_formed_lexical`'s exact per-datatype-IRI
+        // checks without changing `DATATYPE()`'s own spec-correct semantics.
+        // `has_datatype`/`is_well_formed_lexical` themselves stay in
+        // evaluate.rs — still used by `constraint_conforms`.
+        PropConstraint::Datatype(dt_iri) => {
+            let viol = graph::intern_iri(work, &viol_datatype(si, pi));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(RuleAtom::FilterAtom(Expression::Unary(
+                UnaryOp::Not,
+                Box::new(Expression::Binary(
+                    Box::new(Expression::Binary(
+                        Box::new(Expression::FunctionCall(
+                            "DATATYPE".into(),
+                            vec![Expression::Variable(value_var.into())],
+                        )),
+                        BinaryOp::Eq,
+                        Box::new(Expression::Constant(GraphElement::NodeOrEdge(
+                            dag_rdf::RdfResource::Iri(ingress::IriReference(dt_iri.clone())),
+                        ))),
+                    )),
+                    BinaryOp::And,
+                    Box::new(Expression::FunctionCall(
+                        "IS_LEXICALLY_VALID".into(),
+                        vec![
+                            Expression::Variable(value_var.into()),
+                            Expression::Constant(GraphElement::NodeOrEdge(
+                                dag_rdf::RdfResource::Iri(ingress::IriReference(dt_iri.clone())),
+                            )),
+                        ],
+                    )),
+                )),
+            )));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable(value_var.into()),
+                )),
+                body,
+            });
+            vec![viol]
+        }
+
+        // §4.3 value range — ported to FilterAtom-guarded Datalog rules
+        // (#631). `FILTER(!(v <op> bound))` relies on the same
+        // error-defaults-to-false-then-negates-to-true mechanics PR #632
+        // established for sh:nodeKind/sh:languageIn: an incomparable pair
+        // (per the now type-aware `compare_graph_elements`, #631) makes the
+        // comparison evaluate to `None`, which `eval_expression_bool`'s
+        // `Unary(Not, _)` arm treats as `false` before negating — i.e.
+        // "cannot be validly compared to the bound" correctly becomes a
+        // violation (the same rule already applied to `sh:lessThan`, #303),
+        // with no special-casing needed here.
+        PropConstraint::MinInclusive(bound) => range_constraint_rule(
+            bound,
+            BinaryOp::Ge,
+            &viol_min_inclusive(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+        PropConstraint::MaxInclusive(bound) => range_constraint_rule(
+            bound,
+            BinaryOp::Le,
+            &viol_max_inclusive(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+        PropConstraint::MinExclusive(bound) => range_constraint_rule(
+            bound,
+            BinaryOp::Gt,
+            &viol_min_exclusive(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+        PropConstraint::MaxExclusive(bound) => range_constraint_rule(
+            bound,
+            BinaryOp::Lt,
+            &viol_max_exclusive(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+
+        // §4.4.3 sh:pattern — ported to a FilterAtom-guarded Datalog rule
+        // (#631). `REGEX(STR(v), pattern, flags)` relies on #631's
+        // `graph_element_to_string` widening (used by both `STR()` and
+        // `REGEX()`'s text argument) to cover every literal kind, not just
+        // string-shaped ones — matching `lexical_form`'s coverage. A blank
+        // node value node still correctly always-violates: `STR()` returns
+        // `None` for a blank node (`graph_element_to_string` only handles
+        // literals/IRIs), so the inner `REGEX(...)` call errors, which
+        // `Not(_)` — same mechanics as above — turns into `true`. An invalid
+        // regex pattern is checked at rule-*generation* time (mirroring the
+        // existing `evaluate::regex_with_flags`/`Regex::new` skip-with-
+        // warning behavior) so a shape with a broken pattern still produces
+        // no rule/no violations, rather than becoming "every value violates"
+        // via the same error-to-true mechanics.
+        PropConstraint::Pattern(pat, flags) => {
+            let full_pat = regex_with_flags(pat, flags.as_deref());
+            if let Err(e) = regex::Regex::new(&full_pat) {
+                log::warn!("sh:pattern regex '{}' invalid: {e}", pat);
+                return vec![];
+            }
+            let viol = graph::intern_iri(work, &viol_pattern(si, pi));
+            let mut regex_args = vec![
+                Expression::FunctionCall(
+                    "STR".into(),
+                    vec![Expression::Variable(value_var.into())],
+                ),
+                Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    pat.clone(),
+                ))),
+            ];
+            if let Some(f) = flags {
+                regex_args.push(Expression::Constant(GraphElement::GraphLiteral(
+                    RdfLiteral::LiteralString(f.clone()),
+                )));
+            }
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(RuleAtom::FilterAtom(Expression::Unary(
+                UnaryOp::Not,
+                Box::new(Expression::FunctionCall("REGEX".into(), regex_args)),
+            )));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable(value_var.into()),
+                )),
+                body,
+            });
+            vec![viol]
+        }
+
         // Phase 2 constraints — evaluated in evaluate.rs, skip here
-        PropConstraint::Datatype(_)
-        | PropConstraint::MinInclusive(_)
-        | PropConstraint::MaxInclusive(_)
-        | PropConstraint::MinExclusive(_)
-        | PropConstraint::MaxExclusive(_)
-        | PropConstraint::MinLength(_)
+        PropConstraint::MinLength(_)
         | PropConstraint::MaxLength(_)
-        | PropConstraint::Pattern(_, _)
         | PropConstraint::UniqueLang
         | PropConstraint::Equals(_)
         | PropConstraint::Disjoint(_)
@@ -693,6 +855,92 @@ fn prop_constraint_rules(
         | PropConstraint::NodeShape(_)
         | PropConstraint::QualifiedValueShape { .. } => {
             vec![]
+        }
+    }
+}
+
+/// Build a `sh:minInclusive`/`sh:maxInclusive`/`sh:minExclusive`/
+/// `sh:maxExclusive` FilterAtom rule: `FILTER(!(v <op> bound))`, where `op`
+/// is the comparison that must hold for conformance (`>=` for
+/// `sh:minInclusive`, etc.). If `bound` isn't a literal (a malformed shape —
+/// per spec the bound must be a literal), mirrors
+/// `evaluate::range_violates`'s `_ => true` fallback: every value node
+/// unconditionally violates, via a constant-`true` FilterAtom rather than a
+/// comparison.
+#[allow(clippy::too_many_arguments)]
+fn range_constraint_rule(
+    bound: &ElemValue,
+    op: BinaryOp,
+    viol_iri: &str,
+    value_var: &str,
+    target_pred: GraphElementId,
+    true_id: GraphElementId,
+    path_atom: impl Fn(&str) -> Option<RuleAtom>,
+    rules: &mut Vec<Rule>,
+    work: &mut Datastore,
+) -> Vec<GraphElementId> {
+    let viol = graph::intern_iri(work, viol_iri);
+    let mut body = vec![pos(
+        Term::Variable("n".into()),
+        Term::Resource(target_pred),
+        Term::Resource(true_id),
+    )];
+    body.extend(path_atom("n"));
+    let filter_expr = match elem_value_to_constant(bound) {
+        Some(bound_const) => Expression::Unary(
+            UnaryOp::Not,
+            Box::new(Expression::Binary(
+                Box::new(Expression::Variable(value_var.into())),
+                op,
+                Box::new(bound_const),
+            )),
+        ),
+        None => Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true))),
+    };
+    body.push(RuleAtom::FilterAtom(filter_expr));
+    rules.push(Rule {
+        head: RuleHead::NormalHead(dgp(
+            Term::Variable("n".into()),
+            Term::Resource(viol),
+            Term::Variable(value_var.into()),
+        )),
+        body,
+    });
+    vec![viol]
+}
+
+/// Convert a shape-constraint bound `ElemValue` (e.g. the value of
+/// `sh:minInclusive`) directly into a `GraphElement` constant, for use in a
+/// `FilterAtom` expression — no `Datastore` interning needed since
+/// `Expression::Constant` carries a value, not a `GraphElementId`. Returns
+/// `None` for `ElemValue::BlankNode` (not a valid range-constraint bound
+/// per spec; the caller falls back to "always violates", matching
+/// `bound_to_comparable`'s existing `None` case).
+fn elem_value_to_constant(elem: &ElemValue) -> Option<Expression> {
+    match elem {
+        ElemValue::Iri(iri) => Some(Expression::Constant(GraphElement::NodeOrEdge(
+            dag_rdf::RdfResource::Iri(ingress::IriReference(iri.clone())),
+        ))),
+        ElemValue::BlankNode(_) => None,
+        ElemValue::Literal {
+            value,
+            datatype,
+            lang,
+        } => {
+            let lit = if let Some(lang) = lang {
+                RdfLiteral::LangLiteral {
+                    lang: lang.clone(),
+                    literal: value.clone(),
+                }
+            } else if let Some(dt) = datatype {
+                RdfLiteral::TypedLiteral {
+                    type_iri: ingress::IriReference(dt.clone()),
+                    literal: value.clone(),
+                }
+            } else {
+                RdfLiteral::LiteralString(value.clone())
+            };
+            Some(Expression::Constant(GraphElement::GraphLiteral(lit)))
         }
     }
 }
