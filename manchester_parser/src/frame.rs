@@ -307,11 +307,7 @@ pub(crate) fn object_property_frame<'a>(
                 ObjectPropertySection::Range(list) => {
                     for (anns, expr) in list {
                         axioms.push(Axiom::AxiomObjectPropertyAxiom(
-                            ObjectPropertyAxiom::ObjectPropertyRange(
-                                anns,
-                                self_prop.clone(),
-                                expr,
-                            ),
+                            ObjectPropertyAxiom::ObjectPropertyRange(anns, self_prop.clone(), expr),
                         ));
                     }
                 }
