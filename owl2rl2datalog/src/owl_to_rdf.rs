@@ -35,16 +35,10 @@ Contact: hovlanddag@gmail.com
 //! [#509](https://github.com/daghovland/rdf-datalog/issues/509), split out of
 //! the still-open parent tracking issue
 //! [#373](https://github.com/daghovland/rdf-datalog/issues/373) (see that
-//! issue's other follow-ups too: property chains
-//! [#510](https://github.com/daghovland/rdf-datalog/issues/510), `HasKey`
-//! [#511](https://github.com/daghovland/rdf-datalog/issues/511),
-//! `DatatypeDefinition`
-//! [#512](https://github.com/daghovland/rdf-datalog/issues/512), n-ary
+//! issue's other follow-ups too: `DatatypeDefinition`
+//! [#512](https://github.com/daghovland/rdf-datalog/issues/512) and n-ary
 //! disjoint/different constructs
-//! [#513](https://github.com/daghovland/rdf-datalog/issues/513), annotation
-//! axioms [#514](https://github.com/daghovland/rdf-datalog/issues/514), and
-//! ontology header triples
-//! [#515](https://github.com/daghovland/rdf-datalog/issues/515)).
+//! [#513](https://github.com/daghovland/rdf-datalog/issues/513)).
 //!
 //! `DisjointUnionOf` over atomic (named) class-expression members *is*
 //! translated in this pass — the `owl:disjointUnionOf`/`rdf:List` encoding
@@ -52,6 +46,11 @@ Contact: hovlanddag@gmail.com
 //! member is a plain named class, which is the common case. A `DisjointUnion`
 //! whose members include a genuinely complex class expression still falls
 //! back to [#509](https://github.com/daghovland/rdf-datalog/issues/509).
+//!
+//! `SubObjectPropertyOf` with a property-chain sub-expression (`owl:propertyChainAxiom`)
+//! *is* translated too, per
+//! [#510](https://github.com/daghovland/rdf-datalog/issues/510) — see
+//! `Translator::object_property_axiom`'s `PropertyExpressionChain` arm.
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
@@ -64,11 +63,12 @@ use ingress::{
     OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY, OWL_MIN_CARDINALITY,
     OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF,
     OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_PROPERTIES, OWL_ON_PROPERTY,
-    OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_DISJOINT_WITH, OWL_QUALIFIED_CARDINALITY,
-    OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION, OWL_SAME_AS, OWL_SOME_VALUES_FROM,
-    OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, OWL_UNION_OF, OWL_VERSION_IRI,
-    OntologyVersion, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN,
-    RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF, RdfLiteral, XSD_NON_NEGATIVE_INTEGER,
+    OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_CHAIN_AXIOM, OWL_PROPERTY_DISJOINT_WITH,
+    OWL_QUALIFIED_CARDINALITY, OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION, OWL_SAME_AS,
+    OWL_SOME_VALUES_FROM, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, OWL_UNION_OF,
+    OWL_VERSION_IRI, OntologyVersion, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE,
+    RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF, RdfLiteral,
+    XSD_NON_NEGATIVE_INTEGER,
 };
 use owl_ontology::{
     Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
@@ -832,6 +832,36 @@ impl<'a> Translator<'a> {
                 }
                 _ => self.skip("SubObjectPropertyOf with complex expression", axiom),
             },
+            // `SubObjectPropertyOf(ObjectPropertyChain(OPE1 ... OPEn) OPE)`:
+            // <https://www.w3.org/TR/owl2-mapping-to-rdf/> Table 18 — the
+            // super-property `OPE` gets `owl:propertyChainAxiom
+            // T(SEQ OPE1 ... OPEn)`, an `rdf:List` of the chain members.
+            // Chain members are resolved via `named_object_property`, same
+            // as every other property-expression site here, so an inverse
+            // or nested-chain member (not yet given an RDF encoding) causes
+            // the whole axiom to be skipped rather than partially emitted.
+            ObjectPropertyAxiom::SubObjectPropertyOf(
+                annotations,
+                SubPropertyExpression::PropertyExpressionChain(chain),
+                sup,
+            ) => match (
+                self.named_object_properties(chain),
+                self.named_object_property(sup),
+            ) {
+                (Some(chain_ids), Some(sup_id)) => {
+                    let list_head = self.rdf_list(&chain_ids);
+                    self.triple_p_annotated(
+                        sup_id,
+                        OWL_PROPERTY_CHAIN_AXIOM,
+                        list_head,
+                        annotations,
+                    );
+                }
+                _ => self.skip(
+                    "SubObjectPropertyOf property chain with unsupported member",
+                    axiom,
+                ),
+            },
             ObjectPropertyAxiom::EquivalentObjectProperties(annotations, props) => {
                 match self.named_object_properties(props) {
                     Some(ids) => self.chain(&ids, OWL_EQUIVALENT_PROPERTY, annotations),
@@ -1440,6 +1470,113 @@ mod tests {
             RDF_TYPE,
             &IriReference(OWL_SYMMETRIC_PROPERTY.to_owned())
         ));
+    }
+
+    // ── SubObjectPropertyOf property chain (#510) ──────────────────────────
+    //
+    // <https://www.w3.org/TR/owl2-mapping-to-rdf/> Table 18's
+    // `SubObjectPropertyOf(ObjectPropertyChain(OPE1 ... OPEn) OPE)` row:
+    // `T(OPE) owl:propertyChainAxiom T(SEQ OPE1 ... OPEn)`. The predicate
+    // hangs off the *super*-property node, with the chain members as an
+    // `rdf:List` object — confirmed against `rdf_owl_translator`'s read-back
+    // side (`axiom_parser.rs`'s `owl:propertyChainAxiom` arm), which reads
+    // `triple.subject` as the super-property and the list as the chain.
+
+    #[test]
+    fn sub_object_property_of_chain_becomes_property_chain_axiom() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::SubObjectPropertyOf(
+                vec![],
+                SubPropertyExpression::PropertyExpressionChain(vec![
+                    obj_prop("hasParent"),
+                    obj_prop("hasParent"),
+                ]),
+                obj_prop("hasGrandparent"),
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head = object_of(&ds, &ex("hasGrandparent"), OWL_PROPERTY_CHAIN_AXIOM)
+            .expect("owl:propertyChainAxiom triple must exist");
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("hasParent"), ex("hasParent")]
+        );
+        // owl:propertyChainAxiom triple + 2 list cells * 2 triples
+        assert_eq!(report.triples_added, 5);
+    }
+
+    #[test]
+    fn sub_object_property_of_chain_of_three_preserves_list_order() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::SubObjectPropertyOf(
+                vec![],
+                SubPropertyExpression::PropertyExpressionChain(vec![
+                    obj_prop("hasFather"),
+                    obj_prop("hasBrother"),
+                    obj_prop("hasSon"),
+                ]),
+                obj_prop("hasNephewByBrother"),
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let list_head = object_of(&ds, &ex("hasNephewByBrother"), OWL_PROPERTY_CHAIN_AXIOM)
+            .expect("owl:propertyChainAxiom triple must exist");
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("hasFather"), ex("hasBrother"), ex("hasSon")]
+        );
+    }
+
+    #[test]
+    fn sub_object_property_of_chain_with_annotation_is_reified_via_owl_axiom() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::SubObjectPropertyOf(
+                vec![annotation("source", "a good textbook")],
+                SubPropertyExpression::PropertyExpressionChain(vec![
+                    obj_prop("hasParent"),
+                    obj_prop("hasParent"),
+                ]),
+                obj_prop("hasGrandparent"),
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let sup_id = id_of(&ds, &ex("hasGrandparent")).expect("interned");
+        let predicate_id = id_of(&ds, &IriReference(OWL_PROPERTY_CHAIN_AXIOM.to_owned()))
+            .expect("owl:propertyChainAxiom interned");
+        let list_head = object_of(&ds, &ex("hasGrandparent"), OWL_PROPERTY_CHAIN_AXIOM)
+            .expect("owl:propertyChainAxiom triple must exist");
+        let node = find_reification_node_id(&ds, sup_id, predicate_id, list_head)
+            .expect("owl:Axiom reification node must exist");
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "reification node must carry the annotation triple"
+        );
+    }
+
+    /// A chain member that is itself unsupported (an inverse property
+    /// expression, since `Translator::named_object_property` only resolves
+    /// named/anonymous properties) is recorded in `skipped` rather than
+    /// silently dropped or panicking.
+    #[test]
+    fn sub_object_property_of_chain_with_inverse_member_is_skipped() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::SubObjectPropertyOf(
+                vec![],
+                SubPropertyExpression::PropertyExpressionChain(vec![
+                    ObjectPropertyExpression::InverseObjectProperty(Box::new(obj_prop(
+                        "hasParent",
+                    ))),
+                    obj_prop("hasParent"),
+                ]),
+                obj_prop("hasGrandparent"),
+            ),
+        )]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(object_of(&ds, &ex("hasGrandparent"), OWL_PROPERTY_CHAIN_AXIOM).is_none());
     }
 
     #[test]
