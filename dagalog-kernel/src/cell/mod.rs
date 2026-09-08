@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// An error dispatching a single notebook cell (see
-/// [`crate::sockets::dispatch_cell`]).
+/// `crate::sockets::dispatch_cell`, private to that module).
 ///
 /// Before this, `dispatch_cell` collapsed every failure mode into a bare
 /// `Result<_, String>` — indistinguishable from each other except by
