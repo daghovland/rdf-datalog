@@ -399,13 +399,13 @@ fn class_nary(
 fn classify_object_property_axiom(a: &ObjectPropertyAxiom) -> Option<Emission> {
     use ObjectPropertyAxiom::*;
     match a {
-        ObjectPropertyDomain(p, c) => {
+        ObjectPropertyDomain(anns, p, c) => {
             let rhs = fmt_class_expr(c)?;
-            obj_prop_frame_line(p, "Domain", &[], &rhs)
+            obj_prop_frame_line(p, "Domain", anns, &rhs)
         }
-        ObjectPropertyRange(p, c) => {
+        ObjectPropertyRange(anns, p, c) => {
             let rhs = fmt_class_expr(c)?;
-            obj_prop_frame_line(p, "Range", &[], &rhs)
+            obj_prop_frame_line(p, "Range", anns, &rhs)
         }
         SubObjectPropertyOf(anns, sub, sup) => {
             let SubPropertyExpression::SubObjectPropertyExpression(sub_expr) = sub else {

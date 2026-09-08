@@ -426,6 +426,7 @@ pub fn extract_axiom(
                 res,
                 |ope| {
                     Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+                        axiom_anns.clone(),
                         ope,
                         range_ce.clone(),
                     ))
@@ -447,7 +448,9 @@ pub fn extract_axiom(
             |ope| {
                 let obj_ce = decls.class_expression(triple.obj, res);
                 Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(
-                    ope, obj_ce,
+                    axiom_anns.clone(),
+                    ope,
+                    obj_ce,
                 ))
             },
             |dp| {

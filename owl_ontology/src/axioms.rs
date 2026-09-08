@@ -167,9 +167,9 @@ pub enum ClassExpression {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ObjectPropertyAxiom {
     /// Declares the domain of an object property.
-    ObjectPropertyDomain(ObjectPropertyExpression, ClassExpression),
+    ObjectPropertyDomain(Vec<Annotation>, ObjectPropertyExpression, ClassExpression),
     /// Declares the range of an object property.
-    ObjectPropertyRange(ObjectPropertyExpression, ClassExpression),
+    ObjectPropertyRange(Vec<Annotation>, ObjectPropertyExpression, ClassExpression),
     /// One object property expression is a sub-property of another.
     SubObjectPropertyOf(
         Vec<Annotation>,

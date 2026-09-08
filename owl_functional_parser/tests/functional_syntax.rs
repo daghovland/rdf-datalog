@@ -129,7 +129,7 @@ fn object_property_domain_and_range() {
     assert_eq!(onto.axioms.len(), 2);
     assert!(matches!(
         onto.axioms[0],
-        Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(_, _))
+        Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(_, _, _))
     ));
 }
 
@@ -254,6 +254,31 @@ fn axiom_annotations_attach_to_sub_class_of() {
             assert_eq!(anns.len(), 1);
         }
         other => panic!("expected annotated SubClassOf, got {other:?}"),
+    }
+}
+
+#[test]
+fn axiom_annotations_attach_to_object_property_domain_and_range() {
+    // Follow-up from #514/#588: ObjectPropertyDomain/Range now carry a
+    // Vec<Annotation> like every other ObjectPropertyAxiom variant, so
+    // axiomAnnotations parsed here must reach the axiom instead of being
+    // dropped (see the now-removed "Type-model gaps" note in
+    // docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md).
+    let onto = parse_body(
+        "ObjectPropertyDomain(Annotation(rdfs:label \"why\") :hasTopping :Pizza)\n\
+         ObjectPropertyRange(Annotation(rdfs:label \"why\") :hasTopping :Topping)",
+    );
+    match &onto.axioms[0] {
+        Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(anns, _, _)) => {
+            assert_eq!(anns.len(), 1);
+        }
+        other => panic!("expected annotated ObjectPropertyDomain, got {other:?}"),
+    }
+    match &onto.axioms[1] {
+        Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(anns, _, _)) => {
+            assert_eq!(anns.len(), 1);
+        }
+        other => panic!("expected annotated ObjectPropertyRange, got {other:?}"),
     }
 }
 

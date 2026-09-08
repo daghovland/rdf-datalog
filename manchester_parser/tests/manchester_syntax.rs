@@ -408,10 +408,10 @@ fn object_property_domain_range_and_characteristics() {
     ))
     .unwrap();
     assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
-        ObjectPropertyAxiom::ObjectPropertyDomain(obj_prop("hasTopping"), cls("Pizza"))
+        ObjectPropertyAxiom::ObjectPropertyDomain(vec![], obj_prop("hasTopping"), cls("Pizza"))
     )));
     assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
-        ObjectPropertyAxiom::ObjectPropertyRange(obj_prop("hasTopping"), cls("Topping"))
+        ObjectPropertyAxiom::ObjectPropertyRange(vec![], obj_prop("hasTopping"), cls("Topping"))
     )));
     assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
         ObjectPropertyAxiom::InverseFunctionalObjectProperty(vec![], obj_prop("hasTopping"))
@@ -419,6 +419,36 @@ fn object_property_domain_range_and_characteristics() {
     assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
         ObjectPropertyAxiom::TransitiveObjectProperty(vec![], obj_prop("hasTopping"))
     )));
+}
+
+#[test]
+fn object_property_domain_and_range_with_annotations_are_preserved() {
+    // Follow-up from #514/#588: ObjectPropertyDomain/Range now carry a
+    // Vec<Annotation> like every sibling axiom variant, so per-item
+    // `Annotations:` (already parsed for forward-compat, see
+    // `annotated_list`) must actually reach the axiom instead of being
+    // discarded.
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("ObjectProperty: hasTopping\n    Domain: Annotations: rdfs:comment \"only pizzas\" Pizza\n    Range: Annotations: rdfs:comment \"only toppings\" Topping")
+    ))
+    .unwrap();
+    let domain_found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(anns, p, c))
+                if !anns.is_empty() && *p == obj_prop("hasTopping") && *c == cls("Pizza")
+        )
+    });
+    assert!(domain_found, "expected an annotated ObjectPropertyDomain");
+    let range_found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(anns, p, c))
+                if !anns.is_empty() && *p == obj_prop("hasTopping") && *c == cls("Topping")
+        )
+    });
+    assert!(range_found, "expected an annotated ObjectPropertyRange");
 }
 
 #[test]

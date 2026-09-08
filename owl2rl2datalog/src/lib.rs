@@ -251,10 +251,10 @@ fn object_property_axiom2datalog(
     axiom: &ObjectPropertyAxiom,
 ) -> Vec<Rule> {
     match axiom {
-        ObjectPropertyAxiom::ObjectPropertyDomain(prop, domain) => {
+        ObjectPropertyAxiom::ObjectPropertyDomain(_, prop, domain) => {
             object_property_domain(resources, prop, domain)
         }
-        ObjectPropertyAxiom::ObjectPropertyRange(prop, range) => {
+        ObjectPropertyAxiom::ObjectPropertyRange(_, prop, range) => {
             object_property_range(resources, prop, range)
         }
         ObjectPropertyAxiom::SubObjectPropertyOf(_, sub_prop, super_prop) => {
@@ -543,6 +543,7 @@ mod tbox_retraction_tests {
         let bob_iri = IriReference("http://example.org/bob".to_string());
 
         let axiom = Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+            vec![],
             ObjectPropertyExpression::NamedObjectProperty(FullIri(has_parent_iri.clone())),
             ClassExpression::ClassName(FullIri(person_iri.clone())),
         ));
