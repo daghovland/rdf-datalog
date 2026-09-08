@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log
+# 5c076472f3a59882a284640e5d58dbfdd84a843e..HEAD` on branch
+# feat/588-objectproperty-annotations).
+
+ghpull:640 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl_ontology: add Vec<Annotation> to ObjectPropertyDomain/Range" ;
+    bl:number 640 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:588 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr640 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:588 ;
+    prov:startedAtTime "2026-09-01T14:05:20+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-08T16:04:49Z"^^xsd:dateTime .
+
+session:pr640Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #588 (filed by PR #571's own decision record while implementing #514) asked for owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain/ObjectPropertyRange to gain a Vec<Annotation> field, matching every sibling axiom variant, so owl2rl2datalog's owl2rdf Translator could stop falling back to an unannotated triple_p for exactly those two arms. Checked provenance for owl_ontology/src/axioms.rs and crate:owl_ontology up front (the SPARQL query tool itself timed out under a contended shared cargo build, so the lookup was done directly against provenance/summaries/pr-571.ttl instead, which names this exact gap and #588 as the filed follow-up -- the authoritative prior art). Added the field, then mirrored DataPropertyAxiom::DataPropertyDomain/Range's existing pattern at every call site: owl_to_rdf.rs's object_property_axiom switched from triple_p to triple_p_annotated (plus a new reification test copying subclassof_with_annotation_is_reified_via_owl_axiom's shape); owl2rl2datalog/src/lib.rs's rule compiler just binds and ignores the new field (`_`); rdf_owl_translator/src/axiom_parser.rs threads the already-computed axiom_anns into the object-property closures the same way the data-property sibling closures already did; manchester_parser/src/frame.rs and serialize.rs stopped discarding the per-item Domain:/Range: Annotations: that were already being parsed for forward-compat and dropped as `_anns`. Mid-branch, `main` had moved forward with several unrelated PRs, including a brand-new owl_functional_parser crate (#627) added after this branch's base commit -- CI's first run on the completed diff failed to compile because that crate's own object_property_axiom parser had the identical gap, already documented in its own doc comment and docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md's 'Type-model gaps' section, with a warn_if_annotations_dropped workaround. Merged origin/main (clean, no conflicts), then removed that workaround and threaded axiomAnnotations through for real, updating the two docs (CLAUDE.md, the functional-syntax plan) that described the now-resolved limitation. Also hit two environment issues unrelated to the code: the shared cargo target dir filled the 79GB disk mid-build (cargo clean freed it, twice) and a stale-incremental-cache compile error (CLAUDE.md's documented concurrent-worktree hazard) that a `touch` + rebuild resolved without any code change." ;
+    agp:reasoningFor ghpull:640 ;
+    agp:decisionPoint session:pr640Decision ;
+    prov:wasGeneratedBy session:pr640 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr640Decision a agp:Decision ;
+    agp:summaryText "When the first CI run on the completed diff failed with owl_functional_parser compile errors, the fix was to merge origin/main into this branch (bringing in the new crate) rather than rebase or cherry-pick, since the branch's own checkpoint commits were already pushed and merge preserves that history without rewriting shared refs; git resolved it with no conflicts because the new crate's ObjectPropertyDomain/Range call sites were additions, not edits, to lines this branch had touched." ;
+    agp:alternative "Considered leaving owl_functional_parser's warn_if_annotations_dropped workaround in place as a separate follow-up, since #588's stated scope was owl_ontology plus 'every parser/serializer/translator that constructs or matches these variants' at the time the branch was created -- before owl_functional_parser existed. Rejected: the workaround's own doc comment already pointed at this exact gap as the reason it existed, so leaving it while the type it complained about no longer had the gap would just be a second follow-up for the same root cause; fixing it here is a few lines given the axiom_anns/anns plumbing was already fresh in context." .
