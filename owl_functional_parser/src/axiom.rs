@@ -150,21 +150,6 @@ fn sub_object_property_expression<'a>(
     }
 }
 
-/// `ObjectPropertyDomain`/`ObjectPropertyRange` have no `Vec<Annotation>`
-/// slot on `owl_ontology::ObjectPropertyAxiom` (unlike every other variant
-/// in that enum) — see `docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`'s
-/// "Type-model gaps" section. Any `axiomAnnotations` parsed here are dropped
-/// with a `log::warn!` when non-empty.
-fn warn_if_annotations_dropped(keyword: &str, anns: &[owl_ontology::Annotation]) {
-    if !anns.is_empty() {
-        log::warn!(
-            "owl_functional_parser: dropping {} axiomAnnotations on {keyword}(...) -- \
-             owl_ontology::ObjectPropertyAxiom::{keyword} has no Vec<Annotation> slot (#180)",
-            anns.len()
-        );
-    }
-}
-
 fn object_property_axiom<'a>(
     ctx: &'a ParserContext,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, Axiom> {
@@ -223,8 +208,9 @@ fn object_property_axiom<'a>(
                     ),
                 ),
                 |(anns, p, c)| {
-                    warn_if_annotations_dropped("ObjectPropertyDomain", &anns);
-                    Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(p, c))
+                    Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+                        anns, p, c,
+                    ))
                 },
             ),
             nom::combinator::map(
@@ -237,8 +223,9 @@ fn object_property_axiom<'a>(
                     ),
                 ),
                 |(anns, p, c)| {
-                    warn_if_annotations_dropped("ObjectPropertyRange", &anns);
-                    Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(p, c))
+                    Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyRange(
+                        anns, p, c,
+                    ))
                 },
             ),
             nom::combinator::map(
@@ -721,7 +708,7 @@ mod tests {
         let (_, ax) = axiom(&ctx)("ObjectPropertyDomain(:hasTopping :Pizza)").unwrap();
         assert!(matches!(
             ax,
-            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(_, _))
+            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(_, _, _))
         ));
         let (_, ax2) = axiom(&ctx)("TransitiveObjectProperty(:hasPart)").unwrap();
         assert!(matches!(

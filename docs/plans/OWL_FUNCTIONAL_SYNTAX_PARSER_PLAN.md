@@ -303,7 +303,7 @@ nothing "extra" lands before the mandated tier is complete.
 3. **Property expressions & named-datatype data ranges** — `property_expr.rs` (`ObjectInverseOf`); `data_range.rs` limited to `DataRange ::= Datatype` (bare named datatype only — `DataIntersectionOf`/`DataUnionOf`/`DataComplementOf`/`DataOneOf`/`DatatypeRestriction` moved to phase 11).
 4. **Class expressions** — `class_expr.rs`'s full keyword set: boolean combinators, `ObjectOneOf`, all restriction forms (qualified/unqualified cardinalities, `ObjectHasSelf`, data restrictions over named-datatype ranges). Tested via minimal `SubClassOf(:C <expr>)` axioms so results assert against `ClassAxiom::SubClassOf`.
 5. **Class axioms** — `SubClassOf`, `EquivalentClasses`, `DisjointClasses`, `DisjointUnion`.
-6. **Object property axioms** — all keywords in §9.2 except `ObjectPropertyChain` as a `SubObjectPropertyOf` LHS (moved to phase 11); `SubObjectPropertyOf` in this phase only accepts a single `ObjectPropertyExpression` LHS. `ObjectPropertyDomain`/`ObjectPropertyRange` drop any `axiomAnnotations` with `log::warn!` — see "Type-model gaps" below; not a bug, a scoped limitation of the current `owl_ontology::ObjectPropertyAxiom` shape.
+6. **Object property axioms** — all keywords in §9.2 except `ObjectPropertyChain` as a `SubObjectPropertyOf` LHS (moved to phase 11); `SubObjectPropertyOf` in this phase only accepts a single `ObjectPropertyExpression` LHS. `ObjectPropertyDomain`/`ObjectPropertyRange` originally dropped any `axiomAnnotations` with `log::warn!` (the "Type-model gaps" note below) — resolved by [#588](https://github.com/daghovland/rdf-datalog/issues/588), which added the missing `Vec<Annotation>` slot to `owl_ontology::ObjectPropertyAxiom`.
 7. **Data property axioms, `DatatypeDefinition`** — §9.3–§9.4. `HasKey` (§9.5) moved to phase 11.
 8. **Assertions** — all seven ABox assertion keywords (§9.6), incl. anonymous individuals.
 9. **Annotation axioms + nested annotations** — `AnnotationAssertion`, `SubAnnotationPropertyOf`, `AnnotationPropertyDomain`/`Range`; verify `axiomAnnotations` attach correctly to axioms from earlier phases (re-test an axiom with a preceding `Annotation(...)`).
@@ -312,16 +312,13 @@ nothing "extra" lands before the mandated tier is complete.
 
 ## Type-model gaps found while parsing (not new `owl_ontology` types)
 
-- **`ObjectPropertyAxiom::ObjectPropertyDomain`/`ObjectPropertyRange` have no
-  `Vec<Annotation>` slot** (`owl_ontology/src/axioms.rs` lines 169–172),
-  unlike every other `ObjectPropertyAxiom` variant. The functional-syntax
-  grammar technically allows `axiomAnnotations` on both. Rather than widen
-  the shared `owl_ontology` enum for this parser alone, any
-  `axiomAnnotations` present on these two keywords are dropped with a
-  `log::warn!` (matching this crate family's existing convention — see
-  `manchester_parser`'s serializer — for constructs the target type model
-  can't fully represent). Widening the enum, if wanted later, is an
-  `owl_ontology`-crate change and out of scope for a parser-only PR.
+- **`ObjectPropertyAxiom::ObjectPropertyDomain`/`ObjectPropertyRange` had no
+  `Vec<Annotation>` slot**, unlike every other `ObjectPropertyAxiom`
+  variant, even though the functional-syntax grammar allows
+  `axiomAnnotations` on both — resolved by
+  [#588](https://github.com/daghovland/rdf-datalog/issues/588): both
+  variants now carry a leading `Vec<Annotation>`, threaded through here the
+  same way every other axiom's `anns` already was.
 - **`AnnotationAxiom::AnnotationAssertion`'s subject/value are
   `GraphElement`, not `Individual`/`Iri`.** An `_:x` anonymous-individual
   subject is lowered the same way `manchester_parser` already bridges
