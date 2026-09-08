@@ -297,17 +297,12 @@ fn eval_prop_constraint(
         MinCount(_) | MaxCount(_) | Class(_) | HasValue(_) | In(_) => vec![],
 
         // §4.1.2 sh:datatype
-        Datatype(dt_iri) => {
-            let viol = graph::intern_iri(work, &vocab::viol_datatype(si, pi));
-            for node in targets {
-                for val in values_of(*node) {
-                    if !has_datatype(data, val, dt_iri) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.1.2 sh:datatype — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 continued / #631); `has_datatype`/`is_well_formed_lexical`
+        // themselves are unchanged and still used by `constraint_conforms`
+        // below for inner-shape combinator checks.
+        Datatype(_) => vec![],
 
         // §4.1.3 sh:nodeKind — ported to a Datalog FilterAtom rule by
         // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
@@ -316,72 +311,12 @@ fn eval_prop_constraint(
         // checks (sh:and/or/not/xone/node/qualifiedValueShape).
         NodeKind(_) => vec![],
 
-        // §4.3 value range
-        //
-        // Per spec, a value node that cannot be compared to the bound (e.g.
-        // not a literal, or a literal whose datatype isn't ordered against
-        // the bound's) is itself a violation — the same "incomparable ⇒
-        // violation" rule already applied to sh:lessThan (#303). Previously
-        // these constraints silently skipped incomparable values instead of
-        // reporting them. See
-        // https://www.w3.org/TR/shacl/#ConstraintComponentsValueRange and
-        // https://github.com/daghovland/rdf-datalog/issues/311.
-        MinInclusive(bound) => {
-            let viol = graph::intern_iri(work, &vocab::viol_min_inclusive(si, pi));
-            let bound_val = bound_to_comparable(data, shapes_store, bound);
-            for node in targets {
-                for val in values_of(*node) {
-                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
-                        matches!(ord, Ordering::Greater | Ordering::Equal)
-                    }) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
-        MaxInclusive(bound) => {
-            let viol = graph::intern_iri(work, &vocab::viol_max_inclusive(si, pi));
-            let bound_val = bound_to_comparable(data, shapes_store, bound);
-            for node in targets {
-                for val in values_of(*node) {
-                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
-                        matches!(ord, Ordering::Less | Ordering::Equal)
-                    }) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
-        MinExclusive(bound) => {
-            let viol = graph::intern_iri(work, &vocab::viol_min_exclusive(si, pi));
-            let bound_val = bound_to_comparable(data, shapes_store, bound);
-            for node in targets {
-                for val in values_of(*node) {
-                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
-                        matches!(ord, Ordering::Greater)
-                    }) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
-        MaxExclusive(bound) => {
-            let viol = graph::intern_iri(work, &vocab::viol_max_exclusive(si, pi));
-            let bound_val = bound_to_comparable(data, shapes_store, bound);
-            for node in targets {
-                for val in values_of(*node) {
-                    if range_violates(&bound_val, lit_comparable(data, val), |ord| {
-                        matches!(ord, Ordering::Less)
-                    }) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.3 value range — ported to Datalog FilterAtom rules by
+        // translate.rs::range_constraint_rule (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 continued / #631); `bound_to_comparable`/`range_violates`/
+        // `lit_comparable` are unchanged and still used by
+        // `constraint_conforms` below for inner-shape combinator checks.
+        MinInclusive(_) | MaxInclusive(_) | MinExclusive(_) | MaxExclusive(_) => vec![],
 
         // §4.4.1 sh:minLength
         // Per spec: IRIs are tested by their string form (lexical_form
@@ -423,33 +358,12 @@ fn eval_prop_constraint(
             vec![(viol, constraint.component_iri())]
         }
 
-        // §4.4.3 sh:pattern
-        // Per spec: IRIs are tested by their string form (lexical_form
-        // returns Some), blank nodes always violate (lexical_form returns
-        // None) — see https://github.com/daghovland/rdf-datalog/issues/261
-        Pattern(pat, flags) => {
-            let viol = graph::intern_iri(work, &vocab::viol_pattern(si, pi));
-            let full_pat = regex_with_flags(pat, flags.as_deref());
-            match Regex::new(&full_pat) {
-                Err(e) => {
-                    log::warn!("sh:pattern regex '{}' invalid: {e}", pat);
-                }
-                Ok(re) => {
-                    for node in targets {
-                        for val in values_of(*node) {
-                            let violates = match lexical_form(data, val) {
-                                Some(s) => !re.is_match(&s),
-                                None => true,
-                            };
-                            if violates {
-                                add_viol(work, *node, viol, val);
-                            }
-                        }
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.4.3 sh:pattern — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 continued / #631); `regex_with_flags`/`lexical_form`
+        // themselves are unchanged and still used by `constraint_conforms`
+        // below for inner-shape combinator checks.
+        Pattern(_, _) => vec![],
 
         // §4.4.4 sh:languageIn — ported to a Datalog FilterAtom rule by
         // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
@@ -1815,7 +1729,7 @@ fn codepoint_len(s: &str) -> usize {
 ///
 /// SHACL uses XPath regex flags: `i` (case-insensitive), `x` (extended), etc.
 /// The `regex` crate uses `(?flags)` inline notation.
-fn regex_with_flags(pattern: &str, flags: Option<&str>) -> String {
+pub(crate) fn regex_with_flags(pattern: &str, flags: Option<&str>) -> String {
     match flags {
         None | Some("") => pattern.to_owned(),
         Some(f) => {

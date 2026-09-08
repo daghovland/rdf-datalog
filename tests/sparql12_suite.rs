@@ -4350,7 +4350,6 @@ SELECT ?s ?v
 /// wrongly reported as a real `>` — masking exactly the bug class #303/#322/
 /// #325 fixed for SHACL's own `sparql_compare`.
 #[test]
-#[ignore = "#631: compare_graph_elements not yet type-aware"]
 fn regression_631_compare_cross_datatype_is_incomparable() {
     let ds = parse_inline_ttl(
         r#"
@@ -4377,7 +4376,6 @@ ASK { :s :a ?a . :s :b ?b . FILTER(?a > ?b) }
 /// fallback, never `BooleanLiteral`) must still work correctly after the
 /// type-aware rewrite.
 #[test]
-#[ignore = "#631: compare_graph_elements not yet type-aware"]
 fn regression_631_compare_same_kind_still_works() {
     let ds = parse_inline_ttl(
         r#"
@@ -4413,7 +4411,6 @@ PREFIX : <http://example.org/>
 /// `sh:pattern`'s ported FilterAtom rule (`REGEX(STR(v), pattern)`) depends
 /// on for a value node with e.g. an `xsd:integer` or `xsd:date` datatype.
 #[test]
-#[ignore = "#631: graph_element_to_string not yet widened"]
 fn regression_631_str_and_regex_cover_native_literal_kinds() {
     let ds = parse_inline_ttl(
         r#"

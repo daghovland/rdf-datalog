@@ -27,6 +27,7 @@ Contact: hovlanddag@gmail.com
 //! shapes store only (never inserted into a data-store triple or rule body directly).
 
 use crate::ViolMeta;
+use crate::evaluate::regex_with_flags;
 use crate::graph;
 use crate::shapes::{ElemValue, NodeKindValue, ParsedShape, PropConstraint, Target};
 use crate::vocab::*;
@@ -894,9 +895,7 @@ fn range_constraint_rule(
                 Box::new(bound_const),
             )),
         ),
-        None => Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
-            true,
-        ))),
+        None => Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true))),
     };
     body.push(RuleAtom::FilterAtom(filter_expr));
     rules.push(Rule {
