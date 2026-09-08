@@ -36,6 +36,12 @@ All improvements described here work within that architecture (no build tooling,
 
 ## Possible future improvements
 
+### LLM-powered chat panel
+
+Tracked as a distinct effort, not a small stretch item: see epic
+[#184](https://github.com/daghovland/rdf-datalog/issues/184) and the architecture scoping doc
+[docs/plans/LLM_CHAT_ARCHITECTURE_PLAN.md](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/LLM_CHAT_ARCHITECTURE_PLAN.md).
+
 ### Syntax highlighting (P3 stretch goal)
 
 Replace the plain `<textarea>` with **CodeMirror 6** (MIT, CDN-embeddable).

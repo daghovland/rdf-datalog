@@ -281,6 +281,62 @@ pub enum Entity {
 /// An entity declaration together with its annotations.
 pub type Declaration = (Vec<Annotation>, Entity);
 
+/// An argument to a SWRL [`Atom`]: a variable, a literal, or an individual
+/// (named, anonymous, or a datatype/class-name reference used positionally).
+///
+/// Unlike OWL 2 functional-syntax SWRL atoms, the Manchester-syntax concrete
+/// form this crate parses (`predicate(arg, arg, ...)`) can't distinguish an
+/// object-property argument from a data-property one without resolving the
+/// predicate's declared type, so `Individual` and `Literal` are both always
+/// syntactically reachable regardless of the atom's semantic kind.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AtomArg {
+    /// A SWRL variable, named without its leading `?` (e.g. `?p` is `"p"`).
+    Variable(String),
+    /// A literal value.
+    Literal(GraphElement),
+    /// A named or anonymous individual.
+    Individual(Individual),
+}
+
+/// A single atom in a SWRL rule's body or head.
+///
+/// See the [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/MANCHESTER_SYNTAX_PLAN.md)
+/// "`Rule:` SWRL frames" addendum for why there is no arity-1
+/// `BuiltInAtom`/data-range-atom variant here: every single-argument atom is
+/// parsed as a [`Atom::ClassAtom`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Atom {
+    /// `description(arg)` — `arg` is asserted to be an instance of the class
+    /// expression.
+    ClassAtom(ClassExpression, AtomArg),
+    /// `iri(arg1, arg2)` — an object-property atom, a data-property atom, or
+    /// a two-argument built-in, indistinguishable without resolving `iri`'s
+    /// declared entity type.
+    PropertyAtom(Iri, AtomArg, AtomArg),
+    /// `iri(arg, ...)` with any arity other than 1 or 2 — a built-in atom
+    /// (e.g. a 0- or 3+-argument `swrlb:` predicate).
+    BuiltInAtom(Iri, Vec<AtomArg>),
+}
+
+/// A SWRL rule: `body -> head`, both conjunctions of [`Atom`]s.
+///
+/// Held separately from [`Axiom`] on [`crate::Ontology::rules`] rather than
+/// as an `Axiom` variant: SWRL is a distinct W3C submission from OWL 2, and
+/// `Axiom` is matched exhaustively (without a wildcard) by
+/// `owl2rl2datalog::owl_to_rdf`'s RDF-translation walk, which has no
+/// corresponding RDF form for a rule to translate into.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SwrlRule {
+    /// Annotations on the rule itself (from an optional leading
+    /// `Annotations:` section).
+    pub annotations: Vec<Annotation>,
+    /// The rule's antecedent (left of `->`): a conjunction of atoms.
+    pub body: Vec<Atom>,
+    /// The rule's consequent (right of `->`): a conjunction of atoms.
+    pub head: Vec<Atom>,
+}
+
 /// The top-level OWL 2 axiom type, wrapping every axiom category.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Axiom {

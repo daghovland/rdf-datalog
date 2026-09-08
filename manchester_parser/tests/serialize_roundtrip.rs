@@ -448,3 +448,26 @@ fn roundtrips_multi_frame_document() {
         "#,
     );
 }
+
+// ── `Rule:` SWRL frames (#498) ──────────────────────────────────────────
+//
+// `assert_roundtrip` only compares `ontology.axioms`, so rules (held on the
+// separate `ontology.rules` field) get their own small helper here.
+
+#[test]
+fn roundtrips_swrl_rule() {
+    let input = r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        Rule: :Person(?p), :hasAge(?p, ?a), :greaterThan(?a, 18) -> :Adult(?p)
+        "#;
+    let onto = manchester_parser::parse(input).unwrap_or_else(|e| panic!("parse failed: {e}"));
+    assert_eq!(onto.rules.len(), 1);
+    let text = manchester_parser::serialize(&onto);
+    let reparsed = manchester_parser::parse(&text)
+        .unwrap_or_else(|e| panic!("re-parse of serialized output failed: {e}\n---\n{text}"));
+    assert_eq!(
+        onto.rules, reparsed.rules,
+        "rules differ after round-trip; serialized text was:\n{text}"
+    );
+}

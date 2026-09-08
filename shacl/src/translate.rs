@@ -28,12 +28,13 @@ Contact: hovlanddag@gmail.com
 
 use crate::ViolMeta;
 use crate::graph;
-use crate::shapes::{ElemValue, ParsedShape, PropConstraint, Target};
+use crate::shapes::{ElemValue, NodeKindValue, ParsedShape, PropConstraint, Target};
 use crate::vocab::*;
 use dag_rdf::query::get_default_graph_pattern;
-use dag_rdf::{Datastore, GraphElementId, QuadPattern, Term};
+use dag_rdf::{Datastore, GraphElement, GraphElementId, QuadPattern, RdfLiteral, Term};
 use datalog::types::{Rule, RuleAtom, RuleHead};
 use ingress::{RDF_TYPE, RDFS_SUB_CLASS_OF};
+use sparql_parser::ast::{BinaryOp, Expression, UnaryOp};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -138,6 +139,41 @@ pub fn shapes_to_rules(
                     ),
                 )
             }));
+        }
+
+        // sh:nodeKind at node-shape (pathless) level — a dedicated
+        // `ParsedShape::node_kind` field (not routed through
+        // `node_constraints`/`prop_constraint_rules` above, see #260), so
+        // handled directly here with the same `node_kind_expr` builder used
+        // for the property-shape-scoped case. sh:value for a node-shape-
+        // scoped violation is the focus node itself (#310/#312). Mirrors the
+        // `viol_node_kind(shape.idx, usize::MAX)` IRI previously minted by
+        // `evaluate::eval_all` for this same field. See
+        // docs/plans/EXPRESSION_PLAN.md Phase E4 / #62.
+        if let Some(nk) = &shape.node_kind {
+            let viol = graph::intern_iri(work, &viol_node_kind(si, usize::MAX));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable("n".into()),
+                )),
+                body: vec![
+                    pos(
+                        Term::Variable("n".into()),
+                        Term::Resource(target_pred),
+                        Term::Resource(true_id),
+                    ),
+                    RuleAtom::FilterAtom(Expression::Unary(
+                        UnaryOp::Not,
+                        Box::new(node_kind_expr("n", nk)),
+                    )),
+                ],
+            });
+            viol_preds.push((
+                viol,
+                ViolMeta::new(shapes, shape, shape.shapes_id, None, CC_NODE_KIND),
+            ));
         }
 
         // sh:closed — handled in lib.rs::pre_compute_violations (queries original data graph
@@ -580,9 +616,68 @@ fn prop_constraint_rules(
             vec![viol]
         }
 
+        // §4.1.3 sh:nodeKind — ported to a FilterAtom-guarded Datalog rule.
+        // See docs/plans/EXPRESSION_PLAN.md Phase E4 / #62: `ISIRI`/`ISBLANK`/
+        // `ISLITERAL` match `GraphElement` variants directly (no lossy string
+        // conversion, no comparison-error edge cases), so this is a clean 1:1
+        // with the shared `matches_node_kind` helper — which stays, since
+        // `constraint_conforms` (the recursive sh:and/or/not/xone/node/
+        // qualifiedValueShape conformance checker) still calls it directly.
+        PropConstraint::NodeKind(nk) => {
+            let viol = graph::intern_iri(work, &viol_node_kind(si, pi));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(RuleAtom::FilterAtom(Expression::Unary(
+                UnaryOp::Not,
+                Box::new(node_kind_expr(value_var, nk)),
+            )));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable(value_var.into()),
+                )),
+                body,
+            });
+            vec![viol]
+        }
+
+        // §4.4.4 sh:languageIn — ported to a FilterAtom-guarded Datalog rule.
+        // See docs/plans/EXPRESSION_PLAN.md Phase E4 / #62: `LANG()` returns
+        // `""` for any non-`LangLiteral` value without erroring, and
+        // `LANGMATCHES("", tag)` is `false` for every concrete tag, so "not a
+        // language-tagged literal ⇒ violates" (#266/#303) falls out of the
+        // SPARQL semantics with no special-casing. `lang_matches` (the shared
+        // helper) stays, since `constraint_conforms` still calls it directly.
+        PropConstraint::LanguageIn(tags) => {
+            let viol = graph::intern_iri(work, &viol_language_in(si, pi));
+            let mut body = vec![pos(
+                Term::Variable("n".into()),
+                Term::Resource(target_pred),
+                Term::Resource(true_id),
+            )];
+            body.extend(path_atom("n"));
+            body.push(RuleAtom::FilterAtom(Expression::Unary(
+                UnaryOp::Not,
+                Box::new(language_in_expr(value_var, tags)),
+            )));
+            rules.push(Rule {
+                head: RuleHead::NormalHead(dgp(
+                    Term::Variable("n".into()),
+                    Term::Resource(viol),
+                    Term::Variable(value_var.into()),
+                )),
+                body,
+            });
+            vec![viol]
+        }
+
         // Phase 2 constraints — evaluated in evaluate.rs, skip here
         PropConstraint::Datatype(_)
-        | PropConstraint::NodeKind(_)
         | PropConstraint::MinInclusive(_)
         | PropConstraint::MaxInclusive(_)
         | PropConstraint::MinExclusive(_)
@@ -590,7 +685,6 @@ fn prop_constraint_rules(
         | PropConstraint::MinLength(_)
         | PropConstraint::MaxLength(_)
         | PropConstraint::Pattern(_, _)
-        | PropConstraint::LanguageIn(_)
         | PropConstraint::UniqueLang
         | PropConstraint::Equals(_)
         | PropConstraint::Disjoint(_)
@@ -615,6 +709,79 @@ fn pos(s: Term, p: Term, o: Term) -> RuleAtom {
 
 fn neg(s: Term, p: Term, o: Term) -> RuleAtom {
     RuleAtom::NotPattern(dgp(s, p, o))
+}
+
+/// Build the SPARQL expression testing whether `value_var` matches an
+/// `sh:nodeKind` value, mirroring `evaluate::matches_node_kind`'s semantics
+/// exactly: `ISIRI`/`ISBLANK`/`ISLITERAL` on the `GraphElement` variant
+/// directly, OR'd together for the composite kinds. See
+/// docs/plans/EXPRESSION_PLAN.md Phase E4 / #62.
+fn node_kind_expr(value_var: &str, nk: &NodeKindValue) -> Expression {
+    let is_iri =
+        || Expression::FunctionCall("ISIRI".into(), vec![Expression::Variable(value_var.into())]);
+    let is_blank = || {
+        Expression::FunctionCall(
+            "ISBLANK".into(),
+            vec![Expression::Variable(value_var.into())],
+        )
+    };
+    let is_literal = || {
+        Expression::FunctionCall(
+            "ISLITERAL".into(),
+            vec![Expression::Variable(value_var.into())],
+        )
+    };
+    match nk {
+        NodeKindValue::IRI => is_iri(),
+        NodeKindValue::BlankNode => is_blank(),
+        NodeKindValue::Literal => is_literal(),
+        NodeKindValue::BlankNodeOrIRI => {
+            Expression::Binary(Box::new(is_blank()), BinaryOp::Or, Box::new(is_iri()))
+        }
+        NodeKindValue::BlankNodeOrLiteral => {
+            Expression::Binary(Box::new(is_blank()), BinaryOp::Or, Box::new(is_literal()))
+        }
+        NodeKindValue::IRIOrLiteral => {
+            Expression::Binary(Box::new(is_iri()), BinaryOp::Or, Box::new(is_literal()))
+        }
+    }
+}
+
+/// Build the SPARQL expression testing whether `value_var` is a
+/// language-tagged literal whose tag matches one of `tags`, mirroring
+/// `evaluate::lang_matches`'s semantics: `LANGMATCHES(LANG(value_var), tag)`
+/// OR'd across every allowed tag. `LANG()` returns `""` for any non-
+/// `LangLiteral` value (literal or not) without erroring, and
+/// `LANGMATCHES("", tag)` is `false` for every concrete tag, so a
+/// non-language-tagged or non-literal value node correctly falls through to
+/// "does not match" with no special-casing needed. An empty `tags` list
+/// (not permitted by the SHACL grammar, but handled defensively here)
+/// evaluates to the constant `false`, i.e. every value node violates. See
+/// docs/plans/EXPRESSION_PLAN.md Phase E4 / #62.
+fn language_in_expr(value_var: &str, tags: &[String]) -> Expression {
+    let lang_matches = |tag: &str| {
+        Expression::FunctionCall(
+            "LANGMATCHES".into(),
+            vec![
+                Expression::FunctionCall(
+                    "LANG".into(),
+                    vec![Expression::Variable(value_var.into())],
+                ),
+                Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::LiteralString(
+                    tag.to_string(),
+                ))),
+            ],
+        )
+    };
+    let mut tags_iter = tags.iter();
+    let Some(first) = tags_iter.next() else {
+        return Expression::Constant(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false,
+        )));
+    };
+    tags_iter.fold(lang_matches(first), |acc, tag| {
+        Expression::Binary(Box::new(acc), BinaryOp::Or, Box::new(lang_matches(tag)))
+    })
 }
 
 /// Build the body atoms asserting that `count` pairwise-distinct values of

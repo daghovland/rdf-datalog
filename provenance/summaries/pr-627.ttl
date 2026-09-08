@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #627 (issue #180), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps are real, from
+# `git log main..HEAD` on branch feat/180-owl-functional-syntax-parser.
+
+ghpull:627 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "OWL 2 Functional-Style Syntax parser (.ofn -> owl_ontology::Ontology)" ;
+    bl:number 627 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:180 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr627 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:180 ;
+    prov:startedAtTime "2026-08-30T09:46:54Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-08-30T21:00:52Z"^^xsd:dateTime .
+
+session:pr627Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #180 asked for a parser turning OWL 2 Functional-Style Syntax (.ofn) into owl_ontology::Ontology, mirroring manchester_parser's structure. The plan doc was written first: because every functional-syntax production is an unambiguous Keyword(args...) s-expression, with no operator-precedence ladder like Manchester's description/conjunction/primary climb, this syntax is structurally simpler to parse in full than Manchester was at its own initial landing -- so the scope was deliberately widened past Manchester's initial tier to cover the full ClassExpression/DataRange/ObjectPropertyExpression grammars, HasKey, and DatatypeDefinition in one PR, while still phasing the plan (phases 1-10 = the #180-mandated tier, phase 11 = the append-only extras) so an interruption mid-work would still leave the mandated scope satisfied. Two real owl_ontology type-model gaps were found while implementing rather than assumed upfront: ObjectPropertyDomain/Range carry no Vec<Annotation> slot (unlike every other ObjectPropertyAxiom variant), handled by dropping any parsed annotations with log::warn! rather than widening the shared enum for one parser; and AnnotationAssertion's subject/value fields are typed GraphElement, not a dedicated IRI/individual enum, so IRIs and anonymous individuals are lowered into GraphElement::NodeOrEdge the same way manchester_parser would. SWRL Rule(...) parsing was identified as out of scope and filed as issue #625, since owl_ontology has no SWRL representation at all -- unlike every other deferred construct, which targets an existing type." ;
+    agp:reasoningFor ghpull:627 ;
+    prov:wasGeneratedBy session:pr627 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr627Decision .
+
+session:pr627Decision a agp:Decision ;
+    agp:summaryText "DataSomeValuesFrom/DataAllValuesFrom's grammar is DataPropertyExpression {DataPropertyExpression} DataRange, and DataRange's bare Datatype case is syntactically identical to DataPropertyExpression (both are just an IRI) -- so a naive many1-then-final-parser combinator greedily consumed every trailing IRI as a property, leaving nothing for the DataRange and failing on the common one-property case (caught by a failing test, not assumed). Fixed with a dedicated data_properties_then_range combinator: at each position, try a compound (keyword-prefixed, unambiguous) data range first; otherwise parse a bare IRI, and treat it as the terminal DataRange only if the token immediately following it is the closing ')' -- i.e. it is the last item in the list -- else push it as a property and continue." ;
+    agp:alternative "Considered requiring DataSomeValuesFrom's property list to always have exactly one element (dropping support for the Vec<DataProperty> form owl_ontology models), which would have sidestepped the ambiguity entirely, but rejected it since the spec and the existing owl_ontology::ClassExpression::DataSomeValuesFrom(Vec<DataProperty>, DataRange) shape both support multiple properties and real .ofn documents can use it." .

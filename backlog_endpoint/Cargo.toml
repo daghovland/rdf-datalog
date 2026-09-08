@@ -10,7 +10,7 @@ axum = "0.8"
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "signal"] }
 clap = { version = "4", features = ["derive", "env"] }
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 
 [dev-dependencies]
 reqwest = { version = "0.13", features = ["json"] }

@@ -25,6 +25,7 @@ mod individual;
 mod iri;
 mod literal;
 mod property_expr;
+mod rule;
 mod serialize;
 mod tokens;
 
@@ -117,8 +118,15 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
         .map_err(fail)?;
     let ontology_annotations = annotation_sections.into_iter().flatten().collect();
 
-    let (input, frame_axioms) = many0(frame::any_frame(&ctx)).parse(input).map_err(fail)?;
-    let axioms = frame_axioms.into_iter().flatten().collect();
+    let (input, items) = many0(top_level_item(&ctx)).parse(input).map_err(fail)?;
+    let mut axioms = Vec::new();
+    let mut rules = Vec::new();
+    for item in items {
+        match item {
+            TopLevelItem::Axioms(a) => axioms.extend(a),
+            TopLevelItem::Rule(r) => rules.push(r),
+        }
+    }
 
     let (input, ()) = tokens::sp(input).map_err(fail)?;
     if !input.is_empty() {
@@ -137,12 +145,31 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
         (None, _) => ingress::OntologyVersion::UnNamedOntology,
     };
 
-    Ok(Ontology::new(
-        imports,
-        version,
-        ontology_annotations,
-        axioms,
-    ))
+    Ok(Ontology::new(imports, version, ontology_annotations, axioms).with_rules(rules))
+}
+
+/// One top-level document item after the ontology header/imports/
+/// annotations: either an entity/`misc` frame (expanding to `Axiom`s) or a
+/// `Rule:` frame (a single `SwrlRule`). Kept as a thin wrapper around
+/// `frame::any_frame`/`rule::rule_frame` rather than changing either's return
+/// type, so `Rule:` frames can be interleaved with other frames in any
+/// document order without touching `frame.rs`'s `alt` branches (which all
+/// share the `Vec<Axiom>` output type).
+enum TopLevelItem {
+    Axioms(Vec<owl_ontology::Axiom>),
+    Rule(owl_ontology::SwrlRule),
+}
+
+fn top_level_item<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> nom::IResult<&'a str, TopLevelItem> {
+    move |input: &'a str| {
+        nom::branch::alt((
+            nom::combinator::map(rule::rule_frame(ctx), TopLevelItem::Rule),
+            nom::combinator::map(frame::any_frame(ctx), TopLevelItem::Axioms),
+        ))
+        .parse(input)
+    }
 }
 
 fn fail(e: nom::Err<nom::error::Error<&str>>) -> String {

@@ -132,25 +132,52 @@ RDFox extensions are reserved for future Datalog rule authoring beyond SHACL.
 
 ### Phase E4 — Rewrite SHACL evaluate.rs using FilterAtom rules
 
-Once Phase E2 is complete, the hand-coded Rust in `shacl/src/evaluate.rs` can be replaced
-with Datalog rules that include `FilterAtom` guards.  This is a refactor — the existing
-SHACL tests continue passing throughout.
+**Status as of issue [#62](https://github.com/daghovland/rdf-datalog/issues/62):** the mapping
+table below (written before E1/E2/E5 landed) is stale in two ways: the named Rust functions
+(`eval_node_kind`, `eval_datatype`, …) no longer exist under those names — the logic they
+described now lives in shared helpers (`matches_node_kind`, `has_datatype`, `range_violates`,
+`lang_matches`, `sparql_compare`, `regex_with_flags`) called from **two** independent
+consumers, not one:
 
-**Current mapping (evaluate.rs → Datalog rule with FilterAtom):**
+1. `evaluate.rs::eval_prop_constraint` — the top-level per-shape/per-property violation
+   producer (what this table originally described).
+2. `evaluate.rs::constraint_conforms` — a yes/no conformance check used *recursively* by
+   `shape_conforms_for_node`, which `sh:and`/`sh:or`/`sh:not`/`sh:xone`/`sh:node`/
+   `sh:qualifiedValueShape` call to test whether a node conforms to an arbitrary referenced
+   inner shape. This consumer didn't exist when the table was written (added across
+   [#258](https://github.com/daghovland/rdf-datalog/issues/258)/[#276](https://github.com/daghovland/rdf-datalog/issues/276)/
+   [#309](https://github.com/daghovland/rdf-datalog/issues/309)/[#311](https://github.com/daghovland/rdf-datalog/issues/311)).
+   Porting it to Datalog would mean recursive rule generation over the shape-reference graph —
+   a materially larger change than "port six functions," and out of scope for #62.
 
-| Current Rust function | Datalog rule equivalent |
-|---|---|
-| `eval_node_kind()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(!isIRI(v))` |
-| `eval_datatype()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(DATATYPE(v) != D)` |
-| `eval_range()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(v < minVal)` |
-| `eval_min_length()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(STRLEN(STR(v)) < N)` |
-| `eval_regex_check()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(!REGEX(STR(v), pat, flags))` |
-| `eval_language_in()` | `sh_viol(n, v) :- target(n), value(n,v), FILTER(!LANGMATCHES(LANG(v), tag))` |
-| `eval_less_than()` | `sh_viol(n, v) :- target(n), [n,p1,v], [n,p2,w], FILTER(!(v < w))` |
+So #62's scope is narrower than the original table: only consumer (1) is touched. Consumer
+(2) keeps using the shared Rust helpers, which is why those helpers are not deleted even
+for the constraint kinds that do get a Datalog rule.
 
-**Files:** `shacl/src/translate.rs`, `shacl/src/evaluate.rs`
+**Constraint-by-constraint verdict** (checked against `sparql_parser`'s actual expression
+evaluator, `sparql_parser/src/execute/expressions.rs` + `functions.rs`, not just the
+plan's original intent):
 
-**Tests:** All 31 existing SHACL tests must continue passing after refactor.
+| Constraint | Ported to `FilterAtom`? | Why / why not |
+|---|---|---|
+| `sh:nodeKind` | **Yes** | `ISIRI`/`ISBLANK`/`ISLITERAL` match `GraphElement` variants directly — no lossy string conversion, no comparison-error edge cases. Clean 1:1 with `matches_node_kind`. |
+| `sh:languageIn` | **Yes** | `LANG()` returns `""` for any non-`LangLiteral` value (literal or not) without erroring, and `LANGMATCHES("", tag)` is `false` for every concrete tag — so "not a language-tagged literal ⇒ violates" (the #303/#266 rule) falls out of the SPARQL semantics for free, no special-casing needed. |
+| `sh:datatype` | No — deferred | `DATATYPE()` only compares the datatype IRI; it does not check lexical well-formedness (`"aldi"^^xsd:integer` per [#325](https://github.com/daghovland/rdf-datalog/issues/325)). Porting would silently drop that check. |
+| `sh:minInclusive`/`sh:maxInclusive`/`sh:minExclusive`/`sh:maxExclusive` | No — deferred | The generic SPARQL `<`/`>`/`<=`/`>=` evaluator (`compare_graph_elements`) is *weaker* than SHACL's own `sparql_compare`: it falls back to naive string comparison for any two literals that aren't both numeric, so e.g. `"2020-01-01"^^xsd:date` vs `"2020-01-01"^^xsd:string` would compare equal instead of being flagged incomparable-hence-violation (the exact bug class fixed by [#303](https://github.com/daghovland/rdf-datalog/issues/303)/[#322](https://github.com/daghovland/rdf-datalog/issues/322)/[#325](https://github.com/daghovland/rdf-datalog/issues/325)). `FILTER(!(v >= min))` *would* correctly turn a comparison error into a violation (`eval_expr_as_filter` defaults errors to `false`, and `!false = true`), so the "incomparable ⇒ violation" direction is not the blocker — the type-check laxness of `compare_graph_elements` itself is. |
+| `sh:pattern` | No — deferred | `REGEX(v, pat)` evaluates its text argument via `graph_element_to_string`, which only covers `LiteralString`/`LangLiteral`/`TypedLiteral`/IRI — not the natively-typed `IntegerLiteral`/`BooleanLiteral`/`DateLiteral`/etc. variants that `lexical_form` (used by the current Rust path) does cover. A numeric-typed value would always evaluate the filter to "no match" (text unresolvable) regardless of whether the pattern would actually match its lexical form — a real regression risk, not just a style difference. Blank-node "always violates" *does* work correctly (`graph_element_to_string` returns `None` for a blank node, so `!REGEX(...)` correctly becomes `true`). |
+| `sh:lessThan`/`sh:lessThanOrEquals` | No — deferred | Same comparator gap as the range constraints, **plus** a cardinality problem: [#343](https://github.com/daghovland/rdf-datalog/issues/343) requires one violation *per failing `(value, otherValue)` pair* (not one per `value`), using per-pair discriminated predicates so they don't collapse in the dedup'd `QuadTable`. A Datalog rule head can only carry the bound variables that appear in it; encoding "one fact per failing pair" with a fresh synthetic predicate per pair isn't expressible as a fixed rule head the way `viol_discriminated` currently mints predicates at Rust runtime. |
+
+Follow-up issue [#631](https://github.com/daghovland/rdf-datalog/issues/631) tracks porting the deferred constraints once (a) `sparql_parser`'s
+comparator and string-coercion functions are brought up to full SPARQL 1.1 §17.1/§17.3
+fidelity for XSD-typed literals (a `sparql_parser` fix, not a `shacl` one), and (b) a
+per-pair-multiplicity rule-generation pattern exists for `sh:lessThan`-shaped constraints.
+
+**Files:** `shacl/src/translate.rs` (adds `NodeKind`/`LanguageIn` rule generation),
+`shacl/src/evaluate.rs` (removes the now-redundant `eval_prop_constraint` arms for those two
+— `matches_node_kind`/`lang_matches` themselves stay, still used by `constraint_conforms`).
+
+**Tests:** All existing SHACL tests (including the W3C SHACL suite, `tests/w3c_shacl_suite.rs`)
+must continue passing after the refactor, with no change to any skip list.
 
 ---
 

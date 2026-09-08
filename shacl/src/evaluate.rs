@@ -160,33 +160,10 @@ pub fn eval_all(
             }));
         }
 
-        // sh:nodeKind at node shape level — check each target node itself.
-        // sh:value for a node-shape-scoped (pathless) constraint is the focus
-        // node itself (SHACL §4.1.3/§3.4.1, also §2.1.2) — e.g. `sh:targetNode
-        // "true"^^xsd:boolean ; sh:nodeKind sh:IRI` must report `sh:value
-        // "true"^^xsd:boolean`, not omit it. Previously used `nil` here (the
-        // "no value" sentinel), which under-reported this field for every
-        // node-shape sh:nodeKind violation. See
-        // https://github.com/daghovland/rdf-datalog/issues/310 and
-        // https://github.com/daghovland/rdf-datalog/issues/312.
-        if let Some(nk) = &shape.node_kind {
-            let viol = graph::intern_iri(work, &vocab::viol_node_kind(shape.idx, usize::MAX));
-            for node in &targets {
-                if !matches_node_kind(data, *node, nk) {
-                    add_viol(work, *node, viol, *node);
-                }
-            }
-            viol_preds.push((
-                viol,
-                ViolMeta::new(
-                    shapes_store,
-                    shape,
-                    shape.shapes_id,
-                    None,
-                    vocab::CC_NODE_KIND,
-                ),
-            ));
-        }
+        // sh:nodeKind at node-shape (pathless) level is now generated as a
+        // Datalog FilterAtom rule by translate.rs::shapes_to_rules (see
+        // docs/plans/EXPRESSION_PLAN.md Phase E4 / #62) — `targets` (this
+        // function's per-node iteration) has no role here any more.
 
         // sh:xone at shape level:
         if !shape.xone_inners.is_empty() {
@@ -332,18 +309,12 @@ fn eval_prop_constraint(
             vec![(viol, constraint.component_iri())]
         }
 
-        // §4.1.3 sh:nodeKind
-        NodeKind(nk) => {
-            let viol = graph::intern_iri(work, &vocab::viol_node_kind(si, pi));
-            for node in targets {
-                for val in values_of(*node) {
-                    if !matches_node_kind(data, val, nk) {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.1.3 sh:nodeKind — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 / #62); `matches_node_kind` itself is unchanged and still
+        // used by `constraint_conforms` below for inner-shape combinator
+        // checks (sh:and/or/not/xone/node/qualifiedValueShape).
+        NodeKind(_) => vec![],
 
         // §4.3 value range
         //
@@ -480,33 +451,11 @@ fn eval_prop_constraint(
             vec![(viol, constraint.component_iri())]
         }
 
-        // §4.4.4 sh:languageIn
-        LanguageIn(tags) => {
-            let tag_set: HashSet<String> = tags.iter().map(|t| t.to_lowercase()).collect();
-            let viol = graph::intern_iri(work, &vocab::viol_language_in(si, pi));
-            for node in targets {
-                for val in values_of(*node) {
-                    // Language-tagged literal whose tag is not in the allowed set → violation.
-                    // Non-language-tagged literals also violate (per SHACL spec §4.4.4).
-                    // Non-literals also violate — the spec's normative text is
-                    // "For each value node that is either not a literal or
-                    // that does not have a language tag matching ...", so a
-                    // non-literal value node is not out of scope, it always
-                    // violates. See
-                    // https://www.w3.org/TR/shacl/#LanguageInConstraintComponent
-                    // and https://github.com/daghovland/rdf-datalog/issues/266.
-                    let violates = !matches!(
-                        data.resources.get_graph_element(val),
-                        GraphElement::GraphLiteral(RdfLiteral::LangLiteral { lang, .. })
-                            if lang_matches(&tag_set, lang)
-                    );
-                    if violates {
-                        add_viol(work, *node, viol, val);
-                    }
-                }
-            }
-            vec![(viol, constraint.component_iri())]
-        }
+        // §4.4.4 sh:languageIn — ported to a Datalog FilterAtom rule by
+        // translate.rs::prop_constraint_rules (docs/plans/EXPRESSION_PLAN.md
+        // Phase E4 / #62); `lang_matches` itself is unchanged and still used
+        // by `constraint_conforms` below for inner-shape combinator checks.
+        LanguageIn(_) => vec![],
 
         // §4.4.5 sh:uniqueLang
         //

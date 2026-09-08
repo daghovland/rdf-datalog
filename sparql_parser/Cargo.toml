@@ -8,7 +8,7 @@ nom = "8.0"
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
 iri-string = "0.7"
-oxiri = "0.2"
+oxiri = "0.3"
 log = "0.4"
 num-bigint = "0.5.1"
 ordered-float = "5.3"
@@ -17,10 +17,10 @@ regex = "1"
 hex = "0.4"
 rand = "0.10"
 sha2 = { version = "0.10", features = ["force-soft"] }
-sha1 = "0.10"
+sha1 = "0.11"
 md5 = "0.8"
 uuid = { version = "1", features = ["v4"] }
 rust_decimal = "1"
 
 [dev-dependencies]
-env_logger = "0.10"
+env_logger = "0.11"
