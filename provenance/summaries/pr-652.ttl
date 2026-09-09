@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/603-caddyfile-ci-validation).
+
+ghpull:652 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "ci: validate deploy/Caddyfile syntax (caddy validate)" ;
+    bl:number 652 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:603 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr652 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:603 ;
+    prov:startedAtTime "2026-09-09T16:41:53Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-09T16:41:53Z"^^xsd:dateTime .
+
+session:pr652Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #603 (follow-up from #567/PR #601) noted that deploy/Caddyfile has accumulated several hand-edited routing blocks across #439, #441, #494 and #567 with no automated syntax check anywhere in the repo -- confirmed by grep finding no 'Caddyfile'/'caddy adapt' references under .github/workflows/. Checked provenance for both deploy/Caddyfile and .github/workflows/ci.yml first; the only hit was PR #439's original edge-auth design summary, which explained the file's existing structure but had no bearing on how to add a validation step, so nothing from prior provenance was directly reused here. Added a new 'Caddyfile Validate' job to ci.yml that runs `caddy validate --config deploy/Caddyfile --adapter caddyfile` via the official caddy:2-alpine docker image, since docker was available in this session's sandbox (unlike the #567 session that filed this issue, which lacked docker socket access and could only hand-verify). Chose to run the job unconditionally on every CI run rather than gating it on `paths: [deploy/Caddyfile]` as the issue's minimal suggestion proposed, because the file's own comments show its correctness already depends on other deploy/ state (env vars from docker-compose.public.yml, PUBLIC_DOMAIN) that could change without the Caddyfile itself changing, and the check is cheap (a single docker run, ~10s) so the extra runs cost little. Verified the check actually catches errors before opening it for review: ran `caddy validate` locally against the current Caddyfile (passed -- confirming the file is valid as it stands, addressing the issue's explicit ask to double-check this), then intentionally replaced a valid directive with a bogus one and re-ran (failed with a clear parse error and non-zero exit), then restored and re-ran (passed again). The new CI job itself also ran and passed on PR #652, which is the real proof the GitHub Actions wiring works end to end, not just the local docker invocation." ;
+    agp:reasoningFor ghpull:652 ;
+    prov:wasGeneratedBy session:pr652 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
