@@ -124,6 +124,26 @@ jobs:
       - name: cargo test — provenance & backlog SHACL validation
         run: cargo test --test provenance_queries --test backlog_ontology --test agentprov_ontology
 
+  # ── Caddyfile syntax validation ─────────────────────────────────────────────
+  # deploy/Caddyfile has grown several hand-edited routing blocks (#439, #441,
+  # #494, #567) with no automated syntax check anywhere in this repo (#603).
+  # Runs `caddy validate` against the real file via the official caddy:2-alpine
+  # image so a Caddyfile syntax error is caught in CI, not at actual deploy
+  # time. Deliberately unconditional (not gated on `paths:`) since the file's
+  # correctness can also depend on other deploy/ changes (e.g. env vars it
+  # references), and the check itself is a single fast docker run.
+  caddyfile-validate:
+    name: Caddyfile Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: caddy validate
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e PUBLIC_DOMAIN=dagalog.example.com \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
   # ── IMF performance tests ───────────────────────────────────────────────────
   # Downloads imf.ttl and runs the IMF ontology pipeline tests.
   # Kept as a separate job so a slow download does not block the core test suite.
