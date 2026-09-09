@@ -29,7 +29,7 @@ pub mod sparql_constraints;
 pub mod translate;
 pub mod vocab;
 
-use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, Triple};
+use dag_rdf::ingress::Triple;
 use dag_rdf::{Datastore, GraphElementId};
 use datalog::evaluate_rules;
 use ingress::RDF_TYPE;
@@ -776,10 +776,17 @@ fn collect_violations(
 ) -> Vec<ValidationResult> {
     let pred_meta: std::collections::HashMap<GraphElementId, &ViolMeta> =
         viol_preds.iter().map(|(id, meta)| (*id, meta)).collect();
-    // Only examine default-graph triples (triple_id = 0).
-    work.named_graphs
-        .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
-        .filter(|q| pred_meta.contains_key(&q.predicate))
+    // Scan quads by predicate across *all* graphs, not just the default
+    // graph — every violation predicate is a freshly-interned synthetic
+    // `urn:dagalog:shacl:...` IRI that can never collide with a real named
+    // graph already present in the data, so this is a safe superset of the
+    // old default-graph-only scan. Needed because `sh:lessThan`/
+    // `sh:lessThanOrEquals`'s Datalog rules (#637) place their derived
+    // violation quads in a non-default graph slot on purpose — see
+    // `translate::less_than_constraint_rule`'s doc comment for why.
+    pred_meta
+        .keys()
+        .flat_map(|&pred| work.named_graphs.get_quads_with_predicate(pred))
         .map(|q| {
             let focus = graph::element_display(work, q.subject);
             let meta = pred_meta.get(&q.predicate).copied();

@@ -421,12 +421,18 @@ fn w3c_shacl_core_property() {
         // (reached via `ex:InvalidPerson1`/`ex:InvalidPerson2`, both pointing
         // at the same shared `ex:InvalidAddress`) — the same violation-
         // multiplicity collapse `sh:lessThan`/`sh:lessThanOrEquals` had
-        // (#341), fixed there via a per-derivation discriminated violation
-        // predicate (`shacl::vocab::viol_discriminated`, called from those
-        // two constraint arms in shacl/src/evaluate.rs). That mechanism is
-        // NOT yet applied anywhere else — nested `sh:property`'s eventual
-        // `add_viol` call site will need the same discriminator treatment,
-        // it does not come for free from #341's fix. See
+        // (#341). That fix used a per-derivation discriminated violation
+        // predicate (`shacl::vocab::viol_discriminated`) when the constraint
+        // was still hand-evaluated in Rust (`shacl/src/evaluate.rs`); after
+        // #637 ported `sh:lessThan`/`sh:lessThanOrEquals` to Datalog
+        // `FilterAtom` rules, that predicate-suffix mechanism no longer
+        // exists — the same multiplicity is instead encoded via the derived
+        // violation quad's otherwise-unused graph position (see
+        // `translate::less_than_constraint_rule`'s doc comment). Neither
+        // mechanism is applied anywhere else — nested `sh:property`'s
+        // eventual `add_viol`/rule-generation call site will need an
+        // equivalent per-derivation discriminator, it does not come for free
+        // from #341/#637's fixes. See
         // https://github.com/daghovland/rdf-datalog/issues/341.
         "Test of sh:property at property shape 001",
         // "Test of sh:nodeKind at property shape 001" was previously skipped
