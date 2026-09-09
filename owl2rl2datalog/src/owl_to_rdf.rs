@@ -35,9 +35,7 @@ Contact: hovlanddag@gmail.com
 //! [#509](https://github.com/daghovland/rdf-datalog/issues/509), split out of
 //! the still-open parent tracking issue
 //! [#373](https://github.com/daghovland/rdf-datalog/issues/373) (see that
-//! issue's other follow-ups too: `DatatypeDefinition`
-//! [#512](https://github.com/daghovland/rdf-datalog/issues/512) and n-ary
-//! disjoint/different constructs
+//! issue's other follow-ups too: n-ary disjoint/different constructs
 //! [#513](https://github.com/daghovland/rdf-datalog/issues/513)).
 //!
 //! `DisjointUnionOf` over atomic (named) class-expression members *is*
@@ -51,24 +49,31 @@ Contact: hovlanddag@gmail.com
 //! *is* translated too, per
 //! [#510](https://github.com/daghovland/rdf-datalog/issues/510) — see
 //! `Translator::object_property_axiom`'s `PropertyExpressionChain` arm.
+//!
+//! `DatatypeDefinition` axioms, and complex (non-named) `DataRange`s
+//! generally — `DataUnionOf`, `DataIntersectionOf`, `DataComplementOf`,
+//! `DataOneOf`, `DatatypeRestriction` — *are* translated too, per
+//! [#512](https://github.com/daghovland/rdf-datalog/issues/512), via
+//! `Translator::data_range`, the `DataRange` counterpart to
+//! `Translator::class_expression`'s complex-class-expression encoding.
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
     IriReference, OWL_ALL_VALUES_FROM, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE,
     OWL_ANNOTATED_TARGET, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM,
-    OWL_CARDINALITY, OWL_CLASS, OWL_COMPLEMENT_OF, OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM,
-    OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY,
-    OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_HAS_SELF, OWL_HAS_VALUE, OWL_IMPORT,
-    OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY,
-    OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY, OWL_MIN_CARDINALITY,
-    OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF,
-    OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_PROPERTIES, OWL_ON_PROPERTY,
-    OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_CHAIN_AXIOM, OWL_PROPERTY_DISJOINT_WITH,
-    OWL_QUALIFIED_CARDINALITY, OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION, OWL_SAME_AS,
-    OWL_SOME_VALUES_FROM, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY, OWL_UNION_OF,
-    OWL_VERSION_IRI, OntologyVersion, RDF_FIRST, RDF_NIL, RDF_REST, RDF_TYPE, RDFS_DATATYPE,
-    RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF, RDFS_SUB_PROPERTY_OF, RdfLiteral,
-    XSD_NON_NEGATIVE_INTEGER,
+    OWL_CARDINALITY, OWL_CLASS, OWL_COMPLEMENT_OF, OWL_DATATYPE_COMPLEMENT_OF,
+    OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH,
+    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY,
+    OWL_HAS_SELF, OWL_HAS_VALUE, OWL_IMPORT, OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY,
+    OWL_IRREFLEXIVE_PROPERTY, OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY,
+    OWL_MIN_CARDINALITY, OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL,
+    OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_DATATYPE,
+    OWL_ON_PROPERTIES, OWL_ON_PROPERTY, OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_CHAIN_AXIOM,
+    OWL_PROPERTY_DISJOINT_WITH, OWL_QUALIFIED_CARDINALITY, OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION,
+    OWL_SAME_AS, OWL_SOME_VALUES_FROM, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY,
+    OWL_UNION_OF, OWL_VERSION_IRI, OWL_WITH_RESTRICTIONS, OntologyVersion, RDF_FIRST, RDF_NIL,
+    RDF_REST, RDF_TYPE, RDFS_DATATYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUB_CLASS_OF,
+    RDFS_SUB_PROPERTY_OF, RdfLiteral, XSD_NON_NEGATIVE_INTEGER,
 };
 use owl_ontology::{
     Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
@@ -438,16 +443,80 @@ impl<'a> Translator<'a> {
         node
     }
 
-    /// `T(DR)` for a `DataRange`: just the datatype IRI for a named
-    /// datatype. A complex `DataRange` (`DataUnionOf`, `DataIntersectionOf`,
-    /// `DataComplementOf`, `DataOneOf`, `DatatypeRestriction`) has no RDF
-    /// encoding yet — that's [#512](https://github.com/daghovland/rdf-datalog/issues/512)'s
-    /// scope, not this issue's — so this returns `None` for those.
-    fn named_data_range(&mut self, range: &DataRange) -> Option<GraphElementId> {
+    /// `T(DR)` for a `DataRange` — the datatype IRI for a named datatype, or
+    /// the spec's blank-node structural encoding for a complex one
+    /// (`DataUnionOf`, `DataIntersectionOf`, `DataComplementOf`, `DataOneOf`,
+    /// `DatatypeRestriction`), per
+    /// <https://www.w3.org/TR/owl2-mapping-to-rdf/> §2.1's "Translation of
+    /// Data Ranges" table
+    /// ([#512](https://github.com/daghovland/rdf-datalog/issues/512)). The
+    /// `DataRange` counterpart to
+    /// [`Translator::class_expression`] — unlike that method this one is
+    /// infallible: every `DataRange` variant has an RDF encoding, so there is
+    /// no complex-member case that needs to skip the enclosing axiom.
+    fn data_range(&mut self, range: &DataRange) -> GraphElementId {
         match range {
-            DataRange::NamedDataRange(datatype) => Some(self.full_iri(datatype)),
-            _ => None,
+            DataRange::NamedDataRange(datatype) => self.full_iri(datatype),
+            DataRange::DataIntersectionOf(members) => {
+                self.data_range_list(members, OWL_INTERSECTION_OF)
+            }
+            DataRange::DataUnionOf(members) => self.data_range_list(members, OWL_UNION_OF),
+            DataRange::DataComplementOf(inner) => {
+                let inner_id = self.data_range(inner);
+                let node = self.datastore.new_anonymous_blank_node();
+                self.type_triple(node, RDFS_DATATYPE);
+                self.triple_p(node, OWL_DATATYPE_COMPLEMENT_OF, inner_id);
+                node
+            }
+            DataRange::DataOneOf(literals) => {
+                let ids: Vec<_> = literals
+                    .iter()
+                    .map(|lit| self.datastore.add_resource(lit.clone()))
+                    .collect();
+                let list_head = self.rdf_list(&ids);
+                let node = self.datastore.new_anonymous_blank_node();
+                self.type_triple(node, RDFS_DATATYPE);
+                self.triple_p(node, OWL_ONE_OF, list_head);
+                node
+            }
+            DataRange::DatatypeRestriction(datatype, facets) => {
+                let datatype_id = self.full_iri(datatype);
+                // Each `(facet, value)` pair becomes its own blank node
+                // `_:yi <facet-iri> <value>` — the facet IRI (e.g.
+                // `xsd:minInclusive`) is itself the RDF predicate, not a
+                // fixed one, so this goes through `self.triple` (which takes
+                // an already-interned predicate id) rather than `triple_p`
+                // (which takes a fixed `&str` IRI).
+                let facet_nodes: Vec<_> = facets
+                    .iter()
+                    .map(|(facet, value)| {
+                        let facet_pred = self.full_iri(facet);
+                        let value_id = self.datastore.add_resource(value.clone());
+                        let facet_node = self.datastore.new_anonymous_blank_node();
+                        self.triple(facet_node, facet_pred, value_id);
+                        facet_node
+                    })
+                    .collect();
+                let list_head = self.rdf_list(&facet_nodes);
+                let node = self.datastore.new_anonymous_blank_node();
+                self.type_triple(node, RDFS_DATATYPE);
+                self.triple_p(node, OWL_ON_DATATYPE, datatype_id);
+                self.triple_p(node, OWL_WITH_RESTRICTIONS, list_head);
+                node
+            }
         }
+    }
+
+    /// Build an `rdfs:Datatype` blank node `_:x rdf:type rdfs:Datatype ;
+    /// <predicate-iri> T(SEQ members...)` for `DataUnionOf`/
+    /// `DataIntersectionOf`.
+    fn data_range_list(&mut self, members: &[DataRange], predicate_iri: &str) -> GraphElementId {
+        let ids: Vec<_> = members.iter().map(|m| self.data_range(m)).collect();
+        let list_head = self.rdf_list(&ids);
+        let node = self.datastore.new_anonymous_blank_node();
+        self.type_triple(node, RDFS_DATATYPE);
+        self.triple_p(node, predicate_iri, list_head);
+        node
     }
 
     /// Build an `owl:Class` blank node `_:x rdf:type owl:Class ;
@@ -578,13 +647,13 @@ impl<'a> Translator<'a> {
                 Some(node)
             }
             ClassExpression::DataSomeValuesFrom(props, range) => {
-                let range_id = self.named_data_range(range)?;
+                let range_id = self.data_range(range);
                 let node = self.data_restriction_node(props);
                 self.triple_p(node, OWL_SOME_VALUES_FROM, range_id);
                 Some(node)
             }
             ClassExpression::DataAllValuesFrom(props, range) => {
-                let range_id = self.named_data_range(range)?;
+                let range_id = self.data_range(range);
                 let node = self.data_restriction_node(props);
                 self.triple_p(node, OWL_ALL_VALUES_FROM, range_id);
                 Some(node)
@@ -614,7 +683,7 @@ impl<'a> Translator<'a> {
                 Some(node)
             }
             ClassExpression::DataMinQualifiedCardinality(n, prop, range) => {
-                let range_id = self.named_data_range(range)?;
+                let range_id = self.data_range(range);
                 let node = self.data_restriction_node(std::slice::from_ref(prop));
                 let n_id = self.non_negative_integer(n);
                 self.triple_p(node, OWL_MIN_QUALIFIED_CARDINALITY, n_id);
@@ -622,7 +691,7 @@ impl<'a> Translator<'a> {
                 Some(node)
             }
             ClassExpression::DataMaxQualifiedCardinality(n, prop, range) => {
-                let range_id = self.named_data_range(range)?;
+                let range_id = self.data_range(range);
                 let node = self.data_restriction_node(std::slice::from_ref(prop));
                 let n_id = self.non_negative_integer(n);
                 self.triple_p(node, OWL_MAX_QUALIFIED_CARDINALITY, n_id);
@@ -630,7 +699,7 @@ impl<'a> Translator<'a> {
                 Some(node)
             }
             ClassExpression::DataExactQualifiedCardinality(n, prop, range) => {
-                let range_id = self.named_data_range(range)?;
+                let range_id = self.data_range(range);
                 let node = self.data_restriction_node(std::slice::from_ref(prop));
                 let n_id = self.non_negative_integer(n);
                 self.triple_p(node, OWL_QUALIFIED_CARDINALITY, n_id);
@@ -655,8 +724,27 @@ impl<'a> Translator<'a> {
             Axiom::AxiomAnnotationAxiom(annotation_axiom) => {
                 self.annotation_axiom(annotation_axiom)
             }
-            other => self.skip("axiom", other),
+            Axiom::AxiomDatatypeDefinition(annotations, datatype, range) => {
+                self.datatype_definition(datatype, range, annotations)
+            }
         }
+    }
+
+    /// `DatatypeDefinition(DT DR)`: `T(DT) owl:equivalentClass T(DR)`, per
+    /// <https://www.w3.org/TR/owl2-mapping-to-rdf/> §2.3's "Translation of
+    /// Axioms without Annotations" table
+    /// ([#512](https://github.com/daghovland/rdf-datalog/issues/512)). `DR`
+    /// may be a complex data range — [`Translator::data_range`] handles the
+    /// full `DataRange` grammar, so this never needs to skip.
+    fn datatype_definition(
+        &mut self,
+        datatype: &FullIri,
+        range: &DataRange,
+        annotations: &[Annotation],
+    ) {
+        let datatype_id = self.full_iri(datatype);
+        let range_id = self.data_range(range);
+        self.triple_p_annotated(datatype_id, OWL_EQUIVALENT_CLASS, range_id, annotations);
     }
 
     /// Translate `ontology`'s header — the ontology IRI declaration,
@@ -955,13 +1043,9 @@ impl<'a> Translator<'a> {
                     ),
                 }
             }
-            DataPropertyAxiom::DataPropertyRange(
-                annotations,
-                prop,
-                DataRange::NamedDataRange(datatype),
-            ) => {
+            DataPropertyAxiom::DataPropertyRange(annotations, prop, range) => {
                 let prop_id = self.full_iri(prop);
-                let range_id = self.full_iri(datatype);
+                let range_id = self.data_range(range);
                 self.triple_p_annotated(prop_id, RDFS_RANGE, range_id, annotations);
             }
             DataPropertyAxiom::FunctionalDataProperty(annotations, prop) => {
@@ -1188,6 +1272,22 @@ mod tests {
         let predicate = IriReference(predicate_iri.to_owned());
         let (s, p) = (id_of(ds, subject)?, id_of(ds, &predicate)?);
         let quads = ds.quads_matching(None, Some(s), Some(p), None);
+        assert!(quads.len() <= 1, "expected at most one match");
+        quads.first().map(|q| q.obj)
+    }
+
+    /// The head-node id of `<subject-id> <predicate-iri> ?object`, assuming
+    /// exactly one such triple — the same as [`object_of`] but for a subject
+    /// already resolved to a [`GraphElementId`] (e.g. a blank node with no
+    /// IRI to look up).
+    fn object_of_id(
+        ds: &Datastore,
+        subject: GraphElementId,
+        predicate_iri: &str,
+    ) -> Option<GraphElementId> {
+        let predicate = IriReference(predicate_iri.to_owned());
+        let p = id_of(ds, &predicate)?;
+        let quads = ds.quads_matching(None, Some(subject), Some(p), None);
         assert!(quads.len() <= 1, "expected at most one match");
         quads.first().map(|q| q.obj)
     }
@@ -1600,6 +1700,231 @@ mod tests {
         assert_eq!(report.triples_added, 0);
         assert_eq!(report.skipped.len(), 1);
         assert!(object_of(&ds, &ex("hasGrandparent"), OWL_PROPERTY_CHAIN_AXIOM).is_none());
+    }
+
+    // ── DatatypeDefinition / complex DataRange encoding (#512) ─────────────
+    //
+    // <https://www.w3.org/TR/owl2-mapping-to-rdf/> §2.3's "Translation of
+    // Axioms without Annotations" table: `DatatypeDefinition(DT DR)` becomes
+    // `T(DT) owl:equivalentClass T(DR)`. `T(DR)` itself is §2.1's
+    // "Translation of Data Ranges" table, exercised here for every `DataRange`
+    // variant via `Translator::data_range`.
+
+    fn named_datatype(local: &str) -> DataRange {
+        DataRange::NamedDataRange(full(local))
+    }
+
+    fn string_literal(text: &str) -> GraphElement {
+        GraphElement::GraphLiteral(ingress::RdfLiteral::LiteralString(text.to_owned()))
+    }
+
+    #[test]
+    fn datatype_definition_of_named_datatype_becomes_equivalent_class() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("PositiveInt"),
+            named_datatype("xsdPositiveInteger"),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        assert!(has_triple(
+            &ds,
+            &ex("PositiveInt"),
+            OWL_EQUIVALENT_CLASS,
+            &ex("xsdPositiveInteger")
+        ));
+        assert_eq!(report.triples_added, 1);
+    }
+
+    #[test]
+    fn datatype_definition_with_data_union_of_becomes_blank_node_union() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("IntOrString"),
+            DataRange::DataUnionOf(vec![
+                named_datatype("xsdInteger"),
+                named_datatype("xsdString"),
+            ]),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let range_node = object_of(&ds, &ex("IntOrString"), OWL_EQUIVALENT_CLASS)
+            .expect("owl:equivalentClass triple must exist");
+        assert!(
+            !ds.quads_matching(
+                None,
+                Some(range_node),
+                id_of(&ds, &IriReference(RDF_TYPE.to_owned())),
+                id_of(&ds, &IriReference(RDFS_DATATYPE.to_owned())),
+            )
+            .is_empty()
+        );
+        let list_head = ds
+            .quads_matching(
+                None,
+                Some(range_node),
+                id_of(&ds, &IriReference(OWL_UNION_OF.to_owned())),
+                None,
+            )
+            .first()
+            .expect("owl:unionOf triple must exist")
+            .obj;
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("xsdInteger"), ex("xsdString")]
+        );
+    }
+
+    #[test]
+    fn datatype_definition_with_data_intersection_of() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("PositiveEvenInt"),
+            DataRange::DataIntersectionOf(vec![named_datatype("Positive"), named_datatype("Even")]),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let range_node = object_of(&ds, &ex("PositiveEvenInt"), OWL_EQUIVALENT_CLASS)
+            .expect("owl:equivalentClass triple must exist");
+        let list_head = ds
+            .quads_matching(
+                None,
+                Some(range_node),
+                id_of(&ds, &IriReference(OWL_INTERSECTION_OF.to_owned())),
+                None,
+            )
+            .first()
+            .expect("owl:intersectionOf triple must exist")
+            .obj;
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![ex("Positive"), ex("Even")]
+        );
+    }
+
+    #[test]
+    fn datatype_definition_with_data_complement_of() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("NonPositive"),
+            DataRange::DataComplementOf(Box::new(named_datatype("Positive"))),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let range_node = object_of(&ds, &ex("NonPositive"), OWL_EQUIVALENT_CLASS)
+            .expect("owl:equivalentClass triple must exist");
+        let complement_of = id_of(&ds, &IriReference(OWL_DATATYPE_COMPLEMENT_OF.to_owned()))
+            .expect("owl:datatypeComplementOf interned");
+        let positive_id = id_of(&ds, &ex("Positive")).expect("Positive interned");
+        assert!(
+            !ds.quads_matching(
+                None,
+                Some(range_node),
+                Some(complement_of),
+                Some(positive_id)
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn datatype_definition_with_data_one_of() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("Suit"),
+            DataRange::DataOneOf(vec![string_literal("hearts"), string_literal("spades")]),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let range_node = object_of(&ds, &ex("Suit"), OWL_EQUIVALENT_CLASS)
+            .expect("owl:equivalentClass triple must exist");
+        let list_head = ds
+            .quads_matching(
+                None,
+                Some(range_node),
+                id_of(&ds, &IriReference(OWL_ONE_OF.to_owned())),
+                None,
+            )
+            .first()
+            .expect("owl:oneOf triple must exist")
+            .obj;
+        let first_pred =
+            id_of(&ds, &IriReference(RDF_FIRST.to_owned())).expect("rdf:first interned");
+        let first_quads = ds.quads_matching(None, Some(list_head), Some(first_pred), None);
+        assert_eq!(first_quads.len(), 1);
+        let elem = ds.resources.get_graph_element(first_quads[0].obj);
+        assert_eq!(elem, &string_literal("hearts"));
+    }
+
+    #[test]
+    fn datatype_definition_with_datatype_restriction() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![],
+            full("SmallInt"),
+            DataRange::DatatypeRestriction(
+                full("xsdInteger"),
+                vec![
+                    (full("xsdMinInclusive"), string_literal("0")),
+                    (full("xsdMaxInclusive"), string_literal("10")),
+                ],
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let range_node = object_of(&ds, &ex("SmallInt"), OWL_EQUIVALENT_CLASS)
+            .expect("owl:equivalentClass triple must exist");
+        let on_datatype = object_of_id(&ds, range_node, OWL_ON_DATATYPE)
+            .expect("owl:onDatatype triple must exist");
+        assert_eq!(
+            on_datatype,
+            id_of(&ds, &ex("xsdInteger")).expect("interned")
+        );
+        let list_head = object_of_id(&ds, range_node, OWL_WITH_RESTRICTIONS)
+            .expect("owl:withRestrictions triple must exist");
+        let first_pred =
+            id_of(&ds, &IriReference(RDF_FIRST.to_owned())).expect("rdf:first interned");
+        let rest_pred = id_of(&ds, &IriReference(RDF_REST.to_owned())).expect("rdf:rest interned");
+        let first_quads = ds.quads_matching(None, Some(list_head), Some(first_pred), None);
+        assert_eq!(first_quads.len(), 1);
+        let facet_node_1 = first_quads[0].obj;
+        let min_inclusive = id_of(&ds, &ex("xsdMinInclusive")).expect("xsdMinInclusive interned");
+        let facet_quads_1 = ds.quads_matching(None, Some(facet_node_1), Some(min_inclusive), None);
+        assert_eq!(facet_quads_1.len(), 1);
+        assert_eq!(
+            ds.resources.get_graph_element(facet_quads_1[0].obj),
+            &string_literal("0")
+        );
+        let rest_quads = ds.quads_matching(None, Some(list_head), Some(rest_pred), None);
+        assert_eq!(rest_quads.len(), 1);
+        let second_cell = rest_quads[0].obj;
+        let second_first = ds.quads_matching(None, Some(second_cell), Some(first_pred), None);
+        assert_eq!(second_first.len(), 1);
+        let facet_node_2 = second_first[0].obj;
+        let max_inclusive = id_of(&ds, &ex("xsdMaxInclusive")).expect("xsdMaxInclusive interned");
+        let facet_quads_2 = ds.quads_matching(None, Some(facet_node_2), Some(max_inclusive), None);
+        assert_eq!(facet_quads_2.len(), 1);
+        assert_eq!(
+            ds.resources.get_graph_element(facet_quads_2[0].obj),
+            &string_literal("10")
+        );
+    }
+
+    #[test]
+    fn datatype_definition_with_annotation_is_reified_via_owl_axiom() {
+        let (ds, report) = translate(vec![Axiom::AxiomDatatypeDefinition(
+            vec![annotation("source", "a good textbook")],
+            full("PositiveInt"),
+            named_datatype("xsdPositiveInteger"),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let node = find_reification_node(
+            &ds,
+            &ex("PositiveInt"),
+            OWL_EQUIVALENT_CLASS,
+            &ex("xsdPositiveInteger"),
+        )
+        .expect("owl:Axiom reification node must exist");
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "reification node must carry the annotation triple"
+        );
     }
 
     #[test]
@@ -2390,13 +2715,14 @@ mod tests {
     }
 
     /// A restriction whose `DataRange` is itself complex (not a plain named
-    /// datatype) has no RDF encoding yet — that structural mapping is
-    /// [#512](https://github.com/daghovland/rdf-datalog/issues/512)'s scope,
-    /// not this issue's — so it must be reported skipped, not
-    /// partially/incorrectly emitted.
+    /// datatype) is now translated via the general blank-node structural
+    /// mapping ([#512](https://github.com/daghovland/rdf-datalog/issues/512),
+    /// `Translator::data_range`): the complex range becomes its own
+    /// `rdfs:Datatype`/`owl:unionOf` blank node inside the enclosing
+    /// `owl:Restriction`'s `owl:someValuesFrom`.
     #[test]
-    fn data_restriction_with_complex_data_range_is_reported_not_silently_dropped() {
-        let (_ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
+    fn data_restriction_with_complex_data_range_is_now_translated() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
             vec![],
             class("A"),
             ClassExpression::DataSomeValuesFrom(
@@ -2411,8 +2737,17 @@ mod tests {
                 ]),
             ),
         ))]);
-        assert_eq!(report.triples_added, 0);
-        assert_eq!(report.skipped.len(), 1, "skipped: {:?}", report.skipped);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let restriction_node = sub_class_of_node(&ds, &ex("A"));
+        let range_node = single_object_by_id(&ds, restriction_node, OWL_SOME_VALUES_FROM);
+        let list_head = single_object_by_id(&ds, range_node, OWL_UNION_OF);
+        assert_eq!(
+            read_rdf_list(&ds, list_head),
+            vec![
+                IriReference("http://www.w3.org/2001/XMLSchema#integer".to_owned()),
+                IriReference("http://www.w3.org/2001/XMLSchema#string".to_owned()),
+            ]
+        );
     }
 
     /// Recursion: a union containing an intersection must translate the

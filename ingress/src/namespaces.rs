@@ -135,6 +135,12 @@ pub const OWL_INTERSECTION_OF: &str = "http://www.w3.org/2002/07/owl#intersectio
 pub const OWL_UNION_OF: &str = "http://www.w3.org/2002/07/owl#unionOf";
 /// The IRI for complementOf.
 pub const OWL_COMPLEMENT_OF: &str = "http://www.w3.org/2002/07/owl#complementOf";
+/// The IRI for datatypeComplementOf (the `DataComplementOf` data-range mapping).
+pub const OWL_DATATYPE_COMPLEMENT_OF: &str = "http://www.w3.org/2002/07/owl#datatypeComplementOf";
+/// The IRI for onDatatype (the `DatatypeRestriction` data-range mapping).
+pub const OWL_ON_DATATYPE: &str = "http://www.w3.org/2002/07/owl#onDatatype";
+/// The IRI for withRestrictions (the `DatatypeRestriction` data-range mapping).
+pub const OWL_WITH_RESTRICTIONS: &str = "http://www.w3.org/2002/07/owl#withRestrictions";
 /// The IRI for oneOf.
 pub const OWL_ONE_OF: &str = "http://www.w3.org/2002/07/owl#oneOf";
 /// The IRI for someValuesFrom.
