@@ -257,7 +257,9 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             // Reject path-traversal attempts before touching the filesystem.
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
-            execute_functional_file(ds, &path).map(CellOutput::Stream)
+            execute_functional_file(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
         }
         CellType::Reason => {
             let before = ds.named_graphs.quad_count;
