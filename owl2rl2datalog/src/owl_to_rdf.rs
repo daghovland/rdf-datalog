@@ -34,9 +34,17 @@ Contact: hovlanddag@gmail.com
 //! encoding is deferred to
 //! [#509](https://github.com/daghovland/rdf-datalog/issues/509), split out of
 //! the still-open parent tracking issue
-//! [#373](https://github.com/daghovland/rdf-datalog/issues/373) (see that
-//! issue's other follow-ups too: n-ary disjoint/different constructs
-//! [#513](https://github.com/daghovland/rdf-datalog/issues/513)).
+//! [#373](https://github.com/daghovland/rdf-datalog/issues/373).
+//!
+//! `DisjointClasses`/`DisjointObjectProperties`/`DisjointDataProperties`/
+//! `DifferentIndividuals` with more than two members *are* translated too,
+//! per [#513](https://github.com/daghovland/rdf-datalog/issues/513), via the
+//! spec's `owl:AllDisjointClasses`/`owl:AllDisjointProperties`/
+//! `owl:AllDifferent` blank-node encoding (`Translator::all_disjoint`) — the
+//! binary (n=2) forms of all four already translate to a single pairwise
+//! triple (`owl:disjointWith`/`owl:propertyDisjointWith`/`owl:differentFrom`),
+//! see the `Translator::class_axiom`/`object_property_axiom`/
+//! `data_property_axiom`/`assertion` `len() == 2` guards.
 //!
 //! `DisjointUnionOf` over atomic (named) class-expression members *is*
 //! translated in this pass — the `owl:disjointUnionOf`/`rdf:List` encoding
@@ -59,16 +67,17 @@ Contact: hovlanddag@gmail.com
 
 use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
-    IriReference, OWL_ALL_VALUES_FROM, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE,
-    OWL_ANNOTATED_TARGET, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM,
-    OWL_CARDINALITY, OWL_CLASS, OWL_COMPLEMENT_OF, OWL_DATATYPE_COMPLEMENT_OF,
-    OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH,
-    OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY,
-    OWL_HAS_SELF, OWL_HAS_VALUE, OWL_IMPORT, OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY,
-    OWL_IRREFLEXIVE_PROPERTY, OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY,
-    OWL_MIN_CARDINALITY, OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL,
-    OWL_OBJECT_INVERSE_OF, OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_DATATYPE,
-    OWL_ON_PROPERTIES, OWL_ON_PROPERTY, OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_CHAIN_AXIOM,
+    IriReference, OWL_ALL_DIFFERENT, OWL_ALL_DISJOINT_CLASSES, OWL_ALL_DISJOINT_PROPERTIES,
+    OWL_ALL_VALUES_FROM, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE, OWL_ANNOTATED_TARGET,
+    OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CARDINALITY, OWL_CLASS,
+    OWL_COMPLEMENT_OF, OWL_DATATYPE_COMPLEMENT_OF, OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM,
+    OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY,
+    OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_HAS_SELF, OWL_HAS_VALUE, OWL_IMPORT,
+    OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY,
+    OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY, OWL_MEMBERS, OWL_MIN_CARDINALITY,
+    OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF,
+    OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_DATATYPE, OWL_ON_PROPERTIES,
+    OWL_ON_PROPERTY, OWL_ONE_OF, OWL_ONTOLOGY, OWL_PROPERTY_CHAIN_AXIOM,
     OWL_PROPERTY_DISJOINT_WITH, OWL_QUALIFIED_CARDINALITY, OWL_REFLEXIVE_PROPERTY, OWL_RESTRICTION,
     OWL_SAME_AS, OWL_SOME_VALUES_FROM, OWL_SYMMETRIC_PROPERTY, OWL_TRANSITIVE_PROPERTY,
     OWL_UNION_OF, OWL_VERSION_IRI, OWL_WITH_RESTRICTIONS, OntologyVersion, RDF_FIRST, RDF_NIL,
@@ -368,6 +377,41 @@ impl<'a> Translator<'a> {
             tail = cell;
         }
         tail
+    }
+
+    /// The n-ary (n>2) `owl:AllDisjointClasses`/`owl:AllDisjointProperties`/
+    /// `owl:AllDifferent` blank-node encoding, shared by `DisjointClasses`,
+    /// `DisjointObjectProperties`, `DisjointDataProperties` and
+    /// `DifferentIndividuals`, per
+    /// <https://www.w3.org/TR/owl2-mapping-to-rdf/>'s `AllDisjointClasses`/
+    /// `AllDisjointProperties`/`AllDifferent` rows
+    /// ([#513](https://github.com/daghovland/rdf-datalog/issues/513)): a
+    /// fresh blank node typed `type_iri`, with
+    /// `owl:members T(SEQ member1 ... membern)` (an `rdf:List`).
+    ///
+    /// Unlike most other axiom forms in this module, annotations are **not**
+    /// reified via a separate `owl:Axiom` blank node here. §2.3.3 ("Axioms
+    /// Represented by Blank Nodes") of the mapping spec carves out exactly
+    /// this axiom family — along with `NegativeObjectPropertyAssertion` /
+    /// `NegativeDataPropertyAssertion`, not yet translated by this module —
+    /// as already introducing their own blank node `_:x` as part of the base
+    /// translation, so annotations attach directly to `_:x` as plain triples
+    /// `_:x <ap> T(av)` instead: `ANN(_:x)` per §3.2.5's "Parsing of Axioms".
+    fn all_disjoint(
+        &mut self,
+        type_iri: &str,
+        member_ids: &[GraphElementId],
+        annotations: &[Annotation],
+    ) {
+        let node = self.datastore.new_anonymous_blank_node();
+        self.type_triple(node, type_iri);
+        let list_head = self.rdf_list(member_ids);
+        self.triple_p(node, OWL_MEMBERS, list_head);
+        for (ap, av) in annotations {
+            let ap_id = self.full_iri(ap);
+            let av_id = self.annotation_value(av);
+            self.triple(node, ap_id, av_id);
+        }
     }
 
     /// Resolve every element of a list of class expressions, or `None` if any
@@ -855,9 +899,15 @@ impl<'a> Translator<'a> {
                     None => self.skip("DisjointClasses with unsupported class expression", axiom),
                 }
             }
-            // n > 2 needs an `owl:AllDisjointClasses` blank node with an
-            // `owl:members` rdf:List — deferred to
+            // n > 2: `owl:AllDisjointClasses` blank node with an
+            // `owl:members` rdf:List, per
             // https://github.com/daghovland/rdf-datalog/issues/513.
+            ClassAxiom::DisjointClasses(annotations, classes) => {
+                match self.class_expressions(classes) {
+                    Some(ids) => self.all_disjoint(OWL_ALL_DISJOINT_CLASSES, &ids, annotations),
+                    None => self.skip("DisjointClasses with unsupported class expression", axiom),
+                }
+            }
             ClassAxiom::DisjointUnion(annotations, class, members) => {
                 match self.class_expressions(members) {
                     Some(ids) => {
@@ -877,7 +927,6 @@ impl<'a> Translator<'a> {
                     ),
                 }
             }
-            other => self.skip("class axiom", other),
         }
     }
 
@@ -967,6 +1016,15 @@ impl<'a> Translator<'a> {
                     None => self.skip("DisjointObjectProperties with complex expression", axiom),
                 }
             }
+            // n > 2: `owl:AllDisjointProperties` blank node with an
+            // `owl:members` rdf:List, per
+            // https://github.com/daghovland/rdf-datalog/issues/513.
+            ObjectPropertyAxiom::DisjointObjectProperties(annotations, props) => {
+                match self.named_object_properties(props) {
+                    Some(ids) => self.all_disjoint(OWL_ALL_DISJOINT_PROPERTIES, &ids, annotations),
+                    None => self.skip("DisjointObjectProperties with complex expression", axiom),
+                }
+            }
             ObjectPropertyAxiom::InverseObjectProperties(annotations, first, second) => match (
                 self.named_object_property(first),
                 self.named_object_property(second),
@@ -996,7 +1054,6 @@ impl<'a> Translator<'a> {
             ObjectPropertyAxiom::TransitiveObjectProperty(annotations, prop) => {
                 self.property_characteristic(prop, OWL_TRANSITIVE_PROPERTY, annotations, axiom)
             }
-            other => self.skip("object property axiom", other),
         }
     }
 
@@ -1031,6 +1088,15 @@ impl<'a> Translator<'a> {
                 let ids: Vec<_> = props.iter().map(|p| self.full_iri(p)).collect();
                 self.triple_p_annotated(ids[0], OWL_PROPERTY_DISJOINT_WITH, ids[1], annotations);
             }
+            // n > 2: `owl:AllDisjointProperties` blank node with an
+            // `owl:members` rdf:List, per
+            // https://github.com/daghovland/rdf-datalog/issues/513. Data
+            // properties resolve infallibly via `full_iri` (unlike the
+            // object-property variant above), so no skip path is needed.
+            DataPropertyAxiom::DisjointDataProperties(annotations, props) => {
+                let ids: Vec<_> = props.iter().map(|p| self.full_iri(p)).collect();
+                self.all_disjoint(OWL_ALL_DISJOINT_PROPERTIES, &ids, annotations);
+            }
             DataPropertyAxiom::DataPropertyDomain(annotations, prop, domain) => {
                 let prop_id = self.full_iri(prop);
                 match self.class_expression(domain) {
@@ -1053,7 +1119,6 @@ impl<'a> Translator<'a> {
                 let type_id = self.iri(OWL_FUNCTIONAL_PROPERTY);
                 self.triple_p_annotated(prop_id, RDF_TYPE, type_id, annotations);
             }
-            other => self.skip("data property axiom", other),
         }
     }
 
@@ -1103,6 +1168,15 @@ impl<'a> Translator<'a> {
                     .map(|i| intern_individual(self.datastore, i))
                     .collect();
                 self.triple_p_annotated(ids[0], OWL_DIFFERENT_FROM, ids[1], annotations);
+            }
+            // n > 2: `owl:AllDifferent` blank node with an `owl:members`
+            // rdf:List, per https://github.com/daghovland/rdf-datalog/issues/513.
+            Assertion::DifferentIndividuals(annotations, individuals) => {
+                let ids: Vec<_> = individuals
+                    .iter()
+                    .map(|i| intern_individual(self.datastore, i))
+                    .collect();
+                self.all_disjoint(OWL_ALL_DIFFERENT, &ids, annotations);
             }
             other => self.skip("assertion", other),
         }
@@ -1442,6 +1516,98 @@ mod tests {
         assert!(has_triple(&ds, &ex("Dog"), OWL_DISJOINT_WITH, &ex("Cat")));
     }
 
+    // ── n-ary DisjointClasses/DisjointObjectProperties/DisjointDataProperties
+    // / DifferentIndividuals (#513) ─────────────────────────────────────────
+    //
+    // <https://www.w3.org/TR/owl2-mapping-to-rdf/>'s `AllDisjointClasses`/
+    // `AllDisjointProperties`/`AllDifferent` rows: a fresh blank node typed
+    // accordingly, with `owl:members` pointing at an `rdf:List` of the
+    // members, preserving declared order.
+
+    #[test]
+    fn disjoint_classes_of_three_or_more_becomes_all_disjoint_classes() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
+            vec![],
+            vec![class("Dog"), class("Cat"), class("Bird")],
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let members_pred = id_of(&ds, &IriReference(OWL_MEMBERS.to_owned())).expect("interned");
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_disjoint_type = id_of(&ds, &IriReference(OWL_ALL_DISJOINT_CLASSES.to_owned()))
+            .expect("owl:AllDisjointClasses interned");
+        let type_quads = ds.quads_matching(None, None, Some(type_pred), Some(all_disjoint_type));
+        assert_eq!(type_quads.len(), 1, "exactly one AllDisjointClasses node");
+        let node = type_quads[0].subject;
+        let members_quads = ds.quads_matching(None, Some(node), Some(members_pred), None);
+        assert_eq!(members_quads.len(), 1, "one owl:members triple");
+        assert_eq!(
+            read_rdf_list(&ds, members_quads[0].obj),
+            vec![ex("Dog"), ex("Cat"), ex("Bird")]
+        );
+        // rdf:type + owl:members + 3 list cells * 2 triples = 8
+        assert_eq!(report.triples_added, 8);
+    }
+
+    /// Per §2.3.3 of the mapping spec ("Axioms Represented by Blank Nodes"),
+    /// `DisjointClasses`/`DisjointObjectProperties`/`DisjointDataProperties`/
+    /// `DifferentIndividuals` with n>2 already mint their own blank node
+    /// `_:x` as part of the base translation, so annotations attach
+    /// *directly* to `_:x` as plain triples — unlike most other axiom forms
+    /// in this module, there is no separate `owl:Axiom` reification.
+    #[test]
+    fn disjoint_classes_of_three_with_annotation_attaches_directly_to_blank_node() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
+            vec![annotation("source", "a good textbook")],
+            vec![class("Dog"), class("Cat"), class("Bird")],
+        ))]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_disjoint_type = id_of(&ds, &IriReference(OWL_ALL_DISJOINT_CLASSES.to_owned()))
+            .expect("owl:AllDisjointClasses interned");
+        let node = ds
+            .quads_matching(None, None, Some(type_pred), Some(all_disjoint_type))
+            .first()
+            .expect("AllDisjointClasses node must exist")
+            .subject;
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "the AllDisjointClasses node must directly carry the annotation triple"
+        );
+        assert_eq!(
+            axiom_reification_count(&ds),
+            0,
+            "no owl:Axiom reification should be minted for this axiom family"
+        );
+    }
+
+    /// A `DisjointClasses` member that is itself unsupported still causes the
+    /// whole axiom to be skipped, matching the binary (n=2) case's existing
+    /// behaviour — no partially-formed `AllDisjointClasses` node is left
+    /// behind.
+    #[test]
+    fn disjoint_classes_of_three_with_unsupported_member_is_skipped() {
+        let (ds, report) = translate(vec![Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
+            vec![],
+            vec![
+                class("Dog"),
+                class("Cat"),
+                ClassExpression::ObjectSomeValuesFrom(
+                    ObjectPropertyExpression::InverseObjectProperty(Box::new(obj_prop("hasPet"))),
+                    Box::new(class("Animal")),
+                ),
+            ],
+        ))]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(
+            id_of(&ds, &IriReference(OWL_ALL_DISJOINT_CLASSES.to_owned())).is_none(),
+            "no AllDisjointClasses node should have been minted"
+        );
+    }
+
     #[test]
     fn object_property_domain_and_range_become_rdfs_domain_and_range() {
         let (ds, report) = translate(vec![
@@ -1593,6 +1759,63 @@ mod tests {
             RDF_TYPE,
             &IriReference(OWL_SYMMETRIC_PROPERTY.to_owned())
         ));
+    }
+
+    // ── n-ary DisjointObjectProperties (#513) ──────────────────────────────
+
+    #[test]
+    fn disjoint_object_properties_of_three_or_more_becomes_all_disjoint_properties() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::DisjointObjectProperties(
+                vec![],
+                vec![
+                    obj_prop("hasFather"),
+                    obj_prop("hasMother"),
+                    obj_prop("hasSibling"),
+                ],
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_disjoint_type = id_of(&ds, &IriReference(OWL_ALL_DISJOINT_PROPERTIES.to_owned()))
+            .expect("owl:AllDisjointProperties interned");
+        let type_quads = ds.quads_matching(None, None, Some(type_pred), Some(all_disjoint_type));
+        assert_eq!(
+            type_quads.len(),
+            1,
+            "exactly one AllDisjointProperties node"
+        );
+        let node = type_quads[0].subject;
+        let members_pred = id_of(&ds, &IriReference(OWL_MEMBERS.to_owned())).expect("interned");
+        let members_quads = ds.quads_matching(None, Some(node), Some(members_pred), None);
+        assert_eq!(members_quads.len(), 1, "one owl:members triple");
+        assert_eq!(
+            read_rdf_list(&ds, members_quads[0].obj),
+            vec![ex("hasFather"), ex("hasMother"), ex("hasSibling")]
+        );
+    }
+
+    /// A member that is itself unsupported (an inverse property expression)
+    /// still causes the whole axiom to be skipped, matching the binary (n=2)
+    /// case's existing behaviour.
+    #[test]
+    fn disjoint_object_properties_of_three_with_inverse_member_is_skipped() {
+        let (ds, report) = translate(vec![Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::DisjointObjectProperties(
+                vec![],
+                vec![
+                    obj_prop("hasFather"),
+                    obj_prop("hasMother"),
+                    ObjectPropertyExpression::InverseObjectProperty(Box::new(obj_prop("hasChild"))),
+                ],
+            ),
+        )]);
+        assert_eq!(report.triples_added, 0);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(
+            id_of(&ds, &IriReference(OWL_ALL_DISJOINT_PROPERTIES.to_owned())).is_none(),
+            "no AllDisjointProperties node should have been minted"
+        );
     }
 
     // ── SubObjectPropertyOf property chain (#510) ──────────────────────────
@@ -1974,6 +2197,36 @@ mod tests {
         ));
     }
 
+    // ── n-ary DisjointDataProperties (#513) ────────────────────────────────
+
+    #[test]
+    fn disjoint_data_properties_of_three_or_more_becomes_all_disjoint_properties() {
+        let (ds, report) = translate(vec![Axiom::AxiomDataPropertyAxiom(
+            DataPropertyAxiom::DisjointDataProperties(
+                vec![],
+                vec![full("firstName"), full("lastName"), full("ssn")],
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_disjoint_type = id_of(&ds, &IriReference(OWL_ALL_DISJOINT_PROPERTIES.to_owned()))
+            .expect("owl:AllDisjointProperties interned");
+        let type_quads = ds.quads_matching(None, None, Some(type_pred), Some(all_disjoint_type));
+        assert_eq!(
+            type_quads.len(),
+            1,
+            "exactly one AllDisjointProperties node"
+        );
+        let node = type_quads[0].subject;
+        let members_pred = id_of(&ds, &IriReference(OWL_MEMBERS.to_owned())).expect("interned");
+        let members_quads = ds.quads_matching(None, Some(node), Some(members_pred), None);
+        assert_eq!(members_quads.len(), 1, "one owl:members triple");
+        assert_eq!(
+            read_rdf_list(&ds, members_quads[0].obj),
+            vec![ex("firstName"), ex("lastName"), ex("ssn")]
+        );
+    }
+
     /// The ABox logic absorbed from `assert_abox` must still materialise the
     /// same ground triples when driven through `owl2rdf`.
     #[test]
@@ -2005,6 +2258,72 @@ mod tests {
     }
 
     const EX_HAS_PET: &str = "http://example.org/hasPet";
+
+    // ── n-ary DifferentIndividuals (#513) ──────────────────────────────────
+
+    #[test]
+    fn different_individuals_of_three_or_more_becomes_all_different() {
+        let (ds, report) = translate(vec![Axiom::AxiomAssertion(
+            Assertion::DifferentIndividuals(
+                vec![],
+                vec![
+                    Individual::NamedIndividual(full("alice")),
+                    Individual::NamedIndividual(full("bob")),
+                    Individual::NamedIndividual(full("carol")),
+                ],
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_different_type = id_of(&ds, &IriReference(OWL_ALL_DIFFERENT.to_owned()))
+            .expect("owl:AllDifferent interned");
+        let type_quads = ds.quads_matching(None, None, Some(type_pred), Some(all_different_type));
+        assert_eq!(type_quads.len(), 1, "exactly one AllDifferent node");
+        let node = type_quads[0].subject;
+        let members_pred = id_of(&ds, &IriReference(OWL_MEMBERS.to_owned())).expect("interned");
+        let members_quads = ds.quads_matching(None, Some(node), Some(members_pred), None);
+        assert_eq!(members_quads.len(), 1, "one owl:members triple");
+        assert_eq!(
+            read_rdf_list(&ds, members_quads[0].obj),
+            vec![ex("alice"), ex("bob"), ex("carol")]
+        );
+        // rdf:type + owl:members + 3 list cells * 2 triples = 8
+        assert_eq!(report.triples_added, 8);
+    }
+
+    /// See `disjoint_classes_of_three_with_annotation_attaches_directly_to_blank_node`
+    /// above: §2.3.3 of the mapping spec has `DifferentIndividuals` with n>2
+    /// attach annotations directly to the `owl:AllDifferent` blank node
+    /// rather than via `owl:Axiom` reification.
+    #[test]
+    fn different_individuals_of_three_with_annotation_attaches_directly_to_blank_node() {
+        let (ds, report) = translate(vec![Axiom::AxiomAssertion(
+            Assertion::DifferentIndividuals(
+                vec![annotation("source", "a good textbook")],
+                vec![
+                    Individual::NamedIndividual(full("alice")),
+                    Individual::NamedIndividual(full("bob")),
+                    Individual::NamedIndividual(full("carol")),
+                ],
+            ),
+        )]);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+        let type_pred = id_of(&ds, &IriReference(RDF_TYPE.to_owned())).expect("interned");
+        let all_different_type = id_of(&ds, &IriReference(OWL_ALL_DIFFERENT.to_owned()))
+            .expect("owl:AllDifferent interned");
+        let node = ds
+            .quads_matching(None, None, Some(type_pred), Some(all_different_type))
+            .first()
+            .expect("AllDifferent node must exist")
+            .subject;
+        let source_pred = id_of(&ds, &ex("source")).expect("annotation property interned");
+        let quads = ds.quads_matching(None, Some(node), Some(source_pred), None);
+        assert_eq!(
+            quads.len(),
+            1,
+            "the AllDifferent node must directly carry the annotation triple"
+        );
+    }
 
     /// `HasKey` on a named class with a single object property key becomes
     /// `<class> owl:hasKey (<prop>)`, per the W3C mapping's
