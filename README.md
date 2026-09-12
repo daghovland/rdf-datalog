@@ -22,7 +22,7 @@ Almost all implementation is done by LLM-based agents.
 - **Formats** — read and write Turtle, TriG, N-Triples, N-Quads, and JSON-LD 1.1 ([details](docs/user/formats.md))
 - **SPARQL** — SPARQL 1.1 Query and Update, in-process or over HTTP, with SPARQL 1.2 triple terms ([guide](docs/user/sparql-guide.md))
 - **Reasoning** — OWL 2 RL materialisation, plus custom Datalog rules with stratified negation ([guide](docs/user/reasoning.md))
-- **OWL parsing** — Turtle-encoded OWL ontologies and OWL 2 Manchester Syntax (`.omn`)
+- **OWL parsing** — Turtle-encoded OWL ontologies, OWL 2 Manchester Syntax (`.omn`), and OWL 2 Functional-Style Syntax (`.ofn`)
 - **SHACL** — SHACL Core validation via Datalog translation
 - **RML** — map CSV, JSON, JSONL, XML, and SQL (SQLite) to RDF ([guide](docs/user/rml-mapping.md))
 - **OTTR** — reusable, typed RDF templates (stOTTR), expandable in-process, over HTTP, or from Jupyter ([guide](docs/user/ottr-templates.md))
@@ -253,12 +253,12 @@ evaluate_rules(rules, &mut ds);
 ```
 
 Use `--ontology` on the CLI to apply reasoning before running a query. Ontologies written
-in OWL 2 Manchester Syntax (`.omn`) parse directly to the same `Ontology` type via the
-`manchester_parser` crate, so they reason identically. OWL 2 Functional-Style Syntax
-(`.ofn`) ontologies parse to the same `Ontology` type too, via the `owl_functional_parser`
-crate (see [`docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`](docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md));
-CLI/notebook-kernel wiring for `.ofn` is tracked in
-[#633](https://github.com/daghovland/rdf-datalog/issues/633).
+in OWL 2 Manchester Syntax (`.omn`) or OWL 2 Functional-Style Syntax (`.ofn`) parse directly
+to the same `Ontology` type via the `manchester_parser`/`owl_functional_parser` crates, so
+they reason identically to Turtle-encoded ontologies (see
+[`docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`](docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md)
+and [#633](https://github.com/daghovland/rdf-datalog/issues/633) for `.ofn` CLI/notebook-kernel
+wiring).
 
 **Proven by:** [`tests/owl_integration.rs`](tests/owl_integration.rs) (`cargo test --test owl_integration`)
 and [`tests/manchester_owl_reasoning.rs`](tests/manchester_owl_reasoning.rs).

@@ -21,6 +21,7 @@ sparql-endpoint = { path = "sparql_endpoint" }
 rml = { path = "rml" }
 ottr = { path = "ottr" }
 manchester-parser = { path = "manchester_parser" }
+owl-functional-parser = { path = "owl_functional_parser" }
 log = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }

@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/633-ofn-cli-wiring).
+
+ghpull:657 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Wire OWL 2 Functional-Style Syntax (.ofn) into CLI / notebook kernel" ;
+    bl:number 657 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:633 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr657 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:633 ;
+    prov:startedAtTime "2026-09-12T10:13:11Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-12T10:13:11Z"^^xsd:dateTime .
+
+session:pr657Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #633 asked to wire the newly-landed owl_functional_parser (.ofn -> owl_ontology::Ontology, from #180/#627) into the CLI and notebook kernel, split out the same way Manchester's .omn CLI wiring (#161) was split from its own parser (#139). Rather than designing a new integration shape, the prior Manchester wiring (PR #292) was read first and mirrored line for line: dagalog::load_file gained a .ofn branch alongside .omn that materialises ABox-only via owl2rl2datalog::assert_abox (load_file's contract is 'add quads,' not 'reason'); apply_ontologies/compile_ontology_rules special-case .ofn the same way, additionally compiling the TBox via owl2datalog and batching those rules with every other ontology source, because (mirroring #177's still-open Manchester gap) a Functional-Style TBox axiom has no RDF triple representation and would be lost if not compiled at parse time. The one internal refactor was renaming parse_manchester_file to parse_frame_ontology_file(ext, path) with a match on 'omn'/'ofn', instead of duplicating the file-read-and-dispatch boilerplate a third time. dagalog-kernel got a new %%functional <path> cell magic (cell/functional.rs, execute_functional_file) that is a near-verbatim copy of cell/manchester.rs's execute_manchester_file, including reusing PR #374's RdfTranslationReport-based skipped-ABox-assertion warning in the returned status string unchanged. Test fixtures (a small SubClassOf+ClassAssertion .ofn snippet, and an ObjectUnionOf non-atomic ClassAssertion for the skip-reporting test) were written directly from owl_functional_parser's own integration-test syntax examples rather than guessing the grammar. All new tests passed on the first run once the code compiled, since the implementation is a structural mirror of already-working, already-tested Manchester code rather than new logic." ;
+    agp:reasoningFor ghpull:657 ;
+    prov:wasGeneratedBy session:pr657 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
