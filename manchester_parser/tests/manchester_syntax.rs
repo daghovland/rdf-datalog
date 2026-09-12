@@ -380,6 +380,85 @@ fn class_frame_disjointunionof_with_annotations_and_compound_expr() {
 }
 
 #[test]
+fn class_frame_haskey_single_object_property() {
+    let onto = manchester_parser::parse(&doc("Class: Person HasKey: hasSSN")).unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
+        vec![],
+        cls("Person"),
+        vec![obj_prop("hasSSN")],
+        vec![],
+    )));
+}
+
+#[test]
+fn class_frame_haskey_multiple_object_properties() {
+    let onto =
+        manchester_parser::parse(&doc("Class: Person HasKey: hasFirstName hasLastName")).unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
+        vec![],
+        cls("Person"),
+        vec![obj_prop("hasFirstName"), obj_prop("hasLastName")],
+        vec![],
+    )));
+}
+
+#[test]
+fn class_frame_haskey_data_property() {
+    // `hasSSN` is pre-scanned as a `DataProperty:` frame header, so it must
+    // land in `HasKey`'s data-property list, not its object-property list —
+    // regardless of `DataProperty: hasSSN` appearing *after* the `Class:`
+    // frame that uses it (pre-scan is document-order-independent).
+    let onto = manchester_parser::parse(&doc("Class: Person HasKey: hasSSN\nDataProperty: hasSSN"))
+        .unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
+        vec![],
+        cls("Person"),
+        vec![],
+        vec![iri("hasSSN")],
+    )));
+}
+
+#[test]
+fn class_frame_haskey_mixed_object_inverse_and_data_property() {
+    let onto = manchester_parser::parse(&doc(
+        "Class: Person HasKey: inverse hasChild hasSSN\nDataProperty: hasSSN",
+    ))
+    .unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
+        vec![],
+        cls("Person"),
+        vec![ObjectPropertyExpression::InverseObjectProperty(Box::new(
+            obj_prop("hasChild")
+        ))],
+        vec![iri("hasSSN")],
+    )));
+}
+
+#[test]
+fn class_frame_haskey_with_annotations() {
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("Class: Person HasKey: Annotations: rdfs:comment \"why\" hasSSN")
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomHasKey(anns, class, obj_props, data_props)
+                if anns.len() == 1
+                    && *class == cls("Person")
+                    && *obj_props == vec![obj_prop("hasSSN")]
+                    && data_props.is_empty()
+        )
+    });
+    assert!(
+        found,
+        "expected an annotated HasKey for Person, got: {:?}",
+        onto.axioms
+    );
+}
+
+#[test]
 fn class_frame_declaration_and_annotations() {
     let onto = manchester_parser::parse(&format!(
         "Prefix: rdfs: <{RDFS}>\n{}",
@@ -903,17 +982,6 @@ fn rule_frame_can_be_interleaved_with_class_frames() {
 // support yet (see docs/plans/MANCHESTER_SYNTAX_PLAN.md's scope table).
 // They are `#[ignore]`d and expected to keep failing (return `Err`, or parse
 // but silently drop the construct) until #157 is implemented.
-
-#[test]
-#[ignore] // #157: HasKey: is not parsed.
-fn deferred_has_key() {
-    let onto = manchester_parser::parse(&doc("Class: Person HasKey: hasSSN")).unwrap();
-    assert!(
-        onto.axioms
-            .iter()
-            .any(|a| matches!(a, Axiom::AxiomHasKey(_, _, _, _)))
-    );
-}
 
 #[test]
 #[ignore] // #157: SubPropertyChain: (object property chains) is not parsed.

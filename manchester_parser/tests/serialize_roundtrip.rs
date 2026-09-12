@@ -109,6 +109,19 @@ fn roundtrips_class_disjointunionof() {
 }
 
 #[test]
+fn roundtrips_class_haskey_mixed_object_and_data_properties() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasSSN
+        Class: :Person
+            HasKey: :hasFirstName :hasSSN
+        "#,
+    );
+}
+
+#[test]
 fn roundtrips_bare_class_declaration_with_no_axioms() {
     assert_roundtrip(
         r#"
