@@ -48,5 +48,5 @@ rand = "0.10"
 # on rand_core 0.9, which rsa 0.9.x does not implement against). Kept as a
 # separate pin purely to feed RsaPrivateKey::new in test key generation.
 rand_core = "0.6"
-base64 = "0.22"
+base64 = "0.23"
 tempfile = "3"
