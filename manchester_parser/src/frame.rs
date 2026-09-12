@@ -10,10 +10,6 @@ Contact: hovlanddag@gmail.com
 //! `AnnotationProperty:`) and top-level `misc` axioms. Each frame parser
 //! returns `Vec<Axiom>` — one frame typically expands to several axioms (one
 //! per section-list item), per `docs/plans/MANCHESTER_SYNTAX_PLAN.md`.
-//!
-//! `SubPropertyChain:` (object property frame) is deferred; see
-//! [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
-//! follow-up issues.
 
 use crate::annotation::{annotations_section, opt_leading_annotations};
 use crate::class_expr::description;
@@ -278,9 +274,30 @@ enum ObjectPropertySection {
     Range(Vec<(Vec<Annotation>, ClassExpression)>),
     Characteristics(Vec<ObjectPropertyAxiom>),
     SubPropertyOf(Vec<(Vec<Annotation>, ObjectPropertyExpression)>),
+    SubPropertyChain(Vec<Annotation>, Vec<ObjectPropertyExpression>),
     EquivalentTo(Vec<(Vec<Annotation>, ObjectPropertyExpression)>),
     DisjointWith(Vec<(Vec<Annotation>, ObjectPropertyExpression)>),
     InverseOf(Vec<(Vec<Annotation>, ObjectPropertyExpression)>),
+}
+
+/// `objectPropertyExpression 'o' objectPropertyExpression { 'o'
+/// objectPropertyExpression }` (W3C Manchester Syntax §2.5). At least two
+/// elements — a single-element "chain" is just `SubPropertyOf:`.
+fn property_expression_chain<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> IResult<&'a str, Vec<ObjectPropertyExpression>> {
+    move |input: &'a str| {
+        let (input, first) = object_property_expression(ctx)(input)?;
+        let (input, rest) = many1(nom::sequence::preceded(
+            keyword("o"),
+            object_property_expression(ctx),
+        ))
+        .parse(input)?;
+        let mut chain = Vec::with_capacity(1 + rest.len());
+        chain.push(first);
+        chain.extend(rest);
+        Ok((input, chain))
+    }
 }
 
 fn object_property_section<'a>(
@@ -314,6 +331,13 @@ fn object_property_section<'a>(
                     annotated_list(ctx, object_property_expression(ctx)),
                 ),
                 ObjectPropertySection::SubPropertyOf,
+            ),
+            nom::combinator::map(
+                nom::sequence::preceded(
+                    keyword("SubPropertyChain:"),
+                    nom::sequence::pair(opt_annotations(ctx), property_expression_chain(ctx)),
+                ),
+                |(anns, chain)| ObjectPropertySection::SubPropertyChain(anns, chain),
             ),
             nom::combinator::map(
                 nom::sequence::preceded(
@@ -391,6 +415,15 @@ pub(crate) fn object_property_frame<'a>(
                             ),
                         ));
                     }
+                }
+                ObjectPropertySection::SubPropertyChain(anns, chain) => {
+                    axioms.push(Axiom::AxiomObjectPropertyAxiom(
+                        ObjectPropertyAxiom::SubObjectPropertyOf(
+                            anns,
+                            owl_ontology::SubPropertyExpression::PropertyExpressionChain(chain),
+                            self_prop.clone(),
+                        ),
+                    ));
                 }
                 ObjectPropertySection::EquivalentTo(list) => {
                     for (anns, other) in list {

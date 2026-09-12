@@ -1002,6 +1002,19 @@ fn object_property_subpropertychain_of_two() {
 }
 
 #[test]
+fn object_property_subpropertychain_requires_at_least_two_elements() {
+    // The W3C grammar is `objectPropertyExpression 'o' objectPropertyExpression
+    // { 'o' objectPropertyExpression }` — at least two elements joined by
+    // `o`. A bare single property (no `o`) is not a valid `SubPropertyChain:`
+    // value (that's what `SubPropertyOf:` is for), so this must fail to
+    // parse rather than silently produce a one-element chain.
+    let result = manchester_parser::parse(&doc(
+        "ObjectProperty: hasGrandparent SubPropertyChain: hasParent",
+    ));
+    assert!(result.is_err(), "expected a parse error");
+}
+
+#[test]
 fn object_property_subpropertychain_of_three_with_inverse() {
     // Longer chains, and `inverse` on a chain element, both per the W3C
     // grammar's `objectPropertyExpression ::= objectPropertyIRI | 'inverse'
@@ -1027,8 +1040,9 @@ fn object_property_subpropertychain_of_three_with_inverse() {
 
 #[test]
 fn object_property_subpropertychain_with_annotations() {
-    let onto = manchester_parser::parse(&doc(
-        "Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nObjectProperty: hasGrandparent\n    SubPropertyChain: Annotations: rdfs:comment \"derived\" hasParent o hasParent",
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("ObjectProperty: hasGrandparent\n    SubPropertyChain: Annotations: rdfs:comment \"derived\" hasParent o hasParent")
     ))
     .unwrap();
     let found = onto.axioms.iter().any(|a| {
