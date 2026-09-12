@@ -137,8 +137,8 @@ classFrame ::= 'Class:' classIRI
     | 'SubClassOf:' descriptionAnnotatedList
     | 'EquivalentTo:' descriptionAnnotatedList
     | 'DisjointWith:' descriptionAnnotatedList
-    | 'DisjointUnionOf:' annotations description2List }        -- deferred (#157)
-    | 'HasKey:' annotations (...)                                -- deferred (#157)
+    | 'DisjointUnionOf:' annotations description2List
+    | 'HasKey:' annotations (objectPropertyExpression | dataPropertyExpression)+ }
 
 objectPropertyFrame ::= 'ObjectProperty:' objectPropertyIRI
     { 'Annotations:' annotationAnnotatedList
@@ -189,8 +189,7 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | Feature | In scope | Notes |
 |---|---|---|
 | `Prefix:` (incl. default `:`), `Ontology:`, `Import:`, ontology `Annotations:` | Yes | |
-| `Class:` frame: `Annotations:`, `SubClassOf:`, `EquivalentTo:`, `DisjointWith:`, `DisjointUnionOf:` | Yes | |
-| `Class:` frame: `HasKey:` | No | filed as a #157 follow-up |
+| `Class:` frame: `Annotations:`, `SubClassOf:`, `EquivalentTo:`, `DisjointWith:`, `DisjointUnionOf:`, `HasKey:` | Yes | see addendum below |
 | `ObjectProperty:` frame: `Annotations:`, `Domain:`, `Range:`, `Characteristics:`, `SubPropertyOf:`, `EquivalentTo:`, `DisjointWith:`, `InverseOf:` | Yes | |
 | `ObjectProperty:` frame: `SubPropertyChain:` | No | #157 |
 | `DataProperty:` frame: all sections (Characteristics limited to `Functional`, per spec) | Yes | |
@@ -201,7 +200,7 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | `conjunction`'s `classIRI 'that' ...` sugar | No | #157 |
 | Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | No | #157 |
 | `Datatype:` frame | No | #157 (depends on compound data ranges) |
-| `Rule:` (SWRL) frames | Yes | see addendum below; `HasKey:`/`SubPropertyChain:`/compound data ranges/`Datatype:` remain #157 follow-ups |
+| `Rule:` (SWRL) frames | Yes | see addendum below; `SubPropertyChain:`/compound data ranges/`Datatype:` remain #157 follow-ups |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
 
 ---
@@ -475,6 +474,51 @@ full-`<...>`-IRI emission the rest of the serializer uses; round-tripped
 through the parser, a class atom's predicate re-resolves via `description`'s
 `full_iri` path and a generic atom's via `iri`'s, so round-tripping is
 covered by `serialize_roundtrip.rs` alongside the other frame kinds.
+
+## Addendum: `HasKey:` class frame section (#499, item 3 of #157's original six)
+
+[#157](https://github.com/daghovland/rdf-datalog/issues/157)'s remaining
+follow-ups after `DisjointUnionOf:` (#503) and SWRL `Rule:` frames (#498) are
+`HasKey:` (this addendum, #499), `SubPropertyChain:` (#500), compound data
+ranges (#501), and the `Datatype:` frame (#502).
+
+Grammar (W3C Manchester Syntax spec §2.5, `classFrameSection`):
+
+```
+'HasKey:' annotations (objectPropertyExpression | dataPropertyExpression)+
+```
+
+i.e. a space-separated (not comma-separated) list of one or more property
+expressions, each either an `objectPropertyExpression`
+(`objectPropertyIRI | 'inverse' objectPropertyIRI`) or a bare
+`dataPropertyIRI`. The target type,
+`Axiom::AxiomHasKey(Vec<Annotation>, ClassExpression, Vec<ObjectPropertyExpression>, Vec<DataProperty>)`
+(`owl_ontology/src/axioms.rs`), already splits the list into its two
+constituent kinds, so the parser must classify each bare-IRI item as it goes.
+
+**Disambiguation** reuses the same pre-scanned `ParserContext::is_known_data_property`
+table `class_expr::restriction` and the `EquivalentProperties:`/`DisjointProperties:`
+misc forms already rely on (populated by a document-order-independent
+pre-scan of `DataProperty:` frame headers, see `lib.rs::prescan_data_properties`):
+an `inverse IRI` item is unambiguously an object property; a bare IRI is a
+data property iff it was pre-scanned as a `DataProperty:` frame header,
+otherwise it's treated as an (unqualified) object property. This mirrors
+existing precedent rather than inventing a new mechanism.
+
+`AxiomHasKey`'s `ClassExpression` field is always `ClassExpression::ClassName`
+when produced by this parser (built from the enclosing `Class:` frame's own
+IRI, same as `DisjointUnion`'s `Class` field) — there's no route through the
+grammar for a `HasKey:` section to attach to anything but its own frame's
+named class.
+
+The serializer (`serialize.rs`) emits `HasKey:` symmetrically: object
+property items via the existing `fmt_obj_prop` helper, data property items
+via plain `fmt_iri`, object items first then data items (a text-order detail
+only — `AxiomHasKey`'s two `Vec`s are unordered relative to each other
+semantically, and each `Vec`'s own internal order round-trips exactly since
+classification is a pure per-item function of the pre-scan table, not of
+position). Round-trip coverage lives in `serialize_roundtrip.rs` alongside
+the other frame kinds.
 
 ## References
 
