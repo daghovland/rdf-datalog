@@ -693,9 +693,48 @@ impl PartialSubValue {
 type PartialSub = HashMap<String, PartialSubValue>;
 
 #[derive(Clone)]
-enum ActiveGraph {
+pub(crate) enum ActiveGraph {
     Fixed(GraphElementId),
     Variable(String),
+}
+
+/// Bundles the three pieces of evaluation state threaded through nearly
+/// every BGP/property-path evaluation function: the datastore being
+/// queried, the currently active graph (`GRAPH`/`FROM`), and the query's
+/// deadline (issue #372's cooperative timeout). All three are borrowed for
+/// the duration of one `execute` call and never mutated through this
+/// bundle, so `EvalCtx` is itself just a trio of references and is cheaply
+/// `Copy` — see issue #466.
+#[derive(Clone, Copy)]
+pub(crate) struct EvalCtx<'a> {
+    pub(crate) datastore: &'a Datastore,
+    pub(crate) active_graph: &'a ActiveGraph,
+    pub(crate) deadline: &'a Deadline,
+}
+
+impl<'a> EvalCtx<'a> {
+    pub(crate) fn new(
+        datastore: &'a Datastore,
+        active_graph: &'a ActiveGraph,
+        deadline: &'a Deadline,
+    ) -> Self {
+        Self {
+            datastore,
+            active_graph,
+            deadline,
+        }
+    }
+
+    /// The same context but scoped to a different active graph — used when
+    /// a function must evaluate a sub-expression against a graph other than
+    /// the caller's (e.g. iterating every named graph for an unbound
+    /// `GRAPH ?g`).
+    pub(crate) fn with_active_graph(self, active_graph: &'a ActiveGraph) -> Self {
+        Self {
+            active_graph,
+            ..self
+        }
+    }
 }
 
 /// Compute the active graph for a query from its dataset clauses.
