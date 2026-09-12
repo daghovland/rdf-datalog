@@ -2244,6 +2244,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "owl-xml-parser"
+version = "0.1.0"
+dependencies = [
+ "dag-rdf",
+ "ingress",
+ "log",
+ "num-bigint 0.5.1",
+ "ordered-float",
+ "owl-ontology",
+ "roxmltree",
+ "rust_decimal",
+]
+
+[[package]]
 name = "owl2rl2datalog"
 version = "0.1.0"
 dependencies = [
@@ -3000,6 +3014,15 @@ dependencies = [
  "thiserror 2.0.20",
  "turtle",
  "uuid",
+]
+
+[[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
