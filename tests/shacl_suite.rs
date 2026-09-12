@@ -3881,7 +3881,6 @@ fn spec_s5_sparql_target() {
 /// underlying cause so a caller can tell target computation failed rather
 /// than genuinely finding nothing to check.
 #[test]
-#[ignore = "TDD red phase for #522: data_targets/target_rules don't yet propagate a Result"]
 fn regression_issue_522_sparql_target_execution_error_surfaces() {
     let data = load("shacl_s522_sparql_target_exec_error_data.ttl");
     let shapes = load("shacl_s522_sparql_target_exec_error_shapes.ttl");
