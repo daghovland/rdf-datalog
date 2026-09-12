@@ -149,15 +149,17 @@ fn fmt_class_nary(kw: &str, anns: &[Annotation], list: &[ClassExpression]) -> Op
 fn fmt_object_property_axiom(a: &ObjectPropertyAxiom) -> Option<String> {
     use ObjectPropertyAxiom::*;
     match a {
-        ObjectPropertyDomain(p, c) => {
+        ObjectPropertyDomain(anns, p, c) => {
+            let ann = fmt_axiom_annotations(anns);
             let p_s = fmt_obj_prop(p)?;
             let c_s = fmt_class_expr(c)?;
-            Some(format!("ObjectPropertyDomain({p_s} {c_s})"))
+            Some(format!("ObjectPropertyDomain({ann}{p_s} {c_s})"))
         }
-        ObjectPropertyRange(p, c) => {
+        ObjectPropertyRange(anns, p, c) => {
+            let ann = fmt_axiom_annotations(anns);
             let p_s = fmt_obj_prop(p)?;
             let c_s = fmt_class_expr(c)?;
-            Some(format!("ObjectPropertyRange({p_s} {c_s})"))
+            Some(format!("ObjectPropertyRange({ann}{p_s} {c_s})"))
         }
         SubObjectPropertyOf(anns, sub, sup) => {
             let ann = fmt_axiom_annotations(anns);
