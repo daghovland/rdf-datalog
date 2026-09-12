@@ -19,8 +19,13 @@ Contact: hovlanddag@gmail.com
 //! ontology-level `<Annotation>`, and `<Declaration>`.
 
 mod annotation;
+mod axiom;
+mod class_expr;
+mod data_range;
 mod declaration;
+mod individual;
 mod iri;
+mod property_expr;
 
 use owl_ontology::Ontology;
 
@@ -69,9 +74,13 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
                 let axiom = declaration::parse_declaration(child, &prefixes)?;
                 axioms.push(axiom);
             }
+            "SubClassOf" | "EquivalentClasses" | "DisjointClasses" | "DisjointUnion" => {
+                let axiom = axiom::parse_class_axiom(child, &prefixes)?;
+                axioms.push(axiom);
+            }
             other => {
                 return Err(format!(
-                    "unsupported OWL/XML axiom element <{other}> (see #606-#608)"
+                    "unsupported OWL/XML axiom element <{other}> (see #607-#608)"
                 ));
             }
         }
