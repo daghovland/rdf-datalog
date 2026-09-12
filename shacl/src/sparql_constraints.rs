@@ -266,14 +266,14 @@ pub fn eval_all(
     parsed: &[ParsedShape],
     shapes_store: &Datastore,
     data: &Datastore,
-    focus_nodes_of: impl Fn(&ParsedShape) -> Vec<GraphElementId>,
+    focus_nodes_of: impl Fn(&ParsedShape) -> Result<Vec<GraphElementId>, String>,
 ) -> Result<Vec<ValidationResult>, String> {
     let mut results = Vec::new();
     for shape in parsed {
         if shape.deactivated || shape.sparql_constraints.is_empty() {
             continue;
         }
-        let focus_nodes = focus_nodes_of(shape);
+        let focus_nodes = focus_nodes_of(shape)?;
         if focus_nodes.is_empty() {
             continue;
         }

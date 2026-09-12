@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:656 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: surface sh:target SPARQLTarget execution-time errors" ;
+    bl:number 656 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:522 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr656 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:522 ;
+    prov:startedAtTime "2026-09-12T10:07:49Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-12T10:34:22Z"^^xsd:dateTime .
+
+session:pr656Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #522 was a follow-up from #54: shacl::validate already pre-flight parse-checks every sh:target/sh:sparql embedded query, but an execution-time failure of a sh:target SPARQLTarget query (parses fine, fails when run) was log::warn!-and-skip in both data_targets (lib.rs) and translate::target_rules, contributing zero focus nodes silently rather than surfacing an error. #54 had deliberately deferred fixing this because data_targets and the whole Datalog rule-generation pipeline it feeds (translate::shapes_to_rules, evaluate::eval_all, pre_compute_violations, closed_violations) had no Result return to thread an error through. Checked provenance for crate:shacl and shacl/src/lib.rs first (#632/#651/#613/#584 read) to confirm this crate's established idiom for fallible SPARQL execution: sparql_constraints::eval_all/eval_one_constraint already hard-Err on a sh:sparql *constraint*'s execution failure, so the fix here was to extend that exact convention to sh:target's SPARQLTarget case rather than invent a new error-handling style. Traced the full call graph before touching anything: data_targets is called from three places (evaluate::eval_all's per-shape loop, closed_violations, and the focus_nodes_of closure validate() passes into sparql_constraints::eval_all), and pre_compute_violations (which runs eval_all/closed_violations) always executes before translate::shapes_to_rules in validate()'s pipeline — so any SPARQLTarget failure surfaces via the eval_all path before target_rules ever gets a chance to run for that shape. Fixed both arms anyway (target_rules for defense-in-depth/consistency even though its error path is currently unreachable through the public validate() API given that ordering), by making data_targets/evaluate::eval_all/closed_violations/pre_compute_violations/translate::target_rules/translate::shapes_to_rules and the focus_nodes_of closure's signature all Result<_, String>-returning, propagated with plain '?'. Built a real execution-time-failing-but-parse-valid test fixture using a SERVICE clause (parses under sparql_parser's grammar, but shacl::sparql_constraints::run_select always executes with NetworkPolicy::Deny, which rejects SERVICE at execution) rather than a synthetic/contrived failure mode, added as a #[ignore]d red-phase test first per this repo's TDD workflow, then unignored once the Result-threading was in place. A clippy type_complexity lint on shapes_to_rules's new nested Result<(Vec<Rule>, Vec<(_,_)>), String> return type was fixed with a named RulesAndViolPreds type alias rather than #[allow]-ing it. Final state: all 176 shacl_suite tests (10 w3c_shacl_suite, no skip-list changes) plus the new regression test pass; full cargo test --workspace green except the pre-existing sparql_endpoint::query_timeout SIGKILL false alarm (confirmed unrelated to this diff — reproduced in isolation on this same machine); fmt and clippy -D warnings clean; all 8 CI jobs pass." ;
+    agp:reasoningFor ghpull:656 ;
+    prov:wasGeneratedBy session:pr656 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

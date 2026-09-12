@@ -230,6 +230,8 @@ fn shacl_testdata_parses() {
         "shacl_s6_batched_agg_data.ttl",
         "shacl_s6_batched_agg_ungrouped_shapes.ttl",
         "shacl_s6_batched_agg_grouped_shapes.ttl",
+        "shacl_s522_sparql_target_exec_error_data.ttl",
+        "shacl_s522_sparql_target_exec_error_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -3857,6 +3859,39 @@ fn spec_s5_sparql_target() {
     assert_eq!(
         report.results[0].focus_node.as_deref(),
         Some("http://example.org/ns#Bob")
+    );
+}
+
+// ── #522: sh:target SPARQLTarget execution-time errors must surface ───────
+//
+// See docs/plans/SHACL_SPARQLTARGET_ERRORS_522_PLAN.md and
+// [#522](https://github.com/daghovland/rdf-datalog/issues/522).
+
+/// A `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` query that *parses*
+/// successfully (`SERVICE` is valid SPARQL syntax, so #54's pre-flight
+/// parse-check passes) but *fails at execution* because
+/// `shacl::sparql_constraints::run_select` always runs with
+/// `ingress::NetworkPolicy::Deny`. Before the #522 fix, both `data_targets`
+/// (used by `evaluate::eval_all`/`closed_violations`/the `sparql_constraints`
+/// focus-node callback) and `translate::target_rules` silently contributed
+/// zero focus nodes on this failure and `validate()` returned `Ok` with an
+/// empty (vacuously conforming) report — masking that the shape's target
+/// computation never actually ran. After the fix, the execution failure must
+/// propagate as an `Err` all the way out of `validate()`, mentioning the
+/// underlying cause so a caller can tell target computation failed rather
+/// than genuinely finding nothing to check.
+#[test]
+fn regression_issue_522_sparql_target_execution_error_surfaces() {
+    let data = load("shacl_s522_sparql_target_exec_error_data.ttl");
+    let shapes = load("shacl_s522_sparql_target_exec_error_shapes.ttl");
+    let err = shacl::validate(&data, &shapes).expect_err(
+        "a sh:target SPARQLTarget query that fails at *execution* time (SERVICE \
+         rejected under NetworkPolicy::Deny) must surface as an Err rather than \
+         silently contributing zero focus nodes",
+    );
+    assert!(
+        err.to_lowercase().contains("service") || err.to_lowercase().contains("network"),
+        "error message should explain the underlying execution failure; got: {err}"
     );
 }
 

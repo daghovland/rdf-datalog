@@ -39,6 +39,11 @@ use sparql_parser::ast::{BinaryOp, Expression, UnaryOp};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/// `(rules, viol_preds)` — see [`shapes_to_rules`]'s doc comment. Named so
+/// clippy's `type_complexity` lint doesn't flag the nested `Vec<(_, _)>`
+/// inside a `Result`.
+type RulesAndViolPreds = (Vec<Rule>, Vec<(GraphElementId, ViolMeta)>);
+
 /// Translate all parsed shapes into Datalog rules.
 ///
 /// Returns `(rules, viol_preds)`.  Every triple `(n, p, v)` in the working store
@@ -50,7 +55,7 @@ pub fn shapes_to_rules(
     shapes: &Datastore,
     data: &Datastore,
     work: &mut Datastore,
-) -> (Vec<Rule>, Vec<(GraphElementId, ViolMeta)>) {
+) -> Result<RulesAndViolPreds, String> {
     let true_id = graph::intern_iri(work, INT_TRUE);
     let nil_id = graph::intern_iri(work, INT_NIL);
     let rdf_type_id = graph::intern_iri(work, RDF_TYPE);
@@ -71,7 +76,7 @@ pub fn shapes_to_rules(
         let target_pred = graph::intern_iri(work, &int_target(si));
 
         // Target rules
-        rules.extend(target_rules(shape, target_pred, true_id, data, work));
+        rules.extend(target_rules(shape, target_pred, true_id, data, work)?);
 
         // Property shape constraints
         for prop in &shape.property_shapes {
@@ -201,7 +206,7 @@ pub fn shapes_to_rules(
         // conforming sub-shapes; see `eval_xone`).
     }
 
-    (rules, viol_preds)
+    Ok((rules, viol_preds))
 }
 
 // ── Target rules ──────────────────────────────────────────────────────────────
@@ -212,7 +217,7 @@ fn target_rules(
     true_id: GraphElementId,
     data: &Datastore,
     work: &mut Datastore,
-) -> Vec<Rule> {
+) -> Result<Vec<Rule>, String> {
     let mut rules = Vec::new();
     for target in &shape.targets {
         match target {
@@ -271,30 +276,27 @@ fn target_rules(
                 // constraints), and an arbitrary SPARQL target query (unlike
                 // Target::Class's fixed rdf:type/rdfs:subClassOf* pattern)
                 // could easily match those and make the target set depend on
-                // which other shapes happened to run first. A failing/
-                // malformed query contributes no target nodes rather than
-                // failing the whole translation pass — see `data_targets`'s
-                // identical `Target::Sparql` arm for why (no `Result` return
-                // threaded through this far). See
-                // [#54](https://github.com/daghovland/rdf-datalog/issues/54).
-                match crate::sparql_constraints::eval_sparql_target(sq, data) {
-                    Ok(elems) => {
-                        for elem in elems {
-                            let node_id = work.add_resource(elem);
-                            rules.push(fact(node_id, target_pred, true_id));
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "sh:target SPARQLTarget query failed for shape {:?}, contributing no target facts: {e}",
+                // which other shapes happened to run first. An execution-time
+                // failure is a hard `Err` here, the same as `data_targets`'s
+                // identical `Target::Sparql` arm — see
+                // [#522](https://github.com/daghovland/rdf-datalog/issues/522)
+                // (this was previously a warn-and-skip; see #54 for the
+                // original scope decision that deferred fixing it).
+                let elems =
+                    crate::sparql_constraints::eval_sparql_target(sq, data).map_err(|e| {
+                        format!(
+                            "sh:target SPARQLTarget query failed for shape {:?}: {e}",
                             shape.iri
-                        );
-                    }
+                        )
+                    })?;
+                for elem in elems {
+                    let node_id = work.add_resource(elem);
+                    rules.push(fact(node_id, target_pred, true_id));
                 }
             }
         }
     }
-    rules
+    Ok(rules)
 }
 
 // ── Property constraint rules ─────────────────────────────────────────────────

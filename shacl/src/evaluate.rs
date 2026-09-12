@@ -37,7 +37,7 @@ pub fn eval_all(
     shapes_store: &Datastore,
     work: &mut Datastore,
     cache: &path::PathCache,
-) -> Vec<(GraphElementId, ViolMeta)> {
+) -> Result<Vec<(GraphElementId, ViolMeta)>, String> {
     let mut viol_preds = Vec::new();
     for shape in parsed {
         // sh:deactivated — skip this shape's constraints entirely (SHACL §3).
@@ -45,7 +45,7 @@ pub fn eval_all(
         if shape.deactivated {
             continue;
         }
-        let targets = crate::data_targets(shape, data);
+        let targets = crate::data_targets(shape, data)?;
 
         // Every `sh:qualifiedValueShape` declared anywhere among this node
         // shape's property shapes, as (path, inner shape id, owning property
@@ -247,7 +247,7 @@ pub fn eval_all(
             ));
         }
     }
-    viol_preds
+    Ok(viol_preds)
 }
 
 // ── Constraint coordinate ─────────────────────────────────────────────────────
