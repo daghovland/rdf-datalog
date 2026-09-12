@@ -297,6 +297,12 @@ pub fn build_router(state: AppState) -> Router {
             "/{name}/rules",
             post(crate::rules_endpoint::dataset_rules_post),
         )
+        // ── Per-ruleset-scoped runtime ruleset (`/{name}/rules/{id}`, #473) ──
+        .route(
+            "/{name}/rules/{ruleset_id}",
+            post(crate::rules_endpoint::dataset_rules_id_post)
+                .delete(crate::rules_endpoint::dataset_rules_id_delete),
+        )
         // ── Per-dataset GSP (`/{name}/data`, `/{name}/get`) ──────────────────
         .route(
             "/{name}/data",

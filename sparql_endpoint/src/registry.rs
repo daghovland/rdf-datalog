@@ -12,7 +12,7 @@ Contact: hovlanddag@gmail.com
 //! The default dataset is always `"ds"`.
 
 use dag_rdf::Datastore;
-use datalog::IncrementalReasoner;
+use datalog::{IncrementalReasoner, Rule};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
@@ -28,11 +28,29 @@ use tokio::sync::{Mutex, RwLock};
 /// the reasoner are unaffected once they've read through the outer cell.
 pub type ReasonerCell = Arc<RwLock<Option<Arc<Mutex<IncrementalReasoner>>>>>;
 
-/// One registered dataset: its store and its (possibly empty) reasoner slot.
+/// A dataset's named/id-scoped rulesets: `ruleset-id -> the exact rules last
+/// loaded under that id`, via `POST /{dataset}/rules/{ruleset-id}`.
+///
+/// This is bookkeeping *separate* from the single combined `reasoner` that
+/// actually holds the live, materialised ruleset — it exists purely so
+/// `DELETE /{dataset}/rules/{ruleset-id}` (or a same-id replace) knows which
+/// rules are safe to retract from the live reasoner without disturbing a
+/// rule that also belongs to a *different*, still-live ruleset id. See
+/// [#473](https://github.com/daghovland/rdf-datalog/issues/473) and
+/// `docs/plans/RULESET_SCOPED_DELETE_473_PLAN.md`.
+///
+/// The plain no-id `POST /{dataset}/rules` full-replace path (#390/#568)
+/// clears this map entirely: a full replace discards all previously-loaded
+/// rules regardless of source, so no named id can meaningfully survive it.
+pub type RulesetMap = Arc<RwLock<HashMap<String, Vec<Rule>>>>;
+
+/// One registered dataset: its store, its (possibly empty) reasoner slot,
+/// and its named/id-scoped rulesets.
 #[derive(Clone)]
 pub struct DatasetEntry {
     pub store: Arc<RwLock<Datastore>>,
     pub reasoner: ReasonerCell,
+    pub rulesets: RulesetMap,
 }
 
 pub struct DatasetRegistry {
@@ -51,7 +69,14 @@ impl DatasetRegistry {
     /// aliasing bug this pattern was introduced to avoid re-creating.
     pub fn new_with_default(store: Arc<RwLock<Datastore>>, reasoner: ReasonerCell) -> Self {
         let mut datasets = HashMap::new();
-        datasets.insert("ds".to_string(), DatasetEntry { store, reasoner });
+        datasets.insert(
+            "ds".to_string(),
+            DatasetEntry {
+                store,
+                reasoner,
+                rulesets: Arc::new(RwLock::new(HashMap::new())),
+            },
+        );
         Self { datasets }
     }
 
@@ -82,6 +107,7 @@ impl DatasetRegistry {
             DatasetEntry {
                 store,
                 reasoner: Arc::new(RwLock::new(None)),
+                rulesets: Arc::new(RwLock::new(HashMap::new())),
             },
         );
     }
