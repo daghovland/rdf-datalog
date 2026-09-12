@@ -92,27 +92,30 @@ pub struct ReasoningStats {
 /// - `.nt` → N-Triples
 /// - `.nq` → N-Quads
 /// - `.omn` → OWL 2 Manchester Syntax (ABox only — see below)
+/// - `.ofn` → OWL 2 Functional-Style Syntax (ABox only — see below)
 /// - everything else → Turtle
 ///
-/// ## `.omn` handling
+/// ## `.omn`/`.ofn` handling
 ///
-/// A Manchester Syntax document is parsed into an [`owl_ontology::Ontology`]
-/// and only its ABox assertions (`Individual:`/`Types:`/`Facts:` frames) are
-/// materialised into `datastore` as ground quads, via
-/// [`owl2rl2datalog::assert_abox`]. TBox axioms (`SubClassOf:`, property
-/// domain/range, …) are **not** compiled to Datalog rules here — `load_file`'s
-/// contract elsewhere is "add quads to the store," and running a full
-/// OWL-RL materialisation pass as a side effect of a data load would be a
-/// surprise, especially since other files in the same batch (loaded later,
-/// e.g. via a `--data` list) wouldn't yet be visible to it. Callers that want
-/// the TBox reasoned over should pass the `.omn` file via [`apply_ontologies`]
-/// instead, which special-cases `.omn` paths to also call [`owl2datalog`] and
-/// evaluate the resulting rules together with every other ontology source in
-/// one batch. See [#161](https://github.com/daghovland/rdf-datalog/issues/161).
+/// A Manchester Syntax or Functional-Style Syntax document is parsed into an
+/// [`owl_ontology::Ontology`] and only its ABox assertions are materialised
+/// into `datastore` as ground quads, via [`owl2rl2datalog::assert_abox`].
+/// TBox axioms (`SubClassOf:`/`SubClassOf(...)`, property domain/range, …)
+/// are **not** compiled to Datalog rules here — `load_file`'s contract
+/// elsewhere is "add quads to the store," and running a full OWL-RL
+/// materialisation pass as a side effect of a data load would be a surprise,
+/// especially since other files in the same batch (loaded later, e.g. via a
+/// `--data` list) wouldn't yet be visible to it. Callers that want the TBox
+/// reasoned over should pass the file via [`apply_ontologies`] instead, which
+/// special-cases both extensions to also call [`owl2datalog`] and evaluate
+/// the resulting rules together with every other ontology source in one
+/// batch. See [#161](https://github.com/daghovland/rdf-datalog/issues/161)
+/// (`.omn`) and [#633](https://github.com/daghovland/rdf-datalog/issues/633)
+/// (`.ofn`).
 pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext == "omn" {
-        let ontology = parse_manchester_file(path)?;
+    if ext == "omn" || ext == "ofn" {
+        let ontology = parse_frame_ontology_file(ext, path)?;
         let report = assert_abox(datastore, &ontology);
         // `load_file`'s signature is depended on by ~50 call sites across the
         // repo, so widening its return type to carry a skip report is out of
@@ -150,13 +153,25 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     }
 }
 
-/// Read and parse a `.omn` (OWL 2 Manchester Syntax) file into an
-/// [`owl_ontology::Ontology`].
-fn parse_manchester_file(path: &Path) -> Result<owl_ontology::Ontology, String> {
+/// Read and parse a `.omn` (OWL 2 Manchester Syntax) or `.ofn` (OWL 2
+/// Functional-Style Syntax) file into an [`owl_ontology::Ontology`]. `ext`
+/// must be `"omn"` or `"ofn"`; both parsers produce the same `Ontology` type,
+/// so callers can treat either source uniformly once parsed.
+fn parse_frame_ontology_file(ext: &str, path: &Path) -> Result<owl_ontology::Ontology, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
-    manchester_parser::parse(&src)
-        .map_err(|e| format!("Manchester Syntax parse error in {}: {}", path.display(), e))
+    match ext {
+        "omn" => manchester_parser::parse(&src)
+            .map_err(|e| format!("Manchester Syntax parse error in {}: {}", path.display(), e)),
+        "ofn" => owl_functional_parser::parse(&src).map_err(|e| {
+            format!(
+                "OWL 2 Functional-Style Syntax parse error in {}: {}",
+                path.display(),
+                e
+            )
+        }),
+        other => unreachable!("parse_frame_ontology_file called with unsupported ext {other:?}"),
+    }
 }
 
 // ── OWL reasoning ─────────────────────────────────────────────────────────────
@@ -166,20 +181,22 @@ fn parse_manchester_file(path: &Path) -> Result<owl_ontology::Ontology, String> 
 /// Ontology triples are loaded into the same datastore as the data, then the
 /// full RDF→OWL→Datalog→materialise pipeline is executed.
 ///
-/// ## `.omn` (Manchester Syntax) paths
+/// ## `.omn`/`.ofn` (Manchester / Functional-Style Syntax) paths
 ///
-/// Unlike [`load_file`] (which only materialises a `.omn` file's ABox),
-/// `apply_ontologies` special-cases `.omn` paths so their TBox is actually
-/// reasoned over: each is parsed once, its ABox is materialised via
+/// Unlike [`load_file`] (which only materialises such a file's ABox),
+/// `apply_ontologies` special-cases `.omn` and `.ofn` paths so their TBox is
+/// actually reasoned over: each is parsed once, its ABox is materialised via
 /// [`owl2rl2datalog::assert_abox`], and its TBox is compiled to rules via
 /// [`owl2datalog`] — accumulated alongside the rules compiled from every
 /// RDF-native ontology file (Turtle/RDF-XML/JSON-LD, extracted via
 /// [`rdf2owl`]) and evaluated together in one batch, after all paths have
-/// been processed. This ordering matters: a Manchester TBox axiom never
-/// becomes an RDF triple (that's [#177](https://github.com/daghovland/rdf-datalog/issues/177),
+/// been processed. This ordering matters: a frame-based/s-expression TBox
+/// axiom never becomes an RDF triple (that's [#177](https://github.com/daghovland/rdf-datalog/issues/177),
 /// not yet done), so it can never be recovered from `datastore` by `rdf2owl`
 /// after the fact — it must be compiled to rules at parse time or it is lost
-/// entirely. See [#161](https://github.com/daghovland/rdf-datalog/issues/161).
+/// entirely. See [#161](https://github.com/daghovland/rdf-datalog/issues/161)
+/// (`.omn`) and [#633](https://github.com/daghovland/rdf-datalog/issues/633)
+/// (`.ofn`).
 ///
 /// Returns reasoning statistics (axiom count, rule count, triple delta) —
 /// counts include both the Manchester and RDF-native ontology sources.
@@ -210,13 +227,14 @@ pub fn apply_ontologies(
 /// TBox-derived Datalog rules are returned uncompiled/unevaluated so the
 /// caller can decide how to materialise them.
 pub struct OntologyCompilation {
-    /// Total OWL axiom count (Manchester + RDF-native ontology sources).
+    /// Total OWL axiom count (Manchester + Functional-Style + RDF-native
+    /// ontology sources).
     pub axiom_count: usize,
     /// Datalog rules compiled from the ontologies' TBox axioms via
     /// [`owl2datalog`]. Not yet evaluated against the datastore.
     pub rules: Vec<datalog::Rule>,
     /// Descriptions of ABox assertions skipped by [`owl2rl2datalog::assert_abox`]
-    /// across every `.omn` source path (non-atomic class/property
+    /// across every `.omn`/`.ofn` source path (non-atomic class/property
     /// expressions that don't correspond to a single ground triple). Empty in
     /// the common case. See
     /// [#366](https://github.com/daghovland/rdf-datalog/issues/366) and
@@ -229,7 +247,7 @@ pub struct OntologyCompilation {
 ///
 /// ABox assertions ARE applied directly to `datastore` as ground quads (via
 /// [`load_file`] for RDF-native sources and [`owl2rl2datalog::assert_abox`]
-/// for `.omn` sources) — they are extensional input data, not rule-derived,
+/// for `.omn`/`.ofn` sources) — they are extensional input data, not rule-derived,
 /// so there is nothing to defer about them. Only the rule-COMPILATION step
 /// (`owl2datalog`) is separated from evaluation here.
 ///
@@ -250,17 +268,17 @@ pub fn compile_ontology_rules(
     datastore: &mut Datastore,
     paths: &[std::path::PathBuf],
 ) -> Result<OntologyCompilation, String> {
-    let mut manchester_axiom_count = 0usize;
+    let mut frame_ontology_axiom_count = 0usize;
     let mut all_rules = Vec::new();
     let mut abox_skipped = Vec::new();
 
     for path in paths {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext == "omn" {
-            let ontology = parse_manchester_file(path)?;
+        if ext == "omn" || ext == "ofn" {
+            let ontology = parse_frame_ontology_file(ext, path)?;
             let report = assert_abox(datastore, &ontology);
             abox_skipped.extend(report.skipped);
-            manchester_axiom_count += ontology.axioms.len();
+            frame_ontology_axiom_count += ontology.axioms.len();
             all_rules.extend(owl2datalog(&mut datastore.resources, &ontology));
         } else {
             load_file(datastore, path)?;
@@ -269,7 +287,7 @@ pub fn compile_ontology_rules(
 
     let ontology_doc = rdf2owl(datastore).map_err(|e| e.to_string())?;
     let ontology = &ontology_doc.ontology;
-    let axiom_count = manchester_axiom_count + ontology.axioms.len();
+    let axiom_count = frame_ontology_axiom_count + ontology.axioms.len();
 
     all_rules.extend(owl2datalog(&mut datastore.resources, ontology));
 
@@ -858,5 +876,93 @@ SELECT ?x WHERE { ?x a ex:NonExistentClass . }
         assert_eq!(json_escape("hello"), "hello");
         assert_eq!(json_escape("say \"hi\""), "say \\\"hi\\\"");
         assert_eq!(json_escape("line\nnewline"), "line\\nnewline");
+    }
+
+    // ── `.ofn` (OWL 2 Functional-Style Syntax) wiring, see #633 ─────────────
+
+    const ANIMALS_OFN: &str = r#"
+Prefix(:=<http://example.org/>)
+Ontology(
+    Declaration(Class(:Animal))
+    Declaration(Class(:Dog))
+    Declaration(NamedIndividual(:fido))
+    SubClassOf(:Dog :Animal)
+    ClassAssertion(:Dog :fido)
+)
+"#;
+
+    fn write_ofn_fixture(dir: &std::path::Path, contents: &str) -> PathBuf {
+        let p = dir.join("animals.ofn");
+        std::fs::write(&p, contents).expect("write fixture");
+        p
+    }
+
+    fn fido_is_animal(ds: &Datastore) -> bool {
+        let get = |iri: &str| {
+            ds.resources
+                .resource_map
+                .get(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    iri.to_string(),
+                ))))
+                .copied()
+        };
+        let (fido, rdf_type, animal) = match (
+            get("http://example.org/fido"),
+            get("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+            get("http://example.org/Animal"),
+        ) {
+            (Some(f), Some(t), Some(a)) => (f, t, a),
+            _ => return false,
+        };
+        !ds.quads_matching(None, Some(fido), Some(rdf_type), Some(animal))
+            .is_empty()
+    }
+
+    #[test]
+    fn load_file_ofn_materialises_abox_only() {
+        let tmp =
+            std::env::temp_dir().join(format!("dagalog_ofn_load_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_ofn_fixture(&tmp, ANIMALS_OFN);
+
+        let mut ds = Datastore::new(1_000);
+        load_file(&mut ds, &path).expect("should load animals.ofn");
+
+        // ABox (`fido a Dog`) is materialised directly...
+        assert!(
+            ds.resources
+                .resource_map
+                .contains_key(&GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    "http://example.org/fido".to_string()
+                )))),
+            "fido should be interned by load_file"
+        );
+        // ...but the TBox (`Dog SubClassOf Animal`) is NOT reasoned over by
+        // load_file alone, so fido is not (yet) inferred as an Animal.
+        assert!(
+            !fido_is_animal(&ds),
+            "load_file must not reason over the .ofn TBox"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_ontologies_ofn_reasons_over_tbox() {
+        let tmp =
+            std::env::temp_dir().join(format!("dagalog_ofn_apply_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_ofn_fixture(&tmp, ANIMALS_OFN);
+
+        let mut ds = Datastore::new(1_000);
+        let stats = apply_ontologies(&mut ds, &[path]).expect("should apply .ofn ontology");
+        assert!(stats.axiom_count > 0);
+        assert!(stats.rule_count > 0);
+        assert!(
+            fido_is_animal(&ds),
+            "apply_ontologies must reason over the .ofn TBox so fido is inferred as an Animal"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

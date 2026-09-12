@@ -22,6 +22,7 @@ rml = { path = "../rml" }
 ottr = { path = "../ottr" }
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 manchester-parser = { path = "../manchester_parser" }
+owl-functional-parser = { path = "../owl_functional_parser" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
 shacl = { path = "../shacl" }
 

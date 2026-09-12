@@ -48,6 +48,12 @@ pub enum CellType {
     /// materialise its ABox as quads and its TBox as immediately-evaluated
     /// Datalog rules. See [`crate::cell::manchester::execute_manchester_file`].
     Manchester(PathBuf),
+    /// `%%functional <path>` — load an OWL 2 Functional-Style Syntax (`.ofn`)
+    /// file: materialise its ABox as quads and its TBox as
+    /// immediately-evaluated Datalog rules. See
+    /// [`crate::cell::functional::execute_functional_file`] and
+    /// [#633](https://github.com/daghovland/rdf-datalog/issues/633).
+    Functional(PathBuf),
     /// `%%load <path>` — load a Turtle/TriG/N-Triples file.
     Load(PathBuf),
     /// `%%reason` — run OWL-RL reasoning on the current datastore.
@@ -82,6 +88,10 @@ pub fn detect_cell_type(cell: &str) -> CellType {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Manchester(PathBuf::from(path))
             }
+            "functional" => {
+                let path = parts.next().unwrap_or("").trim();
+                CellType::Functional(PathBuf::from(path))
+            }
             "load" => {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Load(PathBuf::from(path))
@@ -109,6 +119,7 @@ pub fn detect_cell_type(cell: &str) -> CellType {
 }
 
 pub mod datalog;
+pub mod functional;
 pub mod manchester;
 pub mod ottr;
 pub mod rml;
@@ -158,6 +169,24 @@ mod tests {
         assert_eq!(
             detect_cell_type(cell),
             CellType::Manchester(PathBuf::from("animals.omn"))
+        );
+    }
+
+    #[test]
+    fn test_functional_magic() {
+        let cell = "%%functional ontologies/animals.ofn";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::Functional(PathBuf::from("ontologies/animals.ofn"))
+        );
+    }
+
+    #[test]
+    fn test_functional_magic_trailing_newline() {
+        let cell = "%%functional animals.ofn\n";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::Functional(PathBuf::from("animals.ofn"))
         );
     }
 
