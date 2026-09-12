@@ -13,16 +13,14 @@ use super::*;
 pub(crate) fn eval_bgp(
     patterns: &[TriplePattern],
     solutions: Vec<PartialSub>,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     budget: Option<usize>,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
     let already_bound: HashSet<String> = solutions
         .first()
         .map(|sub| sub.keys().cloned().collect())
         .unwrap_or_default();
-    let order = crate::join_ordering::order_patterns(patterns, &already_bound, datastore);
+    let order = crate::join_ordering::order_patterns(patterns, &already_bound, ctx.datastore);
 
     let mut current = solutions;
     let last = order.len().saturating_sub(1);
@@ -42,31 +40,17 @@ pub(crate) fn eval_bgp(
                     if acc.len() >= b {
                         break;
                     }
-                    deadline.check()?;
+                    ctx.deadline.check()?;
                     let remaining = b - acc.len();
-                    acc.extend(eval_triple_pattern(
-                        pattern,
-                        &sub,
-                        datastore,
-                        active_graph,
-                        Some(remaining),
-                        deadline,
-                    )?);
+                    acc.extend(eval_triple_pattern(pattern, &sub, Some(remaining), ctx)?);
                 }
                 acc
             }
             None => {
                 let mut acc = Vec::new();
                 for sub in current {
-                    deadline.check()?;
-                    acc.extend(eval_triple_pattern(
-                        pattern,
-                        &sub,
-                        datastore,
-                        active_graph,
-                        None,
-                        deadline,
-                    )?);
+                    ctx.deadline.check()?;
+                    acc.extend(eval_triple_pattern(pattern, &sub, None, ctx)?);
                 }
                 acc
             }
@@ -81,10 +65,8 @@ pub(crate) fn eval_bgp(
 pub(crate) fn eval_triple_pattern(
     tp: &TriplePattern,
     sub: &PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     budget: Option<usize>,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
     // RDF 1.2 triple-term subject: `<<( s p o )>> pred obj`. Resolve the
     // embedded pattern against `reified_triples` first (yielding one or more
@@ -97,13 +79,13 @@ pub(crate) fn eval_triple_pattern(
     // see epic #143.
     if let Term::TripleTerm(inner) = &tp.subject {
         let mut results = Vec::new();
-        for (term_id, inner_bindings) in triple_term_candidates(inner, sub, datastore) {
-            deadline.check()?;
+        for (term_id, inner_bindings) in triple_term_candidates(inner, sub, ctx.datastore) {
+            ctx.deadline.check()?;
             let mut merged = sub.clone();
             let mut ok = true;
             for (var, val) in inner_bindings {
                 match merged.get(&var) {
-                    Some(existing) if !psv_eq(existing, &val, datastore) => {
+                    Some(existing) if !psv_eq(existing, &val, ctx.datastore) => {
                         ok = false;
                         break;
                     }
@@ -120,17 +102,15 @@ pub(crate) fn eval_triple_pattern(
                     tp,
                     Some(term_id),
                     &merged,
-                    datastore,
-                    active_graph,
                     None,
-                    deadline,
+                    ctx,
                 )?);
             }
         }
         return Ok(results);
     }
 
-    eval_triple_pattern_core(tp, None, sub, datastore, active_graph, budget, deadline)
+    eval_triple_pattern_core(tp, None, sub, budget, ctx)
 }
 
 /// Core outer-pattern evaluation shared by plain triple patterns and the
@@ -141,11 +121,12 @@ pub(crate) fn eval_triple_pattern_core(
     tp: &TriplePattern,
     forced_subject: Option<GraphElementId>,
     sub: &PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     budget: Option<usize>,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
+    let datastore = ctx.datastore;
+    let active_graph = ctx.active_graph;
+    let deadline = ctx.deadline;
     // If any constant in the pattern is absent from the store it can never match.
     for term in [&tp.subject, &tp.predicate, &tp.object] {
         if let Term::Constant(gel) = term {
