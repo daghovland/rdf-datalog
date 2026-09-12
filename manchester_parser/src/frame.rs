@@ -11,9 +11,9 @@ Contact: hovlanddag@gmail.com
 //! returns `Vec<Axiom>` — one frame typically expands to several axioms (one
 //! per section-list item), per `docs/plans/MANCHESTER_SYNTAX_PLAN.md`.
 //!
-//! `HasKey:` (class frame), `SubPropertyChain:` (object property frame) are
-//! deferred; see [#157](https://github.com/daghovland/rdf-datalog/issues/157)
-//! and its follow-up issues.
+//! `SubPropertyChain:` (object property frame) is deferred; see
+//! [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
+//! follow-up issues.
 
 use crate::annotation::{annotations_section, opt_leading_annotations};
 use crate::class_expr::description;
@@ -26,10 +26,10 @@ use crate::tokens::{keyword, punct};
 use nom::IResult;
 use nom::Parser;
 use nom::branch::alt;
-use nom::multi::{many0, separated_list1};
+use nom::multi::{many0, many1, separated_list1};
 use owl_ontology::{
-    Annotation, Assertion, ClassAxiom, ClassExpression, DataPropertyAxiom, DataRange, Entity,
-    FullIri, Individual, ObjectPropertyAxiom, ObjectPropertyExpression,
+    Annotation, Assertion, ClassAxiom, ClassExpression, DataProperty, DataPropertyAxiom, DataRange,
+    Entity, FullIri, Individual, ObjectPropertyAxiom, ObjectPropertyExpression,
 };
 
 type Axiom = owl_ontology::Axiom;
@@ -60,6 +60,44 @@ enum ClassSection {
     EquivalentTo(Vec<(Vec<Annotation>, ClassExpression)>),
     DisjointWith(Vec<(Vec<Annotation>, ClassExpression)>),
     DisjointUnionOf(Vec<Annotation>, Vec<ClassExpression>),
+    HasKey(
+        Vec<Annotation>,
+        Vec<ObjectPropertyExpression>,
+        Vec<DataProperty>,
+    ),
+}
+
+/// A single item of a `HasKey:` property list: either an object property
+/// expression (`objectPropertyIRI | 'inverse' objectPropertyIRI`) or a bare
+/// data property IRI. Disambiguated via the same pre-scanned
+/// `ParserContext::is_known_data_property` table `class_expr::restriction`
+/// uses (see that module's docs) — an `inverse ...` item is unambiguously an
+/// object property; a bare IRI is a data property iff it was pre-scanned as
+/// a `DataProperty:` frame header, otherwise it's treated as an object
+/// property.
+enum HasKeyItem {
+    Object(ObjectPropertyExpression),
+    Data(DataProperty),
+}
+
+fn has_key_item<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, HasKeyItem> {
+    move |input: &'a str| {
+        alt((
+            nom::combinator::map(nom::sequence::preceded(keyword("inverse"), iri(ctx)), |p| {
+                HasKeyItem::Object(ObjectPropertyExpression::InverseObjectProperty(Box::new(
+                    ObjectPropertyExpression::NamedObjectProperty(p),
+                )))
+            }),
+            nom::combinator::map(iri(ctx), |p| {
+                if ctx.is_known_data_property(&(p.0).0) {
+                    HasKeyItem::Data(p)
+                } else {
+                    HasKeyItem::Object(ObjectPropertyExpression::NamedObjectProperty(p))
+                }
+            }),
+        ))
+        .parse(input)
+    }
 }
 
 fn class_section<'a>(
@@ -98,6 +136,23 @@ fn class_section<'a>(
                     ),
                 ),
                 |(anns, list)| ClassSection::DisjointUnionOf(anns, list),
+            ),
+            nom::combinator::map(
+                nom::sequence::preceded(
+                    keyword("HasKey:"),
+                    nom::sequence::pair(opt_annotations(ctx), many1(has_key_item(ctx))),
+                ),
+                |(anns, items)| {
+                    let mut obj_props = Vec::new();
+                    let mut data_props = Vec::new();
+                    for item in items {
+                        match item {
+                            HasKeyItem::Object(p) => obj_props.push(p),
+                            HasKeyItem::Data(p) => data_props.push(p),
+                        }
+                    }
+                    ClassSection::HasKey(anns, obj_props, data_props)
+                },
             ),
         ))
         .parse(input)
@@ -148,6 +203,14 @@ pub(crate) fn class_frame<'a>(
                         class_iri.clone(),
                         list,
                     )));
+                }
+                ClassSection::HasKey(anns, obj_props, data_props) => {
+                    axioms.push(Axiom::AxiomHasKey(
+                        anns,
+                        ClassExpression::ClassName(class_iri.clone()),
+                        obj_props,
+                        data_props,
+                    ));
                 }
             }
         }

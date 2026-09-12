@@ -39,8 +39,9 @@ Contact: hovlanddag@gmail.com
 //! - **Out-of-scope constructs are skipped with a `log::warn!`,  never
 //!   silently emitted as invalid syntax.** This covers everything deferred by
 //!   [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
-//!   follow-up issues (`HasKey:`, property chains, compound data ranges, the
-//!   `Datatype:` frame; `DisjointUnionOf:` is now supported) plus a few gaps
+//!   follow-up issues (property chains, compound data ranges, the
+//!   `Datatype:` frame; `DisjointUnionOf:` and `HasKey:` are now supported)
+//!   plus a few gaps
 //!   specific to serialisation
 //!   (standalone `AnnotationAssertion` axioms about an arbitrary subject: the
 //!   frame grammar only lets `Annotations:` attach to a frame's own entity
@@ -283,9 +284,8 @@ fn classify(axiom: &owl_ontology::Axiom) -> Option<Emission> {
             log_skip("Datatype: frame / DatatypeDefinition (#157, compound data ranges)");
             None
         }
-        AxiomHasKey(..) => {
-            log_skip("HasKey: (#157)");
-            None
+        AxiomHasKey(anns, class_expr, obj_props, data_props) => {
+            classify_has_key(anns, class_expr, obj_props, data_props)
         }
         AxiomAssertion(a) => classify_assertion(a),
         AxiomAnnotationAxiom(a) => classify_annotation_axiom(a),
@@ -361,6 +361,38 @@ fn classify_class_axiom(a: &ClassAxiom) -> Option<Emission> {
             ))
         }
     }
+}
+
+/// `HasKey:` — always a `Class:` frame section (the axiom has no top-level
+/// `misc` form). `class_expr` is always `ClassExpression::ClassName` when
+/// produced by this parser (built from the enclosing `Class:` frame's own
+/// IRI); a non-atomic class expression has no frame to attach to, so it's
+/// skipped like `SubClassOf:`'s equivalent case. Object property items are
+/// emitted first via the shared `fmt_obj_prop` helper, then data property
+/// items via plain `fmt_iri` — a text-order detail only, since `AxiomHasKey`
+/// keeps the two kinds in separate `Vec`s with no relative order to preserve
+/// between them; each `Vec`'s own internal order round-trips exactly.
+fn classify_has_key(
+    anns: &[Annotation],
+    class_expr: &ClassExpression,
+    obj_props: &[ObjectPropertyExpression],
+    data_props: &[FullIri],
+) -> Option<Emission> {
+    let ClassExpression::ClassName(class_iri) = class_expr else {
+        log_skip(
+            "HasKey: with a non-atomic class expression (no `Class:` frame header to attach it to)",
+        );
+        return None;
+    };
+    let obj_items: Option<Vec<String>> = obj_props.iter().map(fmt_obj_prop).collect();
+    let mut items = obj_items?;
+    items.extend(data_props.iter().map(fmt_iri));
+    let ann = ann_prefix(anns)?;
+    let line = format!("    HasKey: {ann}{}\n", items.join(" "));
+    Some(Emission::FrameLine(
+        FrameKey::Class(class_iri.0.0.clone()),
+        line,
+    ))
 }
 
 /// `EquivalentClasses`/`DisjointClasses`: prefer the two-element `Class:`

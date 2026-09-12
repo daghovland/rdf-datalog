@@ -380,7 +380,6 @@ fn class_frame_disjointunionof_with_annotations_and_compound_expr() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn class_frame_haskey_single_object_property() {
     let onto = manchester_parser::parse(&doc("Class: Person HasKey: hasSSN")).unwrap();
     assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
@@ -392,7 +391,6 @@ fn class_frame_haskey_single_object_property() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn class_frame_haskey_multiple_object_properties() {
     let onto =
         manchester_parser::parse(&doc("Class: Person HasKey: hasFirstName hasLastName")).unwrap();
@@ -405,16 +403,13 @@ fn class_frame_haskey_multiple_object_properties() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn class_frame_haskey_data_property() {
     // `hasSSN` is pre-scanned as a `DataProperty:` frame header, so it must
     // land in `HasKey`'s data-property list, not its object-property list —
     // regardless of `DataProperty: hasSSN` appearing *after* the `Class:`
     // frame that uses it (pre-scan is document-order-independent).
-    let onto = manchester_parser::parse(&doc(
-        "Class: Person HasKey: hasSSN\nDataProperty: hasSSN",
-    ))
-    .unwrap();
+    let onto = manchester_parser::parse(&doc("Class: Person HasKey: hasSSN\nDataProperty: hasSSN"))
+        .unwrap();
     assert!(onto.axioms.contains(&Axiom::AxiomHasKey(
         vec![],
         cls("Person"),
@@ -424,7 +419,6 @@ fn class_frame_haskey_data_property() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn class_frame_haskey_mixed_object_inverse_and_data_property() {
     let onto = manchester_parser::parse(&doc(
         "Class: Person HasKey: inverse hasChild hasSSN\nDataProperty: hasSSN",
@@ -441,7 +435,6 @@ fn class_frame_haskey_mixed_object_inverse_and_data_property() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn class_frame_haskey_with_annotations() {
     let onto = manchester_parser::parse(&format!(
         "Prefix: rdfs: <{RDFS}>\n{}",

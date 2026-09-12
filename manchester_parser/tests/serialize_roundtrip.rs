@@ -109,7 +109,6 @@ fn roundtrips_class_disjointunionof() {
 }
 
 #[test]
-#[ignore] // #499: HasKey: is not parsed yet.
 fn roundtrips_class_haskey_mixed_object_and_data_properties() {
     assert_roundtrip(
         r#"
