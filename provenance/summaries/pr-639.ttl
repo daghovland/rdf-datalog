@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:639 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "scripts: fix new-provenance-summary.sh base-ref staleness in worktrees" ;
+    bl:number 639 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:612 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr639 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:612 ;
+    prov:startedAtTime "2026-09-04T14:48:16Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-04T14:48:16Z"^^xsd:dateTime .
+
+session:pr639Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #612 reported that scripts/new-provenance-summary.sh computed startedAtTime/endedAtTime via `git log <base-ref>..HEAD`, defaulting base-ref to the literal 'main' ref. Inside a long-lived worktree, local main is set once when the worktree is created and never refreshed, so it can drift far behind origin/main. When a feature branch is cut from a current origin/main fetch, `main..HEAD` sweeps in origin-only commits the stale local main is unaware of, and `--reverse | head -1` can pick one of those older, unrelated commits' timestamps as a bogus startedAtTime -- exactly what happened while writing provenance/summaries/pr-611.ttl for issue #488, where a ~16-day-old stray commit's timestamp was recorded instead of the branch's actual first commit. The issue's own suggested fix offered two options: default to origin/main directly, or derive the base via `git merge-base origin/main HEAD` (more robust if the branch didn't fork from origin/main's exact tip). The merge-base approach was chosen and extracted into a small sourceable function, resolve_base_ref (scripts/lib/resolve_base_ref.sh), rather than inlined in the main script, specifically so it could be unit-tested in isolation the same way scripts/test_is_turtle_file.sh already tests scripts/lib/is_turtle_file.sh -- this repo's established convention for testing bash helpers is to keep them in scripts/lib/ as sourceable functions with a matching scripts/test_<name>.sh. An explicit third argument to new-provenance-summary.sh still always wins (unchanged CLI contract); only the no-argument default changed. resolve_base_ref falls back to the literal 'main' ref only when origin/main cannot be resolved at all (e.g. no such remote), preserving prior behaviour in that edge case rather than failing outright. The new test, scripts/test_resolve_base_ref.sh, builds a throwaway bare-repo sandbox reproducing the exact staleness scenario -- a worktree clone whose local main never advances while origin/main gains further commits pushed from a separate clone, then a feature branch cut from the current origin/main tip so its history includes origin-only commits as ancestors the stale local main doesn't know about -- and asserts two things: first, that plain `main..HEAD` genuinely does sweep in the unrelated commits (proving the sandbox actually exercises the bug rather than vacuously passing), and second, that resolve_base_ref's merge-base-based default excludes them, leaving only the real feature commit. No Rust code was touched; the change is confined to scripts/." ;
+    agp:reasoningFor ghpull:639 ;
+    prov:wasGeneratedBy session:pr639 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

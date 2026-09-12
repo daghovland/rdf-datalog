@@ -10,7 +10,10 @@
 #   cd .claude/worktrees/<branch>
 #   bash ../../../scripts/new-provenance-summary.sh <PR#> <issue#> [<base-ref>]
 #
-# <base-ref> defaults to "main" — the ref the branch diverged from.
+# <base-ref> defaults to the merge-base with origin/main (falling back to
+# the local "main" ref if origin/main can't be resolved) — see
+# scripts/lib/resolve_base_ref.sh and issue #612 for why plain "main" alone
+# is unsafe inside a worktree.
 #
 # After running, edit the generated file's summaryText/decisionPoint
 # (marked TODO) before committing — the script does not write prose.
@@ -24,7 +27,12 @@ fi
 
 pr="$1"
 issue="$2"
-base="${3:-main}"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/resolve_base_ref.sh
+source "$script_dir/lib/resolve_base_ref.sh"
+
+base="$(resolve_base_ref "${3:-}")"
 
 repo_root="$(git rev-parse --show-toplevel)"
 out="$repo_root/provenance/summaries/pr-${pr}.ttl"
