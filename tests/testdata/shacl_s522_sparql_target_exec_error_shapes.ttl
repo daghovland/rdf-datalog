@@ -1,0 +1,23 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# The query below parses successfully (SERVICE is valid SPARQL syntax), but
+# `shacl::sparql_constraints::run_select` always executes with
+# `NetworkPolicy::Deny`, so this SERVICE clause is rejected at *execution*
+# time (unlike a syntax error, which the #54 pre-flight check already catches
+# before validation even starts). See
+# https://github.com/daghovland/rdf-datalog/issues/522.
+ex:RemoteTargetShape
+    a sh:NodeShape ;
+    sh:target [
+        a sh:SPARQLTarget ;
+        sh:select """
+            SELECT ?this WHERE {
+                SERVICE <http://example.org/remote-endpoint/> { ?this a <http://example.org/ns#Person> }
+            }
+        """
+    ] ;
+    sh:property [
+        sh:path ex:name ;
+        sh:minCount 1 ;
+    ] .
