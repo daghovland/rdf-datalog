@@ -25,11 +25,14 @@ mod individual;
 mod iri;
 mod literal;
 mod property_expr;
+mod serialize;
 mod tokens;
 
 use iri::ParserContext;
 use nom::Parser;
 use owl_ontology::Ontology;
+
+pub use serialize::serialize;
 
 /// `prefixDeclaration ::= 'Prefix' '(' prefixName '=' fullIRI ')'`. Unlike
 /// `abbreviatedIRI`'s `prefix:local` shape, the prefix *name* here is
