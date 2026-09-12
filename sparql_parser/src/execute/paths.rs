@@ -173,7 +173,7 @@ pub(crate) fn eval_repeat_path(
     active_graph: &ActiveGraph,
     range: (usize, Option<usize>),
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     let (min, max) = range;
     match max {
         Some(max_n) => {
@@ -225,7 +225,7 @@ pub(crate) fn eval_exact_repeat(
     active_graph: &ActiveGraph,
     k: usize,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     if k == 0 {
         Ok(zero_hop_solutions(
             subject_term,
@@ -257,7 +257,7 @@ pub(crate) fn eval_path_pattern(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     match path {
         PropertyPath::Iri(gel) => {
             let tp = TriplePattern {
@@ -504,7 +504,7 @@ pub(crate) fn transitive_closure(
     active_graph: &ActiveGraph,
     include_zero: bool,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     let subject_gel = resolve_term_to_gel(subject_term, &sub, datastore);
     let object_gel = resolve_term_to_gel(object_term, &sub, datastore);
 
@@ -521,7 +521,7 @@ pub(crate) fn transitive_closure(
     // it is a whole BGP-shaped `eval_path_pattern` call per pop, so the
     // relative overhead of one extra `Instant::now()` per iteration is
     // negligible next to that.
-    let reachable_from = |start_gel: GraphElement| -> Result<Vec<GraphElement>, String> {
+    let reachable_from = |start_gel: GraphElement| -> Result<Vec<GraphElement>, ExecError> {
         let mut visited: HashSet<GraphElement> = HashSet::new();
         let mut queue = vec![start_gel.clone()];
         while let Some(current) = queue.pop() {
@@ -644,7 +644,7 @@ pub(crate) fn transitive_closure(
             let reachable_from_in = |start_gel: GraphElement,
                                      base_sub: &PartialSub,
                                      ag: &ActiveGraph|
-             -> Result<Vec<GraphElement>, String> {
+             -> Result<Vec<GraphElement>, ExecError> {
                 let mut visited: HashSet<GraphElement> = HashSet::new();
                 let mut queue = vec![start_gel.clone()];
                 while let Some(current) = queue.pop() {

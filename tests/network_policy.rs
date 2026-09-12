@@ -54,12 +54,13 @@ fn service_deny_non_silent_returns_error() {
         Ok(_) => panic!("Deny mode must reject non-SILENT SERVICE"),
     };
     assert!(
-        err.contains("rejected") || err.contains("SERVICE"),
-        "unexpected error message: {err}"
+        matches!(err, sparql_parser::ExecError::ServiceDenied { .. }),
+        "unexpected error variant: {err:?}"
     );
+    let msg = err.to_string();
     assert!(
-        err.contains("--network") || err.contains("#118") || err.contains("network"),
-        "error should mention how to enable network: {err}"
+        msg.contains("--network") || msg.contains("#118") || msg.contains("network"),
+        "error should mention how to enable network: {msg}"
     );
 }
 
@@ -103,8 +104,8 @@ fn service_allow_returns_not_implemented_error() {
         Ok(_) => panic!("Allow mode must return not-implemented error for SERVICE"),
     };
     assert!(
-        err.contains("not yet implemented") || err.contains("not implemented"),
-        "unexpected error message: {err}"
+        matches!(err, sparql_parser::ExecError::ServiceNotImplemented),
+        "unexpected error variant: {err:?}"
     );
 }
 

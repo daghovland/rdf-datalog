@@ -13,7 +13,7 @@ pub fn execute_sparql(ds: &mut Datastore, code: &str) -> Result<Vec<(String, Str
     let (_, query) =
         parse_query(code, &mut ctx).map_err(|e| format!("SPARQL parse error: {:?}", e))?;
 
-    match execute(&query, ds, NetworkPolicy::Deny)? {
+    match execute(&query, ds, NetworkPolicy::Deny).map_err(|e| e.to_string())? {
         QueryResult::Select(result) => {
             let cols: Vec<&str> = result.variables.iter().map(String::as_str).collect();
             let rows: Vec<Vec<String>> = result

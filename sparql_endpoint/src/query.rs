@@ -36,7 +36,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dag_rdf::Datastore;
-use sparql_parser::{ParserContext, QueryResult, execute_with_base, parse_query};
+use sparql_parser::{ExecError, ParserContext, QueryResult, execute_with_base, parse_query};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -736,17 +736,17 @@ fn configured_query_timeout(max_query_timeout_secs: u64) -> Option<Duration> {
 /// `Result<_, String>` (no dedicated error enum to match on), so this is a
 /// string-content check against the exact message `Deadline::check` returns;
 /// see `sparql_parser::deadline`.
-fn query_execution_error_response(message: &str) -> Response {
-    if message.contains("exceeded the configured timeout") {
+fn query_execution_error_response(err: &ExecError) -> Response {
+    if matches!(err, ExecError::Timeout) {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            format!("Query execution error: {message}"),
+            format!("Query execution error: {err}"),
         )
             .into_response()
     } else {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Execution error: {message}"),
+            format!("Execution error: {err}"),
         )
             .into_response()
     }

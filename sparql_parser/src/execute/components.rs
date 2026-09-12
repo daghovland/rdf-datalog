@@ -18,7 +18,7 @@ pub(crate) fn eval_components(
     datastore: &Datastore,
     active_graph: ActiveGraph,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     eval_components_budgeted(
         components,
         solutions,
@@ -62,7 +62,7 @@ pub(crate) fn eval_components_budgeted(
     active_graph: ActiveGraph,
     budget: Option<usize>,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     // SPARQL 1.1 §18.2.2.8: every `FILTER` in a `GroupGraphPatternSub`
     // applies after ALL of that same scope's other elements have been
     // joined, regardless of the `FILTER`'s textual position among them (W3C
@@ -164,7 +164,7 @@ pub(crate) fn eval_independent_then_join(
     datastore: &Datastore,
     active_graph: &ActiveGraph,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     let inner_sols = eval_components(
         inner,
         vec![HashMap::new()],
@@ -191,7 +191,7 @@ pub(crate) fn eval_component(
     active_graph: &ActiveGraph,
     budget: Option<usize>,
     deadline: &Deadline,
-) -> Result<Vec<PartialSub>, String> {
+) -> Result<Vec<PartialSub>, ExecError> {
     match comp {
         QueryComponent::BGP(tps) => {
             eval_bgp(tps, solutions, datastore, active_graph, budget, deadline)

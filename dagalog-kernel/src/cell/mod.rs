@@ -1,4 +1,54 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// An error dispatching a single notebook cell (see
+/// `crate::sockets::dispatch_cell`, private to that module).
+///
+/// Before this, `dispatch_cell` collapsed every failure mode into a bare
+/// `Result<_, String>` — indistinguishable from each other except by
+/// matching substrings of the message. See
+/// [#460](https://github.com/daghovland/rdf-datalog/issues/460), part of
+/// the error-handling epic [#453](https://github.com/daghovland/rdf-datalog/issues/453).
+///
+/// `Execution` is a deliberately-scoped catch-all: the individual cell-type
+/// subsystems (`turtle_parser`, `rml`, `manchester_parser`, `shacl`, `ottr`,
+/// `datalog`, `rdf_owl_translator`, `sparql_parser`'s own errors) each
+/// already collapse to their own `String` inside `dagalog-kernel/src/cell/
+/// *.rs`. Fully typing every one of those is a separate, much larger effort
+/// — out of scope for #460, whose stated scope is `dispatch_cell` itself.
+#[derive(Debug)]
+pub enum CellError {
+    /// A `%%load`/`%%rml`/`%%manchester`/`%%validate`/`%%ottr` path argument
+    /// failed the traversal-safety check
+    /// ([#85](https://github.com/daghovland/rdf-datalog/issues/85)).
+    UnsafePath(&'static str),
+    /// Opening a file referenced by a cell magic failed.
+    Io {
+        /// The file name (not the full path — see [`check_path_safe`]'s doc
+        /// comment on why the full path/cwd is intentionally not echoed
+        /// back to the client).
+        file_name: String,
+        source: std::io::Error,
+    },
+    /// A parse or execution failure forwarded verbatim from whichever
+    /// cell-type subsystem ran (turtle/RML/Manchester/SHACL/OTTR/Datalog/
+    /// reasoning/SPARQL).
+    Execution(String),
+}
+
+impl fmt::Display for CellError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CellError::UnsafePath(msg) => write!(f, "{msg}"),
+            CellError::Io { file_name, source } => {
+                write!(f, "cannot open file '{file_name}': {source}")
+            }
+            CellError::Execution(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CellError {}
 
 /// Verify that `untrusted` is a safe, confined relative path.
 ///
@@ -14,19 +64,17 @@ use std::path::{Path, PathBuf};
 /// working directory so that callers cannot use it as an information oracle.
 /// See [#85](https://github.com/daghovland/rdf-datalog/issues/85) and
 /// [#90](https://github.com/daghovland/rdf-datalog/issues/90).
-pub fn check_path_safe(untrusted: &Path) -> Result<(), String> {
+pub fn check_path_safe(untrusted: &Path) -> Result<(), CellError> {
     if untrusted.is_absolute() {
-        return Err(
-            "absolute paths are not allowed in cell magic arguments; use a relative path"
-                .to_string(),
-        );
+        return Err(CellError::UnsafePath(
+            "absolute paths are not allowed in cell magic arguments; use a relative path",
+        ));
     }
     for component in untrusted.components() {
         if component == std::path::Component::ParentDir {
-            return Err(
-                "path traversal sequences ('..') are not allowed in cell magic arguments"
-                    .to_string(),
-            );
+            return Err(CellError::UnsafePath(
+                "path traversal sequences ('..') are not allowed in cell magic arguments",
+            ));
         }
     }
     Ok(())
@@ -250,5 +298,36 @@ mod tests {
             detect_cell_type(cell),
             CellType::OttrFile(PathBuf::from("templates/person.stottr"))
         );
+    }
+
+    // ── CellError ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn unsafe_path_variant_is_matchable() {
+        let err = check_path_safe(Path::new("/etc/passwd")).unwrap_err();
+        assert!(matches!(err, CellError::UnsafePath(_)));
+    }
+
+    #[test]
+    fn unsafe_path_display_does_not_echo_input_path() {
+        let err = check_path_safe(Path::new("/etc/passwd")).unwrap_err();
+        assert!(!err.to_string().contains("/etc"));
+    }
+
+    #[test]
+    fn io_variant_display_includes_file_name_and_source() {
+        let err = CellError::Io {
+            file_name: "mapping.ttl".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("mapping.ttl"));
+        assert!(msg.contains("no such file"));
+    }
+
+    #[test]
+    fn execution_variant_forwards_subsystem_message() {
+        let err = CellError::Execution("Turtle parse error: unexpected token".to_string());
+        assert_eq!(err.to_string(), "Turtle parse error: unexpected token");
     }
 }

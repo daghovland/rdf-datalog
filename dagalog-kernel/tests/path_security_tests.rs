@@ -88,10 +88,12 @@ fn rejection_error_does_not_include_absolute_path() {
     use dagalog_kernel::cell::check_path_safe;
     use std::path::Path;
 
-    let abs_err =
-        check_path_safe(Path::new("/etc/passwd")).expect_err("absolute path must be rejected");
-    let trav_err =
-        check_path_safe(Path::new("../../secret")).expect_err("traversal path must be rejected");
+    let abs_err = check_path_safe(Path::new("/etc/passwd"))
+        .expect_err("absolute path must be rejected")
+        .to_string();
+    let trav_err = check_path_safe(Path::new("../../secret"))
+        .expect_err("traversal path must be rejected")
+        .to_string();
 
     // The process cwd (the notebook's working directory) must not appear in
     // error messages — it is an absolute path the user should not see.

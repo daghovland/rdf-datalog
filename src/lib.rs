@@ -448,7 +448,9 @@ pub fn run_sparql_query(datastore: &Datastore, sparql: &str) -> Result<SelectRes
         NetworkPolicy::Deny,
         ctx.base.as_deref(),
         None,
-    )? {
+    )
+    .map_err(|e| e.to_string())?
+    {
         QueryResult::Select(r) => Ok(r),
         QueryResult::Ask(_) => {
             Err("ASK queries are not supported via run_sparql_query".to_string())

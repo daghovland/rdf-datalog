@@ -196,14 +196,18 @@ fn ensure_this_projected(query: &mut Query) {
 }
 
 fn run_select(query: &Query, store: &Datastore) -> Result<Vec<SolutionRow>, String> {
-    match execute_with_base(query, store, NetworkPolicy::Deny, None, None)? {
+    match execute_with_base(query, store, NetworkPolicy::Deny, None, None)
+        .map_err(|e| e.to_string())?
+    {
         QueryResult::Select(sel) => Ok(sel.rows),
         _ => Err("expected the embedded query to be a SPARQL SELECT".to_string()),
     }
 }
 
 fn run_ask(query: &Query, store: &Datastore) -> Result<bool, String> {
-    match execute_with_base(query, store, NetworkPolicy::Deny, None, None)? {
+    match execute_with_base(query, store, NetworkPolicy::Deny, None, None)
+        .map_err(|e| e.to_string())?
+    {
         QueryResult::Ask(b) => Ok(b),
         _ => Err("expected the embedded query to be a SPARQL ASK".to_string()),
     }
