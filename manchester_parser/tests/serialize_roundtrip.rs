@@ -122,6 +122,18 @@ fn roundtrips_class_haskey_mixed_object_and_data_properties() {
 }
 
 #[test]
+fn roundtrips_object_property_subpropertychain() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        ObjectProperty: :hasGrandparent
+            SubPropertyChain: :hasParent o :hasParent
+        "#,
+    );
+}
+
+#[test]
 fn roundtrips_bare_class_declaration_with_no_axioms() {
     assert_roundtrip(
         r#"
