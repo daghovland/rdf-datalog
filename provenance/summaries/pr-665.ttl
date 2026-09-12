@@ -1,0 +1,40 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #665 (issue #606), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps below are real
+# (from `git log e22f8e7020812ce0bac3176862f74a0797dcbf17..HEAD` on branch
+# feat/606-owlxml-class-axioms).
+
+ghpull:665 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl_xml_parser: class expressions and class axioms (#606)" ;
+    bl:number 665 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:606 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr665 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:606 ;
+    prov:startedAtTime "2026-09-12T11:29:36Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-12T11:36:28Z"^^xsd:dateTime .
+
+session:pr665Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #606 asked for OWL/XML parsing of class-level axioms (SubClassOf, EquivalentClasses, DisjointClasses, DisjointUnion) and the full ClassExpression grammar (intersection/union/complement/oneOf, every object/data restriction and cardinality form), continuing #605's outer-layer parser. Checked provenance for crate:owl_xml_parser first (no hits yet), then read #605's own summary (PR #638) directly for the roxmltree-over-quick-xml rationale and one-function-per-production convention this PR follows. Confirmed the exact OWL/XML element grammar against the W3C spec before writing code (cardinality restrictions carry their count as a cardinality= XML attribute, not a child element as in Functional-Style Syntax; DatatypeRestriction wraps FacetRestriction elements). Added five new modules (property_expr, individual, data_range, class_expr, axiom) mirroring the crate's existing declaration.rs/annotation.rs/iri.rs conventions. One design point worth recording: unlike owl_functional_parser's data_properties_then_range, which needs lookahead to disambiguate a trailing bare IRI as either one more DataPropertyExpression or the final DataRange, OWL/XML's DataSomeValuesFrom/DataAllValuesFrom bodies need no such lookahead at all -- every DataRange production and <DataProperty> use distinct element tags, so a plain per-child tag-name dispatch suffices. AnonymousIndividual (as an ObjectOneOf/ObjectHasValue filler) and axiom-level <Annotation> children on class axioms were kept out of scope per the #605 plan doc's own deferral note, erroring with a message pointing at #608 rather than being silently dropped or mis-parsed. Followed strict TDD: extended docs/plans/OWL_XML_PLAN.md with a '#606' grammar/module-layout section first, then wrote all 14 tests (including a deliberately deep nested-expression regression test per the issue's own callout that this is where hand-rolled recursive-descent XML parsers most often break) as #[ignore]d, then implemented all five modules in one pass and unignored everything -- all tests, clippy, and fmt passed clean on the first full implementation attempt with only minor lifetime-annotation fixes needed (roxmltree::Node needs an explicit <'a> generic, not '_, on a fn's own signature). Also discovered mid-task: the local build host's shared CARGO_TARGET_DIR had filled its 79GB disk completely (0 bytes free), which manifested as spurious 'ld terminated with signal 7 [Bus error]' linker crashes on two unrelated test binaries (sparql-endpoint's shacl test, dagalog's sparql12_suite test) -- resolved with `cargo clean` per CLAUDE.md's disk-usage guidance, not a code issue. Separately, GitHub-hosted CI on this PR fails Clippy/Tests/Tests(release) for a reason genuinely unrelated to this PR's own diff: main's current HEAD has a pre-existing type-mismatch bug in dagalog-kernel/src/sockets.rs (from the just-merged #657), already filed and fixed in #662/PR #663 (green, open, awaiting the user's merge) -- confirmed by diffing the CI error text against that PR's fix and by locally building --exclude dagalog-kernel clean." ;
+    agp:reasoningFor ghpull:665 ;
+    prov:wasGeneratedBy session:pr665 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr665Summary agp:decisionPoint session:pr665Decision .
+
+session:pr665Decision a agp:Decision ;
+    agp:summaryText "Implemented the full DataRange grammar (NamedDataRange/DataIntersectionOf/DataUnionOf/DataComplementOf/DataOneOf/DatatypeRestriction) even though issue #606's own text only explicitly names the restriction elements (DataSomeValuesFrom etc.), not DataRange's compound forms by name. Chose to implement all six DataRange productions now rather than only the bare Datatype case, for parity with owl_functional_parser's own DataRange scope and because DataSomeValuesFrom/DataAllValuesFrom need *some* DataRange as their filler type regardless -- leaving compound ranges unimplemented would have meant erroring on any restriction using a non-trivial datatype (e.g. a xsd:integer/xsd:decimal union), which is common enough in real ontologies that it did not seem like a reasonable thing to defer silently." ;
+    agp:alternative "Considered implementing only DataRange::NamedDataRange (a bare <Datatype IRI=.../>) for #606 and deferring DataIntersectionOf/UnionOf/ComplementOf/OneOf/DatatypeRestriction to #607/#608 as a separate follow-up, matching the issue's literal wording more narrowly. Rejected because the OWL_XML_PLAN.md's own 'no invent new deferred scope' spirit favors keeping a single grammar (DataRange) whole rather than half-implemented across two issues with no clear semantic boundary between the halves, and because owl_functional_parser already sets the precedent of implementing DataRange as one recursive whole." .
