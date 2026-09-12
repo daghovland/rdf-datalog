@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD` on branch
+# feat/637-shacl-lessthan).
+
+ghpull:653 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: port sh:lessThan/sh:lessThanOrEquals to Datalog FilterAtom rules" ;
+    bl:number 653 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:637 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr653 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:637 ;
+    prov:startedAtTime "2026-09-09T17:05:52Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-09T17:05:52Z"^^xsd:dateTime .
+
+session:pr653Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #637 was split out of #631/#62's SHACL-to-Datalog port: sh:lessThan/sh:lessThanOrEquals are blocked by an expressiveness gap, not just the comparator-fidelity gap the rest of #631 fixed (resolved by #651's type-aware compare_graph_elements). #343's fix (already merged, on the Rust evaluation path) requires one violation fact per failing (value, otherValue) pair, produced there by minting a fresh discriminated predicate at Rust runtime (vocab::viol_discriminated) as each pair was iterated. Before writing any rule, confirmed via shacl/src/translate.rs's existing FilterAtom patterns (#632's nodeKind/languageIn, #651's datatype/range/pattern) that a Datalog rule head is fixed at rule-generation time, before any data is known -- it cannot mint a fresh predicate per (value, otherValue) pair the way the Rust path did. The two options the issue text itself proposed were a rule-generation engine extension for per-pair multiplicity, or a different encoding of the discriminator. Chose the encoding route: traced the derived-quad storage path (shacl::evaluate::add_viol, shacl::graph, dag_rdf's QuadTable) and confirmed (a) the quad store dedups on the full (graph, subject, predicate, object) tuple, (b) QuadPattern's graph position is treated as an ordinary substitutable variable by the Datalog engine (datalog::evaluate_pattern/apply_substitution_quad), with no special validation forcing it to be an IRI, and (c) every SHACL violation predicate is always a freshly-interned synthetic urn:dagalog:shacl:... IRI, so it can never collide with a genuine named graph already present in the data. That let the rule bind the violation quad's otherwise-unused graph position to ?otherValue, making the full quad the discriminator instead of a runtime-minted predicate suffix. Verified this doesn't corrupt sh:closed checking (the one other place that could plausibly be graph-position-sensitive) by confirming closed_violations reads only from the original data store, never from work (the mutated clone add_viol writes into) -- so injecting synthetic quads into arbitrary graph slots of work cannot leak into a closed-shape's allowed-properties check. Widened collect_violations to scan by predicate across all graphs (via QuadTable::get_quads_with_predicate) instead of filtering to the default graph only, which is a safe superset for the same never-collides-with-real-data reason. Removed the now-dead vocab::viol_discriminated and the corresponding evaluate.rs match arms, following the exact vec![] skip-arm pattern #632/#651 established for every other ported constraint (constraint_conforms's own LessThan/LessThanOrEquals arms, used by sh:and/or/not/xone/node/qualifiedValueShape, were left untouched since they still call sparql_compare directly). No new tests were needed: the existing black-box validate() suite (spec_s4_5_3/4_lessthan(orequals), regression_341_lessthan_multiplicity_per_failing_pair, the regression_issue_266_lessthan_* cross-type/incomparable-pair tests, and the W3C lessThan-002 fixture) already pins the exact behavior this port had to preserve -- a pure internal port with no observable behavior change, matching the one-pass approach CLAUDE.md allows for such refactors. All 175 shacl_suite.rs + 10 w3c_shacl_suite.rs tests pass unchanged; full cargo test --workspace green apart from the documented, unrelated sparql_endpoint::query_timeout SIGKILL flake; fmt/clippy -D warnings clean; all 8 CI jobs pass." ;
+    agp:reasoningFor ghpull:653 ;
+    agp:decisionPoint session:pr653Decision ;
+    prov:wasGeneratedBy session:pr653 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr653Decision a agp:Decision ;
+    agp:summaryText "Encoded the per-(value,otherValue)-pair violation-multiplicity discriminator (#343) in the derived violation quad's graph position (bound to ?otherValue) rather than extending the Datalog rule-generation/evaluation engine with a general per-substitution predicate-minting mechanism." ;
+    agp:alternative "Considered extending datalog::types::RuleHead/the reasoner itself to support minting a fresh predicate (or otherwise distinguishing) per body substitution at evaluation time -- a general-purpose mechanism the issue text explicitly floated as one of two options. Rejected as a materially bigger, cross-cutting change to the shared Datalog engine (used by OWL-RL reasoning too, not just SHACL) for a need that is, so far, unique to this one SHACL constraint pair; the graph-slot encoding solves it entirely within shacl's own translation layer, using a QuadPattern field (graph) that already exists and is already treated generically by the engine, with no engine change at all. Also considered leaving the object position carrying a synthetic reified (value, otherValue) pair node instead of the graph position, but that would have broken the sh:value = value contract collect_violations relies on (reading q.obj directly as the reported value) and needed either a fresh skolemized blank node per pair -- which the engine also has no built-in support for minting -- or a deterministic pairing encoding that would have been far more invasive to decode back out again." .

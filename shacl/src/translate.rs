@@ -844,14 +844,48 @@ fn prop_constraint_rules(
             vec![viol]
         }
 
+        // §4.5.3 sh:lessThan / §4.5.4 sh:lessThanOrEquals — ported to
+        // FilterAtom-guarded Datalog rules (#637, completing the #62/#631
+        // scope split out in #637). Per spec, "... or where the two values
+        // cannot be compared, there is a validation result" — an
+        // incomparable pair (including cross-datatype, e.g. a number vs. a
+        // date) violates just like a failed `<`/`<=`, which falls out of the
+        // same error-defaults-to-false-then-negates-to-true mechanics used
+        // by the range constraints above (`compare_graph_elements` is
+        // type-aware per #631). See `less_than_constraint_rule`'s own doc
+        // comment for how the spec's per-`(value, otherValue)`-failing-pair
+        // multiplicity requirement (#343) — which a single fixed Datalog
+        // rule head cannot produce by minting a fresh predicate per pair the
+        // way the former Rust path did — is encoded instead.
+        PropConstraint::LessThan(other_path) => less_than_constraint_rule(
+            other_path,
+            BinaryOp::Lt,
+            &viol_less_than(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+        PropConstraint::LessThanOrEquals(other_path) => less_than_constraint_rule(
+            other_path,
+            BinaryOp::Le,
+            &viol_less_than_or_equals(si, pi),
+            value_var,
+            target_pred,
+            true_id,
+            path_atom,
+            rules,
+            work,
+        ),
+
         // Phase 2 constraints — evaluated in evaluate.rs, skip here
         PropConstraint::MinLength(_)
         | PropConstraint::MaxLength(_)
         | PropConstraint::UniqueLang
         | PropConstraint::Equals(_)
         | PropConstraint::Disjoint(_)
-        | PropConstraint::LessThan(_)
-        | PropConstraint::LessThanOrEquals(_)
         | PropConstraint::NodeShape(_)
         | PropConstraint::QualifiedValueShape { .. } => {
             vec![]
@@ -904,6 +938,86 @@ fn range_constraint_rule(
             Term::Resource(viol),
             Term::Variable(value_var.into()),
         )),
+        body,
+    });
+    vec![viol]
+}
+
+/// Build a `sh:lessThan`/`sh:lessThanOrEquals` FilterAtom rule:
+/// `FILTER(!(v <op> ov))`, with `ov` traversed via `other_path` — always a
+/// simple predicate IRI per the SHACL spec (never a compound path), unlike
+/// this constraint's own `sh:path`, which — per #260 — `path_atom`/
+/// `value_var` already generalize over (a path-traversed value for a
+/// property-shape constraint, or the focus node itself for a node-level
+/// one).
+///
+/// # Per-pair violation multiplicity (#343)
+///
+/// Per <https://www.w3.org/TR/shacl/#LessThanConstraintComponent>'s
+/// SPARQL-based validator (`?this $PATH ?value . ?this $lessThan
+/// ?otherValue`, one result row per failing pair), a violation must be
+/// reported once per failing `(value, otherValue)` pair, not once per
+/// distinct `value` — so a value that fails against several `otherValue`s
+/// produces that many (content-identical) results. The former hand-coded
+/// Rust path (`evaluate.rs`, before #637) produced this by minting a fresh
+/// violation predicate per derivation at runtime
+/// (`vocab::viol_discriminated`); a single Datalog rule, translated once at
+/// rule-*generation* time before any data is known, cannot mint predicates
+/// like that.
+///
+/// Instead, this binds the derived violation quad's **graph** position —
+/// otherwise unused by these synthetic marker triples, which every other
+/// constraint always places in the default graph — to `?otherValue`. That
+/// makes the full quad `(otherValue, focus, viol_pred, value)` the
+/// discriminator: two distinct failing pairs sharing the same `(focus,
+/// value)` (but a different `otherValue`) no longer collapse into one quad
+/// under the store's full-quad dedup, exactly as the W3C suite's
+/// `lessThan-002` fixture (#341) requires. `collect_violations`
+/// (`shacl/src/lib.rs`) is widened to scan quads by predicate across *all*
+/// graphs, not just the default graph, to pick these up — a safe superset,
+/// since every violation predicate is a freshly-interned synthetic
+/// `urn:dagalog:shacl:...` IRI that can never collide with a real named
+/// graph already present in the data.
+#[allow(clippy::too_many_arguments)]
+fn less_than_constraint_rule(
+    other_path: &str,
+    op: BinaryOp,
+    viol_iri: &str,
+    value_var: &str,
+    target_pred: GraphElementId,
+    true_id: GraphElementId,
+    path_atom: impl Fn(&str) -> Option<RuleAtom>,
+    rules: &mut Vec<Rule>,
+    work: &mut Datastore,
+) -> Vec<GraphElementId> {
+    let viol = graph::intern_iri(work, viol_iri);
+    let other_path_id = graph::intern_iri(work, other_path);
+    let mut body = vec![pos(
+        Term::Variable("n".into()),
+        Term::Resource(target_pred),
+        Term::Resource(true_id),
+    )];
+    body.extend(path_atom("n"));
+    body.push(pos(
+        Term::Variable("n".into()),
+        Term::Resource(other_path_id),
+        Term::Variable("ov".into()),
+    ));
+    body.push(RuleAtom::FilterAtom(Expression::Unary(
+        UnaryOp::Not,
+        Box::new(Expression::Binary(
+            Box::new(Expression::Variable(value_var.into())),
+            op,
+            Box::new(Expression::Variable("ov".into())),
+        )),
+    )));
+    rules.push(Rule {
+        head: RuleHead::NormalHead(QuadPattern {
+            graph: Term::Variable("ov".into()),
+            subject: Term::Variable("n".into()),
+            predicate: Term::Resource(viol),
+            object: Term::Variable(value_var.into()),
+        }),
         body,
     });
     vec![viol]
