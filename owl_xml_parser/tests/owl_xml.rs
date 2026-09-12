@@ -316,7 +316,6 @@ fn class_axiom(onto: &owl_ontology::Ontology) -> &ClassAxiom {
 }
 
 #[test]
-#[ignore] // #606
 fn sub_class_of_named_classes() {
     let src = wrap(
         "",
@@ -330,15 +329,20 @@ fn sub_class_of_named_classes() {
     match class_axiom(&onto) {
         ClassAxiom::SubClassOf(anns, sub, sup) => {
             assert!(anns.is_empty());
-            assert_eq!(*sub, ClassExpression::ClassName(iri("http://example.org/pizza#Pizza")));
-            assert_eq!(*sup, ClassExpression::ClassName(iri("http://example.org/pizza#Food")));
+            assert_eq!(
+                *sub,
+                ClassExpression::ClassName(iri("http://example.org/pizza#Pizza"))
+            );
+            assert_eq!(
+                *sup,
+                ClassExpression::ClassName(iri("http://example.org/pizza#Food"))
+            );
         }
         other => panic!("expected SubClassOf, got {other:?}"),
     }
 }
 
 #[test]
-#[ignore] // #606
 fn equivalent_classes_three_way() {
     let src = wrap(
         "",
@@ -359,7 +363,6 @@ fn equivalent_classes_three_way() {
 }
 
 #[test]
-#[ignore] // #606
 fn disjoint_classes() {
     let src = wrap(
         "",
@@ -379,7 +382,6 @@ fn disjoint_classes() {
 }
 
 #[test]
-#[ignore] // #606
 fn disjoint_union() {
     let src = wrap(
         "",
@@ -401,7 +403,6 @@ fn disjoint_union() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_intersection_union_complement_operands() {
     let src = wrap(
         "",
@@ -438,7 +439,6 @@ fn object_intersection_union_complement_operands() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_one_of_named_individuals() {
     let src = wrap(
         "",
@@ -467,7 +467,6 @@ fn object_one_of_named_individuals() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_one_of_rejects_anonymous_individual() {
     let src = wrap(
         "",
@@ -485,7 +484,6 @@ fn object_one_of_rejects_anonymous_individual() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_some_and_all_values_from() {
     let src = wrap(
         "",
@@ -517,7 +515,6 @@ fn object_some_and_all_values_from() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_has_value_and_has_self_and_inverse_of() {
     let src = wrap(
         "",
@@ -556,7 +553,6 @@ fn object_has_value_and_has_self_and_inverse_of() {
 }
 
 #[test]
-#[ignore] // #606
 fn object_cardinalities_qualified_and_unqualified() {
     let src = wrap(
         "",
@@ -600,7 +596,6 @@ fn object_cardinalities_qualified_and_unqualified() {
 }
 
 #[test]
-#[ignore] // #606
 fn data_some_and_all_values_from_with_compound_range() {
     let src = wrap(
         "",
@@ -641,7 +636,6 @@ fn data_some_and_all_values_from_with_compound_range() {
 }
 
 #[test]
-#[ignore] // #606
 fn data_has_value_and_cardinalities_with_datatype_restriction() {
     let src = wrap(
         "",
@@ -679,7 +673,9 @@ fn data_has_value_and_cardinalities_with_datatype_restriction() {
                 match &v[2] {
                     ClassExpression::DataMaxQualifiedCardinality(n, _, dr) => {
                         assert_eq!(*n, num_bigint::BigInt::from(1));
-                        assert!(matches!(dr, owl_ontology::DataRange::DatatypeRestriction(_, facets) if facets.len() == 1));
+                        assert!(
+                            matches!(dr, owl_ontology::DataRange::DatatypeRestriction(_, facets) if facets.len() == 1)
+                        );
                     }
                     other => panic!("expected DataMaxQualifiedCardinality, got {other:?}"),
                 }
@@ -691,7 +687,6 @@ fn data_has_value_and_cardinalities_with_datatype_restriction() {
 }
 
 #[test]
-#[ignore] // #606
 fn deeply_nested_class_expression() {
     // Union containing an intersection containing a restriction -- the
     // exact shape #606 flags as most bug-prone for hand-rolled
@@ -739,7 +734,6 @@ fn deeply_nested_class_expression() {
 }
 
 #[test]
-#[ignore] // #606
 fn class_axiom_annotation_children_deferred_to_608() {
     let src = wrap(
         "",
