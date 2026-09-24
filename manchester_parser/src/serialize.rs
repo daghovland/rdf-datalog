@@ -39,8 +39,8 @@ Contact: hovlanddag@gmail.com
 //! - **Out-of-scope constructs are skipped with a `log::warn!`,  never
 //!   silently emitted as invalid syntax.** This covers everything deferred by
 //!   [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
-//!   follow-up issues (property chains, compound data ranges, the
-//!   `Datatype:` frame; `DisjointUnionOf:` and `HasKey:` are now supported)
+//!   follow-up issues (compound data ranges, the `Datatype:` frame;
+//!   `DisjointUnionOf:`, `HasKey:`, and `SubPropertyChain:` are now supported)
 //!   plus a few gaps
 //!   specific to serialisation
 //!   (standalone `AnnotationAssertion` axioms about an arbitrary subject: the
@@ -439,18 +439,34 @@ fn classify_object_property_axiom(a: &ObjectPropertyAxiom) -> Option<Emission> {
             let rhs = fmt_class_expr(c)?;
             obj_prop_frame_line(p, "Range", anns, &rhs)
         }
-        SubObjectPropertyOf(anns, sub, sup) => {
-            let SubPropertyExpression::SubObjectPropertyExpression(sub_expr) = sub else {
-                log_skip("SubPropertyChain: (#157)");
-                return None;
-            };
-            let ObjectPropertyExpression::NamedObjectProperty(sub_iri) = sub_expr else {
-                log_skip("SubPropertyOf: with a non-named subject");
-                return None;
-            };
-            let sup_s = fmt_obj_prop(sup)?;
-            obj_prop_frame_line_named(sub_iri, "SubPropertyOf", anns, &sup_s)
-        }
+        SubObjectPropertyOf(anns, sub, sup) => match sub {
+            SubPropertyExpression::SubObjectPropertyExpression(sub_expr) => {
+                let ObjectPropertyExpression::NamedObjectProperty(sub_iri) = sub_expr else {
+                    log_skip("SubPropertyOf: with a non-named subject");
+                    return None;
+                };
+                let sup_s = fmt_obj_prop(sup)?;
+                obj_prop_frame_line_named(sub_iri, "SubPropertyOf", anns, &sup_s)
+            }
+            SubPropertyExpression::PropertyExpressionChain(chain) => {
+                let ObjectPropertyExpression::NamedObjectProperty(sup_iri) = sup else {
+                    log_skip("SubPropertyChain: with a non-named super-property");
+                    return None;
+                };
+                let items: Option<Vec<String>> = chain.iter().map(fmt_obj_prop).collect();
+                let items = items?;
+                if items.len() < 2 {
+                    log_skip("SubPropertyChain: with fewer than two elements");
+                    return None;
+                }
+                let ann = ann_prefix(anns)?;
+                let line = format!("    SubPropertyChain: {ann}{}\n", items.join(" o "));
+                Some(Emission::FrameLine(
+                    FrameKey::ObjectProperty(sup_iri.0.0.clone()),
+                    line,
+                ))
+            }
+        },
         EquivalentObjectProperties(anns, list) => {
             obj_prop_nary(anns, list, "EquivalentTo", "EquivalentProperties")
         }

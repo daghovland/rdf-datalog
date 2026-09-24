@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:664 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "manchester_parser: implement SubPropertyChain: (object property chains)" ;
+    bl:number 664 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:500 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr664 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:500 ;
+    prov:startedAtTime "2026-09-12T11:29:12Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-12T11:42:13Z"^^xsd:dateTime .
+
+session:pr664Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #500 asked for the ObjectProperty: frame's SubPropertyChain: section (object property chains), the fourth of six grammar productions split out of umbrella issue #157, using #499 (HasKey:) as the closest template in the same crate. Unlike HasKey:'s property list, SubPropertyChain: has no ambiguity to resolve: every chain item is unconditionally an objectPropertyExpression (data properties don't participate in property chains at all), so no analogue of #499's pre-scanned is_known_data_property disambiguation table was needed -- property_expression_chain reuses property_expr::object_property_expression directly. The one deliberate departure from the obvious separated_list1(keyword(\"o\"), ...) implementation: that combinator alone would also accept a single element with no 'o' at all, silently misparsing what the W3C grammar (objectPropertyExpression 'o' objectPropertyExpression { 'o' objectPropertyExpression }) requires to be an error. The parser instead parses one element then requires many1(preceded(keyword(\"o\"), ...)), enforcing the >=2 arity by construction; a negative test (SubPropertyChain: hasParent, no 'o') was added to pin this down after an advisor review caught that the initial separated_list1 draft would have silently accepted it. A second decision, structurally different from every other ObjectProperty: frame section: for SubPropertyChain:, the frame's own property is the axiom's super-property and the section's value is the sub-side (the chain) -- the reverse of SubPropertyOf:'s roles. This maps directly onto the pre-existing owl_ontology::SubPropertyExpression::PropertyExpressionChain variant with no new axiom type needed. Before implementing, grepped owl2rl2datalog/eli/rdf_owl_translator for PropertyExpressionChain/ObjectPropertyChain and confirmed downstream translation (owl2rl2datalog's prp-spo2 rule) already exists and needed no changes -- this issue was pure parser/serializer surface, not a reasoning-side gap. serialize.rs frames the chain under the super-property, joining formatted elements with \" o \", following the same skip-on-non-representable-shape discipline (log_skip, never invalid syntax) as every other serializer arm. Separately, this PR's CI is red for a reason unrelated to the change itself: origin/main was found broken at the merge-base commit (dagalog-kernel's dispatch_cell missing a .map_err on its Functional arm) -- already filed as #662 by another agent before this session checked, so no duplicate issue was filed; the PR body documents the dependency on #662 landing first." ;
+    agp:reasoningFor ghpull:664 ;
+    prov:wasGeneratedBy session:pr664 ;
+    prov:wasAttributedTo session:claudeSonnet5 .

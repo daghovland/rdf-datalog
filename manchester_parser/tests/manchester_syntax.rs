@@ -984,20 +984,80 @@ fn rule_frame_can_be_interleaved_with_class_frames() {
 // but silently drop the construct) until #157 is implemented.
 
 #[test]
-#[ignore] // #157: SubPropertyChain: (object property chains) is not parsed.
-fn deferred_subproperty_chain() {
+fn object_property_subpropertychain_of_two() {
     let onto = manchester_parser::parse(&doc(
         "ObjectProperty: hasGrandparent SubPropertyChain: hasParent o hasParent",
     ))
     .unwrap();
-    assert!(onto.axioms.iter().any(|a| matches!(
-        a,
-        Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::SubObjectPropertyOf(
-            _,
-            owl_ontology::SubPropertyExpression::PropertyExpressionChain(_),
-            _
-        ))
+    assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
+        ObjectPropertyAxiom::SubObjectPropertyOf(
+            vec![],
+            owl_ontology::SubPropertyExpression::PropertyExpressionChain(vec![
+                ObjectPropertyExpression::NamedObjectProperty(iri("hasParent")),
+                ObjectPropertyExpression::NamedObjectProperty(iri("hasParent")),
+            ]),
+            ObjectPropertyExpression::NamedObjectProperty(iri("hasGrandparent")),
+        )
     )));
+}
+
+#[test]
+fn object_property_subpropertychain_requires_at_least_two_elements() {
+    // The W3C grammar is `objectPropertyExpression 'o' objectPropertyExpression
+    // { 'o' objectPropertyExpression }` — at least two elements joined by
+    // `o`. A bare single property (no `o`) is not a valid `SubPropertyChain:`
+    // value (that's what `SubPropertyOf:` is for), so this must fail to
+    // parse rather than silently produce a one-element chain.
+    let result = manchester_parser::parse(&doc(
+        "ObjectProperty: hasGrandparent SubPropertyChain: hasParent",
+    ));
+    assert!(result.is_err(), "expected a parse error");
+}
+
+#[test]
+fn object_property_subpropertychain_of_three_with_inverse() {
+    // Longer chains, and `inverse` on a chain element, both per the W3C
+    // grammar's `objectPropertyExpression ::= objectPropertyIRI | 'inverse'
+    // objectPropertyIRI` used for each chain item.
+    let onto = manchester_parser::parse(&doc(
+        "ObjectProperty: hasCoUncle SubPropertyChain: hasParent o inverse hasParent o hasSibling",
+    ))
+    .unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomObjectPropertyAxiom(
+        ObjectPropertyAxiom::SubObjectPropertyOf(
+            vec![],
+            owl_ontology::SubPropertyExpression::PropertyExpressionChain(vec![
+                ObjectPropertyExpression::NamedObjectProperty(iri("hasParent")),
+                ObjectPropertyExpression::InverseObjectProperty(Box::new(
+                    ObjectPropertyExpression::NamedObjectProperty(iri("hasParent"))
+                )),
+                ObjectPropertyExpression::NamedObjectProperty(iri("hasSibling")),
+            ]),
+            ObjectPropertyExpression::NamedObjectProperty(iri("hasCoUncle")),
+        )
+    )));
+}
+
+#[test]
+fn object_property_subpropertychain_with_annotations() {
+    let onto = manchester_parser::parse(&format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("ObjectProperty: hasGrandparent\n    SubPropertyChain: Annotations: rdfs:comment \"derived\" hasParent o hasParent")
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::SubObjectPropertyOf(
+                anns,
+                owl_ontology::SubPropertyExpression::PropertyExpressionChain(chain),
+                sup,
+            )) if !anns.is_empty()
+                && chain.len() == 2
+                && *sup == ObjectPropertyExpression::NamedObjectProperty(iri("hasGrandparent"))
+        )
+    });
+    assert!(found, "expected an annotated SubPropertyChain: axiom");
 }
 
 #[test]

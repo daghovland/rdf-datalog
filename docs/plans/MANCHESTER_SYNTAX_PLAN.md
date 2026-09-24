@@ -149,7 +149,7 @@ objectPropertyFrame ::= 'ObjectProperty:' objectPropertyIRI
     | 'EquivalentTo:' objectPropertyExpressionAnnotatedList
     | 'DisjointWith:' objectPropertyExpressionAnnotatedList
     | 'InverseOf:' objectPropertyExpressionAnnotatedList
-    | 'SubPropertyChain:' annotations objectPropertyExpression 'o' ... }  -- deferred (#157)
+    | 'SubPropertyChain:' annotations objectPropertyExpression 'o' objectPropertyExpression { 'o' objectPropertyExpression } }
 
 dataPropertyFrame ::= 'DataProperty:' dataPropertyIRI
     { 'Annotations:' annotationAnnotatedList
@@ -191,7 +191,7 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | `Prefix:` (incl. default `:`), `Ontology:`, `Import:`, ontology `Annotations:` | Yes | |
 | `Class:` frame: `Annotations:`, `SubClassOf:`, `EquivalentTo:`, `DisjointWith:`, `DisjointUnionOf:`, `HasKey:` | Yes | see addendum below |
 | `ObjectProperty:` frame: `Annotations:`, `Domain:`, `Range:`, `Characteristics:`, `SubPropertyOf:`, `EquivalentTo:`, `DisjointWith:`, `InverseOf:` | Yes | |
-| `ObjectProperty:` frame: `SubPropertyChain:` | No | #157 |
+| `ObjectProperty:` frame: `SubPropertyChain:` | Yes | see addendum below (#500) |
 | `DataProperty:` frame: all sections (Characteristics limited to `Functional`, per spec) | Yes | |
 | `Individual:` frame: `Annotations:`, `Types:`, `Facts:` (incl. negative `not` facts), `SameAs:`, `DifferentFrom:` | Yes | anonymous individuals via `_:id` node IDs supported |
 | `AnnotationProperty:` frame: `Annotations:`, `Domain:`, `Range:`, `SubPropertyOf:` | Yes | |
@@ -200,7 +200,7 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | `conjunction`'s `classIRI 'that' ...` sugar | No | #157 |
 | Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | No | #157 |
 | `Datatype:` frame | No | #157 (depends on compound data ranges) |
-| `Rule:` (SWRL) frames | Yes | see addendum below; `SubPropertyChain:`/compound data ranges/`Datatype:` remain #157 follow-ups |
+| `Rule:` (SWRL) frames | Yes | see addendum below; compound data ranges/`Datatype:` remain #157 follow-ups |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
 
 ---
@@ -216,7 +216,9 @@ directly into the existing `Class:` frame machinery (same shape as
 (`owl_ontology/src/axioms.rs`), already exists. The other five items (SWRL
 `Rule:` frames, `HasKey:`, `SubPropertyChain:`, compound data ranges,
 `Datatype:` frame) are split into their own follow-up issues, filed against
-#157 as parent, and remain out of scope here.
+#157 as parent. SWRL `Rule:` frames (#498), `HasKey:` (#499), and
+`SubPropertyChain:` (#500, see addendum below) have since shipped; compound
+data ranges (#501) and the `Datatype:` frame (#502) remain out of scope here.
 
 Grammar (§2.5, W3C Manchester Syntax spec):
 ```
@@ -519,6 +521,71 @@ semantically, and each `Vec`'s own internal order round-trips exactly since
 classification is a pure per-item function of the pre-scan table, not of
 position). Round-trip coverage lives in `serialize_roundtrip.rs` alongside
 the other frame kinds.
+
+## Addendum: `SubPropertyChain:` (#500, item 4 of #157's original six)
+
+[#157](https://github.com/daghovland/rdf-datalog/issues/157)'s remaining
+follow-ups after `DisjointUnionOf:` (#503), SWRL `Rule:` frames (#498), and
+`HasKey:` (#499) are `SubPropertyChain:` (this addendum, #500), compound data
+ranges (#501), and the `Datatype:` frame (#502).
+
+Grammar (W3C Manchester Syntax spec §2.5, `objectPropertyFrame` section):
+
+```
+'SubPropertyChain:' annotations objectPropertyExpression 'o' objectPropertyExpression { 'o' objectPropertyExpression }
+```
+
+i.e. an `'o'`-separated list of at least two `objectPropertyExpression`s
+(`objectPropertyIRI | 'inverse' objectPropertyIRI`), unlike every other
+`ObjectProperty:` frame section's comma-separated `objectPropertyExpression`
+list — confirmed against the grammar rather than assumed from the file's
+other sections. Unlike `HasKey:`'s property list, there's no ambiguity to
+disambiguate: every chain item is unconditionally an
+`objectPropertyExpression` (data properties don't participate in property
+chains at all), so `property_expression_chain` in `frame.rs` reuses
+`property_expr::object_property_expression` directly via
+`separated_list1(keyword("o"), object_property_expression(ctx))` — no new
+disambiguation table needed, unlike #499.
+
+The `'o'` separator is parsed via the existing `tokens::keyword` helper (same
+word-boundary handling as `and`/`or`/`not` in class expressions), so `"o"` is
+recognized as a token only when followed by whitespace/`)`/end-of-input, not
+as a prefix of a longer identifier. The section keyword `SubPropertyChain`
+itself was already present in `tokens::RESERVED_SIMPLE_NAMES` (pre-scaffolded
+alongside the original `#[ignore]`d test); the bare separator token `o`
+needs no entry of its own in that list, since `keyword("o")` can never match
+inside a longer identifier by construction — `RESERVED_SIMPLE_NAMES` only
+matters for disambiguating a *complete* bare identifier from a reserved word.
+
+The parser enforces the grammar's "at least two elements" requirement by
+construction rather than via `separated_list1` (which would also accept a
+single element with no `o` at all, silently misparsing what should be a
+grammar error): `property_expression_chain` parses one
+`object_property_expression`, then requires `many1` of
+`preceded(keyword("o"), object_property_expression(ctx))` — so
+`SubPropertyChain: hasParent` (no `o`) fails to parse rather than producing
+a one-element `PropertyExpressionChain`.
+
+Unlike `SubPropertyOf:` (where the frame's own property is the *sub*-property
+and the section's value is the super-property), `SubPropertyChain:`'s section
+value **is** the sub-property side — the chain — and the frame's own
+property is the super-property. This maps directly onto
+`owl_ontology::ObjectPropertyAxiom::SubObjectPropertyOf(Vec<Annotation>,
+SubPropertyExpression, ObjectPropertyExpression)`'s existing shape:
+`SubPropertyExpression::PropertyExpressionChain(chain)` for the sub-side,
+`self_prop` (the frame's own property) for the super-side — no new axiom
+variant needed, since `SubPropertyExpression` was already added as a
+two-variant enum (`SubObjectPropertyExpression` vs. `PropertyExpressionChain`)
+ahead of this issue.
+
+The serializer (`serialize.rs`) frames the axiom under the *super*-property
+(`sup`, which must be `NamedObjectProperty` for a frame to exist), joining
+`fmt_obj_prop` output for each chain element with `" o "`; a chain with fewer
+than two formattable elements or a non-named super-property is skipped with
+`log_skip`, never emitted as invalid syntax. Round-trip coverage (a two-item
+chain) lives in `serialize_roundtrip.rs` alongside the other frame kinds;
+`manchester_syntax.rs` additionally covers a three-item chain with an
+`inverse` element and a chain with per-section `Annotations:`.
 
 ## References
 
