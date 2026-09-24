@@ -42,7 +42,7 @@ static DOLLAR_VAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 
 /// Rewrite every `$name` in `query` to `?name`.
-fn normalize_dollar_vars(query: &str) -> String {
+pub(crate) fn normalize_dollar_vars(query: &str) -> String {
     DOLLAR_VAR.replace_all(query, "?$1").into_owned()
 }
 
@@ -59,7 +59,7 @@ fn build_query_text(sq: &SparqlQuery) -> String {
 
 /// Parse `query_text` into a `Query` AST, returning a caller-facing error string
 /// on failure (never silently dropped — see module docs).
-fn parse(query_text: &str) -> Result<Query, String> {
+pub(crate) fn parse(query_text: &str) -> Result<Query, String> {
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),
         base: None,
@@ -195,7 +195,7 @@ fn ensure_this_projected(query: &mut Query) {
     }
 }
 
-fn run_select(query: &Query, store: &Datastore) -> Result<Vec<SolutionRow>, String> {
+pub(crate) fn run_select(query: &Query, store: &Datastore) -> Result<Vec<SolutionRow>, String> {
     match execute_with_base(query, store, NetworkPolicy::Deny, None, None)
         .map_err(|e| e.to_string())?
     {
@@ -204,7 +204,7 @@ fn run_select(query: &Query, store: &Datastore) -> Result<Vec<SolutionRow>, Stri
     }
 }
 
-fn run_ask(query: &Query, store: &Datastore) -> Result<bool, String> {
+pub(crate) fn run_ask(query: &Query, store: &Datastore) -> Result<bool, String> {
     match execute_with_base(query, store, NetworkPolicy::Deny, None, None)
         .map_err(|e| e.to_string())?
     {
@@ -216,7 +216,7 @@ fn run_ask(query: &Query, store: &Datastore) -> Result<bool, String> {
 /// Display a raw `GraphElement` (not necessarily interned in any particular
 /// store — e.g. a `SolutionRow` binding) the same way `graph::element_display`
 /// renders an interned element.
-fn ge_display(e: &GraphElement) -> String {
+pub(crate) fn ge_display(e: &GraphElement) -> String {
     match e {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => iri.0.clone(),
         GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(n)) => format!("_:b{n}"),
@@ -398,7 +398,7 @@ fn eval_batched_select(
 /// Extract the `$value`/`$path` columns a SELECT constraint's result row
 /// conventionally carries (SHACL-AF §6.1) — shared by the per-node and
 /// batched execution paths.
-fn row_value_and_path(row: &SolutionRow) -> (Option<String>, Option<ShPath>) {
+pub(crate) fn row_value_and_path(row: &SolutionRow) -> (Option<String>, Option<ShPath>) {
     let value = row.get("value").map(ge_display);
     let path = row.get("path").and_then(|e| match e {
         GraphElement::NodeOrEdge(RdfResource::Iri(iri)) => Some(ShPath::Predicate(iri.0.clone())),

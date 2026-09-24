@@ -21,6 +21,7 @@ Contact: hovlanddag@gmail.com
 //!
 //! See `docs/plans/SHACL_PLAN.md` for the phased implementation roadmap.
 
+pub mod custom_components;
 pub mod evaluate;
 pub mod graph;
 pub mod path;
@@ -245,6 +246,11 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         }
     }
 
+    // W3C SHACL spec §6 SPARQL-based constraint components — same pre-flight
+    // parse-checking discipline as above, up front and unconditionally. See
+    // [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+    custom_components::check_all_syntax(&parsed)?;
+
     // A literal `sh:targetNode` value is a focus node regardless of whether
     // it independently occurs anywhere in the data graph — the shapes graph
     // and data graph are ordinarily different documents. IRI/blank-node
@@ -310,6 +316,19 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         shapes,
         data,
         |shape| data_targets(shape, data),
+    )?);
+
+    // W3C SHACL spec §6 SPARQL-based constraint components — same
+    // direct-evaluation posture as `sparql_constraints::eval_all` above (a
+    // separate pass against the un-materialised `data` graph). See
+    // [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+    let component_path_cache = path::PathCache::new();
+    results.extend(custom_components::eval_all(
+        &parsed,
+        shapes,
+        data,
+        |shape| data_targets(shape, data),
+        &component_path_cache,
     )?);
 
     Ok(ValidationReport {
