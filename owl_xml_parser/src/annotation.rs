@@ -21,8 +21,10 @@ use ingress::{GraphElement, IriReference, RdfLiteral};
 use owl_ontology::{Annotation, AnnotationValue};
 
 /// Parse a `<Literal>` element's text content (plus optional `xml:lang`/
-/// `datatypeIRI` attributes) into a [`GraphElement::GraphLiteral`].
-fn parse_literal(node: roxmltree::Node) -> GraphElement {
+/// `datatypeIRI` attributes) into a [`GraphElement::GraphLiteral`]. Shared
+/// with `class_expr.rs`/`data_range.rs` (`DataHasValue`/`DataOneOf`/
+/// `FacetRestriction` values are the same `<Literal>` production).
+pub(crate) fn parse_literal(node: roxmltree::Node) -> GraphElement {
     let text = node.text().unwrap_or("").to_string();
     if let Some(lang) = node.attribute(("http://www.w3.org/XML/1998/namespace", "lang")) {
         return GraphElement::GraphLiteral(RdfLiteral::LangLiteral {

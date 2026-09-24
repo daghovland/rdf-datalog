@@ -283,6 +283,77 @@ next, per CLAUDE.md's TDD protocol.
 
 ---
 
+## Grammar productions in scope (#606: class expressions and class axioms)
+
+Quoted from the W3C spec, `owl:ClassExpression` alternatives and the class
+axiom productions:
+
+```
+ClassAxiom := SubClassOf | EquivalentClasses | DisjointClasses | DisjointUnion
+SubClassOf := '<SubClassOf>' ClassExpression ClassExpression '</SubClassOf>'
+EquivalentClasses := '<EquivalentClasses>' ClassExpression ClassExpression { ClassExpression } '</EquivalentClasses>'
+DisjointClasses := '<DisjointClasses>' ClassExpression ClassExpression { ClassExpression } '</DisjointClasses>'
+DisjointUnion := '<DisjointUnion>' Class ClassExpression ClassExpression { ClassExpression } '</DisjointUnion>'
+
+ClassExpression := Class
+  | ObjectIntersectionOf | ObjectUnionOf | ObjectComplementOf | ObjectOneOf
+  | ObjectSomeValuesFrom | ObjectAllValuesFrom | ObjectHasValue | ObjectHasSelf
+  | ObjectMinCardinality | ObjectMaxCardinality | ObjectExactCardinality
+  | DataSomeValuesFrom | DataAllValuesFrom | DataHasValue
+  | DataMinCardinality | DataMaxCardinality | DataExactCardinality
+```
+
+Every cardinality element (`ObjectMinCardinality`/`ObjectMaxCardinality`/
+`ObjectExactCardinality`/`DataMinCardinality`/`DataMaxCardinality`/
+`DataExactCardinality`) carries the count as a `cardinality="..."` XML
+*attribute* (`xsd:nonNegativeInteger`), not a child element — unlike
+Functional-Style Syntax, where it's the first parenthesized argument. The
+qualified/unqualified distinction is whether a trailing `ClassExpression`/
+`DataRange` child is present (0 or 1, `minOccurs="0"`).
+
+`ObjectPropertyExpression := ObjectProperty | ObjectInverseOf`,
+`DataPropertyExpression := DataProperty` (always a bare element, no
+wrapper), `Individual := NamedIndividual | AnonymousIndividual` (only the
+`NamedIndividual` case is implemented this issue — `AnonymousIndividual` is
+deferred to [#608](https://github.com/daghovland/rdf-datalog/issues/608),
+matching `annotation.rs`'s existing note that individual.rs's anonymous-
+individual counter is a #608 concern), and `DataRange := Datatype |
+DataIntersectionOf | DataUnionOf | DataComplementOf | DataOneOf |
+DatatypeRestriction` (all six implemented here, needed as the filler type
+for `DataSomeValuesFrom`/`DataAllValuesFrom`/cardinality restrictions).
+Unlike Functional-Style Syntax's `data_properties_then_range` (which needs
+lookahead to disambiguate a trailing bare IRI as "one more property" vs.
+"the final range"), OWL/XML has no such ambiguity: `<DataProperty>` and
+every `DataRange` production use distinct tag names, so a plain per-child
+tag-name dispatch is enough — no lookahead helper needed.
+
+### Module layout (new this issue)
+
+- `src/property_expr.rs` — `ObjectPropertyExpression`/`DataPropertyExpression`
+  element dispatch (`<ObjectProperty>`, `<ObjectInverseOf>`, `<DataProperty>`).
+- `src/individual.rs` — `Individual` element dispatch; `<NamedIndividual>`
+  only, `<AnonymousIndividual>` errors pointing to #608.
+- `src/data_range.rs` — `DataRange` element dispatch, all six productions.
+- `src/class_expr.rs` — `ClassExpression` element dispatch, all productions
+  in scope above, recursing into itself/`property_expr`/`individual`/
+  `data_range`.
+- `src/axiom.rs` — `SubClassOf`/`EquivalentClasses`/`DisjointClasses`/
+  `DisjointUnion` → `owl_ontology::Axiom::AxiomClassAxiom`. Axiom-level
+  `<Annotation>` children on these (as opposed to `<Declaration>`'s, already
+  handled by #605) are out of scope here too — deferred to #608 alongside
+  the rest of non-Declaration axiom annotations; encountering one produces
+  a clear error rather than being silently dropped.
+- `src/lib.rs` — dispatch on `<Ontology>`'s children extended to recognize
+  the four class-axiom tags above via `axiom::parse_class_axiom`.
+
+### Deferred within #606 (real follow-up, not filed as a new issue: covered by existing #607/#608)
+
+- `AnonymousIndividual` (`ObjectOneOf`/`ObjectHasValue` fillers) — #608.
+- Axiom-level `<Annotation>` children on class axioms — #608.
+- Object/data property axioms, `<HasKey>`, property chains — #607.
+
+---
+
 ## Deferred follow-up
 
 - `xml:base`-driven relative-IRI resolution (an entity's `IRI="#Pizza"`
