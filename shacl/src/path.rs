@@ -278,9 +278,9 @@ pub fn to_turtle(path: &ShPath) -> String {
 /// encoding, not SPARQL path syntax) — used to substitute the `$PATH` token
 /// in a `sh:propertyValidator` SELECT query (W3C SHACL spec §6.2.3.1). A
 /// top-level compound path needs no wrapping parens in predicate position;
-/// [`parenthesized`] adds them only for a compound child of a compound
-/// expression, where SPARQL's path-operator precedence would otherwise
-/// change the meaning.
+/// a compound child of a compound expression gets them (see the private
+/// `parenthesized` helper below), where SPARQL's path-operator precedence
+/// would otherwise change the meaning.
 pub fn to_sparql_path(path: &ShPath) -> String {
     match path {
         ShPath::Predicate(iri) => format!("<{iri}>"),
