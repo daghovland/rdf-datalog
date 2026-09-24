@@ -1,0 +1,26 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# Reuses ex:PatternConstraintComponent's mandatory sh:pattern parameter, but
+# ex:NoPatternShape never sets ex:pattern anywhere — the component must not
+# be invoked at all (spec §6.1: a shape "uses" a component only when it has
+# values for all of the component's mandatory parameters), not treated as
+# an error or a vacuous violation.
+ex:PatternConstraintComponent
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:pattern ;
+    ] ;
+    sh:validator ex:hasPattern .
+
+ex:hasPattern
+    a sh:SPARQLAskValidator ;
+    sh:ask """
+        ASK {
+            FILTER (!isBlank($value) && regex(str($value), $pattern))
+        }
+        """ .
+
+ex:NoPatternShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Widget .

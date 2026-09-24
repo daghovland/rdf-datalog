@@ -1,0 +1,28 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# A component declaring ONLY sh:propertyValidator, invoked from a
+# node-shape scope (parameters set directly on the node shape, no
+# sh:property block). Per spec §6.2.3's validator selection order, a node
+# shape falls back to sh:validator when no sh:nodeValidator is present —
+# there is no sh:validator here either, so the constraint must be silently
+# ignored (not an error, and definitely not a spurious violation).
+ex:OnlyPropertyValidatorComponent
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:threshold ;
+    ] ;
+    sh:propertyValidator [
+        a sh:SPARQLSelectValidator ;
+        sh:select """
+            SELECT $this ?value WHERE {
+                $this $PATH ?value .
+                FILTER (?value < $threshold)
+            }
+            """ ;
+    ] .
+
+ex:BadNodeShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Gadget ;
+    ex:threshold 100 .
