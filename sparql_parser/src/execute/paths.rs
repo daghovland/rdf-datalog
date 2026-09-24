@@ -159,20 +159,13 @@ pub(crate) fn zero_hop_all_nodes(
 /// multiplicity, and safe on cyclic data since it's a fixed number of
 /// joins) followed by zero-or-more further hops (fixed-point reachability,
 /// so cycles don't cause non-termination or multiplicity blow-up).
-// The `&Deadline` parameter (#372) pushes this over clippy's default
-// too-many-arguments threshold; splitting the existing (subject, path,
-// object, sub, datastore, active_graph) tuple into a struct is a bigger,
-// unrelated refactor this change intentionally doesn't take on.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn eval_repeat_path(
     subject_term: &Term,
     inner: &PropertyPath,
     object_term: &Term,
     sub: PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     range: (usize, Option<usize>),
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
     let (min, max) = range;
     match max {
@@ -182,16 +175,14 @@ pub(crate) fn eval_repeat_path(
             }
             let mut results = Vec::new();
             for k in min..=max_n {
-                deadline.check()?;
+                ctx.deadline.check()?;
                 results.extend(eval_exact_repeat(
                     subject_term,
                     inner,
                     object_term,
                     sub.clone(),
-                    datastore,
-                    active_graph,
                     k,
-                    deadline,
+                    ctx,
                 )?);
             }
             Ok(results)
@@ -201,51 +192,32 @@ pub(crate) fn eval_repeat_path(
             let mut steps: Vec<PropertyPath> = (0..min).map(|_| inner.clone()).collect();
             steps.push(PropertyPath::ZeroOrMore(Box::new(inner.clone())));
             let seq = PropertyPath::Sequence(steps);
-            eval_path_pattern(
-                subject_term,
-                &seq,
-                object_term,
-                sub,
-                datastore,
-                active_graph,
-                deadline,
-            )
+            eval_path_pattern(subject_term, &seq, object_term, sub, ctx)
         }
     }
 }
 
 /// Evaluate `inner{k}` for an exact, non-negative repeat count `k`.
-#[allow(clippy::too_many_arguments)] // see `eval_repeat_path` above (#372)
 pub(crate) fn eval_exact_repeat(
     subject_term: &Term,
     inner: &PropertyPath,
     object_term: &Term,
     sub: PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     k: usize,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
     if k == 0 {
         Ok(zero_hop_solutions(
             subject_term,
             object_term,
             &sub,
-            datastore,
-            active_graph,
+            ctx.datastore,
+            ctx.active_graph,
         ))
     } else {
         let steps: Vec<PropertyPath> = (0..k).map(|_| inner.clone()).collect();
         let seq = PropertyPath::Sequence(steps);
-        eval_path_pattern(
-            subject_term,
-            &seq,
-            object_term,
-            sub,
-            datastore,
-            active_graph,
-            deadline,
-        )
+        eval_path_pattern(subject_term, &seq, object_term, sub, ctx)
     }
 }
 
@@ -254,10 +226,11 @@ pub(crate) fn eval_path_pattern(
     path: &PropertyPath,
     object_term: &Term,
     sub: PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
+    let datastore = ctx.datastore;
+    let active_graph = ctx.active_graph;
+    let deadline = ctx.deadline;
     match path {
         PropertyPath::Iri(gel) => {
             let tp = TriplePattern {
@@ -265,7 +238,7 @@ pub(crate) fn eval_path_pattern(
                 predicate: Term::Constant(gel.clone()),
                 object: object_term.clone(),
             };
-            eval_triple_pattern(&tp, &sub, datastore, active_graph, None, deadline)
+            eval_triple_pattern(&tp, &sub, None, ctx)
         }
 
         PropertyPath::Sequence(steps) => {
@@ -298,9 +271,7 @@ pub(crate) fn eval_path_pattern(
                         step,
                         &current_object,
                         s,
-                        datastore,
-                        active_graph,
-                        deadline,
+                        ctx,
                     )?);
                 }
                 current_subs = next_subs;
@@ -319,54 +290,23 @@ pub(crate) fn eval_path_pattern(
         }
 
         PropertyPath::Alternative(left, right) => {
-            let mut left_subs = eval_path_pattern(
-                subject_term,
-                left,
-                object_term,
-                sub.clone(),
-                datastore,
-                active_graph,
-                deadline,
-            )?;
-            let right_subs = eval_path_pattern(
-                subject_term,
-                right,
-                object_term,
-                sub,
-                datastore,
-                active_graph,
-                deadline,
-            )?;
+            let mut left_subs =
+                eval_path_pattern(subject_term, left, object_term, sub.clone(), ctx)?;
+            let right_subs = eval_path_pattern(subject_term, right, object_term, sub, ctx)?;
             left_subs.extend(right_subs);
             Ok(left_subs)
         }
 
         PropertyPath::Inverse(inner) => {
             // Swap subject and object
-            eval_path_pattern(
-                object_term,
-                inner,
-                subject_term,
-                sub,
-                datastore,
-                active_graph,
-                deadline,
-            )
+            eval_path_pattern(object_term, inner, subject_term, sub, ctx)
         }
 
         PropertyPath::ZeroOrOne(inner) => {
             // Zero hops: subject == object
             let zero_hop =
                 zero_hop_solutions(subject_term, object_term, &sub, datastore, active_graph);
-            let one_hop = eval_path_pattern(
-                subject_term,
-                inner,
-                object_term,
-                sub,
-                datastore,
-                active_graph,
-                deadline,
-            )?;
+            let one_hop = eval_path_pattern(subject_term, inner, object_term, sub, ctx)?;
             // Deduplicate (zero-hop and one-hop may produce the same solution).
             // Compare by resolved value: zero-hop bindings are `Computed` while
             // one-hop bindings from a BGP match are `Interned`, so the same
@@ -381,38 +321,17 @@ pub(crate) fn eval_path_pattern(
             Ok(result)
         }
 
-        PropertyPath::OneOrMore(inner) => transitive_closure(
-            subject_term,
-            inner,
-            object_term,
-            sub,
-            datastore,
-            active_graph,
-            false,
-            deadline,
-        ),
+        PropertyPath::OneOrMore(inner) => {
+            transitive_closure(subject_term, inner, object_term, sub, false, ctx)
+        }
 
-        PropertyPath::ZeroOrMore(inner) => transitive_closure(
-            subject_term,
-            inner,
-            object_term,
-            sub,
-            datastore,
-            active_graph,
-            true,
-            deadline,
-        ),
+        PropertyPath::ZeroOrMore(inner) => {
+            transitive_closure(subject_term, inner, object_term, sub, true, ctx)
+        }
 
-        PropertyPath::Repeat(inner, min, max) => eval_repeat_path(
-            subject_term,
-            inner,
-            object_term,
-            sub,
-            datastore,
-            active_graph,
-            (*min, *max),
-            deadline,
-        ),
+        PropertyPath::Repeat(inner, min, max) => {
+            eval_repeat_path(subject_term, inner, object_term, sub, (*min, *max), ctx)
+        }
 
         PropertyPath::NegatedSet(excluded) => {
             let g = match active_graph {
@@ -494,17 +413,17 @@ pub(crate) fn resolve_term_to_gel(
 ///
 /// Strategy: BFS from the subject if it is bound (forward traversal).
 /// If the subject is unbound and the object is bound, reverse BFS using ^path.
-#[allow(clippy::too_many_arguments)] // see `eval_repeat_path` above (#372)
 pub(crate) fn transitive_closure(
     subject_term: &Term,
     path: &PropertyPath,
     object_term: &Term,
     sub: PartialSub,
-    datastore: &Datastore,
-    active_graph: &ActiveGraph,
     include_zero: bool,
-    deadline: &Deadline,
+    ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
+    let datastore = ctx.datastore;
+    let active_graph = ctx.active_graph;
+    let deadline = ctx.deadline;
     let subject_gel = resolve_term_to_gel(subject_term, &sub, datastore);
     let object_gel = resolve_term_to_gel(object_term, &sub, datastore);
 
@@ -532,9 +451,7 @@ pub(crate) fn transitive_closure(
                 path,
                 &Term::Variable("__tc_next".to_string()),
                 sub.clone(),
-                datastore,
-                active_graph,
-                deadline,
+                ctx,
             )?;
             for s in next_subs {
                 if let Some(next_val) = s.get("__tc_next") {
@@ -593,9 +510,7 @@ pub(crate) fn transitive_closure(
                         &inverse_path,
                         &Term::Variable("__tc_prev".to_string()),
                         sub.clone(),
-                        datastore,
-                        active_graph,
-                        deadline,
+                        ctx,
                     )?;
                     for s in next_subs {
                         if let Some(prev_val) = s.get("__tc_prev") {
@@ -655,9 +570,7 @@ pub(crate) fn transitive_closure(
                         path,
                         &Term::Variable("__tc_next".to_string()),
                         base_sub.clone(),
-                        datastore,
-                        ag,
-                        deadline,
+                        ctx.with_active_graph(ag),
                     )?;
                     for s in next_subs {
                         if let Some(next_val) = s.get("__tc_next") {

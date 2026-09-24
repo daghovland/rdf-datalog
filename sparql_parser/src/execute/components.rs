@@ -192,24 +192,15 @@ pub(crate) fn eval_component(
     budget: Option<usize>,
     deadline: &Deadline,
 ) -> Result<Vec<PartialSub>, ExecError> {
+    let ctx = EvalCtx::new(datastore, active_graph, deadline);
     match comp {
-        QueryComponent::BGP(tps) => {
-            eval_bgp(tps, solutions, datastore, active_graph, budget, deadline)
-        }
+        QueryComponent::BGP(tps) => eval_bgp(tps, solutions, budget, ctx),
 
         QueryComponent::PathPattern(subject, path, object) => {
             let mut result = Vec::new();
             for sub in solutions {
                 deadline.check()?;
-                result.extend(eval_path_pattern(
-                    subject,
-                    path,
-                    object,
-                    sub,
-                    datastore,
-                    active_graph,
-                    deadline,
-                )?);
+                result.extend(eval_path_pattern(subject, path, object, sub, ctx)?);
             }
             Ok(result)
         }
