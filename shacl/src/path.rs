@@ -273,6 +273,43 @@ pub fn to_turtle(path: &ShPath) -> String {
     }
 }
 
+/// Serialize `path` as SPARQL 1.1 property-path surface syntax (distinct
+/// from [`to_turtle`], which emits the SHACL-Turtle RDF-list/blank-node
+/// encoding, not SPARQL path syntax) — used to substitute the `$PATH` token
+/// in a `sh:propertyValidator` SELECT query (W3C SHACL spec §6.2.3.1). A
+/// top-level compound path needs no wrapping parens in predicate position;
+/// [`parenthesized`] adds them only for a compound child of a compound
+/// expression, where SPARQL's path-operator precedence would otherwise
+/// change the meaning.
+pub fn to_sparql_path(path: &ShPath) -> String {
+    match path {
+        ShPath::Predicate(iri) => format!("<{iri}>"),
+        ShPath::Inverse(inner) => format!("^{}", parenthesized(inner)),
+        ShPath::ZeroOrMore(inner) => format!("{}*", parenthesized(inner)),
+        ShPath::OneOrMore(inner) => format!("{}+", parenthesized(inner)),
+        ShPath::ZeroOrOne(inner) => format!("{}?", parenthesized(inner)),
+        ShPath::Sequence(steps) => steps
+            .iter()
+            .map(parenthesized)
+            .collect::<Vec<_>>()
+            .join("/"),
+        ShPath::Alternative(branches) => branches
+            .iter()
+            .map(parenthesized)
+            .collect::<Vec<_>>()
+            .join("|"),
+    }
+}
+
+/// `to_sparql_path(p)`, wrapped in `( … )` unless `p` is a bare predicate
+/// (which never needs parens as an operand).
+fn parenthesized(p: &ShPath) -> String {
+    match p {
+        ShPath::Predicate(_) => to_sparql_path(p),
+        _ => format!("({})", to_sparql_path(p)),
+    }
+}
+
 // ── Evaluation: full path extension over the data graph ─────────────────────
 
 /// All `(subject, object)` pairs connected by `path` in `data`'s default

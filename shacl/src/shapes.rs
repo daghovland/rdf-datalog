@@ -241,6 +241,11 @@ pub struct ParsedPropShape {
     /// "not declared here" — the parent shape's message applies. See
     /// [#403](https://github.com/daghovland/rdf-datalog/issues/403).
     pub message: Option<String>,
+    /// W3C SHACL spec §6 `sh:ConstraintComponent` invocations declared on
+    /// this property shape (i.e. the property shape has values for one or
+    /// more registered components' parameters). See
+    /// [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+    pub component_invocations: Vec<ComponentInvocation>,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -300,6 +305,13 @@ pub struct ParsedShape {
     /// SHACL-AF §6.1 `sh:sparql` custom constraints declared directly on this
     /// shape node. See [#54](https://github.com/daghovland/rdf-datalog/issues/54).
     pub sparql_constraints: Vec<SparqlConstraint>,
+    /// W3C SHACL spec §6 `sh:ConstraintComponent` invocations declared
+    /// directly on this shape node (node-shape scope — see
+    /// [`ParsedPropShape::component_invocations`] for the property-shape
+    /// counterpart). Empty when this shape node itself carries `sh:path`
+    /// (i.e. it is really a property shape — see `attach_component_invocations`).
+    /// See [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+    pub node_component_invocations: Vec<ComponentInvocation>,
 }
 
 /// Return `true` if the shape-graph node `shape_id` carries `sh:deactivated true`.
@@ -360,11 +372,46 @@ pub fn parse_shapes(shapes: &Datastore) -> Vec<ParsedShape> {
         }
     }
 
+    let components = parse_constraint_components(shapes);
     found
         .into_iter()
         .enumerate()
-        .map(|(idx, shape_id)| parse_one_shape(shapes, shape_id, idx))
+        .map(|(idx, shape_id)| {
+            let mut parsed = parse_one_shape(shapes, shape_id, idx);
+            attach_component_invocations(shapes, &mut parsed, &components);
+            parsed
+        })
         .collect()
+}
+
+/// Attach W3C SHACL spec §6 `sh:ConstraintComponent` invocations to `parsed`
+/// (its own node-shape scope, plus each of its property shapes) — a
+/// post-processing pass over an already-parsed [`ParsedShape`], rather than
+/// threading `components` through `parse_one_shape`/`parse_property_shapes`
+/// themselves, so `evaluate::shape_conforms_for_node`'s ad hoc re-parse of an
+/// inner shape (`sh:not`/`sh:and`/`sh:or`/`sh:node`/`sh:xone` references) is
+/// untouched — custom constraint components are deliberately out of scope
+/// there, mirroring the existing scope limit on §5.1 `sh:sparql` constraints
+/// (never evaluated for inner shapes either). See
+/// [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+fn attach_component_invocations(
+    shapes: &Datastore,
+    parsed: &mut ParsedShape,
+    components: &[ConstraintComponentDef],
+) {
+    // A shape node that itself carries sh:path is really a property shape
+    // (already folded into `property_shapes` by `parse_one_shape` — see its
+    // `has_direct_path` handling); its own node-level scope contributes no
+    // constraints, so no node-shape-scoped invocations either.
+    let has_direct_path = graph::get_object(shapes, parsed.shapes_id, SH_PATH).is_some();
+    parsed.node_component_invocations = if has_direct_path {
+        Vec::new()
+    } else {
+        find_component_invocations(shapes, parsed.shapes_id, components)
+    };
+    for prop in &mut parsed.property_shapes {
+        prop.component_invocations = find_component_invocations(shapes, prop.shapes_id, components);
+    }
 }
 
 // ── Shape parsing ─────────────────────────────────────────────────────────────
@@ -413,6 +460,7 @@ pub(crate) fn parse_one_shape(
                     .and_then(|iri| crate::Severity::from_iri(&iri)),
                 message: graph::get_object(shapes, shape_id, SH_MESSAGE)
                     .and_then(|id| literal_string(shapes, id)),
+                component_invocations: Vec::new(),
             });
         }
     }
@@ -472,6 +520,7 @@ pub(crate) fn parse_one_shape(
         message,
         deactivated,
         sparql_constraints,
+        node_component_invocations: Vec::new(),
     }
 }
 
@@ -533,6 +582,193 @@ fn parse_sparql_constraints(shapes: &Datastore, shape_id: GraphElementId) -> Vec
                 is_ask,
                 message,
                 severity,
+            })
+        })
+        .collect()
+}
+
+// ── §6: SPARQL-based constraint components ─────────────────────────────────
+// Spec: <https://www.w3.org/TR/shacl/#constraints-sparql> (§6). See
+// [#519](https://github.com/daghovland/rdf-datalog/issues/519) and
+// `docs/plans/SHACL_CUSTOM_CONSTRAINT_COMPONENTS_519_PLAN.md`.
+
+/// One `sh:parameter` declaration of a [`ConstraintComponentDef`].
+#[derive(Debug, Clone)]
+pub struct ComponentParameter {
+    /// The parameter's `sh:path` IRI — also the predicate a shape sets
+    /// directly to supply this parameter's value when invoking the
+    /// component.
+    pub path: String,
+    /// The SPARQL variable name a validator query pre-binds this
+    /// parameter's value to — the local name of `path` (spec §6.2.1).
+    pub var_name: String,
+    /// `sh:optional true` on this parameter declaration.
+    pub optional: bool,
+}
+
+/// A single `sh:validator`/`sh:nodeValidator`/`sh:propertyValidator` value —
+/// a SPARQL ASK or SELECT query (spec §6.2.3), plus its own `sh:message`
+/// template (may contain `{$paramName}`/`{?paramName}` placeholders, spec
+/// §6.2.2's templating syntax).
+#[derive(Debug, Clone)]
+pub struct ValidatorDef {
+    pub query: SparqlQuery,
+    pub is_ask: bool,
+    pub message: Option<String>,
+}
+
+/// A parsed `?c a sh:ConstraintComponent` declaration (spec §6.2).
+#[derive(Debug, Clone)]
+pub struct ConstraintComponentDef {
+    /// ID of the component's own node in the **shapes** `Datastore` —
+    /// reported as `sh:sourceConstraintComponent` for any violation it
+    /// produces.
+    pub component_id: GraphElementId,
+    pub parameters: Vec<ComponentParameter>,
+    /// Generic `sh:validator` — always ASK-based (spec §6.2.3).
+    pub validator: Option<ValidatorDef>,
+    /// `sh:nodeValidator` — always SELECT-based, used only for node shapes.
+    pub node_validator: Option<ValidatorDef>,
+    /// `sh:propertyValidator` — always SELECT-based, used only for property
+    /// shapes.
+    pub property_validator: Option<ValidatorDef>,
+}
+
+/// One shape's invocation of a [`ConstraintComponentDef`] — the component's
+/// own id (for `sh:sourceConstraintComponent`), the parameter bindings read
+/// from the invoking shape, and the (cloned) validator definitions, so
+/// evaluation never needs a second lookup by component id.
+#[derive(Debug, Clone)]
+pub struct ComponentInvocation {
+    pub component_id: GraphElementId,
+    /// `(parameter var_name, bound value)`, one entry per parameter the
+    /// invoking shape actually has a value for (including optional ones
+    /// that happen to be set; a missing optional parameter has no entry).
+    pub bindings: Vec<(String, GraphElement)>,
+    pub validator: Option<ValidatorDef>,
+    pub node_validator: Option<ValidatorDef>,
+    pub property_validator: Option<ValidatorDef>,
+}
+
+/// The local name of an IRI: the longest `NCName`-like suffix after the last
+/// `#` or `/` (spec §6.2.1's "longest NCNAME at the end of the IRI, not
+/// immediately preceded by the first colon in the IRI" — simplified to the
+/// common case of a `#`/`/`-delimited namespace, which covers every
+/// parameter path a real shapes graph declares).
+fn local_name(iri: &str) -> String {
+    iri.rsplit(['#', '/']).next().unwrap_or(iri).to_string()
+}
+
+/// Resolve one `sh:validator`/`sh:nodeValidator`/`sh:propertyValidator`
+/// value node to a [`ValidatorDef`]. `None` for a malformed entry (neither
+/// `sh:select` nor `sh:ask` present) — silently skipped, mirroring
+/// `parse_sparql_constraints`'s existing posture on malformed input.
+fn parse_validator_def(shapes: &Datastore, node: GraphElementId) -> Option<ValidatorDef> {
+    let (query, is_ask) = if let Some(id) = graph::get_object(shapes, node, SH_SELECT) {
+        (literal_string(shapes, id)?, false)
+    } else if let Some(id) = graph::get_object(shapes, node, SH_ASK) {
+        (literal_string(shapes, id)?, true)
+    } else {
+        return None;
+    };
+    let message =
+        graph::get_object(shapes, node, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
+    let prefixes = parse_sparql_prefixes(shapes, node);
+    Some(ValidatorDef {
+        query: SparqlQuery { query, prefixes },
+        is_ask,
+        message,
+    })
+}
+
+/// Parse every `?c a sh:ConstraintComponent` declaration anywhere in
+/// `shapes`. A component with no parameters, or with no validator of any
+/// kind, is ill-formed per spec (§6.2.1: "every constraint component has at
+/// least one non-optional parameter") and is skipped entirely — mirroring
+/// this crate's existing posture of silently skipping malformed shapes-graph
+/// input rather than erroring.
+fn parse_constraint_components(shapes: &Datastore) -> Vec<ConstraintComponentDef> {
+    let Some(rdf_type_id) = graph::lookup_iri(shapes, RDF_TYPE) else {
+        return Vec::new();
+    };
+    let Some(cc_id) = graph::lookup_iri(shapes, SH_CONSTRAINT_COMPONENT) else {
+        return Vec::new();
+    };
+    shapes
+        .get_triples_with_object_predicate(cc_id, rdf_type_id)
+        .map(|t| t.subject)
+        .filter_map(|component_id| {
+            let parameters: Vec<ComponentParameter> =
+                graph::get_objects(shapes, component_id, SH_PARAMETER)
+                    .into_iter()
+                    .filter_map(|p| {
+                        let path_id = graph::get_object(shapes, p, SH_PATH)?;
+                        let path = graph::iri_string(shapes, path_id)?;
+                        let optional = graph::get_object(shapes, p, SH_OPTIONAL)
+                            .and_then(|id| graph::elem_to_bool(shapes, id))
+                            .unwrap_or(false);
+                        let var_name = local_name(&path);
+                        Some(ComponentParameter {
+                            path,
+                            var_name,
+                            optional,
+                        })
+                    })
+                    .collect();
+            if parameters.is_empty() {
+                return None;
+            }
+            let validator = graph::get_object(shapes, component_id, SH_VALIDATOR)
+                .and_then(|v| parse_validator_def(shapes, v));
+            let node_validator = graph::get_object(shapes, component_id, SH_NODE_VALIDATOR)
+                .and_then(|v| parse_validator_def(shapes, v));
+            let property_validator = graph::get_object(shapes, component_id, SH_PROPERTY_VALIDATOR)
+                .and_then(|v| parse_validator_def(shapes, v));
+            if validator.is_none() && node_validator.is_none() && property_validator.is_none() {
+                return None;
+            }
+            Some(ConstraintComponentDef {
+                component_id,
+                parameters,
+                validator,
+                node_validator,
+                property_validator,
+            })
+        })
+        .collect()
+}
+
+/// Which components `shape_id` invokes: for every [`ConstraintComponentDef`]
+/// whose non-optional parameters all have a value on `shape_id`, one
+/// [`ComponentInvocation`] with that shape's bound parameter values (spec
+/// §6.1's informative "uses a constraint component" algorithm). A parameter
+/// with more than one value on `shape_id` uses only the first found — see
+/// the plan doc's "Multi-valued parameters" non-goal.
+fn find_component_invocations(
+    shapes: &Datastore,
+    shape_id: GraphElementId,
+    components: &[ConstraintComponentDef],
+) -> Vec<ComponentInvocation> {
+    components
+        .iter()
+        .filter_map(|comp| {
+            let mut bindings = Vec::new();
+            for param in &comp.parameters {
+                match graph::get_object(shapes, shape_id, &param.path) {
+                    Some(val_id) => {
+                        let elem = shapes.resources.get_graph_element(val_id).clone();
+                        bindings.push((param.var_name.clone(), elem));
+                    }
+                    None if param.optional => {}
+                    None => return None,
+                }
+            }
+            Some(ComponentInvocation {
+                component_id: comp.component_id,
+                bindings,
+                validator: comp.validator.clone(),
+                node_validator: comp.node_validator.clone(),
+                property_validator: comp.property_validator.clone(),
             })
         })
         .collect()
@@ -616,6 +852,7 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                     .and_then(|iri| crate::Severity::from_iri(&iri)),
                 message: graph::get_object(shapes, prop_node, SH_MESSAGE)
                     .and_then(|id| literal_string(shapes, id)),
+                component_invocations: Vec::new(),
             })
         })
         .collect()

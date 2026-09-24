@@ -1,0 +1,45 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# Mirrors the W3C SHACL spec's own §6.1 informative example
+# (sh:PatternConstraintComponent): sh:flags is an optional parameter (spec
+# §6.2.1's sh:optional) never set anywhere in this shapes graph, exercising
+# the "absent optional parameter" path via a bound()-guarded ASK query.
+ex:PatternConstraintComponent
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:pattern ;
+    ] ;
+    sh:parameter [
+        sh:path ex:flags ;
+        sh:optional true ;
+    ] ;
+    sh:validator ex:hasPattern .
+
+ex:hasPattern
+    a sh:SPARQLAskValidator ;
+    sh:message "Value does not match pattern {$pattern}" ;
+    # Semantically identical to the W3C spec's own §6.1 example
+    # (`IF(bound($flags), regex(str($value), $pattern, $flags),
+    # regex(str($value), $pattern))`), but written with &&/|| instead of a
+    # nested IF() — this crate's `sparql_parser` only routes BOUND/REGEX/
+    # ISBLANK (and other FILTER-only builtins) through its boolean-context
+    # dispatcher, which IF()'s condition/branch arguments do not use (they
+    # go through the value-context dispatcher instead), so those builtins
+    # cannot yet be nested inside IF()/COALESCE(). Filed as a follow-up:
+    # https://github.com/daghovland/rdf-datalog/issues/674.
+    sh:ask """
+        ASK {
+            FILTER (!isBlank($value) &&
+                ((bound($flags) && regex(str($value), $pattern, $flags)) ||
+                 (!bound($flags) && regex(str($value), $pattern))))
+        }
+        """ .
+
+ex:CodeShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Item ;
+    sh:property [
+        sh:path ex:code ;
+        ex:pattern "^[A-Z]+$" ;
+    ] .

@@ -1,0 +1,4 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:Item1 a ex:Item ; ex:code "ABC" .
+ex:Item2 a ex:Item ; ex:code "abc" .
