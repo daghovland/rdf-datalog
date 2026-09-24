@@ -41,7 +41,7 @@ pub mod vqs_routes;
 use dag_rdf::datastore::Datastore;
 use datalog::{IncrementalReasoner, Rule};
 use ingress::NetworkPolicy;
-use persistence::QuadChangelog;
+use persistence::{LogEntry, QuadChangelog};
 use registry::DatasetRegistry;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -487,6 +487,68 @@ pub async fn serve_on_listener(
     let network_policy = config.network_policy.clone();
     let allow_loopback_for_ssrf_tests = config.allow_loopback_for_ssrf_tests;
     let registry = DatasetRegistry::new_with_default(store.clone(), reasoner.clone());
+
+    // Replay any durably-persisted rules-endpoint mutations (#475), on top of
+    // the quad-changelog replay and `--rules`-derived initial reasoner above.
+    // Ordering matches `--data` -> quad changelog -> `--rules` -> ruleset
+    // changelog, so a persisted `POST /{dataset}/rules` correctly overrides
+    // a `--rules`-supplied ruleset, exactly as it did live. See
+    // `docs/plans/PERSIST_RULESETS_475_PLAN.md`.
+    if let Some(ref changelog) = changelog {
+        let ruleset_entries = changelog
+            .lock()
+            .await
+            .ruleset_entries()
+            .map_err(std::io::Error::other)?;
+        for entry in ruleset_entries {
+            let dataset = match &entry {
+                LogEntry::ReplaceRuleset { dataset, .. }
+                | LogEntry::SetNamedRuleset { dataset, .. }
+                | LogEntry::DeleteNamedRuleset { dataset, .. } => dataset.clone(),
+                _ => unreachable!("ruleset_entries() only returns ruleset-mutation variants"),
+            };
+            let Some(ds_entry) = registry.get_entry(&dataset) else {
+                log::warn!(
+                    "skipping persisted ruleset log entry for unknown dataset {dataset:?} \
+                     (not present in the registry at startup)"
+                );
+                continue;
+            };
+            let mut ds_store = ds_entry.store.write().await;
+            let replay_result = match &entry {
+                LogEntry::ReplaceRuleset { rules_text, .. } => {
+                    rules_endpoint::apply_replace_ruleset_text(&ds_entry, &mut ds_store, rules_text)
+                        .await
+                        .map(|_| ())
+                }
+                LogEntry::SetNamedRuleset {
+                    ruleset_id,
+                    rules_text,
+                    ..
+                } => rules_endpoint::apply_set_named_ruleset_text(
+                    &ds_entry,
+                    &mut ds_store,
+                    ruleset_id,
+                    rules_text,
+                )
+                .await
+                .map(|_| ()),
+                LogEntry::DeleteNamedRuleset { ruleset_id, .. } => {
+                    rules_endpoint::apply_delete_named_ruleset(&ds_entry, &mut ds_store, ruleset_id)
+                        .await
+                        .map(|_| ())
+                }
+                _ => unreachable!("ruleset_entries() only returns ruleset-mutation variants"),
+            };
+            drop(ds_store);
+            replay_result.map_err(|e| {
+                std::io::Error::other(format!(
+                    "failed to replay persisted ruleset for dataset {dataset:?}: {e}"
+                ))
+            })?;
+        }
+    }
+
     let state = AppState {
         store,
         registry: Arc::new(RwLock::new(registry)),
