@@ -213,6 +213,119 @@ fn merge_rules_into(base: &mut Vec<Rule>, extra: &[Rule]) {
     }
 }
 
+// ── Shared apply logic (#475) ────────────────────────────────────────────────
+//
+// The functions below are the actual state-mutating core of each rules
+// endpoint, factored out so both the live HTTP handlers *and* startup replay
+// of the durable ruleset changelog (`lib.rs::serve_on_listener`, see
+// [`docs/plans/PERSIST_RULESETS_475_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/PERSIST_RULESETS_475_PLAN.md))
+// share exactly one implementation. Each takes the raw rules text (never a
+// pre-parsed `Vec<Rule>`) since `datalog_parser::parse` must intern IRIs
+// into whichever `Datastore` it's handed, and startup replay hands it a
+// freshly-reconstructed store.
+
+/// Distinguishes a parse failure (caller should map to `400`) from a
+/// ruleset-application failure (caller should map to `409`), so both the
+/// HTTP handlers and startup replay can react appropriately.
+#[derive(Debug)]
+pub(crate) enum RulesetApplyError {
+    Parse(String),
+    Conflict(String),
+}
+
+impl std::fmt::Display for RulesetApplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RulesetApplyError::Parse(e) => write!(f, "Datalog parse error: {e}"),
+            RulesetApplyError::Conflict(e) => write!(
+                f,
+                "ruleset is contradictory over the dataset's existing data: {e}"
+            ),
+        }
+    }
+}
+
+/// Core of `POST /{dataset}/rules`: parse `rules_text`, replace the
+/// dataset's entire live ruleset, and clear the id-scoped bookkeeping (a
+/// full replace discards all previously-loaded rules regardless of source).
+/// Returns the number of rules loaded.
+pub(crate) async fn apply_replace_ruleset_text(
+    entry: &DatasetEntry,
+    store: &mut Datastore,
+    rules_text: &str,
+) -> Result<usize, RulesetApplyError> {
+    let rules = datalog_parser::parse(rules_text, store).map_err(RulesetApplyError::Parse)?;
+    let rules_loaded = rules.len();
+
+    apply_combined_ruleset(entry, store, &rules)
+        .await
+        .map_err(RulesetApplyError::Conflict)?;
+
+    // This is a full replace: it discards *all* previously-loaded rules
+    // regardless of source, so no named ruleset id (from
+    // `POST /{dataset}/rules/{id}`, #473) can meaningfully survive it —
+    // clear the id-scoped bookkeeping too. See
+    // `docs/plans/RULESET_SCOPED_DELETE_473_PLAN.md`.
+    entry.rulesets.write().await.clear();
+
+    Ok(rules_loaded)
+}
+
+/// Core of `POST /{dataset}/rules/{ruleset-id}`: parse `rules_text`, union it
+/// with every other still-live named ruleset, apply the combined result, and
+/// update the id-scoped bookkeeping. Returns the number of rules loaded for
+/// `ruleset_id` (an empty body unloads just this id).
+pub(crate) async fn apply_set_named_ruleset_text(
+    entry: &DatasetEntry,
+    store: &mut Datastore,
+    ruleset_id: &str,
+    rules_text: &str,
+) -> Result<usize, RulesetApplyError> {
+    let rules = datalog_parser::parse(rules_text, store).map_err(RulesetApplyError::Parse)?;
+    let rules_loaded = rules.len();
+
+    let mut rulesets = entry.rulesets.write().await;
+    let mut combined = union_other_rulesets(&rulesets, ruleset_id);
+    merge_rules_into(&mut combined, &rules);
+
+    apply_combined_ruleset(entry, store, &combined)
+        .await
+        .map_err(RulesetApplyError::Conflict)?;
+
+    if rules.is_empty() {
+        rulesets.remove(ruleset_id);
+    } else {
+        rulesets.insert(ruleset_id.to_string(), rules);
+    }
+
+    Ok(rules_loaded)
+}
+
+/// Core of `DELETE /{dataset}/rules/{ruleset-id}`: retract exactly the named
+/// ruleset. Returns `Ok(None)` if `ruleset_id` was never loaded (caller maps
+/// this to `404` for the live HTTP handler, or a silent skip for replay,
+/// since a delete of an already-absent id is a legitimate no-op either way).
+pub(crate) async fn apply_delete_named_ruleset(
+    entry: &DatasetEntry,
+    store: &mut Datastore,
+    ruleset_id: &str,
+) -> Result<Option<usize>, RulesetApplyError> {
+    let mut rulesets = entry.rulesets.write().await;
+    if !rulesets.contains_key(ruleset_id) {
+        return Ok(None);
+    }
+
+    let combined = union_other_rulesets(&rulesets, ruleset_id);
+    apply_combined_ruleset(entry, store, &combined)
+        .await
+        .map_err(RulesetApplyError::Conflict)?;
+
+    let removed = rulesets
+        .remove(ruleset_id)
+        .expect("checked contains_key above");
+    Ok(Some(removed.len()))
+}
+
 pub async fn dataset_rules_post(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -250,28 +363,34 @@ pub async fn dataset_rules_post(
     // no ruleset change) — see plan doc test
     // `test_post_rules_parse_error_leaves_dataset_untouched`.
     let mut store = entry.store.write().await;
-    let rules = match datalog_parser::parse(&body_str, &mut store) {
-        Ok(r) => r,
-        Err(e) => {
+    let rules_loaded = match apply_replace_ruleset_text(&entry, &mut store, &body_str).await {
+        Ok(n) => n,
+        Err(RulesetApplyError::Parse(e)) => {
             return (StatusCode::BAD_REQUEST, format!("Datalog parse error: {e}")).into_response();
         }
+        Err(RulesetApplyError::Conflict(e)) => {
+            return (
+                StatusCode::CONFLICT,
+                format!("New ruleset is contradictory over the dataset's existing data: {e}"),
+            )
+                .into_response();
+        }
     };
-    let rules_loaded = rules.len();
 
-    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &rules).await {
-        return (
-            StatusCode::CONFLICT,
-            format!("New ruleset is contradictory over the dataset's existing data: {e}"),
-        )
-            .into_response();
+    // Durably record the operation (#475) only now that it's known to have
+    // actually succeeded — see the plan doc's "when to log" section for why
+    // this is the safer ordering here (unlike the quad-mutation changelog
+    // path, which logs an already-validated operation before applying it).
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_replace_ruleset(&name, &body_str) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
     }
-
-    // This is a full replace: it discards *all* previously-loaded rules
-    // regardless of source, so no named ruleset id (from
-    // `POST /{dataset}/rules/{id}`, #473) can meaningfully survive it —
-    // clear the id-scoped bookkeeping too. See
-    // `docs/plans/RULESET_SCOPED_DELETE_473_PLAN.md`.
-    entry.rulesets.write().await.clear();
 
     (
         StatusCode::OK,
@@ -319,31 +438,33 @@ pub async fn dataset_rules_id_post(
 
     // Same lock-across-parse-and-rebuild rationale as `dataset_rules_post`.
     let mut store = entry.store.write().await;
-    let rules = match datalog_parser::parse(&body_str, &mut store) {
-        Ok(r) => r,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Datalog parse error: {e}")).into_response();
+    let rules_loaded =
+        match apply_set_named_ruleset_text(&entry, &mut store, &ruleset_id, &body_str).await {
+            Ok(n) => n,
+            Err(RulesetApplyError::Parse(e)) => {
+                return (StatusCode::BAD_REQUEST, format!("Datalog parse error: {e}"))
+                    .into_response();
+            }
+            Err(RulesetApplyError::Conflict(e)) => {
+                return (
+                    StatusCode::CONFLICT,
+                    format!("New ruleset is contradictory over the dataset's existing data: {e}"),
+                )
+                    .into_response();
+            }
+        };
+
+    // See the "when to log" note in `dataset_rules_post`: log only now that
+    // the operation is known to have actually succeeded.
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_set_named_ruleset(&name, &ruleset_id, &body_str) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
         }
-    };
-    let rules_loaded = rules.len();
-
-    let mut rulesets = entry.rulesets.write().await;
-    let mut combined = union_other_rulesets(&rulesets, &ruleset_id);
-    merge_rules_into(&mut combined, &rules);
-
-    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &combined).await {
-        return (
-            StatusCode::CONFLICT,
-            format!("New ruleset is contradictory over the dataset's existing data: {e}"),
-        )
-            .into_response();
-    }
-
-    if rules.is_empty() {
-        // Same-id replace with an empty body: unload just this id.
-        rulesets.remove(&ruleset_id);
-    } else {
-        rulesets.insert(ruleset_id.clone(), rules);
     }
 
     (
@@ -374,26 +495,36 @@ pub async fn dataset_rules_id_delete(
     };
 
     let mut store = entry.store.write().await;
-    let mut rulesets = entry.rulesets.write().await;
+    let rules_removed = match apply_delete_named_ruleset(&entry, &mut store, &ruleset_id).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Ruleset not found").into_response(),
+        Err(RulesetApplyError::Parse(e)) => {
+            // Unreachable in practice (DELETE has no body to parse), kept
+            // exhaustive since `apply_delete_named_ruleset` shares the error
+            // type with the parse-capable operations.
+            return (StatusCode::BAD_REQUEST, format!("Datalog parse error: {e}")).into_response();
+        }
+        Err(RulesetApplyError::Conflict(e)) => {
+            return (
+                StatusCode::CONFLICT,
+                format!("Remaining ruleset is contradictory over the dataset's existing data: {e}"),
+            )
+                .into_response();
+        }
+    };
 
-    if !rulesets.contains_key(&ruleset_id) {
-        return (StatusCode::NOT_FOUND, "Ruleset not found").into_response();
+    // See the "when to log" note in `dataset_rules_post`: log only now that
+    // the operation is known to have actually succeeded.
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_delete_named_ruleset(&name, &ruleset_id) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
     }
-
-    let combined = union_other_rulesets(&rulesets, &ruleset_id);
-
-    if let Err(e) = apply_combined_ruleset(&entry, &mut store, &combined).await {
-        return (
-            StatusCode::CONFLICT,
-            format!("Remaining ruleset is contradictory over the dataset's existing data: {e}"),
-        )
-            .into_response();
-    }
-
-    let removed = rulesets
-        .remove(&ruleset_id)
-        .expect("checked contains_key above");
-    let rules_removed = removed.len();
 
     (
         StatusCode::OK,
