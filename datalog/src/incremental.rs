@@ -542,7 +542,7 @@ impl IncrementalReasoner {
     /// this call — may falsify a `NOT` body atom of some derivation recorded
     /// *before* this call (or earlier in this same call). Such derivations
     /// are stale and must be retracted, not just left alongside the new
-    /// facts. [`Self::retract_negation_invalidated`] finds and removes them,
+    /// facts. `retract_negation_invalidated` finds and removes them,
     /// cascades to anything that positively depended on a removed fact (via
     /// the same reverse-witness machinery [`Self::apply_deletions`] uses),
     /// and re-derives whatever is still provable, repeating until no further
@@ -550,7 +550,7 @@ impl IncrementalReasoner {
     /// points to a strictly lower stratum under stratification).
     ///
     /// Unlike the positive phase above, this second phase is **not**
-    /// undone by [`Self::undo_insertions`] on error: it uses
+    /// undone by `undo_insertions` on error: it uses
     /// [`dag_rdf::QuadTable::remove_quad`] (swap-based), which breaks the
     /// append-only invariant `undo_insertions`'s `truncate_to` rollback
     /// depends on. A `Contradiction` raised during this phase therefore
