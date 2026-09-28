@@ -25,6 +25,7 @@ mod data_range;
 mod declaration;
 mod individual;
 mod iri;
+mod property_axiom;
 mod property_expr;
 
 use owl_ontology::Ontology;
@@ -34,10 +35,11 @@ use owl_ontology::Ontology;
 ///
 /// Only the subset described in `docs/plans/OWL_XML_PLAN.md` is supported:
 /// the ontology header, `<Prefix>`/`<Import>` declarations, ontology-level
-/// `<Annotation>`s, and `<Declaration>`. Class/property/individual axioms
-/// (`<SubClassOf>`, `<ObjectPropertyDomain>`, `<ClassAssertion>`, ...) are
-/// not yet recognized and will cause a parse error if present — see
-/// [#606](https://github.com/daghovland/rdf-datalog/issues/606)-[#608](https://github.com/daghovland/rdf-datalog/issues/608).
+/// `<Annotation>`s, `<Declaration>`, class axioms, and object-/data-property
+/// axioms (including `<HasKey>`). ABox (individual) axioms and
+/// non-`Declaration` axiom-level `<Annotation>` children are not yet
+/// recognized and will cause a parse error if present — see
+/// [#608](https://github.com/daghovland/rdf-datalog/issues/608).
 pub fn parse(input: &str) -> Result<Ontology, String> {
     let doc = roxmltree::Document::parse(input).map_err(|e| format!("XML parse error: {e}"))?;
     let root = doc.root_element();
@@ -78,9 +80,38 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
                 let axiom = axiom::parse_class_axiom(child, &prefixes)?;
                 axioms.push(axiom);
             }
+            "SubObjectPropertyOf"
+            | "EquivalentObjectProperties"
+            | "DisjointObjectProperties"
+            | "ObjectPropertyDomain"
+            | "ObjectPropertyRange"
+            | "InverseObjectProperties"
+            | "FunctionalObjectProperty"
+            | "InverseFunctionalObjectProperty"
+            | "ReflexiveObjectProperty"
+            | "IrreflexiveObjectProperty"
+            | "SymmetricObjectProperty"
+            | "AsymmetricObjectProperty"
+            | "TransitiveObjectProperty" => {
+                let axiom = property_axiom::parse_object_property_axiom(child, &prefixes)?;
+                axioms.push(axiom);
+            }
+            "SubDataPropertyOf"
+            | "EquivalentDataProperties"
+            | "DisjointDataProperties"
+            | "DataPropertyDomain"
+            | "DataPropertyRange"
+            | "FunctionalDataProperty" => {
+                let axiom = property_axiom::parse_data_property_axiom(child, &prefixes)?;
+                axioms.push(axiom);
+            }
+            "HasKey" => {
+                let axiom = property_axiom::parse_has_key(child, &prefixes)?;
+                axioms.push(axiom);
+            }
             other => {
                 return Err(format!(
-                    "unsupported OWL/XML axiom element <{other}> (see #607-#608)"
+                    "unsupported OWL/XML axiom element <{other}> (see #608)"
                 ));
             }
         }
