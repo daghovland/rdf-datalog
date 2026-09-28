@@ -666,12 +666,11 @@ impl IncrementalReasoner {
                             if derivation.rule_id != rule_id {
                                 continue;
                             }
-                            if let Some(sub) = reconstruct_substitution(rule, derivation) {
-                                if crate::datalog::get_substitutions(sub, fact, &not_pattern)
+                            if let Some(sub) = reconstruct_substitution(rule, derivation)
+                                && crate::datalog::get_substitutions(sub, fact, &not_pattern)
                                     .is_some()
-                                {
-                                    seeds.insert(*derived_quad);
-                                }
+                            {
+                                seeds.insert(*derived_quad);
                             }
                         }
                     }
