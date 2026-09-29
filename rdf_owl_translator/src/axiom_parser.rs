@@ -207,6 +207,42 @@ pub fn extract_axiom(
                         }
                     }
                 }
+                // `owl:AllDifferent` (n>2 `DifferentIndividuals`), per
+                // https://github.com/daghovland/rdf-datalog/issues/667 —
+                // the read-back counterpart of #513's write-side
+                // `Translator::all_disjoint` encoding.
+                o if o == ids.owl_all_different_id => {
+                    let members_triples: Vec<Triple> = datastore
+                        .get_triples_with_subject_predicate(triple.subject, ids.owl_members_id)
+                        .collect();
+                    match members_triples.as_slice() {
+                        [] => None,
+                        [mt] => {
+                            let list = get_rdf_list_elements(
+                                &|s, p| {
+                                    datastore.get_triples_with_subject_predicate(s, p).collect()
+                                },
+                                ids,
+                                mt.obj,
+                            )?;
+                            let individuals: Vec<Individual> = list
+                                .iter()
+                                .map(|&id| try_get_individual(res.get_graph_element(id)))
+                                .collect::<Result<_, _>>()?;
+                            Some(Axiom::AxiomAssertion(Assertion::DifferentIndividuals(
+                                axiom_anns,
+                                individuals,
+                            )))
+                        }
+                        _ => {
+                            return Err(TranslatorError::MultipleOwlMembers(format!(
+                                "owl:AllDifferent {} has {} owl:members triples, expected at most 1",
+                                triple.subject,
+                                members_triples.len()
+                            )));
+                        }
+                    }
+                }
                 o if o == ids.owl_functional_property_id => Some(decls.object_or_data_property(
                     triple.subject,
                     res,
@@ -754,7 +790,6 @@ ex:Disj a owl:AllDisjointProperties ;
     // error (`TranslatorError::MultipleOwlMembers`).
 
     #[test]
-    #[ignore = "not yet implemented, see #667"]
     fn all_different_single_members_triple_succeeds() {
         let ttl = r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -774,14 +809,17 @@ ex:Diff a owl:AllDifferent ;
         );
         match &result {
             Ok(Some(Axiom::AxiomAssertion(Assertion::DifferentIndividuals(_, individuals)))) => {
-                assert_eq!(individuals.len(), 3, "expected 3 individuals, got {individuals:?}");
+                assert_eq!(
+                    individuals.len(),
+                    3,
+                    "expected 3 individuals, got {individuals:?}"
+                );
             }
             _ => panic!("expected a DifferentIndividuals axiom, got {result:?}"),
         }
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #667"]
     fn all_different_multiple_members_triples_returns_err() {
         let ttl = r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -807,7 +845,6 @@ ex:Diff a owl:AllDifferent ;
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #667"]
     fn all_different_no_members_triple_returns_none() {
         let ttl = r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -820,7 +857,10 @@ ex:Diff a owl:AllDifferent .
             "http://example.org/Diff",
             "http://www.w3.org/2002/07/owl#AllDifferent",
         );
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {result:?}");
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {result:?}"
+        );
     }
 
     /// Round-trip: write an n-ary `DifferentIndividuals` axiom out via
@@ -828,11 +868,10 @@ ex:Diff a owl:AllDifferent .
     /// encoding), then read it back via `extract_axiom` and confirm the same
     /// set of individuals comes back.
     #[test]
-    #[ignore = "not yet implemented, see #667"]
     fn all_different_round_trips_through_owl2rdf() {
         use ingress::{IriReference, OntologyVersion};
-        use owl2rl2datalog::owl_to_rdf::owl2rdf;
         use owl_ontology::{Individual, Ontology};
+        use owl2rl2datalog::owl_to_rdf::owl2rdf;
 
         let axiom = Axiom::AxiomAssertion(Assertion::DifferentIndividuals(
             vec![],
