@@ -105,14 +105,41 @@ keeps the two file *lists* from silently diverging.
 ### Why concatenation is safe here
 
 Turtle files can be concatenated and parsed as one document as long as
-`@prefix` declarations don't conflict. All four sources share the same
-`bl:`/`agp:` prefix→IRI mappings (verified: `vocabulary.ttl` and
-`agentprov-vocabulary.ttl` are literally byte-identical prefixes to what's
-already embedded in `data/dataset.ttl`). Blank nodes are scoped per parse,
-so concatenating before parsing is equivalent to parsing one larger
-document — no cross-file blank-node collision risk (checked: the
-individual snapshot/provenance files use IRI-named individuals, not blank
-nodes, for every `bl:`/`agp:` subject).
+`@prefix` declarations don't conflict, and as long as no two files reuse
+the same *labeled* blank-node identifier (`_:x`) or rely on a per-file
+`@base`/relative IRI that would resolve differently once concatenated.
+Checked concretely, not assumed:
+
+- All sources share the same `bl:`/`agp:` prefix→IRI mappings (verified:
+  `vocabulary.ttl` and `agentprov-vocabulary.ttl` are literally
+  byte-identical prefixes to what's already embedded in `data/dataset.ttl`).
+- `grep -ho '_:[A-Za-z0-9_]*' backlog/ontology/*.ttl backlog/examples/snapshot.ttl
+  provenance/summaries/*.ttl | sort | uniq -c` finds several `_:` tokens
+  (`_:x`, `_:b0`, `_:c14n0`, …), but every hit traced back to plain prose
+  *inside* an `agp:summaryText "..."` string literal (a PR summary
+  describing someone else's blank-node-handling code) — never actual
+  Turtle blank-node syntax. Same check for `grep -l '<#\|<>'` (candidate
+  relative IRIs / `@base` use): every hit is also inside a
+  `summaryText`/`abstractText` string, e.g. pr-419.ttl's summary
+  *mentioning* `<#service>` fragment IRIs from an unrelated Fuseki
+  assembler file. No source file actually declares `@base` or a labeled
+  blank node as real RDF syntax. `tests/regenerate_production_dataset.rs`'s
+  `merged_dataset_contains_backlog_and_provenance_data` test loading the
+  real, live-regenerated snapshot + all 257 current summaries and getting
+  a sane combined triple count is the concrete backstop for this, run
+  every time CI runs — if a future summary ever *does* introduce a real
+  labeled blank node or relative IRI, the resulting parse/count anomaly
+  would show up there.
+- Blank nodes are otherwise scoped per parse, so concatenating text before
+  parsing is equivalent to parsing one larger document — no cross-file
+  collision risk given the above.
+
+`scripts/regenerate-production-dataset.sh --print-sources` and
+`scripts/serve-backlog.sh --print-data-args` are asserted (as sets) to
+resolve the same file list by
+`tests/regenerate_production_dataset.rs::production_and_dev_scripts_resolve_the_same_source_files`,
+so the two independently-maintained lists (see below) can't silently
+diverge.
 
 ## Non-goals for this PR
 

@@ -20,6 +20,7 @@ pub mod crates;
 pub mod github;
 pub mod loader;
 pub mod model;
+pub mod regenerate_cli;
 
 pub use github::{GhCliSource, GitHubError, GitHubSource};
 pub use loader::build_snapshot;
