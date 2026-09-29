@@ -31,7 +31,7 @@ pub struct RegenerateOptions {
 }
 
 /// Parses CLI arguments as `std::env::args().skip(1)` would yield them
-/// (i.e. NOT including argv[0]). Currently understands only `--out
+/// (i.e. NOT including `argv[0]`). Currently understands only `--out
 /// <PATH>`; any other argument is rejected with an error string rather
 /// than silently ignored, so a typo'd flag fails loudly instead of quietly
 /// regenerating to the default location.
