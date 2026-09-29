@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #686 (issue #667), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps below are real
+# (from `git log 536e76b0fdfd26e6fd8f8cae3fff1c59aca3fbcc..HEAD` on branch
+# feat/667-alldifferent-readback).
+
+ghpull:686 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rdf_owl_translator: read back owl:AllDifferent (n-ary DifferentIndividuals)" ;
+    bl:number 686 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:667 ;
+    bl:touchesFile "rdf_owl_translator/src/axiom_parser.rs" ,
+        "rdf_owl_translator/Cargo.toml" .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr686 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:667 ;
+    prov:startedAtTime "2026-09-29T18:37:19Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-29T18:52:54Z"^^xsd:dateTime .
+
+session:pr686Summary a agp:TranscriptSummary ;
+    agp:abstractText "Add extract_axiom read-back for owl:AllDifferent (n>2 DifferentIndividuals), mirroring the AllDisjointClasses/AllDisjointProperties arms." ;
+    agp:summaryText "Issue #667 was the read-side counterpart of #513/PR #669: owl2rl2datalog::owl_to_rdf already emitted an owl:AllDifferent blank node (rdf:type + owl:members rdf:List, annotations attached directly to the blank node rather than reified via owl:Axiom, per the W3C mapping spec section 2.3.3) for n>2 DifferentIndividuals, but rdf_owl_translator::axiom_parser::extract_axiom had no matching rdf:type arm -- WellKnownIds::owl_all_different_id was interned but never matched, so the axiom silently round-tripped to nothing on RDF ingestion. The existing owl:AllDisjointClasses/owl:AllDisjointProperties arms (added by earlier #363 panic-removal work, PRs #418/#424/#425) were the closest template: both walk the single owl:members triple off the blank node via get_rdf_list_elements, return Ok(None) when owl:members is absent (0 triples -- not every owl:AllDifferent-typed subject need carry members), and return Err(TranslatorError::MultipleOwlMembers) when more than one owl:members triple is present (malformed input, already a hard error elsewhere in this file per #363/#424). The new arm follows the identical shape, differing only in resolving each rdf:List element through try_get_individual (already Result-returning, propagated via '?') instead of decls.class_expression/object_property_expression, and producing Axiom::AxiomAssertion(Assertion::DifferentIndividuals(annotations, individuals)) instead of a ClassAxiom/ObjectPropertyAxiom variant. TDD: four tests added first as #[ignore]'d (single owl:members succeeds, multiple returns MultipleOwlMembers, zero returns Ok(None), mirroring the sibling arms' three cases one-for-one) plus a fourth exercising the full round trip -- build an Ontology with one n=3 DifferentIndividuals axiom, translate it out via owl2rl2datalog::owl2rdf (added as a rdf_owl_translator dev-dependency; no cycle, since owl2rl2datalog does not depend on rdf_owl_translator), then read it back via extract_axiom and check 3 individuals come back -- which is the strongest test here since it exercises #513's actual write-side encoding rather than a hand-written Turtle fixture that could drift from what owl2rdf really emits. Compiled clean with all four tests correctly failing/ignored (Ok(None) came back from the pre-existing generic-None catchall rather than reaching the not-yet-written arm) before implementing, then unignored and green after adding the ~25-line match arm. Full quality gate (fmt, clippy --workspace -D warnings, cargo test -p rdf-owl-translator -p owl2rl2datalog, cargo test --workspace) all passed; the one sparql-endpoint::query_timeout SIGKILL seen locally is the documented memory-pressure false alarm unrelated to this crate, and CI (all 9 checks) came back green independently." ;
+    agp:reasoningFor ghpull:686 ;
+    prov:wasGeneratedBy session:pr686 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
