@@ -125,11 +125,16 @@ Checked concretely, not assumed:
   assembler file. No source file actually declares `@base` or a labeled
   blank node as real RDF syntax. `tests/regenerate_production_dataset.rs`'s
   `merged_dataset_contains_backlog_and_provenance_data` test loading the
-  real, live-regenerated snapshot + all 257 current summaries and getting
-  a sane combined triple count is the concrete backstop for this, run
-  every time CI runs — if a future summary ever *does* introduce a real
-  labeled blank node or relative IRI, the resulting parse/count anomaly
-  would show up there.
+  checked-in `backlog/examples/snapshot.ttl` + all current summaries (CI
+  runs with `--skip-regenerate`, no live `gh api` call — see the
+  Validation plan below for where the live path was actually exercised
+  instead) catches *some* future regressions but not all: a relative IRI
+  parsed with no `@base` fails outright, so that case would be caught, but
+  two different files that both happened to use the same labeled blank
+  node (e.g. `_:b0`) would parse cleanly into a single merged node — a
+  silent semantic error, not a parse failure — and a triple-count
+  threshold can't detect that. This is a real gap, not fully closed by the
+  current test; noted rather than glossed over.
 - Blank nodes are otherwise scoped per parse, so concatenating text before
   parsing is equivalent to parsing one larger document — no cross-file
   collision risk given the above.
@@ -143,9 +148,16 @@ diverge.
 
 ## Non-goals for this PR
 
-- Installing/enabling the systemd timer on the actual production server —
-  operational step for Dag, documented not automated (no access to that
-  host from here).
+- Installing/enabling the systemd timer, and running the script against
+  the real `data/dataset.ttl`/restarting the real `deploy-dagalog-1`
+  container. This session *does* have shell access to the actual
+  production host (it's this machine — confirmed via `docker ps`, which
+  shows `deploy-dagalog-1` and the rest of the public stack already
+  running), so this isn't a hard access limitation, but a deliberate
+  scope decision: flipping the live deployment over is an operational
+  action with real user-facing effect, not a code change, and belongs to
+  Dag's own review/rollout rather than happening silently inside a PR.
+  Filed as a follow-up issue (see below) rather than done here.
 - A GitHub Actions-based regeneration path that commits back to `main` —
   considered and rejected: a bot pushing directly to `main` bypasses this
   repo's own PR-only workflow, a bigger design decision than this issue.
@@ -166,13 +178,24 @@ diverge.
    just "the script looks right." Mirrors `tests/serve_backlog_provenance.rs`'s
    existing pattern.
 3. `cargo fmt`/`clippy`/`cargo test --workspace` as usual.
-4. Manually run the full script (with a live `--skip-regenerate` off, i.e.
-   an actual `backlog-regenerate` call) once in this worktree against a
-   scratch output path, and load the result, as an extra concrete check
-   beyond the test suite.
+4. Manually ran the full script with the live path (`--skip-regenerate`
+   *off*, a real `backlog-regenerate` hitting `gh api`) once in this
+   worktree, against a scratch `--out` path (never the real
+   `data/dataset.ttl`) with `--no-restart`. The first two attempts hit a
+   transient GitHub API 500 ("diff is temporarily unavailable due to heavy
+   server load") mid-regeneration — the script correctly exited non-zero
+   without touching the `--out` file. Third attempt succeeded. Loaded the
+   resulting file via `dagalog --query` and confirmed
+   `bl:CurrentSnapshot bl:generatedAt` was a live, same-day timestamp
+   (not the Aug 11 one baked into the checked-in `snapshot.ttl`), and that
+   371 real `bl:Issue` individuals came back. `git status` after the run
+   confirmed `backlog/examples/snapshot.ttl` was untouched.
 
 ## Follow-ups filed
 
-None yet — filed during implementation if anything genuinely out-of-scope
-turns up (e.g. if actually installing the timer surfaces a real blocker
-worth tracking).
+- Actually running the script against production's real `data/dataset.ttl`
+  and restarting `deploy-dagalog-1`, and installing/enabling the systemd
+  timer — filed as [#687](https://github.com/daghovland/rdf-datalog/issues/687)
+  (sub-issue of the backlog/provenance dashboard epic
+  [#378](https://github.com/daghovland/rdf-datalog/issues/378), Status
+  `Todo`, awaiting Dag's review per this repo's own follow-up rule).

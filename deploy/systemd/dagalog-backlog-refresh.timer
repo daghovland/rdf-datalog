@@ -1,7 +1,8 @@
 # Daily trigger for dagalog-backlog-refresh.service -- see that file and
 # docs/deploy/PUBLIC_DEPLOYMENT.md ("Keeping the backlog/provenance data
 # current") for what it does and how to install it. Not installed
-# automatically (issue #565: https://github.com/daghovland/rdf-datalog/issues/565).
+# automatically -- rollout tracked in issue #687:
+# https://github.com/daghovland/rdf-datalog/issues/687.
 [Unit]
 Description=Daily dagalog backlog/provenance snapshot refresh
 

@@ -165,8 +165,20 @@ every time this script runs, independent of `git pull`. A stale checkout
 still gets a fresh *snapshot* but stale *summaries*.
 
 To run this daily without remembering to by hand, install the provided
-systemd timer template (not installed automatically — this repo has no
-access to the actual server):
+systemd timer template (not installed automatically — see
+[#687](https://github.com/daghovland/rdf-datalog/issues/687) for actually
+rolling this out; it's an operational step for Dag to do deliberately, not
+something a PR should flip on by itself):
+
+**Pre-build the release binary first**, rather than letting the timer's
+first run compile `backlog-regenerate` from scratch against the shared,
+memory-constrained `CARGO_TARGET_DIR` (see the disk-usage note in the root
+`CLAUDE.md` — this host runs on ~3.7GB and concurrent cargo builds are a
+known OOM risk):
+
+```sh
+CARGO_TARGET_DIR=/home/dag/.cargo-shared-target/rdf-datalog cargo build --release -p backlog
+```
 
 ```sh
 sudo cp deploy/systemd/dagalog-backlog-refresh.{service,timer} /etc/systemd/system/

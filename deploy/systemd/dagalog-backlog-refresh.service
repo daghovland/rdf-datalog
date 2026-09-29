@@ -5,9 +5,10 @@
 # regenerated snapshot + provenance summaries, then restarts the dagalog
 # container so it picks up the new file.
 #
-# NOT installed automatically -- this repo has no access to the actual
-# production server. See docs/deploy/PUBLIC_DEPLOYMENT.md, "Keeping the
-# backlog/provenance data current", for install steps.
+# NOT installed automatically -- this is a deliberate operational rollout
+# step left for Dag, not something a PR should flip on by itself. See
+# issue #687 and docs/deploy/PUBLIC_DEPLOYMENT.md, "Keeping the backlog/
+# provenance data current", for install steps.
 #
 # Runs as a system unit (not --user) so it works without an interactive
 # login session (loginctl enable-linger) and so `docker compose` reaches
