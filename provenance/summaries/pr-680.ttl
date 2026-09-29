@@ -1,0 +1,32 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log 536e76b0fdfd26e6fd8f8cae3fff1c59aca3fbcc..HEAD`
+# on branch fix/677-rustls-security-fix).
+
+ghpull:680 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "fix: bump rustls to 0.23.45 to resolve RUSTSEC-2026-0285" ;
+    bl:number 680 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:677 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr680 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:677 ;
+    prov:startedAtTime "2026-09-28T13:07:08Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-28T13:07:08Z"^^xsd:dateTime .
+
+session:pr680Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #677 reported that CI's Security Audit job (cargo audit via rustsec/audit-check) was failing on main because of RUSTSEC-2026-0285, a rustls TLS 1.3 handshake vulnerability affecting versions below 0.23.45; rustls is a transitive dependency pulled in via reqwest/hyper-rustls/rustls-platform-verifier, and main's Cargo.lock was pinned to 0.23.39. The issue brief flagged that a duplicate (#678) existed and that PR #673 (an unrelated refactor for issue #466) had incidentally bundled the same rustls bump, so the first action was to check whether #673 had already merged before doing any work — it was still open (mergedAt null), so the fix was still needed and not redundant. The fix itself was a pure transitive dependency bump: `cargo update -p rustls --precise 0.23.45`, which also pulled forward aws-lc-rs, aws-lc-sys, and rustls-webpki to satisfy rustls's own Cargo.toml constraints. No source code or tests were touched, since the vulnerability lives entirely in the pinned dependency version, not in this repo's use of it. `cargo audit` was re-run locally afterward and no longer reported RUSTSEC-2026-0285 (only two pre-existing, unrelated 'yanked' warnings for chacha20 and spin remained), confirming the advisory was resolved. cargo fmt, cargo clippy --workspace --all-targets -D warnings, and cargo test --workspace all passed; the only test-suite anomaly was sparql_endpoint's query_timeout test being SIGKILLed, which CLAUDE.md documents as a known false alarm from memory pressure on this shared machine, not a real regression, and CI (green) is authoritative there. The PR description's 'Prior provenance checked' section was marked skipped with a reason: Cargo.lock is touched by nearly every PR in this repo's history, so a related_to_file query against it would be pure noise for a lockfile-only bump that touches no crate source." ;
+    agp:reasoningFor ghpull:680 ;
+    prov:wasGeneratedBy session:pr680 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
