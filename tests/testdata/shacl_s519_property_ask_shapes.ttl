@@ -1,0 +1,29 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# Mirrors the W3C SHACL spec's own §6.2.3.2 example (ex:hasLang), invoked
+# from a sh:property block: the generic sh:validator (ASK) is evaluated once
+# per path-traversed value node (spec §6.3), with $this/$value pre-bound.
+ex:LanguageConstraintComponentUsingASK
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:lang ;
+    ] ;
+    sh:validator ex:hasLang .
+
+ex:hasLang
+    a sh:SPARQLAskValidator ;
+    sh:message "Values are literals with language \"{$lang}\"" ;
+    sh:ask """
+        ASK {
+            FILTER (isLiteral($value) && langMatches(lang($value), $lang))
+        }
+        """ .
+
+ex:CountryShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Country ;
+    sh:property [
+        sh:path ex:germanLabel ;
+        ex:lang "de" ;
+    ] .

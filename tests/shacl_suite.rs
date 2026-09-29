@@ -232,6 +232,18 @@ fn shacl_testdata_parses() {
         "shacl_s6_batched_agg_grouped_shapes.ttl",
         "shacl_s522_sparql_target_exec_error_data.ttl",
         "shacl_s522_sparql_target_exec_error_shapes.ttl",
+        "shacl_s519_node_ask_data.ttl",
+        "shacl_s519_node_ask_shapes.ttl",
+        "shacl_s519_property_ask_data.ttl",
+        "shacl_s519_property_ask_shapes.ttl",
+        "shacl_s519_property_select_data.ttl",
+        "shacl_s519_property_select_shapes.ttl",
+        "shacl_s519_optional_param_data.ttl",
+        "shacl_s519_optional_param_shapes.ttl",
+        "shacl_s519_missing_required_data.ttl",
+        "shacl_s519_missing_required_shapes.ttl",
+        "shacl_s519_no_suitable_validator_data.ttl",
+        "shacl_s519_no_suitable_validator_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -4059,5 +4071,162 @@ fn spec_s6_batched_group_by_this_uses_batched_path() {
     assert_eq!(
         got, expected,
         "GROUP BY $this must produce the same violations as the ungrouped/per-node case"
+    );
+}
+
+// ── #519: W3C SHACL spec §6 SPARQL-based constraint components ────────────
+//
+// See docs/plans/SHACL_CUSTOM_CONSTRAINT_COMPONENTS_519_PLAN.md and
+// [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+
+/// Node-shape-scoped invocation of the generic `sh:validator` (ASK-based,
+/// spec §6.2.3.2): `$value` is pre-bound to the focus node itself (a node
+/// shape's only "value node" is the focus node, SHACL §3.7), alongside
+/// `$this` and the component's own parameter (`ex:minScore`). `ex:N2` (score
+/// 2) is below the shape's `ex:minScore 5` and violates; `ex:N1` (score 10)
+/// conforms. Also checks `sh:message` template substitution (`{$minScore}`).
+#[test]
+fn spec_s6_2_ask_validator_node_shape() {
+    let data = load("shacl_s519_node_ask_data.ttl");
+    let shapes = load("shacl_s519_node_ask_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:N2 (score 2 < 5) should violate"
+    );
+    let r = &report.results[0];
+    assert_eq!(r.focus_node.as_deref(), Some("http://example.org/ns#N2"));
+    assert_eq!(r.value.as_deref(), Some("http://example.org/ns#N2"));
+    assert_eq!(
+        r.source_constraint.as_deref(),
+        Some("http://example.org/ns#MinScoreConstraintComponent")
+    );
+    let msg = r
+        .message
+        .as_deref()
+        .expect("validator sh:message should be rendered");
+    assert!(
+        msg.contains('5'),
+        "message template {{$minScore}} should be substituted with the bound value; got: {msg}"
+    );
+}
+
+/// Property-shape-scoped invocation of the generic `sh:validator` (ASK,
+/// spec §6.2.3.2) — mirrors the spec's own `ex:hasLang` example almost
+/// verbatim. `ex:Norway`'s `ex:germanLabel "Norge"@no` doesn't match the
+/// shape's `ex:lang "de"` parameter and violates; `ex:Austria`'s `@de`
+/// label conforms.
+#[test]
+fn spec_s6_2_ask_validator_property_shape() {
+    let data = load("shacl_s519_property_ask_data.ttl");
+    let shapes = load("shacl_s519_property_ask_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Norway's germanLabel should violate"
+    );
+    let r = &report.results[0];
+    assert_eq!(
+        r.focus_node.as_deref(),
+        Some("http://example.org/ns#Norway")
+    );
+    assert_eq!(simple_path(r), Some("http://example.org/ns#germanLabel"));
+    assert_eq!(r.value.as_deref(), Some("\"Norge\"@no"));
+    let msg = r
+        .message
+        .as_deref()
+        .expect("validator sh:message should be rendered");
+    assert!(
+        msg.contains("de"),
+        "message template {{$lang}} should be substituted; got: {msg}"
+    );
+}
+
+/// Property-shape-scoped invocation of `sh:propertyValidator` (SELECT-based,
+/// spec §6.2.3.1) — mirrors the spec's own
+/// `ex:LanguageConstraintComponentUsingSELECT` example. Confirms the `$PATH`
+/// token in the validator query text is actually textually substituted with
+/// the invoking property shape's real path (`ex:englishLabel`) before
+/// execution — without substitution the query would reference an unbound
+/// `?PATH` variable and never match anything, so this also implicitly
+/// confirms `ex:Norway`'s non-`en` label is caught.
+#[test]
+fn spec_s6_2_select_validator_property_shape_path_substitution() {
+    let data = load("shacl_s519_property_select_data.ttl");
+    let shapes = load("shacl_s519_property_select_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Norway's englishLabel should violate"
+    );
+    let r = &report.results[0];
+    assert_eq!(
+        r.focus_node.as_deref(),
+        Some("http://example.org/ns#Norway")
+    );
+    assert_eq!(r.value.as_deref(), Some("\"Norvege\"@fr"));
+}
+
+/// A component with one optional parameter (`sh:flags`, spec §6.2.1) that no
+/// shape in this test ever sets — mirrors the spec's own
+/// `sh:PatternConstraintComponent` §6.1 example (`bound($flags)`-guarded
+/// ASK). `ex:Item2`'s `ex:code "abc"` doesn't match the mandatory
+/// `ex:pattern "^[A-Z]+$"` and violates; `ex:Item1` (`"ABC"`) conforms.
+#[test]
+fn regression_519_optional_parameter_absent() {
+    let data = load("shacl_s519_optional_param_data.ttl");
+    let shapes = load("shacl_s519_optional_param_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Item2's code should violate"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.org/ns#Item2")
+    );
+}
+
+/// A shape with no value at all for a component's one mandatory parameter
+/// must not invoke that component (spec §6.1: a shape "uses" a component
+/// only when it has values for every mandatory parameter) — not an error,
+/// and not a spurious violation either.
+#[test]
+fn regression_519_missing_required_parameter_not_invoked() {
+    let data = load("shacl_s519_missing_required_data.ttl");
+    let shapes = load("shacl_s519_missing_required_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        report.conforms,
+        "component must not be invoked at all when its mandatory parameter is absent; got: {:?}",
+        report.results
+    );
+}
+
+/// A component declaring only `sh:propertyValidator`, invoked from a
+/// node-shape scope (parameter set directly on the node shape, no
+/// `sh:property` block). Per spec §6.2.3's validator selection order, a
+/// node shape only ever falls back to the generic `sh:validator` — which
+/// this component doesn't declare — so the constraint must be silently
+/// ignored (spec: "a SHACL-SPARQL processor ignores the constraint"), not
+/// an error and not a violation.
+#[test]
+fn regression_519_no_suitable_validator_ignored() {
+    let data = load("shacl_s519_no_suitable_validator_data.ttl");
+    let shapes = load("shacl_s519_no_suitable_validator_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(
+        report.conforms,
+        "no suitable validator (only sh:propertyValidator, node-scope invocation) \
+         must be silently ignored, not violated; got: {:?}",
+        report.results
     );
 }

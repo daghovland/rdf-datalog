@@ -197,6 +197,30 @@ pub const SH_PREFIX_NAME: &str = "http://www.w3.org/ns/shacl#prefix";
 /// `"..."^^xsd:anyURI` typed literal, not a bare IRI node).
 pub const SH_NAMESPACE: &str = "http://www.w3.org/ns/shacl#namespace";
 
+// ── §6.2 SHACL: SPARQL-based constraint components ─────────────────────────
+// Spec: <https://www.w3.org/TR/shacl/#constraints-sparql> (§6). See
+// [#519](https://github.com/daghovland/rdf-datalog/issues/519).
+
+/// `sh:ConstraintComponent` — the generic type marking a shapes-graph node as
+/// a (SPARQL-based, here) constraint component declaration. Not
+/// `sh:SPARQLConstraintComponent` (that IRI, `CC_SPARQL` above, is the fixed
+/// `sh:sourceConstraintComponent` value for §5.1's embedded `sh:sparql`
+/// mechanism) — see the plan doc's "Correction to the issue title" section.
+pub const SH_CONSTRAINT_COMPONENT: &str = "http://www.w3.org/ns/shacl#ConstraintComponent";
+/// `sh:parameter` — one parameter declaration of a constraint component.
+pub const SH_PARAMETER: &str = "http://www.w3.org/ns/shacl#parameter";
+/// `sh:optional` — on a parameter declaration, marks it non-mandatory.
+pub const SH_OPTIONAL: &str = "http://www.w3.org/ns/shacl#optional";
+/// `sh:validator` — a component's generic (ASK-based) validator, used when no
+/// shape-type-specific validator applies.
+pub const SH_VALIDATOR: &str = "http://www.w3.org/ns/shacl#validator";
+/// `sh:nodeValidator` — a component's node-shape-specific (SELECT-based)
+/// validator.
+pub const SH_NODE_VALIDATOR: &str = "http://www.w3.org/ns/shacl#nodeValidator";
+/// `sh:propertyValidator` — a component's property-shape-specific
+/// (SELECT-based) validator.
+pub const SH_PROPERTY_VALIDATOR: &str = "http://www.w3.org/ns/shacl#propertyValidator";
+
 // ── Synthetic marker IRIs (internal to this implementation) ───────────────────
 //
 // These are minted into the working Datastore as predicate IRIs during validation.

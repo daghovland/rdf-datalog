@@ -1,0 +1,32 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# Mirrors the W3C SHACL spec's own §6.2.3.1 example
+# (ex:LanguageConstraintComponentUsingSELECT), invoked from a sh:property
+# block: sh:propertyValidator (SELECT-based), whose query text's $PATH
+# token must be textually substituted with the invoking property shape's
+# actual sh:path (here a bare predicate, ex:englishLabel) before execution.
+ex:LanguageConstraintComponentUsingSELECT
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:lang ;
+    ] ;
+    sh:propertyValidator [
+        a sh:SPARQLSelectValidator ;
+        sh:message "Values are literals with language \"{$lang}\"" ;
+        sh:select """
+            SELECT DISTINCT $this ?value
+            WHERE {
+                $this $PATH ?value .
+                FILTER (!isLiteral(?value) || !langMatches(lang(?value), $lang))
+            }
+            """ ;
+    ] .
+
+ex:CountryShape2
+    a sh:NodeShape ;
+    sh:targetClass ex:Country ;
+    sh:property [
+        sh:path ex:englishLabel ;
+        ex:lang "en" ;
+    ] .

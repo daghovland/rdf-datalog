@@ -1,0 +1,28 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# W3C SHACL spec §6.2 SPARQL-based constraint component invoked at
+# node-shape scope: the generic sh:validator (ASK-based, spec §6.2.3.2),
+# with $value pre-bound to the focus node itself (a node shape's only
+# "value node" is the focus node — SHACL §3.7).
+ex:MinScoreConstraintComponent
+    a sh:ConstraintComponent ;
+    sh:parameter [
+        sh:path ex:minScore ;
+    ] ;
+    sh:validator ex:hasMinScore .
+
+ex:hasMinScore
+    a sh:SPARQLAskValidator ;
+    sh:message "score is below minimum {$minScore}" ;
+    sh:ask """
+        ASK {
+            $this <http://example.org/ns#score> ?s .
+            FILTER (?s >= $minScore)
+        }
+        """ .
+
+ex:ScoreShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    ex:minScore 5 .

@@ -1,0 +1,4 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:Austria a ex:Country ; ex:germanLabel "Österreich"@de .
+ex:Norway a ex:Country ; ex:germanLabel "Norge"@no .

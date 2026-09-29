@@ -1,0 +1,3 @@
+@prefix ex: <http://example.org/ns#> .
+
+ex:Widget1 a ex:Widget ; ex:code "whatever" .
