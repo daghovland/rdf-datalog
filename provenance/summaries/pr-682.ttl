@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:682 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "datalog: retract negation-dependent derivations on insert" ;
+    bl:number 682 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:679 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr682 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:679 ;
+    prov:startedAtTime "2026-09-28T13:36:02Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-28T13:50:12Z"^^xsd:dateTime .
+
+session:pr682Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #679 reported that IncrementalReasoner::apply_insertions never retracted existing derived facts when an inserted fact falsified a NOT body atom -- adding a package boundary after membership was already materialised left stale membership facts beyond the boundary. Root-caused by reading apply_deletions/forward_phase first (per the issue's own pointer to #591/PR #590): Derivation only records positive body_witnesses, so nothing links a derivation to the absence it also depended on. Fix adds a second phase to apply_insertions, run after the existing positive semi-naive pass: DatalogProgram gains neg_rule_map (mirrors rule_map but for NotPattern atoms) so a new/derived fact can be matched against candidate (rule_id, pattern) pairs; reconstruct_substitution rebuilds a recorded Derivation's substitution from its rule's positive atoms and body_witnesses (in the same order materialise_delta_iteration produces them); negation_invalidated_seeds finds every derived quad whose derivation is falsified that way; cascade_pd reuses apply_deletions's existing reverse-witness BFS to also retract anything positively depending on a retracted quad; retract_negation_invalidated iterates this to a fixpoint since one round's re-derivation can itself falsify a different rule's NOT atom in a higher stratum. The negation phase cannot reuse the existing undo_insertions exact-rollback (it uses remove_quad, which is swap-based and breaks the append-only invariant undo_insertions's truncate_to depends on), so a Contradiction here is documented as needing rebuild_from_base recovery, matching apply_deletions's own existing contract rather than inventing a new one." ;
+    agp:reasoningFor ghpull:682 ;
+    agp:decisionPoint session:pr682Decision ;
+    prov:wasGeneratedBy session:pr682 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr682Decision a agp:Decision ;
+    agp:summaryText "Chose to reconstruct each derivation's substitution from its already-recorded body_witnesses (zipping them against the rule's positive body atoms in order) rather than adding new state to Derivation to track negative dependencies directly. This reuses the existing DerivedFromIndex/Derivation shape unchanged, so no migration of existing derivation records was needed, and the reconstructed substitution is exactly what evaluate() used originally, including leaving variables that appear only in a NOT atom unbound (matching evaluate_pattern's existential-check semantics for those atoms)." ;
+    agp:alternative "Considered adding an explicit negative_witnesses/negative-dependency list to Derivation, checked directly during a NOT-pattern lookup instead of being reconstructed. Rejected for this PR: it would require re-deriving or re-checking every existing Derivation at read time anyway to populate it retroactively for the negation-invalidation scan (no different in complexity from reconstruction), while also enlarging every derivation record and touching the DerivedFromIndex SHACL/serialisation surface for no correctness gain. Left as a possible follow-up only if the O(derived facts) scan in negation_invalidated_seeds (filed as #683) turns out to need it." .

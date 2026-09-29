@@ -54,6 +54,15 @@ pub enum ReasoningError {
 pub struct DatalogProgram {
     pub rules: Vec<Rule>,
     rule_map: HashMap<QuadWildcard, Vec<PartialRule>>,
+    /// Index of `NotPattern` body atoms, mirroring `rule_map` but for
+    /// negation: `direct_wildcard_pattern(p) -> [(rule_id, p)]` for every
+    /// `RuleAtom::NotPattern(p)` across `rules`. Used by
+    /// [`crate::IncrementalReasoner::apply_insertions`] to find which rules'
+    /// negated body atoms a newly-inserted (or newly-derived) fact might
+    /// falsify — the insertion-side counterpart to `rule_map`'s positive
+    /// forward-chaining trigger. See
+    /// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    neg_rule_map: HashMap<QuadWildcard, Vec<(usize, dag_rdf::QuadPattern)>>,
     /// Records for each derived quad how it was produced (rule + body witnesses).
     pub derived_from: DerivedFromIndex,
     /// Number of times [`Self::materialise_seminaive`]/
@@ -95,21 +104,34 @@ impl DatalogProgram {
         // Using all sub-wildcards here would index every rule under (*, *, *, *),
         // causing every fact to scan every rule — O(facts × rules) = catastrophic.
         let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
+        let mut neg_rule_map: HashMap<QuadWildcard, Vec<(usize, dag_rdf::QuadPattern)>> =
+            HashMap::new();
         for (rule_id, rule) in rules.iter().enumerate() {
             for atom in &rule.body {
-                if let RuleAtom::PositivePattern(p) = atom {
-                    let wc = direct_wildcard_pattern(p);
-                    rule_map.entry(wc).or_default().push(PartialRule {
-                        rule: rule.clone(),
-                        match_pattern: p.clone(),
-                        rule_id,
-                    });
+                match atom {
+                    RuleAtom::PositivePattern(p) => {
+                        let wc = direct_wildcard_pattern(p);
+                        rule_map.entry(wc).or_default().push(PartialRule {
+                            rule: rule.clone(),
+                            match_pattern: p.clone(),
+                            rule_id,
+                        });
+                    }
+                    RuleAtom::NotPattern(p) => {
+                        let wc = direct_wildcard_pattern(p);
+                        neg_rule_map
+                            .entry(wc)
+                            .or_default()
+                            .push((rule_id, p.clone()));
+                    }
+                    _ => {}
                 }
             }
         }
         Ok(DatalogProgram {
             rules,
             rule_map,
+            neg_rule_map,
             derived_from: DerivedFromIndex::new(),
             materialise_calls: 0,
             disabled_rules: std::collections::HashSet::new(),
@@ -146,13 +168,23 @@ impl DatalogProgram {
         is_safe_rule(&rule)?;
         let rule_id = self.rules.len(); // will be the new index after push
         for atom in &rule.body {
-            if let RuleAtom::PositivePattern(p) = atom {
-                let wc = direct_wildcard_pattern(p);
-                self.rule_map.entry(wc).or_default().push(PartialRule {
-                    rule: rule.clone(),
-                    match_pattern: p.clone(),
-                    rule_id,
-                });
+            match atom {
+                RuleAtom::PositivePattern(p) => {
+                    let wc = direct_wildcard_pattern(p);
+                    self.rule_map.entry(wc).or_default().push(PartialRule {
+                        rule: rule.clone(),
+                        match_pattern: p.clone(),
+                        rule_id,
+                    });
+                }
+                RuleAtom::NotPattern(p) => {
+                    let wc = direct_wildcard_pattern(p);
+                    self.neg_rule_map
+                        .entry(wc)
+                        .or_default()
+                        .push((rule_id, p.clone()));
+                }
+                _ => {}
             }
         }
         self.rules.push(rule);
@@ -166,6 +198,24 @@ impl DatalogProgram {
             .flatten()
             .filter(|pr| !self.disabled_rules.contains(&pr.rule_id))
             .flat_map(|pr| get_matches_for_rule(fact, pr))
+            .collect()
+    }
+
+    /// Every `(rule_id, pattern)` pair whose `NotPattern` body atom `fact`
+    /// could match (via the same wildcard-index lookup `get_rules_for_fact`
+    /// uses for positive atoms), excluding disabled rules. Used by
+    /// [`crate::IncrementalReasoner`]'s insertion-side negation-invalidation
+    /// pass. See [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    pub(crate) fn negatively_triggered_rules(
+        &self,
+        fact: &dag_rdf::Quad,
+    ) -> Vec<(usize, dag_rdf::QuadPattern)> {
+        wildcard_quad_pattern(&constant_quad_pattern(fact))
+            .iter()
+            .filter_map(|wc| self.neg_rule_map.get(wc))
+            .flatten()
+            .filter(|(rule_id, _)| !self.disabled_rules.contains(rule_id))
+            .cloned()
             .collect()
     }
 

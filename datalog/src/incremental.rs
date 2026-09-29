@@ -23,7 +23,7 @@ Contact: hovlanddag@gmail.com
 
 use crate::reasoner::{DatalogProgram, ReasoningError};
 use crate::stratifier::RulePartitioner;
-use crate::types::{Derivation, DerivedFromIndex, Rule, RuleHead};
+use crate::types::{Derivation, DerivedFromIndex, Rule, RuleAtom, RuleHead, Substitution};
 use dag_rdf::{Datastore, Quad, QuadTable};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -535,6 +535,29 @@ impl IncrementalReasoner {
     /// [#320](https://github.com/daghovland/rdf-datalog/issues/320).
     /// [`Self::rebuild_from_base`] remains available as a slower fallback
     /// (e.g. if a caller wants to double-check soundness after a rollback).
+    ///
+    /// **Negation invalidation (see [#679](https://github.com/daghovland/rdf-datalog/issues/679)):**
+    /// after the positive forward-chaining pass above, any fact newly present
+    /// — an original insert, or something derived from one, at any point in
+    /// this call — may falsify a `NOT` body atom of some derivation recorded
+    /// *before* this call (or earlier in this same call). Such derivations
+    /// are stale and must be retracted, not just left alongside the new
+    /// facts. `retract_negation_invalidated` finds and removes them,
+    /// cascades to anything that positively depended on a removed fact (via
+    /// the same reverse-witness machinery [`Self::apply_deletions`] uses),
+    /// and re-derives whatever is still provable, repeating until no further
+    /// negation invalidation is found (bounded, since negation only ever
+    /// points to a strictly lower stratum under stratification).
+    ///
+    /// Unlike the positive phase above, this second phase is **not**
+    /// undone by `undo_insertions` on error: it uses
+    /// [`dag_rdf::QuadTable::remove_quad`] (swap-based), which breaks the
+    /// append-only invariant `undo_insertions`'s `truncate_to` rollback
+    /// depends on. A `Contradiction` raised during this phase therefore
+    /// leaves `base`/`self` in the same "safe to recover via
+    /// [`Self::rebuild_from_base`]" state [`Self::apply_deletions`] already
+    /// documents for its own forward phase — not the exact-rollback
+    /// guarantee the positive-phase-only case above gives.
     pub fn apply_insertions(
         &mut self,
         base: &mut Datastore,
@@ -567,7 +590,123 @@ impl IncrementalReasoner {
                 return Err(e);
             }
         }
-        Ok(())
+
+        self.retract_negation_invalidated(base, &delta_facts)
+    }
+
+    /// Second phase of [`Self::apply_insertions`] — see that method's doc
+    /// comment for the full rationale and the error-handling caveat.
+    ///
+    /// Iterates to a fixpoint: each round finds every derived quad whose
+    /// derivation is falsified by a fact in `check_facts` (via
+    /// [`Self::negation_invalidated_seeds`]), cascades the retraction to
+    /// anything positively depending on it (via [`Self::cascade_pd`]),
+    /// removes the whole set from `base` and every program's `derived_from`
+    /// index, then re-runs full semi-naive materialisation (which may itself
+    /// re-derive some of what was just removed, via a surviving path, or
+    /// produce brand-new facts that in turn falsify a *different* rule's
+    /// `NOT` atom elsewhere — hence the next round checks only what was
+    /// newly derived this round). Stops as soon as a round finds nothing to
+    /// invalidate.
+    fn retract_negation_invalidated(
+        &mut self,
+        base: &mut Datastore,
+        delta_facts: &[Quad],
+    ) -> Result<(), ReasoningError> {
+        let mut check_facts: Vec<Quad> = delta_facts.to_vec();
+        loop {
+            let seeds = self.negation_invalidated_seeds(&check_facts);
+            if seeds.is_empty() {
+                return Ok(());
+            }
+            let pd = self.cascade_pd(base, seeds);
+
+            for q in &pd {
+                base.named_graphs.remove_quad(*q);
+                for program in &mut self.programs {
+                    program.derived_from.remove(q);
+                }
+            }
+
+            let mut new_delta: Vec<Quad> = Vec::new();
+            for program in &mut self.programs {
+                let mut buf = Vec::new();
+                program.materialise_seminaive_tracked(base, &mut buf)?;
+                new_delta.extend(buf.into_iter().map(|(q, _)| q));
+            }
+            check_facts = new_delta;
+        }
+    }
+
+    /// Every derived quad whose recorded derivation is falsified by some
+    /// fact in `facts`: for each fact, find every `(rule_id, not_pattern)`
+    /// a rule's `NotPattern` body atom that fact could match (via
+    /// [`DatalogProgram::negatively_triggered_rules`]), then scan that
+    /// program's `derived_from` index for derivations using that `rule_id`,
+    /// reconstruct the substitution the derivation used (from its recorded
+    /// positive `body_witnesses`, via [`reconstruct_substitution`]), and
+    /// check whether `fact` unifies with `not_pattern` under that
+    /// substitution — exactly the same check [`crate::datalog::evaluate`]
+    /// made (in the negative sense) when the derivation was first produced.
+    /// See [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    ///
+    /// O(`facts.len()` × total derived facts across all programs) — every
+    /// program's whole `derived_from` index is scanned per candidate rule,
+    /// since there is no `rule_id -> derivations` reverse index yet. Fine
+    /// for correctness; tracked as a follow-up performance improvement in
+    /// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    fn negation_invalidated_seeds(&self, facts: &[Quad]) -> HashSet<Quad> {
+        let mut seeds = HashSet::new();
+        for fact in facts {
+            for program in &self.programs {
+                for (rule_id, not_pattern) in program.negatively_triggered_rules(fact) {
+                    let rule = &program.rules[rule_id];
+                    for (derived_quad, derivations) in program.derived_from.iter() {
+                        for derivation in derivations {
+                            if derivation.rule_id != rule_id {
+                                continue;
+                            }
+                            if let Some(sub) = reconstruct_substitution(rule, derivation)
+                                && crate::datalog::get_substitutions(sub, fact, &not_pattern)
+                                    .is_some()
+                            {
+                                seeds.insert(*derived_quad);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        seeds
+    }
+
+    /// Cascade a set of seed quads (known to need retraction) through the
+    /// reverse witness index, exactly as [`Self::backward_phase_from_rule_removal`]
+    /// does for rule retraction: any derived quad using a seed (or a later
+    /// addition to the set) as a positive body witness is also added,
+    /// transitively. A quad that is currently extensional in `base` is never
+    /// added — an asserted base fact is unconditionally true regardless of
+    /// what some rule's (now-stale) derivation of it claimed. See
+    /// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    fn cascade_pd(&self, base: &Datastore, seeds: HashSet<Quad>) -> HashSet<Quad> {
+        let reverse = self.build_reverse_index();
+        let mut pd: HashSet<Quad> = HashSet::new();
+        let mut worklist: VecDeque<Quad> = VecDeque::new();
+        for q in seeds {
+            if !base.named_graphs.is_extensional(&q) && pd.insert(q) {
+                worklist.push_back(q);
+            }
+        }
+        while let Some(q) = worklist.pop_front() {
+            if let Some(dependents) = reverse.get(&q) {
+                for &derived in dependents {
+                    if !base.named_graphs.is_extensional(&derived) && pd.insert(derived) {
+                        worklist.push_back(derived);
+                    }
+                }
+            }
+        }
+        pd
     }
 
     /// Undo exactly what [`Self::apply_insertions`] changed during a call
@@ -1087,6 +1226,34 @@ impl IncrementalReasoner {
         }
         Ok(base.named_graphs.quad_count - before)
     }
+}
+
+/// Reconstruct the substitution a [`Derivation`] used, from `rule`'s
+/// positive body atoms and the derivation's recorded `body_witnesses` (in
+/// the same order — both are built by iterating `rule.body` and keeping
+/// only `RuleAtom::PositivePattern` entries, see
+/// `DatalogProgram::materialise_delta_iteration`). Returns `None` if the
+/// witnesses don't unify with the patterns (should not happen for a
+/// genuinely-recorded derivation of this exact `rule`) or there are fewer
+/// witnesses than positive atoms.
+///
+/// This only recovers bindings for variables that appear in some positive
+/// body atom. A variable that appears *only* in a `NotPattern` atom (e.g.
+/// an existential "no such fact at all" check) is correctly left unbound —
+/// [`crate::datalog::get_substitutions`] then treats it the same way
+/// [`crate::datalog::evaluate_pattern`] did when the derivation was first
+/// produced: any value for it counts as a match. See
+/// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+fn reconstruct_substitution(rule: &Rule, derivation: &Derivation) -> Option<Substitution> {
+    let mut sub = crate::datalog::empty_substitution();
+    let mut witnesses = derivation.body_witnesses.iter();
+    for atom in &rule.body {
+        if let RuleAtom::PositivePattern(p) = atom {
+            let witness = witnesses.next()?;
+            sub = crate::datalog::get_substitutions(sub, witness, p)?;
+        }
+    }
+    Some(sub)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -5187,6 +5354,451 @@ mod tests {
         assert!(
             ds_oracle_base.named_graphs.contains(&is_in_package_b),
             "sanity: the oracle itself must derive isInPackage(b,pkg) once the block is gone"
+        );
+    }
+
+    /// Reproduces [#679](https://github.com/daghovland/rdf-datalog/issues/679):
+    /// inserting a fact that falsifies a `NOT` body atom did not retract the
+    /// existing derived facts whose derivation depended on that atom's
+    /// (former) absence — the insertion-side counterpart to the deletion-side
+    /// investigation in #591 (`test_delete_base_fact_that_blocks_negation_matches_full_rebuild`
+    /// above), and the exact rule shape/scenario named in the issue:
+    ///
+    /// ```text
+    /// isInPackage[node, pkg] :- isSelectedInternal[node, pkg].
+    /// isInPackage[next, pkg] :-
+    ///     isInPackage[node, pkg],
+    ///     adjacentTo[node, next],
+    ///     NOT isBoundaryOf[node, pkg].
+    /// ```
+    ///
+    /// Starting from `isSelectedInternal(internal,pkg)`,
+    /// `adjacentTo(internal,boundary)`, `adjacentTo(boundary,outside)`:
+    /// materialising derives `isInPackage(boundary,pkg)` (via
+    /// `isInPackage(internal,pkg)` + `adjacentTo(internal,boundary)` +
+    /// `NOT isBoundaryOf(internal,pkg)`, which holds) and, from there,
+    /// `isInPackage(outside,pkg)` (via `isInPackage(boundary,pkg)` +
+    /// `adjacentTo(boundary,outside)` + `NOT isBoundaryOf(boundary,pkg)`,
+    /// which *also* holds — nothing has marked `boundary` as a boundary yet).
+    ///
+    /// Inserting `isBoundaryOf(boundary,pkg)` must:
+    /// - retract `isInPackage(outside,pkg)` — its derivation's `NOT
+    ///   isBoundaryOf(boundary,pkg)` atom is now false, and no other rule/
+    ///   witness re-derives it.
+    /// - leave `isInPackage(boundary,pkg)` alone — its own derivation's `NOT`
+    ///   atom is about `internal`, not `boundary`, so it is unaffected.
+    #[test]
+    fn test_insert_boundary_retracts_membership_beyond_boundary() {
+        let (mut ds, g, _a, _p, _b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let is_selected_internal = mk_pred(&mut ds, "isSelectedInternal");
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+
+        let internal = mk_pred(&mut ds, "internal");
+        let boundary = mk_pred(&mut ds, "boundary");
+        let outside = mk_pred(&mut ds, "outside");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        // isInPackage[node,pkg] :- isSelectedInternal[node,pkg].
+        let seed_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_selected_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        // isInPackage[next,pkg] :- isInPackage[node,pkg], adjacentTo[node,next],
+        //                          NOT isBoundaryOf[node,pkg].
+        let expand_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("next".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("next".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let rules = vec![seed_rule, expand_rule];
+
+        let f_selected_internal = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: is_selected_internal,
+            obj: pkg,
+        };
+        let f_adjacent_internal_boundary = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: adjacent_to,
+            obj: boundary,
+        };
+        let f_adjacent_boundary_outside = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: adjacent_to,
+            obj: outside,
+        };
+        for f in [
+            f_selected_internal,
+            f_adjacent_internal_boundary,
+            f_adjacent_boundary_outside,
+        ] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let is_in_package_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let is_in_package_outside = Quad {
+            triple_id: g,
+            subject: outside,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+
+        assert!(
+            ds.named_graphs.contains(&is_in_package_boundary),
+            "sanity: boundary should be in package before any isBoundaryOf fact exists"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_in_package_outside),
+            "sanity: outside should be in package before any isBoundaryOf fact exists \
+             (expansion isn't blocked yet)"
+        );
+
+        let f_is_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[f_is_boundary])
+            .unwrap();
+
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_outside),
+            "isInPackage(outside,pkg) must be retracted: its derivation's NOT \
+             isBoundaryOf(boundary,pkg) atom is now false and expansion may not \
+             continue past the boundary"
+        );
+        assert!(
+            ds.named_graphs.contains(&is_in_package_boundary),
+            "isInPackage(boundary,pkg) must remain: its own derivation depends on \
+             NOT isBoundaryOf(internal,pkg), which is unaffected by this insertion"
+        );
+    }
+
+    /// Order-independence counterpart to the test above: if
+    /// `isBoundaryOf(boundary,pkg)` is already present *before* the
+    /// reasoner ever materialises, `isInPackage(outside,pkg)` must never be
+    /// derived at all — confirming the forward (non-incremental) path
+    /// already respects the negation correctly, so the bug in
+    /// [#679](https://github.com/daghovland/rdf-datalog/issues/679) really is
+    /// specific to the incremental insertion path, not the negation
+    /// evaluation itself.
+    #[test]
+    fn test_boundary_present_before_materialisation_never_derives_beyond_boundary() {
+        let (mut ds, g, _a, _p, _b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let is_selected_internal = mk_pred(&mut ds, "isSelectedInternal");
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+
+        let internal = mk_pred(&mut ds, "internal");
+        let boundary = mk_pred(&mut ds, "boundary");
+        let outside = mk_pred(&mut ds, "outside");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        let seed_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_selected_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        let expand_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("next".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("next".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let rules = vec![seed_rule, expand_rule];
+
+        let f_selected_internal = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: is_selected_internal,
+            obj: pkg,
+        };
+        let f_adjacent_internal_boundary = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: adjacent_to,
+            obj: boundary,
+        };
+        let f_adjacent_boundary_outside = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: adjacent_to,
+            obj: outside,
+        };
+        let f_is_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        for f in [
+            f_selected_internal,
+            f_adjacent_internal_boundary,
+            f_adjacent_boundary_outside,
+            f_is_boundary,
+        ] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let is_in_package_outside = Quad {
+            triple_id: g,
+            subject: outside,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_outside),
+            "outside must never be derived as in-package when isBoundaryOf(boundary,pkg) \
+             is present from the start"
+        );
+    }
+
+    /// Covers the issue's explicit second scenario: negation invalidation
+    /// must also fire when the insertion *derives* (rather than directly
+    /// inserts) a fact matching a negated pattern. Uses a three-rule chain
+    /// where the base-fact insertion first derives `isBoundaryOf(boundary,pkg)`
+    /// via a positive rule, and only that derived fact (not anything
+    /// literally in `inserts`) falsifies `expand_rule`'s `NOT` atom.
+    #[test]
+    fn test_insert_deriving_boundary_retracts_membership_beyond_boundary() {
+        let (mut ds, g, _a, _p, _b, _c) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let is_selected_internal = mk_pred(&mut ds, "isSelectedInternal");
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let marked_boundary = mk_pred(&mut ds, "markedBoundary");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+
+        let internal = mk_pred(&mut ds, "internal");
+        let boundary = mk_pred(&mut ds, "boundary");
+        let outside = mk_pred(&mut ds, "outside");
+        let pkg = mk_pred(&mut ds, "pkg");
+
+        let seed_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_selected_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        let expand_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("next".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("next".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        // isBoundaryOf[node,pkg] :- markedBoundary[node,pkg]. -- the insertion
+        // below inserts only `markedBoundary`; `isBoundaryOf` is *derived*.
+        let boundary_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_boundary_of),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(marked_boundary),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        let rules = vec![seed_rule, expand_rule, boundary_rule];
+
+        let f_selected_internal = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: is_selected_internal,
+            obj: pkg,
+        };
+        let f_adjacent_internal_boundary = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: adjacent_to,
+            obj: boundary,
+        };
+        let f_adjacent_boundary_outside = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: adjacent_to,
+            obj: outside,
+        };
+        for f in [
+            f_selected_internal,
+            f_adjacent_internal_boundary,
+            f_adjacent_boundary_outside,
+        ] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
+
+        let is_in_package_outside = Quad {
+            triple_id: g,
+            subject: outside,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        assert!(
+            ds.named_graphs.contains(&is_in_package_outside),
+            "sanity: outside should be in package before any boundary marking exists"
+        );
+
+        // Insert only `markedBoundary(boundary,pkg)` -- `isBoundaryOf(boundary,pkg)`
+        // is *derived* from it during this same apply_insertions call, and it is
+        // that derived fact (never literally in `inserts`) that must be found to
+        // falsify expand_rule's NOT atom.
+        let f_marked_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: marked_boundary,
+            obj: pkg,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[f_marked_boundary])
+            .unwrap();
+
+        let is_boundary_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+        assert!(
+            ds.named_graphs.contains(&is_boundary_boundary),
+            "sanity: isBoundaryOf(boundary,pkg) must have been derived from markedBoundary"
+        );
+        assert!(
+            !ds.named_graphs.contains(&is_in_package_outside),
+            "isInPackage(outside,pkg) must be retracted even though isBoundaryOf(boundary,pkg) \
+             was derived, not directly inserted"
         );
     }
 }
