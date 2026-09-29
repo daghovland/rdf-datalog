@@ -2749,6 +2749,7 @@ dependencies = [
  "log",
  "num-bigint 0.5.1",
  "owl-ontology",
+ "owl2rl2datalog",
  "thiserror 2.0.20",
  "turtle",
 ]
