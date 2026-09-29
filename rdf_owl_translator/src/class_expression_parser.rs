@@ -34,9 +34,6 @@ pub struct OntologyDeclarations {
     pub object_property_expressions: HashMap<GraphElementId, ObjectPropertyExpression>,
     pub data_property_expressions: HashMap<GraphElementId, DataProperty>,
     pub annotation_properties: HashMap<GraphElementId, AnnotationProperty>,
-    // Kept for future use in assertion axiom extraction.
-    #[allow(dead_code)]
-    pub(crate) individuals: HashMap<GraphElementId, Individual>,
     pub annotations: HashMap<GraphElementId, Vec<Annotation>>,
 }
 
@@ -62,7 +59,6 @@ impl OntologyDeclarations {
             object_property_expressions,
             data_property_expressions,
             annotation_properties,
-            individuals,
             annotations,
         };
 
