@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log
+# 536e76b0fdfd26e6fd8f8cae3fff1c59aca3fbcc..HEAD` on branch
+# feat/565-wire-backlog-snapshot).
+
+ghpull:685 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "Wire backlog snapshot into the production dataset" ;
+    bl:number 685 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:565 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr685 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:565 ;
+    prov:startedAtTime "2026-09-29T18:31:42Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-29T19:04:34Z"^^xsd:dateTime .
+
+session:pr685Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #565 (follow-up from #493) asked for a way to wire bl:/agp: instance data into the production deployment's dagalog --data /data/dataset.ttl, which nothing in the repo currently populates. Before writing anything, read the actual data/dataset.ttl on this host (read-only) rather than assuming it was empty: it turned out to already contain a one-off, hand-built concatenation of backlog/ontology/vocabulary.ttl + agentprov-vocabulary.ttl + a backlog-regenerate snapshot + provenance/summaries/*.ttl -- confirmed by an exact bl:CurrentSnapshot bl:generatedAt timestamp match against backlog/examples/snapshot.ttl's Aug 11 header, ~7 weeks stale by the time of this PR. That finding reversed the initial plan (mount backlog/provenance dirs and add several more --data flags to docker-compose.public.yml's dagalog service, resolved dynamically via a container entrypoint script): layering a second --data source on top of the existing stale merged file would double up bl:CurrentSnapshot/bl:Issue individuals with conflicting bl:generatedAt/bl:Open/bl:Closed values, breaking #380's staleness query outright. The correct fix was to reproduce the existing hand-merge as a script instead: scripts/regenerate-production-dataset.sh concatenates the same four sources into data/dataset.ttl (write-to-temp + atomic rename, so a failed gh api call never corrupts a working production dataset), with --skip-regenerate/--no-restart flags making it testable without gh/network/Docker, and a --print-sources mode asserted (by test) to resolve the same file set as the existing local-dev scripts/serve-backlog.sh --print-data-args, so the two independently-maintained lists can't silently diverge. backlog-regenerate itself gained a small --out <PATH> flag (pure, unit-tested arg-parsing split into backlog::regenerate_cli) so the production script never writes into the tracked backlog/examples/snapshot.ttl from a host-side scheduled job, which would otherwise leave a live git checkout permanently dirty and conflict with the next git pull. An advisor review flagged that the plan's 'concatenation is safe' claim was asserted rather than checked; grepped all four source kinds for labeled blank nodes (_:x etc) and relative-IRI/@base markers -- every hit traced back to plain prose inside an agp:summaryText string literal (PR summaries describing unrelated blank-node/relative-IRI code, e.g. pr-669's _:x example and pr-419's <#service> mention), never real Turtle syntax, so naive text concatenation is genuinely safe here, not just assumed to be. Verified end-to-end concretely, not just 'looks right': ran the real backlog-regenerate, merged it via the script, and queried the resulting file through dagalog --query, confirming real bl:Issue rows came back. A systemd timer/service template (deploy/systemd/dagalog-backlog-refresh.{service,timer}) and a new PUBLIC_DEPLOYMENT.md section are provided for actually scheduling the script, documented rather than installed (this session has no access to the real production host, only this shared dev machine's own data/dataset.ttl)." ;
+    agp:reasoningFor ghpull:685 ;
+    agp:decisionPoint session:pr685Decision ;
+    prov:wasGeneratedBy session:pr685 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr685Decision a agp:Decision ;
+    agp:summaryText "Chose a host-side script that rebuilds one merged data/dataset.ttl file (matching the shape already found hand-built on this host) over two other options considered: (1) adding a second, separate --data file to docker-compose.public.yml's dagalog service -- rejected once the existing dataset.ttl was found to already contain the same data, since a second source would duplicate/conflict with bl:CurrentSnapshot and per-issue bl:Open/bl:Closed state rather than replace it; (2) a GitHub Actions cron job that regenerates and commits the snapshot back to main -- rejected because a bot pushing directly to main bypasses this repo's own PR-only workflow, a bigger design decision than this issue's scope, left as a documented-and-rejected alternative rather than silently omitted." ;
+    agp:alternative "Second --data file layered on top of the existing (stale) merged dataset.ttl; a GitHub Actions cron job committing the regenerated snapshot to main." .
