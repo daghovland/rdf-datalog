@@ -76,10 +76,14 @@ schedule.
    extracted into a small pure function so it's unit-testable without
    `gh`/network.
 3. `deploy/systemd/dagalog-backlog-refresh.{service,timer}` — a template
-   unit pair Dag installs manually on the server (this session has no
-   access to that host, so — like every other prerequisite in
-   `PUBLIC_DEPLOYMENT.md` — it's a documented step, not something run from
-   here). `OnCalendar=daily`. The service unit sets `PATH` (needs
+   unit pair Dag installs manually on the server (this session does in
+   fact have shell access to that host — it's this machine, confirmed via
+   `docker ps` showing `deploy-dagalog-1` already running — but installing
+   a timer and restarting the live container is a deliberate operational
+   rollout action, left for Dag's own review rather than done silently
+   inside this PR; filed as follow-up issue
+   [#687](https://github.com/daghovland/rdf-datalog/issues/687)).
+   `OnCalendar=daily`. The service unit sets `PATH` (needs
    `~/.cargo/bin` if running via `cargo run --release`, or a path to a
    prebuilt binary) and `HOME` explicitly (`gh` reads its token from
    `$HOME/.config/gh`) — a systemd unit does not inherit an interactive
