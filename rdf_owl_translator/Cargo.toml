@@ -13,3 +13,4 @@ thiserror = "2"
 
 [dev-dependencies]
 turtle = { path = "../turtle" }
+owl2rl2datalog = { path = "../owl2rl2datalog" }
