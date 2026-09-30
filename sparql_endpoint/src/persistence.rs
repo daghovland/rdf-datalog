@@ -1013,6 +1013,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             // Delete from a named graph that was never created.
             cl.log_delete_quad(
+                "ds",
                 Some("http://example.org/no_such_graph"),
                 &iri("http://example.org/s"),
                 &iri("http://example.org/p"),

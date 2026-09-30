@@ -107,7 +107,6 @@ const TRIPLE: &str = "<http://ex/s> <http://ex/p> <http://ex/o> .";
 // ── M1: writes to a non-"ds" dataset must not leak into "ds" on replay ────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn non_ds_write_does_not_leak_into_ds_after_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -132,7 +131,6 @@ async fn non_ds_write_does_not_leak_into_ds_after_restart() {
 // ── M2: non-"ds" dataset data survives restart ─────────────────────────────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn non_ds_dataset_data_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -154,7 +152,6 @@ async fn non_ds_dataset_data_survives_restart() {
 // ── M3: an empty created dataset survives restart ──────────────────────────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn empty_created_dataset_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -174,7 +171,6 @@ async fn empty_created_dataset_survives_restart() {
 // ── M4: a deleted dataset does not reappear after restart ──────────────────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn deleted_dataset_does_not_reappear_after_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -196,7 +192,6 @@ async fn deleted_dataset_does_not_reappear_after_restart() {
 // ── M5: delete then recreate comes back empty (no resurrected quads) ───────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn delete_then_recreate_is_empty_after_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -223,7 +218,6 @@ async fn delete_then_recreate_is_empty_after_restart() {
 // ── M6: a non-"ds" dataset's ruleset survives restart ───────────────────────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn non_ds_dataset_ruleset_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -263,7 +257,6 @@ async fn non_ds_dataset_ruleset_survives_restart() {
 // ── M7: compact must preserve every dataset, not just "ds" ─────────────────────
 
 #[tokio::test]
-#[ignore = "not yet implemented -- see #670"]
 async fn compact_preserves_all_datasets() {
     let dir = tempfile::tempdir().unwrap();
 
