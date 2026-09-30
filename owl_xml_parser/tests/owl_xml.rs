@@ -751,3 +751,370 @@ fn class_axiom_annotation_children_deferred_to_608() {
         Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
     }
 }
+
+// === #607: object/data property axioms ======================================
+// See docs/plans/OWL_XML_PLAN.md's "#607" section for the grammar subset.
+
+fn object_property_axiom(onto: &owl_ontology::Ontology) -> &owl_ontology::ObjectPropertyAxiom {
+    match &onto.axioms[0] {
+        Axiom::AxiomObjectPropertyAxiom(pa) => pa,
+        other => panic!("expected AxiomObjectPropertyAxiom, got {other:?}"),
+    }
+}
+
+fn data_property_axiom(onto: &owl_ontology::Ontology) -> &owl_ontology::DataPropertyAxiom {
+    match &onto.axioms[0] {
+        Axiom::AxiomDataPropertyAxiom(pa) => pa,
+        other => panic!("expected AxiomDataPropertyAxiom, got {other:?}"),
+    }
+}
+
+#[test]
+fn sub_object_property_of_named() {
+    let src = wrap(
+        "",
+        r#"<SubObjectPropertyOf>
+             <ObjectProperty IRI="http://example.org/pizza#hasDog"/>
+             <ObjectProperty IRI="http://example.org/pizza#hasPet"/>
+           </SubObjectPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert_eq!(onto.axioms.len(), 1);
+    match object_property_axiom(&onto) {
+        owl_ontology::ObjectPropertyAxiom::SubObjectPropertyOf(
+            _,
+            owl_ontology::SubPropertyExpression::SubObjectPropertyExpression(sub),
+            sup,
+        ) => {
+            assert_eq!(
+                *sub,
+                owl_ontology::ObjectPropertyExpression::NamedObjectProperty(iri(
+                    "http://example.org/pizza#hasDog"
+                ))
+            );
+            assert_eq!(
+                *sup,
+                owl_ontology::ObjectPropertyExpression::NamedObjectProperty(iri(
+                    "http://example.org/pizza#hasPet"
+                ))
+            );
+        }
+        other => panic!("expected SubObjectPropertyOf, got {other:?}"),
+    }
+}
+
+#[test]
+fn sub_object_property_of_chain() {
+    // ObjectPropertyChain(hasParent hasParent) SubObjectPropertyOf hasGrandparent
+    let src = wrap(
+        "",
+        r#"<SubObjectPropertyOf>
+             <ObjectPropertyChain>
+               <ObjectProperty IRI="http://example.org/pizza#hasParent"/>
+               <ObjectProperty IRI="http://example.org/pizza#hasParent"/>
+             </ObjectPropertyChain>
+             <ObjectProperty IRI="http://example.org/pizza#hasGrandparent"/>
+           </SubObjectPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match object_property_axiom(&onto) {
+        owl_ontology::ObjectPropertyAxiom::SubObjectPropertyOf(
+            _,
+            owl_ontology::SubPropertyExpression::PropertyExpressionChain(chain),
+            _,
+        ) => {
+            assert_eq!(chain.len(), 2);
+        }
+        other => panic!("expected chain SubObjectPropertyOf, got {other:?}"),
+    }
+}
+
+#[test]
+fn equivalent_and_disjoint_object_properties() {
+    let src = wrap(
+        "",
+        r#"<EquivalentObjectProperties>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <ObjectProperty IRI="http://example.org/pizza#topping"/>
+           </EquivalentObjectProperties>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match object_property_axiom(&onto) {
+        owl_ontology::ObjectPropertyAxiom::EquivalentObjectProperties(_, ps) => {
+            assert_eq!(ps.len(), 2);
+        }
+        other => panic!("expected EquivalentObjectProperties, got {other:?}"),
+    }
+
+    let src2 = wrap(
+        "",
+        r#"<DisjointObjectProperties>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <ObjectProperty IRI="http://example.org/pizza#hasBase"/>
+           </DisjointObjectProperties>"#,
+    );
+    let onto2 = owl_xml_parser::parse(&src2).unwrap();
+    match object_property_axiom(&onto2) {
+        owl_ontology::ObjectPropertyAxiom::DisjointObjectProperties(_, ps) => {
+            assert_eq!(ps.len(), 2);
+        }
+        other => panic!("expected DisjointObjectProperties, got {other:?}"),
+    }
+}
+
+#[test]
+fn object_property_domain_and_range() {
+    let src = wrap(
+        "",
+        r#"<ObjectPropertyDomain>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+           </ObjectPropertyDomain>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        object_property_axiom(&onto),
+        owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain(_, _, _)
+    ));
+
+    let src2 = wrap(
+        "",
+        r#"<ObjectPropertyRange>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <Class IRI="http://example.org/pizza#Topping"/>
+           </ObjectPropertyRange>"#,
+    );
+    let onto2 = owl_xml_parser::parse(&src2).unwrap();
+    assert!(matches!(
+        object_property_axiom(&onto2),
+        owl_ontology::ObjectPropertyAxiom::ObjectPropertyRange(_, _, _)
+    ));
+}
+
+#[test]
+fn inverse_object_properties() {
+    let src = wrap(
+        "",
+        r#"<InverseObjectProperties>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <ObjectProperty IRI="http://example.org/pizza#isToppingOf"/>
+           </InverseObjectProperties>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        object_property_axiom(&onto),
+        owl_ontology::ObjectPropertyAxiom::InverseObjectProperties(_, _, _)
+    ));
+}
+
+type ObjectPropertyAxiomCheck = fn(&owl_ontology::ObjectPropertyAxiom) -> bool;
+
+#[test]
+fn object_property_characteristics() {
+    let cases: Vec<(&str, ObjectPropertyAxiomCheck)> = vec![
+        ("FunctionalObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::FunctionalObjectProperty(_, _)
+            )
+        }),
+        ("InverseFunctionalObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::InverseFunctionalObjectProperty(_, _)
+            )
+        }),
+        ("ReflexiveObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::ReflexiveObjectProperty(_, _)
+            )
+        }),
+        ("IrreflexiveObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::IrreflexiveObjectProperty(_, _)
+            )
+        }),
+        ("SymmetricObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::SymmetricObjectProperty(_, _)
+            )
+        }),
+        ("AsymmetricObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::AsymmetricObjectProperty(_, _)
+            )
+        }),
+        ("TransitiveObjectProperty", |a| {
+            matches!(
+                a,
+                owl_ontology::ObjectPropertyAxiom::TransitiveObjectProperty(_, _)
+            )
+        }),
+    ];
+    for (tag, check) in cases {
+        let src = wrap(
+            "",
+            &format!(
+                r#"<{tag}><ObjectProperty IRI="http://example.org/pizza#hasTopping"/></{tag}>"#
+            ),
+        );
+        let onto = owl_xml_parser::parse(&src).unwrap();
+        assert!(check(object_property_axiom(&onto)), "tag {tag} failed");
+    }
+}
+
+#[test]
+fn sub_data_property_of() {
+    let src = wrap(
+        "",
+        r#"<SubDataPropertyOf>
+             <DataProperty IRI="http://example.org/pizza#hasSpicyLevel"/>
+             <DataProperty IRI="http://example.org/pizza#hasLevel"/>
+           </SubDataPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        data_property_axiom(&onto),
+        owl_ontology::DataPropertyAxiom::SubDataPropertyOf(_, _, _)
+    ));
+}
+
+#[test]
+fn equivalent_and_disjoint_data_properties() {
+    let src = wrap(
+        "",
+        r#"<EquivalentDataProperties>
+             <DataProperty IRI="http://example.org/pizza#hasName"/>
+             <DataProperty IRI="http://example.org/pizza#label"/>
+           </EquivalentDataProperties>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match data_property_axiom(&onto) {
+        owl_ontology::DataPropertyAxiom::EquivalentDataProperties(_, ps) => {
+            assert_eq!(ps.len(), 2);
+        }
+        other => panic!("expected EquivalentDataProperties, got {other:?}"),
+    }
+
+    let src2 = wrap(
+        "",
+        r#"<DisjointDataProperties>
+             <DataProperty IRI="http://example.org/pizza#hasName"/>
+             <DataProperty IRI="http://example.org/pizza#hasSSN"/>
+           </DisjointDataProperties>"#,
+    );
+    let onto2 = owl_xml_parser::parse(&src2).unwrap();
+    match data_property_axiom(&onto2) {
+        owl_ontology::DataPropertyAxiom::DisjointDataProperties(_, ps) => {
+            assert_eq!(ps.len(), 2);
+        }
+        other => panic!("expected DisjointDataProperties, got {other:?}"),
+    }
+}
+
+#[test]
+fn data_property_domain_and_range() {
+    let src = wrap(
+        "",
+        r#"<DataPropertyDomain>
+             <DataProperty IRI="http://example.org/pizza#hasSpicyLevel"/>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+           </DataPropertyDomain>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        data_property_axiom(&onto),
+        owl_ontology::DataPropertyAxiom::DataPropertyDomain(_, _, _)
+    ));
+
+    let src2 = wrap(
+        "",
+        r#"<DataPropertyRange>
+             <DataProperty IRI="http://example.org/pizza#hasSpicyLevel"/>
+             <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
+           </DataPropertyRange>"#,
+    );
+    let onto2 = owl_xml_parser::parse(&src2).unwrap();
+    assert!(matches!(
+        data_property_axiom(&onto2),
+        owl_ontology::DataPropertyAxiom::DataPropertyRange(_, _, _)
+    ));
+}
+
+#[test]
+fn functional_data_property() {
+    let src = wrap(
+        "",
+        r#"<FunctionalDataProperty><DataProperty IRI="http://example.org/pizza#hasSSN"/></FunctionalDataProperty>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        data_property_axiom(&onto),
+        owl_ontology::DataPropertyAxiom::FunctionalDataProperty(_, _)
+    ));
+}
+
+#[test]
+fn has_key_with_object_and_data_properties() {
+    let src = wrap(
+        "",
+        r#"<HasKey>
+             <Class IRI="http://example.org/pizza#Person"/>
+             <ObjectProperty IRI="http://example.org/pizza#hasSSN"/>
+             <DataProperty IRI="http://example.org/pizza#hasName"/>
+           </HasKey>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomHasKey(_, class, ops, dps) => {
+            assert_eq!(
+                *class,
+                ClassExpression::ClassName(iri("http://example.org/pizza#Person"))
+            );
+            assert_eq!(ops.len(), 1);
+            assert_eq!(dps.len(), 1);
+        }
+        other => panic!("expected AxiomHasKey, got {other:?}"),
+    }
+}
+
+#[test]
+fn property_axiom_annotation_children_deferred_to_608() {
+    let src = wrap(
+        "",
+        r#"<ObjectPropertyDomain>
+             <Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+           </ObjectPropertyDomain>"#,
+    );
+    match owl_xml_parser::parse(&src) {
+        Err(e) => assert!(e.contains("608")),
+        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    }
+}
+
+#[test]
+fn has_key_annotation_children_deferred_to_608() {
+    let src = wrap(
+        "",
+        r#"<HasKey>
+             <Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <Class IRI="http://example.org/pizza#Person"/>
+           </HasKey>"#,
+    );
+    match owl_xml_parser::parse(&src) {
+        Err(e) => assert!(e.contains("608")),
+        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    }
+}

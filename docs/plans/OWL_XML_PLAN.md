@@ -354,6 +354,95 @@ tag-name dispatch is enough — no lookahead helper needed.
 
 ---
 
+## Grammar productions in scope (#607: object/data property axioms)
+
+Quoted (lightly reformatted) from the W3C spec, `ObjectPropertyAxiom`,
+`DataPropertyAxiom`, and `HasKey`:
+
+```
+ObjectPropertyAxiom := SubObjectPropertyOf | EquivalentObjectProperties
+  | DisjointObjectProperties | ObjectPropertyDomain | ObjectPropertyRange
+  | InverseObjectProperties | FunctionalObjectProperty
+  | InverseFunctionalObjectProperty | ReflexiveObjectProperty
+  | IrreflexiveObjectProperty | SymmetricObjectProperty
+  | AsymmetricObjectProperty | TransitiveObjectProperty
+
+SubObjectPropertyOf := '<SubObjectPropertyOf>' axiomAnnotations
+    (ObjectPropertyExpression | ObjectPropertyChain) ObjectPropertyExpression
+    '</SubObjectPropertyOf>'
+ObjectPropertyChain := '<ObjectPropertyChain>' ObjectPropertyExpression
+    ObjectPropertyExpression { ObjectPropertyExpression }
+    '</ObjectPropertyChain>'
+EquivalentObjectProperties | DisjointObjectProperties :=
+    axiomAnnotations ObjectPropertyExpression ObjectPropertyExpression
+    { ObjectPropertyExpression }
+ObjectPropertyDomain | ObjectPropertyRange :=
+    axiomAnnotations ObjectPropertyExpression ClassExpression
+InverseObjectProperties :=
+    axiomAnnotations ObjectPropertyExpression ObjectPropertyExpression
+FunctionalObjectProperty | InverseFunctionalObjectProperty
+  | ReflexiveObjectProperty | IrreflexiveObjectProperty
+  | SymmetricObjectProperty | AsymmetricObjectProperty
+  | TransitiveObjectProperty := axiomAnnotations ObjectPropertyExpression
+
+DataPropertyAxiom := SubDataPropertyOf | EquivalentDataProperties
+  | DisjointDataProperties | DataPropertyDomain | DataPropertyRange
+  | FunctionalDataProperty
+
+SubDataPropertyOf := axiomAnnotations DataPropertyExpression DataPropertyExpression
+EquivalentDataProperties | DisjointDataProperties :=
+    axiomAnnotations DataPropertyExpression DataPropertyExpression
+    { DataPropertyExpression }
+DataPropertyDomain := axiomAnnotations DataPropertyExpression ClassExpression
+DataPropertyRange := axiomAnnotations DataPropertyExpression DataRange
+FunctionalDataProperty := axiomAnnotations DataPropertyExpression
+
+HasKey := '<HasKey>' axiomAnnotations ClassExpression
+    { ObjectPropertyExpression } { DataPropertyExpression } '</HasKey>'
+```
+
+Every element name uniquely identifies its production, exactly as with
+#606's class axioms. `SubObjectPropertyOf`'s LHS is disambiguated purely by
+its first child's tag: `<ObjectPropertyChain>` means the chain form
+(`owl_ontology::SubPropertyExpression::PropertyExpressionChain`), anything
+else means a single expression
+(`SubPropertyExpression::SubObjectPropertyExpression`) — no lookahead
+needed, mirroring `axiom.rs`'s (#606) flat per-tag dispatch style.
+`<HasKey>`'s object- and data-property-expression children need no
+delimiting markup either (unlike Functional-Style Syntax's two parenthesized
+groups): every `ObjectPropertyExpression` child is tagged `<ObjectProperty>`
+or `<ObjectInverseOf>`, every `DataPropertyExpression` child is tagged
+`<DataProperty>`, so the two groups are told apart by tag name alone after
+the leading `ClassExpression` child.
+
+As with #606's class axioms, axiom-level `<Annotation>` children on any of
+these (as opposed to `<Declaration>`'s own, handled by #605) remain out of
+scope — deferred to
+[#608](https://github.com/daghovland/rdf-datalog/issues/608); encountering
+one produces a clear error rather than being silently dropped or
+mis-parsed.
+
+### Module layout (new this issue)
+
+- `src/property_axiom.rs` — `SubObjectPropertyOf`/`EquivalentObjectProperties`/
+  `DisjointObjectProperties`/`ObjectPropertyDomain`/`ObjectPropertyRange`/
+  `InverseObjectProperties`/the seven object-property-characteristic
+  elements → `owl_ontology::Axiom::AxiomObjectPropertyAxiom`;
+  `SubDataPropertyOf`/`EquivalentDataProperties`/`DisjointDataProperties`/
+  `DataPropertyDomain`/`DataPropertyRange`/`FunctionalDataProperty` →
+  `owl_ontology::Axiom::AxiomDataPropertyAxiom`; `HasKey` →
+  `owl_ontology::Axiom::AxiomHasKey`.
+- `src/lib.rs` — dispatch on `<Ontology>`'s children extended to recognize
+  the property-axiom and `HasKey` tags above via
+  `property_axiom::parse_*`.
+
+### Deferred within #607 (already filed: #608)
+
+- Axiom-level `<Annotation>` children on property axioms and `HasKey` —
+  #608.
+
+---
+
 ## Deferred follow-up
 
 - `xml:base`-driven relative-IRI resolution (an entity's `IRI="#Pizza"`
