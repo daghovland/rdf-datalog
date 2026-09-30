@@ -181,6 +181,12 @@ pub async fn dataset_rml_post(
         let entries: Vec<_> = quads
             .iter()
             .map(|q| LogEntry::InsertQuad {
+                // `name` (the `/{name}/rml` path param), not
+                // `state.dataset_name` -- this handler is wired directly in
+                // server.rs, not through `dataset_routes::dataset_state()`,
+                // so `state` here is always the root (un-scoped) AppState.
+                // See https://github.com/daghovland/rdf-datalog/issues/670.
+                dataset: name.clone(),
                 graph: graph_iri_for(&tmp_store, q.triple_id),
                 s: to_repr(tmp_store.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp_store.resources.get_graph_element(q.predicate)),

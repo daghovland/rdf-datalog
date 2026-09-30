@@ -202,7 +202,7 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
                 .into_response();
         }
     }
-    let (prepared, log_entries) = match prepare_update(&store, ops) {
+    let (prepared, log_entries) = match prepare_update(&state.dataset_name, &store, ops) {
         Ok(pair) => pair,
         Err(e) => {
             return (
@@ -398,7 +398,7 @@ async fn run_transactional_update(update_str: &str, tx_id: &str, state: &AppStat
     // Resource interning does not increment the generation counter.
     let mut store = state.store.write().await;
 
-    let (prepared, _log_entries) = match prepare_update(&store, ops) {
+    let (prepared, _log_entries) = match prepare_update(&state.dataset_name, &store, ops) {
         Ok(pair) => pair,
         Err(e) => {
             return (

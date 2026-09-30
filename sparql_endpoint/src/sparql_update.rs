@@ -710,6 +710,7 @@ pub enum PreparedOp {
 /// Then write the returned `LogEntry` values to the changelog, and finally call
 /// `apply_prepared_update` to mutate the in-memory store.
 pub fn prepare_update(
+    dataset: &str,
     store: &Datastore,
     ops: Vec<UpdateOp>,
 ) -> Result<(Vec<PreparedOp>, Vec<LogEntry>), String> {
@@ -726,6 +727,7 @@ pub fn prepare_update(
                     let graph = tmp_graph_iri(&tmp, gid);
                     for q in tmp.named_graphs.get_graph(gid).collect::<Vec<_>>() {
                         entries.push(LogEntry::InsertQuad {
+                            dataset: dataset.to_owned(),
                             graph: graph.clone(),
                             s: to_repr(tmp.resources.get_graph_element(q.subject)),
                             p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -743,6 +745,7 @@ pub fn prepare_update(
                     let graph = tmp_graph_iri(&tmp, gid);
                     for q in tmp.named_graphs.get_graph(gid).collect::<Vec<_>>() {
                         entries.push(LogEntry::DeleteQuad {
+                            dataset: dataset.to_owned(),
                             graph: graph.clone(),
                             s: to_repr(tmp.resources.get_graph_element(q.subject)),
                             p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -753,41 +756,55 @@ pub fn prepare_update(
                 prepared.push(PreparedOp::DeleteData(tmp));
             }
             UpdateOp::ClearDefault => {
-                entries.push(LogEntry::ClearGraph { graph: None });
+                entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
+                    graph: None,
+                });
                 prepared.push(PreparedOp::ClearDefault);
             }
             UpdateOp::DropDefault => {
-                entries.push(LogEntry::ClearGraph { graph: None });
+                entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
+                    graph: None,
+                });
                 prepared.push(PreparedOp::DropDefault);
             }
             UpdateOp::ClearGraph(ref iri) => {
                 entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
                     graph: Some(iri.clone()),
                 });
                 prepared.push(PreparedOp::ClearGraph(iri.clone()));
             }
             UpdateOp::DropGraph(ref iri) => {
                 entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
                     graph: Some(iri.clone()),
                 });
                 prepared.push(PreparedOp::DropGraph(iri.clone()));
             }
             UpdateOp::ClearNamed => {
-                collect_named_graph_entries(store, &mut entries);
+                collect_named_graph_entries(dataset, store, &mut entries);
                 prepared.push(PreparedOp::ClearNamed);
             }
             UpdateOp::DropNamed => {
-                collect_named_graph_entries(store, &mut entries);
+                collect_named_graph_entries(dataset, store, &mut entries);
                 prepared.push(PreparedOp::DropNamed);
             }
             UpdateOp::ClearAll => {
-                entries.push(LogEntry::ClearGraph { graph: None });
-                collect_named_graph_entries(store, &mut entries);
+                entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
+                    graph: None,
+                });
+                collect_named_graph_entries(dataset, store, &mut entries);
                 prepared.push(PreparedOp::ClearAll);
             }
             UpdateOp::DropAll => {
-                entries.push(LogEntry::ClearGraph { graph: None });
-                collect_named_graph_entries(store, &mut entries);
+                entries.push(LogEntry::ClearGraph {
+                    dataset: dataset.to_owned(),
+                    graph: None,
+                });
+                collect_named_graph_entries(dataset, store, &mut entries);
                 prepared.push(PreparedOp::DropAll);
             }
             UpdateOp::CreateGraph(iri) => {
@@ -868,7 +885,7 @@ fn tmp_graph_iri(tmp: &Datastore, gid: GraphElementId) -> Option<String> {
     }
 }
 
-fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
+fn collect_named_graph_entries(dataset: &str, store: &Datastore, entries: &mut Vec<LogEntry>) {
     let ids: Vec<_> = store
         .named_graphs
         .triple_id_index
@@ -879,6 +896,7 @@ fn collect_named_graph_entries(store: &Datastore, entries: &mut Vec<LogEntry>) {
     for id in ids {
         if let Some(iri_ref) = store.resources.get_named_resource(id) {
             entries.push(LogEntry::ClearGraph {
+                dataset: dataset.to_owned(),
                 graph: Some(iri_ref.0.clone()),
             });
         }
@@ -1576,7 +1594,7 @@ fn load_fetched(
 /// Convenience wrapper: parse, discard log entries, apply.
 /// Use only when persistence is not configured and no incremental reasoner is active.
 pub fn execute_update(store: &mut Datastore, ops: Vec<UpdateOp>) -> Result<(), String> {
-    let (prepared, _) = prepare_update(store, ops)?;
+    let (prepared, _) = prepare_update("ds", store, ops)?;
     apply_prepared_update(store, prepared, None, NetworkPolicy::Deny)
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -2122,7 +2140,7 @@ mod tests {
         let ops = parse_update(&format!("INSERT DATA {{ {content} }}")).unwrap();
 
         let mut store = Datastore::new(64);
-        let (prepared, log_entries) = prepare_update(&store, ops).unwrap();
+        let (prepared, log_entries) = prepare_update("ds", &store, ops).unwrap();
 
         assert_eq!(log_entries.len(), 1, "one triple → one log entry");
 
@@ -2198,7 +2216,7 @@ mod tests {
         let policy = NetworkPolicy::Deny;
         let ops = parse_update("LOAD <http://example.org/data.ttl>").unwrap();
         let mut store = Datastore::new(64);
-        let (prepared, _) = prepare_update(&store, ops).unwrap();
+        let (prepared, _) = prepare_update("ds", &store, ops).unwrap();
         let result = apply_prepared_update(&mut store, prepared, None, policy);
         assert!(result.is_err(), "Deny policy must return error");
         let msg = result.unwrap_err().to_string();
@@ -2215,7 +2233,7 @@ mod tests {
         // Seed the store with the triple.
         let mut store = Datastore::new(64);
         let insert_ops = parse_update(&format!("INSERT DATA {{ {content} }}")).unwrap();
-        let (prepared, _) = prepare_update(&store, insert_ops).unwrap();
+        let (prepared, _) = prepare_update("ds", &store, insert_ops).unwrap();
         apply_prepared_update(&mut store, prepared, None, NetworkPolicy::Deny).unwrap();
         assert_eq!(
             store
@@ -2227,7 +2245,7 @@ mod tests {
 
         // Now delete it.
         let delete_ops = parse_update(&format!("DELETE DATA {{ {content} }}")).unwrap();
-        let (prepared, log_entries) = prepare_update(&store, delete_ops).unwrap();
+        let (prepared, log_entries) = prepare_update("ds", &store, delete_ops).unwrap();
         assert_eq!(log_entries.len(), 1, "one log entry for the deletion");
         assert!(
             matches!(log_entries[0], LogEntry::DeleteQuad { .. }),

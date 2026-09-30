@@ -166,6 +166,20 @@ pub async fn admin_create_dataset(
         return (StatusCode::CONFLICT, "Dataset already exists").into_response();
     }
 
+    // Log BEFORE inserting into the registry (#670): a changelog append
+    // failure must leave the dataset absent everywhere, not just durably
+    // unrecorded but live in memory until the next restart silently drops it.
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_create_dataset(&name) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     let new_store = Arc::new(RwLock::new(Datastore::new(1024)));
     registry.insert(&name, new_store);
     StatusCode::OK.into_response()
@@ -273,11 +287,26 @@ pub async fn admin_delete_dataset(
     Path(name): Path<String>,
 ) -> axum::response::Response {
     let mut registry = state.registry.write().await;
-    if registry.remove(&name) {
-        StatusCode::OK.into_response()
-    } else {
-        (StatusCode::NOT_FOUND, "Dataset not found").into_response()
+    if !registry.exists(&name) {
+        return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     }
+
+    // Log BEFORE removing from the registry (#670), same ordering rationale
+    // as admin_create_dataset: a changelog append failure must leave the
+    // dataset live, not durably-deleted-but-still-present until restart.
+    if let Some(ref changelog) = state.changelog {
+        let mut cl = changelog.lock().await;
+        if let Err(e) = cl.log_delete_dataset(&name) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persistence error: {e}"),
+            )
+                .into_response();
+        }
+    }
+
+    registry.remove(&name);
+    StatusCode::OK.into_response()
 }
 
 // ── F: compaction ─────────────────────────────────────────────────────────────
@@ -297,10 +326,29 @@ pub async fn admin_compact(State(state): State<AppState>) -> axum::response::Res
             .into_response();
     };
 
-    let store = state.store.read().await;
-    let mut changelog = changelog_lock.lock().await;
+    // Every dataset in the registry (#670), not just "ds" -- lock order:
+    // registry -> each dataset's store -> changelog, matching the
+    // read-before-write pattern used elsewhere in this crate.
+    let registry = state.registry.read().await;
+    let names = registry.names();
+    let mut guards = Vec::with_capacity(names.len());
+    for name in &names {
+        let Some(store) = registry.get(name) else {
+            continue;
+        };
+        guards.push((name.to_string(), store));
+    }
+    // Hold every store's read lock for the duration of the snapshot so it's
+    // consistent across all datasets, then borrow each guard for the call.
+    let mut locked = Vec::with_capacity(guards.len());
+    for (name, store) in &guards {
+        locked.push((name.as_str(), store.read().await));
+    }
+    let datasets: Vec<(&str, &Datastore)> =
+        locked.iter().map(|(name, guard)| (*name, &**guard)).collect();
 
-    match changelog.compact(&store) {
+    let mut changelog = changelog_lock.lock().await;
+    match changelog.compact_multi(&datasets) {
         Ok((before, after)) => {
             let body = serde_json::json!({
                 "entries_before": before,

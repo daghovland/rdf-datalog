@@ -38,13 +38,17 @@ async fn get_dataset_entry(state: &AppState, name: &str) -> Option<DatasetEntry>
 /// reasoner from the entry is correct-by-construction for `"ds"` too, no
 /// special-casing needed. Related: [#390](https://github.com/daghovland/rdf-datalog/issues/390),
 /// [#469](https://github.com/daghovland/rdf-datalog/issues/469).
-fn dataset_state(state: &AppState, entry: DatasetEntry) -> AppState {
+fn dataset_state(state: &AppState, name: &str, entry: DatasetEntry) -> AppState {
     AppState {
         store: entry.store,
         registry: state.registry.clone(),
         config: state.config.clone(),
         jwks_cache: state.jwks_cache.clone(),
         changelog: state.changelog.clone(),
+        // Every changelog entry a per-dataset handler logs must be stamped
+        // with THIS dataset's name, not the root state's -- see
+        // https://github.com/daghovland/rdf-datalog/issues/670.
+        dataset_name: name.trim_start_matches('/').to_string(),
         // Each dataset has its own store, hence its own VQS index cache.
         vqs_cache: Arc::new(RwLock::new(None)),
         reasoner: entry.reasoner,
@@ -67,7 +71,7 @@ pub async fn dataset_sparql_get(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    query::sparql_get_with_state(dataset_state(&state, ds), params, headers).await
+    query::sparql_get_with_state(dataset_state(&state, &name, ds), params, headers).await
 }
 
 pub async fn dataset_sparql_post(
@@ -80,7 +84,7 @@ pub async fn dataset_sparql_post(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    query::sparql_post_with_state(dataset_state(&state, ds), params, headers, body).await
+    query::sparql_post_with_state(dataset_state(&state, &name, ds), params, headers, body).await
 }
 
 // ── B: per-dataset GSP (`/{name}/data`, `/{name}/get`) ───────────────────────
@@ -94,7 +98,7 @@ pub async fn dataset_data_get(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_get_inner(dataset_state(&state, ds), params, headers).await
+    graph_store::gsp_get_inner(dataset_state(&state, &name, ds), params, headers).await
 }
 
 pub async fn dataset_data_head(
@@ -106,7 +110,7 @@ pub async fn dataset_data_head(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_head_inner(dataset_state(&state, ds), params, headers).await
+    graph_store::gsp_head_inner(dataset_state(&state, &name, ds), params, headers).await
 }
 
 pub async fn dataset_data_put(
@@ -119,7 +123,7 @@ pub async fn dataset_data_put(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_put_inner(dataset_state(&state, ds), params, headers, body).await
+    graph_store::gsp_put_inner(dataset_state(&state, &name, ds), params, headers, body).await
 }
 
 pub async fn dataset_data_post(
@@ -134,7 +138,7 @@ pub async fn dataset_data_post(
     };
     // Fuseki /{name}/data creates named graphs on POST even when they don't
     // exist yet — real Fuseki clients rely on this without a prior PUT.
-    graph_store::gsp_post_inner(dataset_state(&state, ds), params, headers, body, true).await
+    graph_store::gsp_post_inner(dataset_state(&state, &name, ds), params, headers, body, true).await
 }
 
 pub async fn dataset_data_delete(
@@ -145,7 +149,7 @@ pub async fn dataset_data_delete(
     let Some(ds) = get_dataset_entry(&state, &name).await else {
         return (StatusCode::NOT_FOUND, "Dataset not found").into_response();
     };
-    graph_store::gsp_delete_inner(dataset_state(&state, ds), params).await
+    graph_store::gsp_delete_inner(dataset_state(&state, &name, ds), params).await
 }
 
 // ── F: per-dataset SPARQL Update (`/{name}/update`) ──────────────────────────
@@ -164,7 +168,7 @@ pub async fn dataset_update_post(
     // dataset (not just `"ds"`) — see the comment on `dataset_state()`.
     // Related: https://github.com/daghovland/rdf-datalog/issues/457,
     // https://github.com/daghovland/rdf-datalog/issues/390
-    let ds_state = dataset_state(&state, entry);
+    let ds_state = dataset_state(&state, &name, entry);
 
     if state.config.read_only {
         return (StatusCode::FORBIDDEN, "Server is in read-only mode").into_response();
@@ -232,7 +236,12 @@ pub async fn dataset_update_post(
     }
 
     // Parse Turtle content once; build WAL entries and prepared apply in one pass.
-    let (prepared, log_entries) = match sparql_update::prepare_update(&store, ops) {
+    // Stamp with THIS dataset's name (`ds_state.dataset_name`), not the root
+    // `state`'s -- `state` here is always the un-scoped top-level AppState
+    // (aliasing "ds"), which would silently mislabel every non-"ds" write.
+    // See https://github.com/daghovland/rdf-datalog/issues/670.
+    let (prepared, log_entries) =
+        match sparql_update::prepare_update(&ds_state.dataset_name, &store, ops) {
         Ok(pair) => pair,
         Err(e) => {
             return (

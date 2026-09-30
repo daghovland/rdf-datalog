@@ -381,6 +381,16 @@ pub struct AppState {
     pub jwks_cache: auth::JwksCache,
     /// Durable changelog.  `None` when the server runs in in-memory mode (no `data_dir`).
     pub changelog: Option<Arc<Mutex<QuadChangelog>>>,
+    /// The name of the dataset this `AppState` is scoped to — `"ds"` for the
+    /// top-level `AppState` built in `serve_on_listener` and for every
+    /// non-dataset-scoped route (`/sparql`, `/rdf-graph-store`, `/upload`,
+    /// …), or the requested `{name}` for a per-dataset route (set by
+    /// `dataset_routes::dataset_state()`). Every handler that appends a
+    /// quad-mutation `persistence::LogEntry` to the changelog stamps it with
+    /// this field, so replay at startup can tell which dataset a durably
+    /// logged mutation belongs to. See
+    /// [#670](https://github.com/daghovland/rdf-datalog/issues/670).
+    pub dataset_name: String,
     /// Cached VQS productive-extension index (navigation graph + Wld configuration
     /// set), rebuilt lazily whenever the underlying `Datastore` generation changes.
     pub vqs_cache: Arc<RwLock<Option<vqs_routes::VqsCache>>>,
@@ -486,7 +496,21 @@ pub async fn serve_on_listener(
 
     let network_policy = config.network_policy.clone();
     let allow_loopback_for_ssrf_tests = config.allow_loopback_for_ssrf_tests;
-    let registry = DatasetRegistry::new_with_default(store.clone(), reasoner.clone());
+    let mut registry = DatasetRegistry::new_with_default(store.clone(), reasoner.clone());
+
+    // Reconstruct every OTHER dataset registered via `POST /$/datasets`
+    // during a previous run (#670) -- "ds" was already handled above via
+    // `replay_into`. Must run BEFORE the ruleset-replay loop below, since
+    // that loop looks datasets up in `registry` and previously only ever
+    // found "ds".
+    if let Some(ref changelog) = changelog {
+        let cl = changelog.lock().await;
+        let dataset_names = cl.discover_dataset_names().map_err(std::io::Error::other)?;
+        for name in dataset_names {
+            let ds_store = cl.replay_dataset(&name).map_err(std::io::Error::other)?;
+            registry.insert(&name, Arc::new(RwLock::new(ds_store)));
+        }
+    }
 
     // Replay any durably-persisted rules-endpoint mutations (#475), on top of
     // the quad-changelog replay and `--rules`-derived initial reasoner above.
@@ -554,6 +578,7 @@ pub async fn serve_on_listener(
         registry: Arc::new(RwLock::new(registry)),
         jwks_cache: auth::JwksCache::new(std::time::Duration::from_secs(3600)),
         changelog,
+        dataset_name: "ds".to_string(),
         config,
         vqs_cache: Arc::new(RwLock::new(None)),
         reasoner,
