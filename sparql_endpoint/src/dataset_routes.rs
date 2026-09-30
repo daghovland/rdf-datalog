@@ -138,7 +138,14 @@ pub async fn dataset_data_post(
     };
     // Fuseki /{name}/data creates named graphs on POST even when they don't
     // exist yet — real Fuseki clients rely on this without a prior PUT.
-    graph_store::gsp_post_inner(dataset_state(&state, &name, ds), params, headers, body, true).await
+    graph_store::gsp_post_inner(
+        dataset_state(&state, &name, ds),
+        params,
+        headers,
+        body,
+        true,
+    )
+    .await
 }
 
 pub async fn dataset_data_delete(
@@ -242,15 +249,15 @@ pub async fn dataset_update_post(
     // See https://github.com/daghovland/rdf-datalog/issues/670.
     let (prepared, log_entries) =
         match sparql_update::prepare_update(&ds_state.dataset_name, &store, ops) {
-        Ok(pair) => pair,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Update prepare error: {e}"),
-            )
-                .into_response();
-        }
-    };
+            Ok(pair) => pair,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Update prepare error: {e}"),
+                )
+                    .into_response();
+            }
+        };
 
     if let Some(ref changelog) = state.changelog {
         let mut cl = changelog.lock().await;

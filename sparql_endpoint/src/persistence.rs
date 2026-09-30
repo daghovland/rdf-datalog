@@ -258,7 +258,11 @@ impl QuadChangelog {
     // ── Public mutation log operations ────────────────────────────────────────
 
     /// Durably record that a graph was cleared, in `dataset`.
-    pub fn log_clear_graph(&mut self, dataset: &str, graph_iri: Option<&str>) -> Result<(), String> {
+    pub fn log_clear_graph(
+        &mut self,
+        dataset: &str,
+        graph_iri: Option<&str>,
+    ) -> Result<(), String> {
         self.append_entry(&LogEntry::ClearGraph {
             dataset: dataset.to_owned(),
             graph: graph_iri.map(str::to_owned),
@@ -774,7 +778,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/s"),
                 &iri("http://example.org/p"),
                 &lit("hello"),
@@ -806,7 +810,7 @@ mod tests {
             // Insert then clear.
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/s"),
                 &iri("http://example.org/p"),
                 &lit("hello"),
@@ -868,7 +872,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/changelog"),
                 &iri("http://example.org/p"),
                 &lit("from changelog"),
@@ -919,7 +923,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            Some(graph_iri),
+                Some(graph_iri),
                 &iri("http://example.org/s"),
                 &iri("http://example.org/p"),
                 &lit("named"),
@@ -950,7 +954,7 @@ mod tests {
             // Insert one quad in the default graph and one in a named graph.
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/default_s"),
                 &iri("http://example.org/p"),
                 &lit("default"),
@@ -958,14 +962,15 @@ mod tests {
             .unwrap();
             cl.log_insert_quad(
                 "ds",
-            Some("http://example.org/g1"),
+                Some("http://example.org/g1"),
                 &iri("http://example.org/named_s"),
                 &iri("http://example.org/p"),
                 &lit("named"),
             )
             .unwrap();
             // Clear only the named graph.
-            cl.log_clear_graph("ds", Some("http://example.org/g1")).unwrap();
+            cl.log_clear_graph("ds", Some("http://example.org/g1"))
+                .unwrap();
         }
 
         let cl = QuadChangelog::open(&db_path).unwrap();
@@ -990,7 +995,7 @@ mod tests {
             // Delete a quad that was never inserted — must not panic.
             cl.log_delete_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/ghost_s"),
                 &iri("http://example.org/p"),
                 &lit("ghost"),
@@ -1095,7 +1100,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/s"),
                 &iri("http://example.org/label"),
                 &lang_lit,
@@ -1125,7 +1130,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/a"),
                 &iri("http://example.org/p"),
                 &lit("1"),
@@ -1133,7 +1138,7 @@ mod tests {
             .unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/b"),
                 &iri("http://example.org/p"),
                 &lit("2"),
@@ -1146,7 +1151,7 @@ mod tests {
             let mut cl = QuadChangelog::open(&db_path).unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/c"),
                 &iri("http://example.org/p"),
                 &lit("3"),
@@ -1154,7 +1159,7 @@ mod tests {
             .unwrap();
             cl.log_insert_quad(
                 "ds",
-            None,
+                None,
                 &iri("http://example.org/d"),
                 &iri("http://example.org/p"),
                 &lit("4"),
@@ -1360,7 +1365,11 @@ mod tests {
 
         let cl = QuadChangelog::open(&db_path).unwrap();
         let names = cl.discover_dataset_names().unwrap();
-        assert_eq!(names.len(), 2, "both non-ds datasets must survive compaction");
+        assert_eq!(
+            names.len(),
+            2,
+            "both non-ds datasets must survive compaction"
+        );
         assert!(names.contains(&"foo".to_string()));
         assert!(names.contains(&"empty1".to_string()));
 

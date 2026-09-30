@@ -344,8 +344,10 @@ pub async fn admin_compact(State(state): State<AppState>) -> axum::response::Res
     for (name, store) in &guards {
         locked.push((name.as_str(), store.read().await));
     }
-    let datasets: Vec<(&str, &Datastore)> =
-        locked.iter().map(|(name, guard)| (*name, &**guard)).collect();
+    let datasets: Vec<(&str, &Datastore)> = locked
+        .iter()
+        .map(|(name, guard)| (*name, &**guard))
+        .collect();
 
     let mut changelog = changelog_lock.lock().await;
     match changelog.compact_multi(&datasets) {
