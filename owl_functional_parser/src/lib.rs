@@ -14,8 +14,9 @@ Contact: hovlanddag@gmail.com
 //! See `docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md` for the grammar
 //! subset this parser covers and the module layout. Issue
 //! [#180](https://github.com/daghovland/rdf-datalog/issues/180) tracks this
-//! feature; SWRL `Rule(...)` parsing is deferred to
-//! [#625](https://github.com/daghovland/rdf-datalog/issues/625).
+//! feature; SWRL `DLSafeRule(...)` parsing (issue
+//! [#625](https://github.com/daghovland/rdf-datalog/issues/625)) is covered
+//! by `rule.rs`.
 
 mod annotation;
 mod axiom;
@@ -25,6 +26,7 @@ mod individual;
 mod iri;
 mod literal;
 mod property_expr;
+mod rule;
 mod serialize;
 mod tokens;
 
@@ -33,6 +35,25 @@ use nom::Parser;
 use owl_ontology::Ontology;
 
 pub use serialize::serialize;
+
+/// Either an axiom or a SWRL rule, as parsed from one top-level production
+/// inside `Ontology(...)`'s body — `many0`-parsed together since both kinds
+/// of production can appear interleaved, then partitioned into `Ontology`'s
+/// separate `axioms`/`rules` fields.
+enum Item {
+    Axiom(owl_ontology::Axiom),
+    Rule(owl_ontology::SwrlRule),
+}
+
+fn item<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> nom::IResult<&'a str, Item> {
+    move |input: &'a str| {
+        nom::branch::alt((
+            nom::combinator::map(axiom::axiom(ctx), Item::Axiom),
+            nom::combinator::map(rule::dl_safe_rule(ctx), Item::Rule),
+        ))
+        .parse(input)
+    }
+}
 
 /// `prefixDeclaration ::= 'Prefix' '(' prefixName '=' fullIRI ')'`. Unlike
 /// `abbreviatedIRI`'s `prefix:local` shape, the prefix *name* here is
@@ -99,9 +120,7 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
         .parse(input)
         .map_err(fail)?;
 
-    let (input, axioms) = nom::multi::many0(axiom::axiom(&ctx))
-        .parse(input)
-        .map_err(fail)?;
+    let (input, items) = nom::multi::many0(item(&ctx)).parse(input).map_err(fail)?;
 
     let (input, _) = tokens::punct(')')(input).map_err(fail)?;
 
@@ -122,12 +141,19 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
         (None, _) => ingress::OntologyVersion::UnNamedOntology,
     };
 
-    Ok(Ontology::new(
-        imports,
-        version,
-        ontology_annotations,
-        axioms,
-    ))
+    let mut axioms = Vec::new();
+    let mut rules = Vec::new();
+    for it in items {
+        match it {
+            Item::Axiom(a) => axioms.push(a),
+            Item::Rule(r) => rules.push(r),
+        }
+    }
+
+    Ok(
+        Ontology::new(imports, version, ontology_annotations, axioms)
+            .with_rules(rules),
+    )
 }
 
 fn fail(e: nom::Err<nom::error::Error<&str>>) -> String {

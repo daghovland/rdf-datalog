@@ -19,9 +19,9 @@ Contact: hovlanddag@gmail.com
 //! one `Keyword(...)` line, emitted in `ontology.axioms` order.
 
 use owl_ontology::{
-    Annotation, AnnotationAxiom, AnnotationValue, Assertion, Axiom, ClassAxiom, ClassExpression,
-    DataPropertyAxiom, DataRange, Entity, FullIri, Individual, ObjectPropertyAxiom,
-    ObjectPropertyExpression, Ontology, SubPropertyExpression,
+    Annotation, AnnotationAxiom, AnnotationValue, Assertion, Atom, AtomArg, Axiom, ClassAxiom,
+    ClassExpression, DataPropertyAxiom, DataRange, Entity, FullIri, Individual,
+    ObjectPropertyAxiom, ObjectPropertyExpression, Ontology, SubPropertyExpression, SwrlRule,
 };
 
 /// Serialize `ontology` to OWL 2 Functional-Style Syntax text.
@@ -60,6 +60,14 @@ pub fn serialize(ontology: &Ontology) -> String {
             None => {
                 // `fmt_axiom` (or one of its helpers) already logged a
                 // `log::warn!` explaining why this axiom was skipped.
+            }
+        }
+    }
+    for rule in &ontology.rules {
+        match fmt_rule(rule) {
+            Some(s) => out.push_str(&format!("    {s}\n")),
+            None => {
+                // `fmt_rule` already logged a `log::warn!`.
             }
         }
     }
@@ -669,4 +677,91 @@ fn fmt_data_range(dr: &DataRange) -> Option<String> {
 fn join_data_range(kw: &str, list: &[DataRange]) -> Option<String> {
     let items: Option<Vec<String>> = list.iter().map(fmt_data_range).collect();
     Some(format!("{kw}({})", items?.join(" ")))
+}
+
+// ── SWRL DLSafeRule(...) formatting (#625) ───────────────────────────────
+
+/// Emit a `DLSafeRule(...)` line, or `None` (with a `log::warn!`) if any
+/// atom argument, class expression, or data range in the rule falls outside
+/// this serializer's scope.
+fn fmt_rule(rule: &SwrlRule) -> Option<String> {
+    let ann = fmt_axiom_annotations(&rule.annotations);
+    let body: Option<Vec<String>> = rule.body.iter().map(fmt_atom).collect();
+    let head: Option<Vec<String>> = rule.head.iter().map(fmt_atom).collect();
+    match (body, head) {
+        (Some(body), Some(head)) => Some(format!(
+            "DLSafeRule({ann}Body({}) Head({}))",
+            body.join(" "),
+            head.join(" ")
+        )),
+        _ => {
+            log_skip("DLSafeRule atom outside serializer scope");
+            None
+        }
+    }
+}
+
+/// Formats one SWRL [`Atom`] back to its functional-syntax keyword form.
+///
+/// `Atom::PropertyAtom(iri, a, b)` is ambiguous between `ObjectPropertyAtom`
+/// and `DataPropertyAtom` when both `a` and `b` are `AtomArg::Variable` --
+/// the parser's own `i_arg`/`d_arg` productions can't be told apart from a
+/// bare `Variable(...)` alone (see `rule.rs`'s doc comment). This picks
+/// `DataPropertyAtom` only when `b` is unambiguously a `Literal` (never
+/// producible from `IArg`), and `ObjectPropertyAtom` otherwise (covers both
+/// the unambiguous `Individual` case and the ambiguous `Variable` case).
+/// This is round-trip-safe regardless of which keyword is picked in the
+/// ambiguous case: re-parsing either keyword with two `Variable(...)`
+/// arguments produces the same `Atom::PropertyAtom(iri, Variable, Variable)`
+/// value, so the choice never changes the parsed result.
+fn fmt_atom(atom: &Atom) -> Option<String> {
+    match atom {
+        Atom::ClassAtom(ce, arg) => {
+            Some(format!("ClassAtom({} {})", fmt_class_expr(ce)?, fmt_atom_arg(arg)?))
+        }
+        Atom::DataRangeAtom(dr, arg) => Some(format!(
+            "DataRangeAtom({} {})",
+            fmt_data_range(dr)?,
+            fmt_atom_arg(arg)?
+        )),
+        Atom::PropertyAtom(iri, a, b) => {
+            let kw = match b {
+                AtomArg::Literal(_) => "DataPropertyAtom",
+                AtomArg::Individual(_) | AtomArg::Variable(_) => "ObjectPropertyAtom",
+            };
+            Some(format!(
+                "{kw}({} {} {})",
+                fmt_iri(iri),
+                fmt_atom_arg(a)?,
+                fmt_atom_arg(b)?
+            ))
+        }
+        Atom::BuiltInAtom(iri, args) => {
+            let items: Option<Vec<String>> = args.iter().map(fmt_atom_arg).collect();
+            Some(format!("BuiltInAtom({} {})", fmt_iri(iri), items?.join(" ")))
+        }
+        Atom::SameIndividualAtom(a, b) => Some(format!(
+            "SameIndividualAtom({} {})",
+            fmt_atom_arg(a)?,
+            fmt_atom_arg(b)?
+        )),
+        Atom::DifferentIndividualsAtom(a, b) => Some(format!(
+            "DifferentIndividualsAtom({} {})",
+            fmt_atom_arg(a)?,
+            fmt_atom_arg(b)?
+        )),
+    }
+}
+
+/// `IArg`/`DArg` argument formatting. `AtomArg::Variable` stores the full
+/// IRI string (see its doc comment), so it's wrapped back into
+/// `Variable(<...>)` here, not `Variable(name)` -- unlike
+/// `manchester_parser::serialize`'s equivalent, which re-adds the `?`
+/// prefix instead.
+fn fmt_atom_arg(arg: &AtomArg) -> Option<String> {
+    match arg {
+        AtomArg::Variable(iri_str) => Some(format!("Variable(<{iri_str}>)")),
+        AtomArg::Literal(ge) => fmt_literal(ge),
+        AtomArg::Individual(ind) => Some(fmt_individual(ind)),
+    }
 }
