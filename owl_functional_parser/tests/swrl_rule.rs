@@ -136,9 +136,7 @@ fn parses_same_and_different_individuals_atom_rule() {
 
 #[test]
 fn parses_ground_individual_args_not_just_variables() {
-    let onto = parse_body(
-        "DLSafeRule(Body() Head(ObjectPropertyAtom(:hasParent :alice :bob)))",
-    );
+    let onto = parse_body("DLSafeRule(Body() Head(ObjectPropertyAtom(:hasParent :alice :bob)))");
     let rule = &onto.rules[0];
     match &rule.head[0] {
         Atom::PropertyAtom(_, AtomArg::Individual(Individual::NamedIndividual(_)), _) => {}

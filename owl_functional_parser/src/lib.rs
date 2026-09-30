@@ -150,10 +150,7 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
         }
     }
 
-    Ok(
-        Ontology::new(imports, version, ontology_annotations, axioms)
-            .with_rules(rules),
-    )
+    Ok(Ontology::new(imports, version, ontology_annotations, axioms).with_rules(rules))
 }
 
 fn fail(e: nom::Err<nom::error::Error<&str>>) -> String {

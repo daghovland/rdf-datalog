@@ -172,17 +172,16 @@ fn data_property_atom<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IRes
 /// syntax's `BuiltInAtom` keyword is unambiguous at every arity including 2.
 fn built_in_atom<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, Atom> {
     move |input: &'a str| {
-        paren_form(
-            "BuiltInAtom",
-            (iri(ctx), many0_no_sep(d_arg(ctx))),
-        )
-        .parse(input)
-        .map(|(rest, (pred, args))| (rest, Atom::BuiltInAtom(pred, args)))
+        paren_form("BuiltInAtom", (iri(ctx), many0_no_sep(d_arg(ctx))))
+            .parse(input)
+            .map(|(rest, (pred, args))| (rest, Atom::BuiltInAtom(pred, args)))
     }
 }
 
 /// `SameIndividualAtom ::= 'SameIndividualAtom' '(' IArg IArg ')'`.
-fn same_individual_atom<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, Atom> {
+fn same_individual_atom<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> IResult<&'a str, Atom> {
     move |input: &'a str| {
         paren_form("SameIndividualAtom", (i_arg(ctx), i_arg(ctx)))
             .parse(input)
@@ -236,21 +235,18 @@ pub(crate) fn dl_safe_rule<'a>(
     ctx: &'a ParserContext,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, SwrlRule> {
     move |input: &'a str| {
-        paren_form(
-            "DLSafeRule",
-            (axiom_annotations(ctx), body(ctx), head(ctx)),
-        )
-        .parse(input)
-        .map(|(rest, (annotations, body, head))| {
-            (
-                rest,
-                SwrlRule {
-                    annotations,
-                    body,
-                    head,
-                },
-            )
-        })
+        paren_form("DLSafeRule", (axiom_annotations(ctx), body(ctx), head(ctx)))
+            .parse(input)
+            .map(|(rest, (annotations, body, head))| {
+                (
+                    rest,
+                    SwrlRule {
+                        annotations,
+                        body,
+                        head,
+                    },
+                )
+            })
     }
 }
 
@@ -287,8 +283,7 @@ mod tests {
 
     #[test]
     fn parses_built_in_atom_at_arity_two() {
-        let (_, a) =
-            built_in_atom(&ctx())("BuiltInAtom(:eq Variable(:x) Variable(:y))").unwrap();
+        let (_, a) = built_in_atom(&ctx())("BuiltInAtom(:eq Variable(:x) Variable(:y))").unwrap();
         assert!(matches!(a, Atom::BuiltInAtom(_, args) if args.len() == 2));
     }
 

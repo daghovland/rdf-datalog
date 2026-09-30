@@ -716,9 +716,11 @@ fn fmt_rule(rule: &SwrlRule) -> Option<String> {
 /// value, so the choice never changes the parsed result.
 fn fmt_atom(atom: &Atom) -> Option<String> {
     match atom {
-        Atom::ClassAtom(ce, arg) => {
-            Some(format!("ClassAtom({} {})", fmt_class_expr(ce)?, fmt_atom_arg(arg)?))
-        }
+        Atom::ClassAtom(ce, arg) => Some(format!(
+            "ClassAtom({} {})",
+            fmt_class_expr(ce)?,
+            fmt_atom_arg(arg)?
+        )),
         Atom::DataRangeAtom(dr, arg) => Some(format!(
             "DataRangeAtom({} {})",
             fmt_data_range(dr)?,
@@ -738,7 +740,11 @@ fn fmt_atom(atom: &Atom) -> Option<String> {
         }
         Atom::BuiltInAtom(iri, args) => {
             let items: Option<Vec<String>> = args.iter().map(fmt_atom_arg).collect();
-            Some(format!("BuiltInAtom({} {})", fmt_iri(iri), items?.join(" ")))
+            Some(format!(
+                "BuiltInAtom({} {})",
+                fmt_iri(iri),
+                items?.join(" ")
+            ))
         }
         Atom::SameIndividualAtom(a, b) => Some(format!(
             "SameIndividualAtom({} {})",
