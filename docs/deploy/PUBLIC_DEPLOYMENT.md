@@ -135,6 +135,62 @@ dashboard content. Also confirm a request for an email *not* in
 Only once both checks pass as expected should this be considered safe to
 leave running unattended.
 
+## Keeping the backlog/provenance data current
+
+`dagalog`'s `--data /data/dataset.ttl` file needs to actually contain
+`bl:`/`agp:` instance data (backlog issues/PRs, agent-provenance
+summaries) for `/describe` (#493) and the backlog dashboard's SPARQL
+queries to return anything real. That file is **not** rebuilt
+automatically by Step 3 above — run
+[`scripts/regenerate-production-dataset.sh`](../../scripts/regenerate-production-dataset.sh)
+(issue [#565](https://github.com/daghovland/rdf-datalog/issues/565); see
+[`docs/plans/WIRE_BACKLOG_SNAPSHOT_565_PLAN.md`](../plans/WIRE_BACKLOG_SNAPSHOT_565_PLAN.md)
+for the design) once manually, then on a schedule:
+
+```sh
+scripts/regenerate-production-dataset.sh
+```
+
+This regenerates the backlog snapshot (`gh api`, so needs `gh` CLI
+authenticated on this host — the same auth already used to build/deploy),
+concatenates it with the backlog/provenance ontology and every
+`provenance/summaries/*.ttl` file into `data/dataset.ttl`, and restarts the
+`dagalog` service so it re-reads the new file (`--read-only` mode loads
+once at startup, with no hot reload).
+
+**Freshness split, worth knowing:** `provenance/summaries/*.ttl` only
+updates on this checkout's next `git pull` (they're committed to `main` by
+each PR's own workflow step), while the backlog snapshot itself refreshes
+every time this script runs, independent of `git pull`. A stale checkout
+still gets a fresh *snapshot* but stale *summaries*.
+
+To run this daily without remembering to by hand, install the provided
+systemd timer template (not installed automatically — see
+[#687](https://github.com/daghovland/rdf-datalog/issues/687) for actually
+rolling this out; it's an operational step for Dag to do deliberately, not
+something a PR should flip on by itself):
+
+**Pre-build the release binary first**, rather than letting the timer's
+first run compile `backlog-regenerate` from scratch against the shared,
+memory-constrained `CARGO_TARGET_DIR` (see the disk-usage note in the root
+`CLAUDE.md` — this host runs on ~3.7GB and concurrent cargo builds are a
+known OOM risk):
+
+```sh
+CARGO_TARGET_DIR=/home/dag/.cargo-shared-target/rdf-datalog cargo build --release -p backlog
+```
+
+```sh
+sudo cp deploy/systemd/dagalog-backlog-refresh.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dagalog-backlog-refresh.timer
+```
+
+Adjust `User=`/`WorkingDirectory=` in the `.service` file first if the repo
+isn't checked out at `/home/dag/rdf-datalog`. Check it actually ran with
+`systemctl status dagalog-backlog-refresh.timer` and
+`journalctl -u dagalog-backlog-refresh.service`.
+
 ## Notes
 
 - **Live-tested against `dagalog.no`** (see [#477](https://github.com/daghovland/rdf-datalog/issues/477)): the deny path in Step 4 initially returned a bare `401` instead of redirecting to Google sign-in — `forward_auth` proxies oauth2-proxy's `/oauth2/auth` check response through as-is, so an explicit `@error status 401` / `handle_response` redirect to `/oauth2/start` is required inside the `forward_auth` block (see `deploy/Caddyfile`). With that fix, the full chain (deny → `/oauth2/start` → Google consent screen) works end-to-end.

@@ -1,0 +1,36 @@
+# Template systemd service unit that reruns
+# scripts/regenerate-production-dataset.sh (issue #565:
+# https://github.com/daghovland/rdf-datalog/issues/565) -- rebuilds the
+# production data/dataset.ttl from the backlog ontology + a freshly
+# regenerated snapshot + provenance summaries, then restarts the dagalog
+# container so it picks up the new file.
+#
+# NOT installed automatically -- this is a deliberate operational rollout
+# step left for Dag, not something a PR should flip on by itself. See
+# issue #687 and docs/deploy/PUBLIC_DEPLOYMENT.md, "Keeping the backlog/
+# provenance data current", for install steps.
+#
+# Runs as a system unit (not --user) so it works without an interactive
+# login session (loginctl enable-linger) and so `docker compose` reaches
+# the same daemon the regular deploy uses. Adjust User=/WorkingDirectory
+# to match wherever the repo is actually checked out on the server.
+[Unit]
+Description=Regenerate dagalog backlog/provenance snapshot and restart dagalog
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=dag
+WorkingDirectory=/home/dag/rdf-datalog
+# systemd units do not inherit an interactive login shell's environment --
+# `gh` (shelled out to by backlog-regenerate) reads its auth token from
+# $HOME/.config/gh, and `cargo run --release` needs ~/.cargo/bin on PATH
+# unless a prebuilt release binary is used instead (see the runbook).
+Environment=HOME=/home/dag
+Environment=PATH=/home/dag/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=CARGO_TARGET_DIR=/home/dag/.cargo-shared-target/rdf-datalog
+ExecStart=/home/dag/rdf-datalog/scripts/regenerate-production-dataset.sh
+
+[Install]
+WantedBy=multi-user.target

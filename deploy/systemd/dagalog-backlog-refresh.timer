@@ -1,0 +1,17 @@
+# Daily trigger for dagalog-backlog-refresh.service -- see that file and
+# docs/deploy/PUBLIC_DEPLOYMENT.md ("Keeping the backlog/provenance data
+# current") for what it does and how to install it. Not installed
+# automatically -- rollout tracked in issue #687:
+# https://github.com/daghovland/rdf-datalog/issues/687.
+[Unit]
+Description=Daily dagalog backlog/provenance snapshot refresh
+
+[Timer]
+OnCalendar=daily
+# Spread slightly past midnight and catch up if the host was asleep/down
+# at the scheduled time, rather than silently skipping a whole day.
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
