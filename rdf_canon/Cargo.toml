@@ -7,5 +7,5 @@ description = "RDF Dataset Canonicalization (RDFC-1.0/URDNA2015) over Dagalog's 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
-oxrdf = "0.2"
+oxrdf = "0.3"
 rdf-canon-upstream = { package = "rdf-canon", version = "0.15" }

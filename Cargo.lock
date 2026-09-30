@@ -2239,7 +2239,7 @@ dependencies = [
  "oxilangtag",
  "oxiri 0.2.11",
  "rand 0.8.6",
- "thiserror 2.0.20",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2251,7 +2251,7 @@ dependencies = [
  "oxilangtag",
  "oxiri 0.2.11",
  "rand 0.9.4",
- "thiserror 2.0.20",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2264,7 +2264,7 @@ dependencies = [
  "oxilangtag",
  "oxiri 0.2.11",
  "oxrdf 0.3.3",
- "thiserror 2.0.20",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2737,7 +2737,7 @@ version = "0.1.0"
 dependencies = [
  "dag-rdf",
  "ingress",
- "oxrdf 0.2.4",
+ "oxrdf 0.3.3",
  "rdf-canon",
 ]
 
