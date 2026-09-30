@@ -102,6 +102,39 @@ pub enum LogEntry {
         p: ElementRepr,
         o: ElementRepr,
     },
+    /// `POST /{dataset}/rules` (#390/#568) — full ruleset replace.
+    ///
+    /// Recorded as raw Datalog source text, not parsed `Rule`s: a `Rule`'s
+    /// `QuadPattern`s hold interned `GraphElementId`s that are not stable
+    /// across a restart (a fresh `GraphElementManager` assigns ids in
+    /// whatever order data happens to be re-loaded), exactly why the quad
+    /// entries above use the portable `ElementRepr` rather than raw ids.
+    /// `datalog_parser::parse` already interns IRIs into whatever store it's
+    /// given as it parses, so replaying is simply "parse this text again
+    /// against the replayed store". See
+    /// [#475](https://github.com/daghovland/rdf-datalog/issues/475).
+    ReplaceRuleset { dataset: String, rules_text: String },
+    /// `POST /{dataset}/rules/{ruleset-id}` (#473) — named/scoped ruleset
+    /// load or replace.
+    SetNamedRuleset {
+        dataset: String,
+        ruleset_id: String,
+        rules_text: String,
+    },
+    /// `DELETE /{dataset}/rules/{ruleset-id}` (#473) — named ruleset
+    /// retraction.
+    DeleteNamedRuleset { dataset: String, ruleset_id: String },
+}
+
+/// Returns `true` for a [`LogEntry`] variant that records a rules-endpoint
+/// mutation (as opposed to a quad mutation) — see [`QuadChangelog::ruleset_entries`].
+fn is_ruleset_entry(entry: &LogEntry) -> bool {
+    matches!(
+        entry,
+        LogEntry::ReplaceRuleset { .. }
+            | LogEntry::SetNamedRuleset { .. }
+            | LogEntry::DeleteNamedRuleset { .. }
+    )
 }
 
 // ── QuadChangelog ─────────────────────────────────────────────────────────────
@@ -225,6 +258,66 @@ impl QuadChangelog {
         })
     }
 
+    // ── Ruleset mutation log operations (#475) ────────────────────────────────
+
+    /// Durably record a `POST /{dataset}/rules` full ruleset replace.
+    pub fn log_replace_ruleset(&mut self, dataset: &str, rules_text: &str) -> Result<(), String> {
+        self.append_entry(&LogEntry::ReplaceRuleset {
+            dataset: dataset.to_owned(),
+            rules_text: rules_text.to_owned(),
+        })
+    }
+
+    /// Durably record a `POST /{dataset}/rules/{ruleset-id}` named ruleset
+    /// load/replace.
+    pub fn log_set_named_ruleset(
+        &mut self,
+        dataset: &str,
+        ruleset_id: &str,
+        rules_text: &str,
+    ) -> Result<(), String> {
+        self.append_entry(&LogEntry::SetNamedRuleset {
+            dataset: dataset.to_owned(),
+            ruleset_id: ruleset_id.to_owned(),
+            rules_text: rules_text.to_owned(),
+        })
+    }
+
+    /// Durably record a `DELETE /{dataset}/rules/{ruleset-id}` named ruleset
+    /// retraction.
+    pub fn log_delete_named_ruleset(
+        &mut self,
+        dataset: &str,
+        ruleset_id: &str,
+    ) -> Result<(), String> {
+        self.append_entry(&LogEntry::DeleteNamedRuleset {
+            dataset: dataset.to_owned(),
+            ruleset_id: ruleset_id.to_owned(),
+        })
+    }
+
+    /// Read back every ruleset-mutation log entry, in original append order,
+    /// filtering out the quad-mutation entries.
+    ///
+    /// Called once at startup (after quad-entry replay and initial-reasoner
+    /// construction) to reconstruct any runtime-loaded rulesets. See
+    /// [`docs/plans/PERSIST_RULESETS_475_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/PERSIST_RULESETS_475_PLAN.md).
+    pub fn ruleset_entries(&self) -> Result<Vec<LogEntry>, String> {
+        let read_txn = self.db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(QUAD_LOG).map_err(|e| e.to_string())?;
+
+        let mut result = Vec::new();
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_, bytes) = row.map_err(|e| e.to_string())?;
+            let entry: LogEntry =
+                serde_json::from_slice(bytes.value()).map_err(|e| e.to_string())?;
+            if is_ruleset_entry(&entry) {
+                result.push(entry);
+            }
+        }
+        Ok(result)
+    }
+
     // ── Compaction ────────────────────────────────────────────────────────────
 
     /// Atomically rewrite the log to contain only the current live quads.
@@ -238,7 +331,13 @@ impl QuadChangelog {
             table.len().map_err(|e| e.to_string())?
         };
 
-        let new_entries: Vec<LogEntry> = ds
+        // Ruleset-mutation entries (#475) are not quad state and have no
+        // "current snapshot" equivalent -- they must survive compaction
+        // unchanged (in original order) rather than being discarded along
+        // with the superseded quad-mutation history.
+        let preserved_ruleset_entries = self.ruleset_entries()?;
+
+        let mut new_entries: Vec<LogEntry> = ds
             .named_graphs
             .get_all_quads()
             .map(|quad| {
@@ -258,6 +357,7 @@ impl QuadChangelog {
                 }
             })
             .collect();
+        new_entries.extend(preserved_ruleset_entries);
 
         let entries_after = new_entries.len() as u64;
 
@@ -383,6 +483,13 @@ fn apply_entry(ds: &mut Datastore, entry: &LogEntry) {
                 obj: o_id,
             });
         }
+        // Ruleset-mutation entries (#475) don't apply to a bare `Datastore`
+        // -- they need registry-level state (a dataset's reasoner + named
+        // ruleset bookkeeping) and are replayed separately at startup via
+        // `QuadChangelog::ruleset_entries`, after quad replay completes.
+        LogEntry::ReplaceRuleset { .. }
+        | LogEntry::SetNamedRuleset { .. }
+        | LogEntry::DeleteNamedRuleset { .. } => {}
     }
 }
 
