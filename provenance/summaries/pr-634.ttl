@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #634 (issue #181), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps are real, from
+# `git log main..HEAD` on branch feat/181-owl-functional-syntax-serializer.
+
+ghpull:634 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "OWL 2 Functional-Style Syntax serializer (owl_ontology::Ontology -> .ofn)" ;
+    bl:number 634 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:181 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr634 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:181 ;
+    prov:startedAtTime "2026-09-01T14:05:20+02:00"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-06T11:12:32Z"^^xsd:dateTime .
+
+session:pr634Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #181 asked for a serializer turning owl_ontology::Ontology back into OWL 2 Functional-Style Syntax (.ofn), the reverse of owl_functional_parser::parse (#180/PR #627), mirroring manchester_parser's serializer (#160/PR #288) in overall style. Provenance for PR #288 was read first and directly applied: no Prefix(...)/IRI-shortening (every IRI emitted as full <...>, since Ontology carries no prefix map) and the log::warn!-and-skip policy for constructs the type model can't represent, rather than silently emitting invalid syntax. The actual structure ended up simpler than Manchester's, for the same reason the parser itself was: Functional-Style Syntax is axiom-per-axiom, not frame-per-entity, so there is no entity-grouping pass at all -- each owl_ontology::Axiom maps to exactly one Keyword(...) line, emitted in ontology.axioms order, which also means anonymous-individual ids always round-trip exactly (no reordering risk from grouping, unlike Manchester's serializer, which restricts its own round-trip tests to single-anonymous-individual fixtures for this reason). Because #180's parser already covers a materially larger grammar subset than Manchester's initial landing (full ClassExpression/DataRange/ObjectPropertyExpression grammars, ObjectPropertyChain, HasKey, compound data ranges), the serializer mirrors that full coverage rather than a narrower first-landing subset -- every fmt_* helper was written to match axiom.rs's parse grammar one-to-one, keyword for keyword. Given the mapping is mechanical and low-ambiguity (one Axiom variant, one keyword line, verified directly against the parser's own axiom.rs), the round-trip test suite (30 tests covering header/declarations/every class-expression form/class-property axioms/HasKey/compound data ranges/assertions/annotation axioms/anonymous individuals/a multi-axiom integration fixture) was written in full up front, then the whole serializer was implemented in one pass rather than construct-by-construct, and every test went green on the first run except one caused by a typo in the test fixture itself (DataMaxQualifiedCardinality is not a real Functional-Style Syntax keyword -- the qualified/unqualified distinction is filler-presence, not a separate keyword -- caught immediately by the round-trip re-parse failing, not by inspection)." ;
+    agp:reasoningFor ghpull:634 ;
+    prov:wasGeneratedBy session:pr634 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr634Decision .
+
+session:pr634Decision a agp:Decision ;
+    agp:summaryText "AnnotationAssertion's subject/value fields are typed ingress::GraphElement (an owl_ontology type-model gap noted in the parser's own plan doc, not something this PR could fix), not a dedicated IRI/individual enum. The serializer formats them back into whichever Functional-Style Syntax production matches the concrete GraphElement variant actually reachable through this parser's own annotation_subject/annotation_value_as_graph_element productions: NodeOrEdge(Iri(_)) to a bare IRI, NodeOrEdge(AnonymousBlankNode(_)) to _:b<id>, GraphLiteral(_) to a Literal; the fourth GraphElement variant, TripleTerm (RDF 1.2 embedded triples), is not reachable through this parser at all, so it is skipped with log::warn! rather than guessed at, matching the crate's general skip-not-guess policy for unrepresentable input." ;
+    agp:alternative "Considered treating ClassExpression::AnonymousClass and ObjectPropertyExpression::AnonymousObjectProperty as a serializer gap worth flagging prominently, but concluded they are not really a scope limitation at all: OWL 2's own Functional-Style Syntax (and Manchester Syntax) has no concrete-syntax production for an anonymous class or object-property expression in the first place -- only individuals can be anonymous in either syntax -- so there is nothing the parser could ever produce that would need round-tripping here; documented this in the plan doc's Serialiser section instead of treating it as an open issue." .
