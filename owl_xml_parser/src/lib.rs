@@ -134,9 +134,84 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
     ))
 }
 
+/// Cheap content sniff used by `dagalog`'s CLI/notebook-kernel wiring
+/// ([#609](https://github.com/daghovland/rdf-datalog/issues/609)) to decide
+/// whether a `.owl`-extensioned file is OWL/XML Serialization (this crate's
+/// format) rather than, say, a Turtle-serialized ontology — the `.owl`
+/// extension is ambiguous and used for both elsewhere in this repository's
+/// own test fixtures (`tests/testdata/equality.owl` and friends are Turtle).
+///
+/// Returns `true` only when `src` parses as XML *and* its root element's tag
+/// name is literally `Ontology` (the OWL/XML Serialization spec's root
+/// element, <https://www.w3.org/TR/owl2-xml-serialization/>). Returns
+/// `false` for anything else, including malformed XML, Turtle text, and
+/// RDF/XML (whose root element is `rdf:RDF`, not `Ontology`) — this function
+/// makes no attempt to recognize RDF/XML, which this codebase does not parse
+/// under any extension today.
+///
+/// This is a sniff, not a validator: a `.owl` file that passes this check
+/// may still fail `parse` for an unrelated reason (e.g. an unsupported axiom
+/// element), and that failure should surface as a normal parse error rather
+/// than a silent fallback to a different parser.
+pub fn looks_like_owl_xml(src: &str) -> bool {
+    match roxmltree::Document::parse(src) {
+        Ok(doc) => doc.root_element().tag_name().name() == "Ontology",
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── looks_like_owl_xml, see #609 ─────────────────────────────────────
+
+    #[test]
+    fn sniff_recognizes_owl_xml_root() {
+        assert!(looks_like_owl_xml(
+            r#"<?xml version="1.0"?><Ontology xmlns="http://www.w3.org/2002/07/owl#"></Ontology>"#
+        ));
+    }
+
+    #[test]
+    fn sniff_recognizes_owl_xml_root_with_attributes() {
+        assert!(looks_like_owl_xml(
+            r#"<Ontology xmlns="http://www.w3.org/2002/07/owl#" ontologyIRI="http://example.org/o"><Declaration><Class IRI="http://example.org/C"/></Declaration></Ontology>"#
+        ));
+    }
+
+    #[test]
+    fn sniff_rejects_turtle_text() {
+        assert!(!looks_like_owl_xml(
+            "@prefix ex: <http://example.org/> .\nex:a a ex:B .\n"
+        ));
+    }
+
+    #[test]
+    fn sniff_rejects_turtle_starting_with_an_iri() {
+        // A bare IRI subject is not a legal XML tag name, so this fails to
+        // parse as XML at all rather than being confused for one.
+        assert!(!looks_like_owl_xml(
+            "<http://example.org/a> a <http://example.org/B> .\n"
+        ));
+    }
+
+    #[test]
+    fn sniff_rejects_rdf_xml_root() {
+        assert!(!looks_like_owl_xml(
+            r#"<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF>"#
+        ));
+    }
+
+    #[test]
+    fn sniff_rejects_malformed_xml() {
+        assert!(!looks_like_owl_xml("<Ontology><unclosed></Ontology>"));
+    }
+
+    #[test]
+    fn sniff_rejects_empty_string() {
+        assert!(!looks_like_owl_xml(""));
+    }
 
     #[test]
     fn parses_unnamed_empty_ontology() {

@@ -93,29 +93,40 @@ pub struct ReasoningStats {
 /// - `.nq` → N-Quads
 /// - `.omn` → OWL 2 Manchester Syntax (ABox only — see below)
 /// - `.ofn` → OWL 2 Functional-Style Syntax (ABox only — see below)
+/// - `.owx` → OWL 2 XML Serialization (ABox only — see below)
+/// - `.owl` → OWL 2 XML Serialization, but **only** when content-sniffing
+///   (see [`frame_ontology_ext`]) confirms an `<Ontology>` XML root;
+///   otherwise Turtle, since this repository's own test fixtures use `.owl`
+///   for Turtle-serialized ontologies (the extension alone is ambiguous —
+///   see [#609](https://github.com/daghovland/rdf-datalog/issues/609))
 /// - everything else → Turtle
 ///
-/// ## `.omn`/`.ofn` handling
+/// ## `.omn`/`.ofn`/`.owx`/`.owl` handling
 ///
-/// A Manchester Syntax or Functional-Style Syntax document is parsed into an
-/// [`owl_ontology::Ontology`] and only its ABox assertions are materialised
-/// into `datastore` as ground quads, via [`owl2rl2datalog::assert_abox`].
-/// TBox axioms (`SubClassOf:`/`SubClassOf(...)`, property domain/range, …)
-/// are **not** compiled to Datalog rules here — `load_file`'s contract
-/// elsewhere is "add quads to the store," and running a full OWL-RL
-/// materialisation pass as a side effect of a data load would be a surprise,
-/// especially since other files in the same batch (loaded later, e.g. via a
-/// `--data` list) wouldn't yet be visible to it. Callers that want the TBox
-/// reasoned over should pass the file via [`apply_ontologies`] instead, which
-/// special-cases both extensions to also call [`owl2datalog`] and evaluate
-/// the resulting rules together with every other ontology source in one
-/// batch. See [#161](https://github.com/daghovland/rdf-datalog/issues/161)
-/// (`.omn`) and [#633](https://github.com/daghovland/rdf-datalog/issues/633)
-/// (`.ofn`).
+/// A Manchester Syntax, Functional-Style Syntax, or OWL/XML Serialization
+/// document is parsed into an [`owl_ontology::Ontology`] and only its ABox
+/// assertions are materialised into `datastore` as ground quads, via
+/// [`owl2rl2datalog::assert_abox`]. TBox axioms (`SubClassOf:`/
+/// `SubClassOf(...)`/`<SubClassOf>`, property domain/range, …) are **not**
+/// compiled to Datalog rules here — `load_file`'s contract elsewhere is "add
+/// quads to the store," and running a full OWL-RL materialisation pass as a
+/// side effect of a data load would be a surprise, especially since other
+/// files in the same batch (loaded later, e.g. via a `--data` list) wouldn't
+/// yet be visible to it. Callers that want the TBox reasoned over should
+/// pass the file via [`apply_ontologies`] instead, which special-cases these
+/// extensions to also call [`owl2datalog`] and evaluate the resulting rules
+/// together with every other ontology source in one batch. See
+/// [#161](https://github.com/daghovland/rdf-datalog/issues/161) (`.omn`),
+/// [#633](https://github.com/daghovland/rdf-datalog/issues/633) (`.ofn`),
+/// and [#609](https://github.com/daghovland/rdf-datalog/issues/609)
+/// (`.owx`/`.owl`). `owl_xml_parser` does not yet parse ABox assertion
+/// axioms ([#608](https://github.com/daghovland/rdf-datalog/issues/608) is
+/// open), so a `.owx`/`.owl` document containing any will fail to parse with
+/// a clear error rather than silently dropping them.
 pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext == "omn" || ext == "ofn" {
-        let ontology = parse_frame_ontology_file(ext, path)?;
+    if let Some(frame_ext) = frame_ontology_ext(path)? {
+        let ontology = parse_frame_ontology_file(frame_ext, path)?;
         let report = assert_abox(datastore, &ontology);
         // `load_file`'s signature is depended on by ~50 call sites across the
         // repo, so widening its return type to carry a skip report is out of
@@ -153,10 +164,44 @@ pub fn load_file(datastore: &mut Datastore, path: &Path) -> Result<(), String> {
     }
 }
 
-/// Read and parse a `.omn` (OWL 2 Manchester Syntax) or `.ofn` (OWL 2
-/// Functional-Style Syntax) file into an [`owl_ontology::Ontology`]. `ext`
-/// must be `"omn"` or `"ofn"`; both parsers produce the same `Ontology` type,
-/// so callers can treat either source uniformly once parsed.
+/// Determine which (if any) frame-based/XML OWL parser should handle `path`,
+/// returning a normalized extension tag (`"omn"`, `"ofn"`, or `"owx"`) for
+/// [`parse_frame_ontology_file`], or `None` for RDF-native extensions that
+/// `load_file`'s Turtle/TriG/N-Triples/N-Quads branches handle instead.
+///
+/// `.owl` is content-sniffed via [`owl_xml_parser::looks_like_owl_xml`]
+/// rather than trusted outright: this repository's own test fixtures
+/// (`tests/testdata/equality.owl` and friends) are Turtle-serialized
+/// ontologies using the `.owl` extension, so routing every `.owl` file to
+/// `owl_xml_parser` unconditionally would break them. A `.owl` file is only
+/// treated as OWL/XML (normalized to `"owx"`, since both parse identically
+/// once resolved) when its root XML element is literally `<Ontology>`. See
+/// [#609](https://github.com/daghovland/rdf-datalog/issues/609).
+fn frame_ontology_ext(path: &Path) -> Result<Option<&'static str>, String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext {
+        "omn" => Ok(Some("omn")),
+        "ofn" => Ok(Some("ofn")),
+        "owx" => Ok(Some("owx")),
+        "owl" => {
+            let src = std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
+            Ok(if owl_xml_parser::looks_like_owl_xml(&src) {
+                Some("owx")
+            } else {
+                None
+            })
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Read and parse a `.omn` (OWL 2 Manchester Syntax), `.ofn` (OWL 2
+/// Functional-Style Syntax), or `.owx`/`.owl` (OWL 2 XML Serialization) file
+/// into an [`owl_ontology::Ontology`]. `ext` must be `"omn"`, `"ofn"`, or
+/// `"owx"` (as returned by [`frame_ontology_ext`]); all three parsers
+/// produce the same `Ontology` type, so callers can treat any source
+/// uniformly once parsed.
 fn parse_frame_ontology_file(ext: &str, path: &Path) -> Result<owl_ontology::Ontology, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
@@ -166,6 +211,13 @@ fn parse_frame_ontology_file(ext: &str, path: &Path) -> Result<owl_ontology::Ont
         "ofn" => owl_functional_parser::parse(&src).map_err(|e| {
             format!(
                 "OWL 2 Functional-Style Syntax parse error in {}: {}",
+                path.display(),
+                e
+            )
+        }),
+        "owx" => owl_xml_parser::parse(&src).map_err(|e| {
+            format!(
+                "OWL 2 XML Serialization parse error in {}: {}",
                 path.display(),
                 e
             )
@@ -181,22 +233,24 @@ fn parse_frame_ontology_file(ext: &str, path: &Path) -> Result<owl_ontology::Ont
 /// Ontology triples are loaded into the same datastore as the data, then the
 /// full RDF→OWL→Datalog→materialise pipeline is executed.
 ///
-/// ## `.omn`/`.ofn` (Manchester / Functional-Style Syntax) paths
+/// ## `.omn`/`.ofn`/`.owx`/`.owl` (Manchester / Functional-Style / OWL/XML) paths
 ///
 /// Unlike [`load_file`] (which only materialises such a file's ABox),
-/// `apply_ontologies` special-cases `.omn` and `.ofn` paths so their TBox is
-/// actually reasoned over: each is parsed once, its ABox is materialised via
+/// `apply_ontologies` special-cases these extensions ([`frame_ontology_ext`]
+/// decides which, content-sniffing `.owl`) so their TBox is actually
+/// reasoned over: each is parsed once, its ABox is materialised via
 /// [`owl2rl2datalog::assert_abox`], and its TBox is compiled to rules via
 /// [`owl2datalog`] — accumulated alongside the rules compiled from every
 /// RDF-native ontology file (Turtle/RDF-XML/JSON-LD, extracted via
 /// [`rdf2owl`]) and evaluated together in one batch, after all paths have
-/// been processed. This ordering matters: a frame-based/s-expression TBox
-/// axiom never becomes an RDF triple (that's [#177](https://github.com/daghovland/rdf-datalog/issues/177),
+/// been processed. This ordering matters: a frame-based/s-expression/XML
+/// TBox axiom never becomes an RDF triple (that's [#177](https://github.com/daghovland/rdf-datalog/issues/177),
 /// not yet done), so it can never be recovered from `datastore` by `rdf2owl`
 /// after the fact — it must be compiled to rules at parse time or it is lost
 /// entirely. See [#161](https://github.com/daghovland/rdf-datalog/issues/161)
-/// (`.omn`) and [#633](https://github.com/daghovland/rdf-datalog/issues/633)
-/// (`.ofn`).
+/// (`.omn`), [#633](https://github.com/daghovland/rdf-datalog/issues/633)
+/// (`.ofn`), and [#609](https://github.com/daghovland/rdf-datalog/issues/609)
+/// (`.owx`/`.owl`).
 ///
 /// Returns reasoning statistics (axiom count, rule count, triple delta) —
 /// counts include both the Manchester and RDF-native ontology sources.
@@ -273,9 +327,8 @@ pub fn compile_ontology_rules(
     let mut abox_skipped = Vec::new();
 
     for path in paths {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext == "omn" || ext == "ofn" {
-            let ontology = parse_frame_ontology_file(ext, path)?;
+        if let Some(frame_ext) = frame_ontology_ext(path)? {
+            let ontology = parse_frame_ontology_file(frame_ext, path)?;
             let report = assert_abox(datastore, &ontology);
             abox_skipped.extend(report.skipped);
             frame_ontology_axiom_count += ontology.axioms.len();
@@ -966,5 +1019,127 @@ Ontology(
         );
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // ── `.owx`/`.owl` (OWL 2 XML Serialization) wiring, see #609 ────────────
+    //
+    // `owl_xml_parser` does not yet parse ABox assertion axioms (#608 is
+    // open), so unlike the `.ofn` fixture above there is no `ClassAssertion`
+    // here — only a TBox (`Dog SubClassOf Animal`). The ABox fact (`fido a
+    // Dog`) is asserted separately, directly into the datastore, so these
+    // tests can still exercise "does apply_ontologies's compiled TBox rule
+    // actually fire" without depending on #608.
+
+    const ANIMALS_OWX: &str = r#"<?xml version="1.0"?>
+<Ontology xmlns="http://www.w3.org/2002/07/owl#" ontologyIRI="http://example.org/animals">
+    <Declaration><Class IRI="http://example.org/Animal"/></Declaration>
+    <Declaration><Class IRI="http://example.org/Dog"/></Declaration>
+    <SubClassOf>
+        <Class IRI="http://example.org/Dog"/>
+        <Class IRI="http://example.org/Animal"/>
+    </SubClassOf>
+</Ontology>
+"#;
+
+    fn write_owx_fixture(dir: &std::path::Path, contents: &str) -> PathBuf {
+        let p = dir.join("animals.owx");
+        std::fs::write(&p, contents).expect("write fixture");
+        p
+    }
+
+    fn write_owl_fixture(dir: &std::path::Path, contents: &str) -> PathBuf {
+        let p = dir.join("animals.owl");
+        std::fs::write(&p, contents).expect("write fixture");
+        p
+    }
+
+    /// Insert `ex:fido a ex:Dog` directly into `ds`, bypassing any ontology
+    /// parser — standing in for an ABox that (until #608) `.owx`/`.owl`
+    /// cannot supply itself.
+    fn assert_fido_is_dog(ds: &mut Datastore) {
+        turtle::parse_turtle(
+            ds,
+            "@prefix ex: <http://example.org/> .\nex:fido a ex:Dog .\n".as_bytes(),
+        )
+        .expect("insert ABox fact");
+    }
+
+    #[test]
+    fn load_file_owx_succeeds_on_tbox_only_ontology() {
+        let tmp =
+            std::env::temp_dir().join(format!("dagalog_owx_load_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_owx_fixture(&tmp, ANIMALS_OWX);
+
+        let mut ds = Datastore::new(1_000);
+        // Before #609, `.owx` fell through to the default Turtle branch and
+        // would fail to parse this XML document at all.
+        load_file(&mut ds, &path).expect("should load animals.owx");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_ontologies_owx_reasons_over_tbox() {
+        let tmp =
+            std::env::temp_dir().join(format!("dagalog_owx_apply_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_owx_fixture(&tmp, ANIMALS_OWX);
+
+        let mut ds = Datastore::new(1_000);
+        assert_fido_is_dog(&mut ds);
+        let stats = apply_ontologies(&mut ds, &[path]).expect("should apply .owx ontology");
+        assert!(stats.axiom_count > 0);
+        assert!(stats.rule_count > 0);
+        assert!(
+            fido_is_animal(&ds),
+            "apply_ontologies must reason over the .owx TBox so fido is inferred as an Animal"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn apply_ontologies_owl_sniffed_as_owl_xml_reasons_over_tbox() {
+        // Same fixture content as the `.owx` test above, but saved with the
+        // ambiguous `.owl` extension: content-sniffing must still route it
+        // to owl_xml_parser.
+        let tmp = std::env::temp_dir().join(format!(
+            "dagalog_owl_sniff_apply_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let path = write_owl_fixture(&tmp, ANIMALS_OWX);
+
+        let mut ds = Datastore::new(1_000);
+        assert_fido_is_dog(&mut ds);
+        let stats = apply_ontologies(&mut ds, &[path])
+            .expect("should sniff .owl as OWL/XML and apply it");
+        assert!(stats.axiom_count > 0);
+        assert!(stats.rule_count > 0);
+        assert!(
+            fido_is_animal(&ds),
+            "apply_ontologies must reason over the sniffed .owl (OWL/XML) TBox"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Regression coverage for the `.owl` ambiguity itself
+    /// ([#609](https://github.com/daghovland/rdf-datalog/issues/609)):
+    /// `tests/testdata/equality.owl` is a real, pre-existing Turtle-syntax
+    /// fixture using the `.owl` extension. Content-sniffing must fall
+    /// through to the ordinary Turtle loader for it, exactly as before this
+    /// change — the new `.owx`/`.owl` OWL/XML routing must never swallow it.
+    #[test]
+    fn load_file_turtle_syntax_owl_fixture_still_loads_as_turtle() {
+        let mut ds = Datastore::new(10_000);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata/equality.owl");
+        load_file(&mut ds, &path).expect("equality.owl (Turtle) should still load");
+        assert!(
+            ds.named_graphs.quad_count > 0,
+            "equality.owl should have loaded some triples"
+        );
     }
 }
