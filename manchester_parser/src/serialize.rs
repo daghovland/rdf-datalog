@@ -1021,9 +1021,78 @@ fn fmt_obj_prop(p: &ObjectPropertyExpression) -> Option<String> {
 fn fmt_data_range(dr: &DataRange) -> Option<String> {
     match dr {
         DataRange::NamedDataRange(iri) => Some(fmt_iri(iri)),
-        _ => {
-            log_skip("compound data range (#157: and/or/not/{lit,...}/facets)");
-            None
+        DataRange::DataIntersectionOf(items) => join_data_range(items, " and ", 2),
+        DataRange::DataUnionOf(items) => join_data_range(items, " or ", 2),
+        DataRange::DataComplementOf(inner) => Some(format!("not {}", fmt_data_range(inner)?)),
+        DataRange::DataOneOf(vals) => {
+            let items: Option<Vec<String>> = vals.iter().map(fmt_literal).collect();
+            Some(format!("{{ {} }}", items?.join(", ")))
+        }
+        DataRange::DatatypeRestriction(dt, facets) => {
+            let items: Option<Vec<String>> = facets
+                .iter()
+                .map(|(facet, value)| {
+                    Some(format!("{} {}", fmt_facet(facet)?, fmt_literal(value)?))
+                })
+                .collect();
+            Some(format!("{}[{}]", fmt_iri(dt), items?.join(", ")))
         }
     }
+}
+
+/// `and`/`or` join of a `DataIntersectionOf`/`DataUnionOf` list. Each member
+/// is wrapped in parentheses when it is itself a compound (non-`NamedDataRange`)
+/// data range, since Manchester Syntax's `dataConjunction`/`dataRange`
+/// precedence ladder would otherwise flatten nested `and`/`or`/`not` into
+/// the wrong grouping on re-parse. Mirrors `owl_functional_parser`'s
+/// `join_data_range`, but with infix keywords instead of a prefix function
+/// name, and `min_len` skips (rather than erroring on) a parser-unreachable
+/// 0/1-element list -- lists this serializer itself ever produces have at
+/// least 2 elements, but the check stays defensive against future producers.
+fn join_data_range(items: &[DataRange], sep: &str, min_len: usize) -> Option<String> {
+    if items.len() < min_len {
+        log_skip("data range intersection/union with fewer than 2 members");
+        return None;
+    }
+    let parts: Option<Vec<String>> = items
+        .iter()
+        .map(|dr| {
+            let s = fmt_data_range(dr)?;
+            Some(match dr {
+                DataRange::NamedDataRange(_) | DataRange::DatatypeRestriction(_, _) => s,
+                _ => format!("({s})"),
+            })
+        })
+        .collect();
+    Some(parts?.join(sep))
+}
+
+/// The inverse of `data_range.rs::facet`: maps a canonical facet IRI back to
+/// its Manchester Syntax `constrainingFacet` token. Any IRI not in the
+/// fixed nine-member facet vocabulary is not representable (this parser
+/// only ever produces the nine canonical IRIs, so this is unreachable in
+/// practice, but defensive against a hand-built `Ontology`).
+fn fmt_facet(iri: &FullIri) -> Option<&'static str> {
+    let s = iri.0.0.as_str();
+    if let Some(local) = s.strip_prefix(ingress::XSD) {
+        return match local {
+            "maxInclusive" => Some("<="),
+            "maxExclusive" => Some("<"),
+            "minInclusive" => Some(">="),
+            "minExclusive" => Some(">"),
+            "length" => Some("length"),
+            "minLength" => Some("minLength"),
+            "maxLength" => Some("maxLength"),
+            "pattern" => Some("pattern"),
+            _ => {
+                log_skip("datatype restriction facet with an unrecognized xsd: facet IRI");
+                None
+            }
+        };
+    }
+    if s.strip_prefix(ingress::RDF) == Some("langRange") {
+        return Some("langRange");
+    }
+    log_skip("datatype restriction facet with an unrecognized facet IRI");
+    None
 }

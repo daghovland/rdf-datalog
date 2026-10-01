@@ -217,6 +217,50 @@ fn roundtrips_object_one_of() {
     );
 }
 
+// ── Compound data ranges (#501) ──────────────────────────────────────────
+
+#[test]
+fn roundtrips_data_range_intersection_union_complement() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasRating
+            Range: xsd:integer and xsd:positiveInteger
+        DataProperty: :hasId
+            Range: xsd:integer or xsd:string
+        DataProperty: :hasFlag
+            Range: not xsd:boolean
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_data_one_of() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasSize
+            Range: { "S", "M", "L" }
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_datatype_restriction_facets() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasAge
+            Range: xsd:integer[>= 0, < 150]
+        "#,
+    );
+}
+
 // ── Phase 4: ObjectProperty: / DataProperty: frames ──────────────────────
 
 #[test]
