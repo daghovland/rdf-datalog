@@ -17,30 +17,17 @@ Contact: hovlanddag@gmail.com
 //!
 //! `HasKey` -> `owl_ontology::Axiom::AxiomHasKey`.
 //!
-//! Axiom-level `<Annotation>` children on any of these (as opposed to
-//! `<Declaration>`'s own leading annotations, handled by #605) are out of
-//! scope for this issue -- deferred to
-//! [#608](https://github.com/daghovland/rdf-datalog/issues/608), matching
-//! `axiom.rs`'s (#606) precedent for class axioms. Encountering one
-//! produces a clear error rather than being silently dropped.
+//! Axiom-level `<Annotation>` children (the leading `axiomAnnotations` every
+//! `Axiom` alternative carries per the spec) are parsed via
+//! `annotation::split_axiom_annotations` (#608), matching `axiom.rs`'s
+//! (#606) precedent for class axioms.
 
+use crate::annotation::split_axiom_annotations;
+use crate::axiom::element_children;
 use crate::class_expr::class_expression;
 use crate::iri::Prefixes;
 use crate::property_expr::{data_property_expression, object_property_expression};
 use owl_ontology::{Axiom, DataPropertyAxiom, ObjectPropertyAxiom, SubPropertyExpression};
-
-fn element_children<'a>(node: roxmltree::Node<'a, 'a>) -> Vec<roxmltree::Node<'a, 'a>> {
-    node.children().filter(|n| n.is_element()).collect()
-}
-
-fn reject_axiom_level_annotation(tag: &str, children: &[roxmltree::Node]) -> Result<(), String> {
-    if children.iter().any(|n| n.tag_name().name() == "Annotation") {
-        return Err(format!(
-            "<{tag}> axiom-level <Annotation> is not yet supported (see #608)"
-        ));
-    }
-    Ok(())
-}
 
 /// Parse a `SubObjectPropertyOf` LHS: either a bare `ObjectPropertyExpression`
 /// or an `<ObjectPropertyChain>` of two or more.
@@ -74,8 +61,8 @@ pub(crate) fn parse_object_property_axiom(
     prefixes: &Prefixes,
 ) -> Result<Axiom, String> {
     let tag = node.tag_name().name();
-    let children = element_children(node);
-    reject_axiom_level_annotation(tag, &children)?;
+    let all_children = element_children(node);
+    let (anns, children) = split_axiom_annotations(&all_children, prefixes)?;
 
     let unary = |build: fn(
         Vec<owl_ontology::Annotation>,
@@ -89,7 +76,7 @@ pub(crate) fn parse_object_property_axiom(
             ));
         }
         let p = object_property_expression(children[0], prefixes)?;
-        Ok(Axiom::AxiomObjectPropertyAxiom(build(Vec::new(), p)))
+        Ok(Axiom::AxiomObjectPropertyAxiom(build(anns.clone(), p)))
     };
 
     match tag {
@@ -103,7 +90,7 @@ pub(crate) fn parse_object_property_axiom(
             let sub = sub_object_property_expression(children[0], prefixes)?;
             let sup = object_property_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::SubObjectPropertyOf(Vec::new(), sub, sup),
+                ObjectPropertyAxiom::SubObjectPropertyOf(anns, sub, sup),
             ))
         }
         "EquivalentObjectProperties" => {
@@ -118,7 +105,7 @@ pub(crate) fn parse_object_property_axiom(
                 .map(|c| object_property_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::EquivalentObjectProperties(Vec::new(), ps),
+                ObjectPropertyAxiom::EquivalentObjectProperties(anns, ps),
             ))
         }
         "DisjointObjectProperties" => {
@@ -133,7 +120,7 @@ pub(crate) fn parse_object_property_axiom(
                 .map(|c| object_property_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::DisjointObjectProperties(Vec::new(), ps),
+                ObjectPropertyAxiom::DisjointObjectProperties(anns, ps),
             ))
         }
         "ObjectPropertyDomain" => {
@@ -146,7 +133,7 @@ pub(crate) fn parse_object_property_axiom(
             let p = object_property_expression(children[0], prefixes)?;
             let c = class_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::ObjectPropertyDomain(Vec::new(), p, c),
+                ObjectPropertyAxiom::ObjectPropertyDomain(anns, p, c),
             ))
         }
         "ObjectPropertyRange" => {
@@ -159,7 +146,7 @@ pub(crate) fn parse_object_property_axiom(
             let p = object_property_expression(children[0], prefixes)?;
             let c = class_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::ObjectPropertyRange(Vec::new(), p, c),
+                ObjectPropertyAxiom::ObjectPropertyRange(anns, p, c),
             ))
         }
         "InverseObjectProperties" => {
@@ -172,7 +159,7 @@ pub(crate) fn parse_object_property_axiom(
             let p1 = object_property_expression(children[0], prefixes)?;
             let p2 = object_property_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomObjectPropertyAxiom(
-                ObjectPropertyAxiom::InverseObjectProperties(Vec::new(), p1, p2),
+                ObjectPropertyAxiom::InverseObjectProperties(anns, p1, p2),
             ))
         }
         "FunctionalObjectProperty" => unary(ObjectPropertyAxiom::FunctionalObjectProperty),
@@ -195,8 +182,8 @@ pub(crate) fn parse_data_property_axiom(
     prefixes: &Prefixes,
 ) -> Result<Axiom, String> {
     let tag = node.tag_name().name();
-    let children = element_children(node);
-    reject_axiom_level_annotation(tag, &children)?;
+    let all_children = element_children(node);
+    let (anns, children) = split_axiom_annotations(&all_children, prefixes)?;
 
     match tag {
         "SubDataPropertyOf" => {
@@ -209,7 +196,7 @@ pub(crate) fn parse_data_property_axiom(
             let sub = data_property_expression(children[0], prefixes)?;
             let sup = data_property_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::SubDataPropertyOf(Vec::new(), sub, sup),
+                DataPropertyAxiom::SubDataPropertyOf(anns, sub, sup),
             ))
         }
         "EquivalentDataProperties" => {
@@ -224,7 +211,7 @@ pub(crate) fn parse_data_property_axiom(
                 .map(|c| data_property_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::EquivalentDataProperties(Vec::new(), ps),
+                DataPropertyAxiom::EquivalentDataProperties(anns, ps),
             ))
         }
         "DisjointDataProperties" => {
@@ -239,7 +226,7 @@ pub(crate) fn parse_data_property_axiom(
                 .map(|c| data_property_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::DisjointDataProperties(Vec::new(), ps),
+                DataPropertyAxiom::DisjointDataProperties(anns, ps),
             ))
         }
         "DataPropertyDomain" => {
@@ -252,7 +239,7 @@ pub(crate) fn parse_data_property_axiom(
             let p = data_property_expression(children[0], prefixes)?;
             let c = class_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::DataPropertyDomain(Vec::new(), p, c),
+                DataPropertyAxiom::DataPropertyDomain(anns, p, c),
             ))
         }
         "DataPropertyRange" => {
@@ -265,7 +252,7 @@ pub(crate) fn parse_data_property_axiom(
             let p = data_property_expression(children[0], prefixes)?;
             let dr = crate::data_range::data_range(children[1], prefixes)?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::DataPropertyRange(Vec::new(), p, dr),
+                DataPropertyAxiom::DataPropertyRange(anns, p, dr),
             ))
         }
         "FunctionalDataProperty" => {
@@ -277,7 +264,7 @@ pub(crate) fn parse_data_property_axiom(
             }
             let p = data_property_expression(children[0], prefixes)?;
             Ok(Axiom::AxiomDataPropertyAxiom(
-                DataPropertyAxiom::FunctionalDataProperty(Vec::new(), p),
+                DataPropertyAxiom::FunctionalDataProperty(anns, p),
             ))
         }
         other => Err(format!("<{other}> is not a valid DataPropertyAxiom")),
@@ -291,8 +278,8 @@ pub(crate) fn parse_data_property_axiom(
 /// tag name, since OWL/XML has no ambiguity here (unlike Functional-Style
 /// Syntax's two parenthesized groups).
 pub(crate) fn parse_has_key(node: roxmltree::Node, prefixes: &Prefixes) -> Result<Axiom, String> {
-    let children = element_children(node);
-    reject_axiom_level_annotation("HasKey", &children)?;
+    let all_children = element_children(node);
+    let (anns, children) = split_axiom_annotations(&all_children, prefixes)?;
 
     let class_node = children
         .first()
@@ -318,7 +305,7 @@ pub(crate) fn parse_has_key(node: roxmltree::Node, prefixes: &Prefixes) -> Resul
     }
 
     Ok(Axiom::AxiomHasKey(
-        Vec::new(),
+        anns,
         class,
         object_properties,
         data_properties,
@@ -410,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_axiom_level_annotation() {
+    fn parses_axiom_level_annotation() {
         let d = doc(r#"<ObjectPropertyDomain>
                  <Annotation>
                    <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
@@ -419,7 +406,16 @@ mod tests {
                  <ObjectProperty IRI="http://example.org/hasTopping"/>
                  <Class IRI="http://example.org/Pizza"/>
                </ObjectPropertyDomain>"#);
-        let err = parse_object_property_axiom(d.root_element(), &Prefixes::new()).unwrap_err();
-        assert!(err.contains("608"));
+        let axiom = parse_object_property_axiom(d.root_element(), &Prefixes::new()).unwrap();
+        match axiom {
+            Axiom::AxiomObjectPropertyAxiom(ObjectPropertyAxiom::ObjectPropertyDomain(
+                anns,
+                _,
+                _,
+            )) => {
+                assert_eq!(anns.len(), 1);
+            }
+            other => panic!("expected ObjectPropertyDomain, got {other:?}"),
+        }
     }
 }

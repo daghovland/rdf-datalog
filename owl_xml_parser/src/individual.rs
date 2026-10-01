@@ -8,24 +8,25 @@ Contact: hovlanddag@gmail.com
 
 //! `Individual ::= NamedIndividual | AnonymousIndividual`
 //!
-//! Only `<NamedIndividual>` is implemented here -- `<AnonymousIndividual
-//! nodeID="...">` needs a per-document label->id counter (matching
-//! `manchester_parser`/`owl_functional_parser`'s `ParserContext::
-//! anon_individual_for_label`), which is out of scope until
-//! [#608](https://github.com/daghovland/rdf-datalog/issues/608) introduces
-//! ABox/individual handling in full (see `docs/plans/OWL_XML_PLAN.md`'s
-//! "#606" section).
+//! `<AnonymousIndividual nodeID="...">` resolves through
+//! [`Prefixes::anon_individual_for_label`], assigning a stable per-document
+//! numeric id the same `nodeID` always maps back to (#608).
 
 use crate::iri::{Prefixes, resolve_iri};
 use owl_ontology::Individual;
 
-/// Parse a `<NamedIndividual>` element into an [`Individual`]. Errors with a
-/// clear pointer to #608 on `<AnonymousIndividual>`.
+/// Parse a `<NamedIndividual>`/`<AnonymousIndividual>` element into an
+/// [`Individual`].
 pub(crate) fn individual(node: roxmltree::Node, prefixes: &Prefixes) -> Result<Individual, String> {
     match node.tag_name().name() {
         "NamedIndividual" => Ok(Individual::NamedIndividual(resolve_iri(node, prefixes)?)),
         "AnonymousIndividual" => {
-            Err("<AnonymousIndividual> is not yet supported (see #608)".to_string())
+            let node_id = node
+                .attribute("nodeID")
+                .ok_or_else(|| "<AnonymousIndividual> has no nodeID attribute".to_string())?;
+            Ok(Individual::AnonymousIndividual(
+                prefixes.anon_individual_for_label(node_id),
+            ))
         }
         other => Err(format!("<{other}> is not a valid Individual")),
     }
@@ -52,9 +53,35 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_anonymous_individual_with_608_reference() {
+    fn parses_anonymous_individual() {
         let d = doc(r#"<AnonymousIndividual nodeID="x"/>"#);
-        let err = individual(d.root_element(), &Prefixes::new()).unwrap_err();
-        assert!(err.contains("608"));
+        let i = individual(d.root_element(), &Prefixes::new()).unwrap();
+        assert!(matches!(i, Individual::AnonymousIndividual(_)));
+    }
+
+    #[test]
+    fn same_node_id_is_the_same_anonymous_individual() {
+        let prefixes = Prefixes::new();
+        let d1 = doc(r#"<AnonymousIndividual nodeID="x"/>"#);
+        let d2 = doc(r#"<AnonymousIndividual nodeID="x"/>"#);
+        let i1 = individual(d1.root_element(), &prefixes).unwrap();
+        let i2 = individual(d2.root_element(), &prefixes).unwrap();
+        assert_eq!(i1, i2);
+    }
+
+    #[test]
+    fn different_node_ids_are_different_anonymous_individuals() {
+        let prefixes = Prefixes::new();
+        let d1 = doc(r#"<AnonymousIndividual nodeID="x"/>"#);
+        let d2 = doc(r#"<AnonymousIndividual nodeID="y"/>"#);
+        let i1 = individual(d1.root_element(), &prefixes).unwrap();
+        let i2 = individual(d2.root_element(), &prefixes).unwrap();
+        assert_ne!(i1, i2);
+    }
+
+    #[test]
+    fn errors_on_missing_node_id() {
+        let d = doc(r#"<AnonymousIndividual/>"#);
+        assert!(individual(d.root_element(), &Prefixes::new()).is_err());
     }
 }
