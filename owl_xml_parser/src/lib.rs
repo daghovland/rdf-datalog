@@ -12,13 +12,15 @@ Contact: hovlanddag@gmail.com
 //! (`.owx`/`.owl`) documents into an [`owl_ontology::Ontology`].
 //!
 //! See `docs/plans/OWL_XML_PLAN.md` for the grammar subset this parser
-//! covers, the module layout, and what's deferred (tracked in
-//! [#606](https://github.com/daghovland/rdf-datalog/issues/606)-[#609](https://github.com/daghovland/rdf-datalog/issues/609)).
-//! Issue [#605](https://github.com/daghovland/rdf-datalog/issues/605) tracks
-//! this issue's own scope: the `<Ontology>` header, `<Prefix>`, `<Import>`,
-//! ontology-level `<Annotation>`, and `<Declaration>`.
+//! covers and the module layout. CLI/notebook wiring is tracked in
+//! [#609](https://github.com/daghovland/rdf-datalog/issues/609);
+//! `<DatatypeDefinition>` in
+//! [#694](https://github.com/daghovland/rdf-datalog/issues/694); and
+//! meta-annotations (annotations on annotations) in
+//! [#695](https://github.com/daghovland/rdf-datalog/issues/695).
 
 mod annotation;
+mod assertion;
 mod axiom;
 mod class_expr;
 mod data_range;
@@ -33,13 +35,15 @@ use owl_ontology::Ontology;
 /// Parse an OWL/XML document (`.owx`/`.owl`) and produce an
 /// [`owl_ontology::Ontology`].
 ///
-/// Only the subset described in `docs/plans/OWL_XML_PLAN.md` is supported:
-/// the ontology header, `<Prefix>`/`<Import>` declarations, ontology-level
-/// `<Annotation>`s, `<Declaration>`, class axioms, and object-/data-property
-/// axioms (including `<HasKey>`). ABox (individual) axioms and
-/// non-`Declaration` axiom-level `<Annotation>` children are not yet
-/// recognized and will cause a parse error if present — see
-/// [#608](https://github.com/daghovland/rdf-datalog/issues/608).
+/// Covers the full subset described in `docs/plans/OWL_XML_PLAN.md`: the
+/// ontology header, `<Prefix>`/`<Import>` declarations, ontology-level
+/// `<Annotation>`s, `<Declaration>`, class axioms, object-/data-property
+/// axioms (including `<HasKey>`), ABox (individual) axioms, the remaining
+/// annotation axioms, `<AnonymousIndividual>` fillers, and axiom-level
+/// `<Annotation>` children on every axiom kind. `<DatatypeDefinition>` is
+/// not yet recognized (see
+/// [#694](https://github.com/daghovland/rdf-datalog/issues/694)) and will
+/// cause a parse error if present.
 pub fn parse(input: &str) -> Result<Ontology, String> {
     let doc = roxmltree::Document::parse(input).map_err(|e| format!("XML parse error: {e}"))?;
     let root = doc.root_element();
@@ -109,9 +113,26 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
                 let axiom = property_axiom::parse_has_key(child, &prefixes)?;
                 axioms.push(axiom);
             }
+            "ClassAssertion"
+            | "ObjectPropertyAssertion"
+            | "NegativeObjectPropertyAssertion"
+            | "DataPropertyAssertion"
+            | "NegativeDataPropertyAssertion"
+            | "SameIndividual"
+            | "DifferentIndividuals" => {
+                let axiom = assertion::parse_assertion(child, &prefixes)?;
+                axioms.push(axiom);
+            }
+            "AnnotationAssertion"
+            | "SubAnnotationPropertyOf"
+            | "AnnotationPropertyDomain"
+            | "AnnotationPropertyRange" => {
+                let axiom = annotation::parse_annotation_axiom(child, &prefixes)?;
+                axioms.push(axiom);
+            }
             other => {
                 return Err(format!(
-                    "unsupported OWL/XML axiom element <{other}> (see #608)"
+                    "unsupported OWL/XML axiom element <{other}> (see #694)"
                 ));
             }
         }
