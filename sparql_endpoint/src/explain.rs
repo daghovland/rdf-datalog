@@ -23,7 +23,7 @@ use ingress::NetworkPolicy;
 use serde_json::json;
 use sparql_parser::execute::QueryResult;
 use sparql_parser::explain::{ExplainPlan, PlanNode, explain_query, query_type_label};
-use sparql_parser::{ExecError, ast::Query, execute_with_base};
+use sparql_parser::{ExecError, ProfileNode, ast::Query, execute_with_profile};
 use std::time::{Duration, Instant};
 
 /// True iff the `explain` query parameter requests EXPLAIN output.
@@ -56,11 +56,19 @@ pub(crate) fn explain_query_response(
     let plan = explain_query(query, store);
     let query_type = query_type_label(query);
 
+    // `execute_with_profile` (issue #572) wraps `execute_with_base` and
+    // additionally collects a runtime per-operator timing tree — see
+    // `sparql_parser::profile`'s module doc. `totalTimeMs` still measures
+    // the same wall-clock span #537 always has (unchanged: one `Instant`
+    // pair around the whole execution); profiling overhead (one
+    // thread-local check per operator, `Instant::now()` only when active)
+    // is included in it, same as before.
     let start = Instant::now();
-    let result = execute_with_base(query, store, network, base, timeout);
+    let (result, profile) = execute_with_profile(query, store, network, base, timeout);
     let total_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     let plan_json = plan_to_json(&plan);
+    let profile_json = profile_to_json(&profile);
 
     match result {
         Ok(query_result) => {
@@ -68,6 +76,7 @@ pub(crate) fn explain_query_response(
                 "queryType": query_type,
                 "totalTimeMs": total_time_ms,
                 "plan": plan_json,
+                "profile": profile_json,
             });
             match query_result {
                 QueryResult::Select(select_result) => {
@@ -92,6 +101,7 @@ pub(crate) fn explain_query_response(
                 "queryType": query_type,
                 "totalTimeMs": total_time_ms,
                 "plan": plan_json,
+                "profile": profile_json,
                 "error": err.to_string(),
             });
             (status, axum::Json(body)).into_response()
@@ -140,4 +150,22 @@ fn node_to_json(node: &PlanNode) -> serde_json::Value {
         }
         PlanNode::Service { detail } => json!({"kind": "Service", "detail": detail}),
     }
+}
+
+/// Serialize the runtime profile tree (issue #572) — a separate array from
+/// `"plan"`'s, see `sparql_parser::profile`'s module doc for why.
+fn profile_to_json(profile: &[ProfileNode]) -> serde_json::Value {
+    serde_json::Value::Array(profile.iter().map(profile_node_to_json).collect())
+}
+
+fn profile_node_to_json(node: &ProfileNode) -> serde_json::Value {
+    json!({
+        "kind": node.kind,
+        "label": node.label,
+        "totalTimeMs": node.total_time_ms,
+        "invocations": node.invocations,
+        "rowsIn": node.rows_in,
+        "rowsOut": node.rows_out,
+        "children": profile_to_json(&node.children),
+    })
 }

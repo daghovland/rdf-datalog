@@ -21,12 +21,16 @@ Contact: hovlanddag@gmail.com
 //! index `.len()` lookups `join_ordering::cardinality_and_index` already
 //! performs for real query planning.
 //!
-//! Two things this module deliberately does *not* do, both filed as
-//! follow-ups rather than built here (see the plan doc):
-//! - Per-operator/per-stage timing
-//!   ([#572](https://github.com/daghovland/rdf-datalog/issues/572)) — only
-//!   the caller-measured total wall-clock time is meaningful here, since
-//!   this module never executes anything.
+//! This module never executes anything, so it only ever reports the total
+//! caller-measured wall-clock time, never per-operator timing — actual
+//! per-operator (per-component, per-triple-pattern) timing is collected
+//! separately, from real execution, by [`crate::profile`]
+//! ([#572](https://github.com/daghovland/rdf-datalog/issues/572)) and
+//! surfaced as its own tree, not merged into this module's [`PlanNode`]
+//! tree — see `crate::profile`'s module doc for why.
+//!
+//! One thing this module deliberately does *not* do, filed as a follow-up
+//! rather than built here (see the plan doc):
 //! - A non-empty, conservatively-computed `already_bound` set when
 //!   recursing into a BGP or an `OPTIONAL` body
 //!   ([#573](https://github.com/daghovland/rdf-datalog/issues/573)) — every
@@ -252,7 +256,12 @@ fn explain_component(comp: &QueryComponent, datastore: &Datastore) -> PlanNode {
     }
 }
 
-fn render_triple_pattern(tp: &TriplePattern) -> String {
+/// `pub(crate)` rather than private: reused by `sparql_parser::profile`'s
+/// instrumentation (`bgp.rs`'s per-pattern timing, `components.rs`'s
+/// per-component labels) so a `Pattern`/`PathPattern`/`Graph`/`Service`
+/// profile node's rendered label matches the static plan's wording exactly
+/// — one rendering function, not two that could drift apart.
+pub(crate) fn render_triple_pattern(tp: &TriplePattern) -> String {
     format!(
         "{} {} {}",
         render_term(&tp.subject),
@@ -261,7 +270,7 @@ fn render_triple_pattern(tp: &TriplePattern) -> String {
     )
 }
 
-fn render_term(term: &Term) -> String {
+pub(crate) fn render_term(term: &Term) -> String {
     match term {
         Term::Variable(v) => format!("?{v}"),
         Term::Constant(gel) => gel.to_string(),
