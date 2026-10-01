@@ -96,6 +96,7 @@ pub async fn upload_turtle(
             .named_graphs
             .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
             .map(|q| LogEntry::InsertQuad {
+                dataset: state.dataset_name.clone(),
                 graph: graph_iri.clone(),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),

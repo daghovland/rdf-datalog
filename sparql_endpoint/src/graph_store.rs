@@ -535,10 +535,12 @@ pub async fn gsp_put_inner(
     if let Some(ref changelog) = state.changelog {
         let mut entries = Vec::new();
         entries.push(LogEntry::ClearGraph {
+            dataset: state.dataset_name.clone(),
             graph: graph_iri.clone(),
         });
         for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
             entries.push(LogEntry::InsertQuad {
+                dataset: state.dataset_name.clone(),
                 graph: graph_iri.clone(),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -627,7 +629,7 @@ pub async fn gsp_delete_inner(
 
     if let Some(ref changelog) = state.changelog {
         let mut cl = changelog.lock().await;
-        if let Err(e) = cl.log_clear_graph(graph_iri.as_deref()) {
+        if let Err(e) = cl.log_clear_graph(&state.dataset_name, graph_iri.as_deref()) {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("persistence error: {e}"),
@@ -712,6 +714,7 @@ pub async fn gsp_post_inner(
                 .named_graphs
                 .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
                 .map(|q| LogEntry::InsertQuad {
+                    dataset: state.dataset_name.clone(),
                     graph: None,
                     s: to_repr(tmp.resources.get_graph_element(q.subject)),
                     p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -765,6 +768,7 @@ pub async fn gsp_post_inner(
                 .named_graphs
                 .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
                 .map(|q| LogEntry::InsertQuad {
+                    dataset: state.dataset_name.clone(),
                     graph: Some(iri.clone()),
                     s: to_repr(tmp.resources.get_graph_element(q.subject)),
                     p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -808,6 +812,7 @@ pub async fn gsp_post_inner(
                 .iter()
                 .copied()
                 .map(|q| LogEntry::InsertQuad {
+                    dataset: state.dataset_name.clone(),
                     graph: graph_iri_for(&tmp, q.triple_id),
                     s: to_repr(tmp.resources.get_graph_element(q.subject)),
                     p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -871,6 +876,7 @@ pub async fn gsp_post_inner(
             .named_graphs
             .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
             .map(|q| LogEntry::InsertQuad {
+                dataset: state.dataset_name.clone(),
                 graph: Some(new_iri.clone()),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -975,10 +981,12 @@ pub async fn direct_gsp_put(
 
     if let Some(ref changelog) = state.changelog {
         let mut entries = vec![LogEntry::ClearGraph {
+            dataset: state.dataset_name.clone(),
             graph: Some(graph_iri.clone()),
         }];
         for q in tmp.named_graphs.get_graph(DEFAULT_GRAPH_ELEMENT_ID) {
             entries.push(LogEntry::InsertQuad {
+                dataset: state.dataset_name.clone(),
                 graph: Some(graph_iri.clone()),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),
@@ -1038,7 +1046,7 @@ pub async fn direct_gsp_delete(
 
     if let Some(ref changelog) = state.changelog {
         let mut cl = changelog.lock().await;
-        if let Err(e) = cl.log_clear_graph(Some(&graph_iri)) {
+        if let Err(e) = cl.log_clear_graph(&state.dataset_name, Some(&graph_iri)) {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("persistence error: {e}"),
@@ -1126,6 +1134,7 @@ pub async fn direct_gsp_post(
             .named_graphs
             .get_graph(DEFAULT_GRAPH_ELEMENT_ID)
             .map(|q| LogEntry::InsertQuad {
+                dataset: state.dataset_name.clone(),
                 graph: Some(graph_iri.clone()),
                 s: to_repr(tmp.resources.get_graph_element(q.subject)),
                 p: to_repr(tmp.resources.get_graph_element(q.predicate)),
