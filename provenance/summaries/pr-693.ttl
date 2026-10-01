@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log 9e3b93121c93c971061b4ed0f0f4c34d6166c4b4..HEAD`
+# on branch feat/501-manchester-compound-dataranges).
+
+ghpull:693 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "manchester_parser: compound data ranges (DataIntersectionOf/UnionOf/ComplementOf/OneOf, DatatypeRestriction facets)" ;
+    bl:number 693 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:501 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr693 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:501 ;
+    prov:startedAtTime "2026-10-01T14:16:00Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-01T14:35:13Z"^^xsd:dateTime .
+
+session:pr693Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #501 asked for the remaining Manchester Syntax dataRange grammar beyond a bare named datatype: DataIntersectionOf/DataUnionOf (and/or), DataComplementOf (not), DataOneOf ({lit,...}), and DatatypeRestriction facets (Datatype[facet value,...]), the fifth of six productions split out of umbrella issue #157. data_range.rs was restructured from one flat function into the same four-level precedence ladder class_expr.rs already uses for class expressions (description/conjunction/primary/atomic), reusing owl_ontology::DataRange's existing variants unchanged (added earlier for owl_functional_parser's #180 landing). The nine W3C constrainingFacet tokens (length/minLength/maxLength/pattern/langRange/<=/</>=/>) were mapped to their canonical xsd:/rdf: facet IRIs via a small lookup, read back symmetrically in serialize.rs's new fmt_facet. An advisor review before merge caught a real regression in the first draft: class_expr.rs's data_restriction_tail (some/only/min/max/exactly fillers) called the new full data_range(ctx), but the W3C grammar's filler position is actually dataPrimary, not dataRange -- using the broader parser let a bare `and`/`or` after a filler wrongly extend the data range instead of starting the next class-level conjunct (`hasAge some xsd:integer and hasName some xsd:string` misparsed). Fixed by exposing data_range::data_primary as pub(crate) and switching the five filler call sites to it, with a parenthesized compound range still reachable via dataAtomic's '(' dataRange ')'. The same review caught the serializer's naive fmt_data_range not parenthesizing a compound range under `not` (DataComplementOf(DataUnionOf(...)) emitted as `not a or b`, reparsing as `(not a) or b`); split into fmt_data_primary (valid and/or-list-member or restriction-filler text) and fmt_data_atomic (valid directly after `not`), matching the grammar's own primary/atomic distinction rather than one ad hoc wrapping rule." ;
+    agp:reasoningFor ghpull:693 ;
+    agp:decisionPoint session:pr693Decision ;
+    prov:wasGeneratedBy session:pr693 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr693Decision a agp:Decision ;
+    agp:summaryText "Restriction fillers (some/only/min/max/exactly) parse via the new data_primary function, not the full data_range, matching the W3C grammar's dataPropertyExpression 'some' dataPrimary production exactly; the serializer mirrors this with a fmt_data_primary/fmt_data_atomic split instead of one fmt_data_range doing double duty." ;
+    agp:alternative "An initial draft left the restriction-filler call sites on the full data_range(ctx) (the or-level grammar) since it is a superset of dataPrimary and was simpler to wire up from the existing code. Rejected after advisor review showed it silently misparses a class-level `and`/`or` following a data restriction filler as part of the data range instead of the next class conjunct -- not merely a conformance nicety but an actual parsing bug on realistic input." .
