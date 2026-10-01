@@ -176,6 +176,20 @@ pub fn extract_axiom(
                         }
                     }
                 }
+                // `owl:AllDisjointProperties` is the identical RDF encoding
+                // for both n>2 `DisjointObjectProperties` and n>2
+                // `DisjointDataProperties` (per #513/PR #669) -- the mapping
+                // spec gives no way to tell them apart from the blank-node
+                // structure alone. Disambiguate per-member using each
+                // property's own declared kind, mirroring
+                // `OntologyDeclarations::object_or_data_property`'s existing
+                // pattern (used below for `owl:FunctionalProperty`): only
+                // when *every* member is declared a data property (and none
+                // an object property) is this read back as
+                // `DisjointDataProperties`; an undeclared or mixed member set
+                // defaults to `DisjointObjectProperties`, the pre-existing
+                // behavior. See
+                // https://github.com/daghovland/rdf-datalog/issues/668.
                 o if o == ids.owl_all_disjoint_properties_id => {
                     let members_triples: Vec<Triple> = datastore
                         .get_triples_with_subject_predicate(triple.subject, ids.owl_members_id)
@@ -190,13 +204,30 @@ pub fn extract_axiom(
                                 ids,
                                 mt.obj,
                             )?;
-                            let opes: Vec<ObjectPropertyExpression> = list
-                                .iter()
-                                .map(|&id| decls.object_property_expression(id, res))
-                                .collect();
-                            Some(Axiom::AxiomObjectPropertyAxiom(
-                                ObjectPropertyAxiom::DisjointObjectProperties(axiom_anns, opes),
-                            ))
+                            let all_data_properties = !list.is_empty()
+                                && list
+                                    .iter()
+                                    .all(|id| decls.data_property_expressions.contains_key(id))
+                                && list
+                                    .iter()
+                                    .all(|id| !decls.object_property_expressions.contains_key(id));
+                            if all_data_properties {
+                                let dps: Vec<DataProperty> = list
+                                    .iter()
+                                    .map(|&id| decls.data_property_expression(id, res))
+                                    .collect();
+                                Some(Axiom::AxiomDataPropertyAxiom(
+                                    DataPropertyAxiom::DisjointDataProperties(axiom_anns, dps),
+                                ))
+                            } else {
+                                let opes: Vec<ObjectPropertyExpression> = list
+                                    .iter()
+                                    .map(|&id| decls.object_property_expression(id, res))
+                                    .collect();
+                                Some(Axiom::AxiomObjectPropertyAxiom(
+                                    ObjectPropertyAxiom::DisjointObjectProperties(axiom_anns, opes),
+                                ))
+                            }
                         }
                         _ => {
                             return Err(TranslatorError::MultipleOwlMembers(format!(
@@ -781,6 +812,129 @@ ex:Disj a owl:AllDisjointProperties ;
             matches!(result, Err(TranslatorError::MultipleOwlMembers(_))),
             "expected MultipleOwlMembers error, got {result:?}"
         );
+    }
+
+    // ── owl:AllDisjointProperties object- vs. data-property disambiguation
+    // (#668) ─────────────────────────────────────────────────────────────
+    //
+    // `owl:AllDisjointProperties` is the identical RDF encoding for both n>2
+    // `DisjointObjectProperties` and n>2 `DisjointDataProperties` (per
+    // https://github.com/daghovland/rdf-datalog/issues/513's write side, PR
+    // #669) -- the only available signal on read-back is each member's own
+    // declared property kind.
+
+    #[test]
+    fn all_disjoint_properties_all_data_properties_returns_disjoint_data_properties() {
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:firstName a owl:DatatypeProperty .
+ex:lastName a owl:DatatypeProperty .
+ex:ssn a owl:DatatypeProperty .
+
+ex:Disj a owl:AllDisjointProperties ;
+    owl:members ( ex:firstName ex:lastName ex:ssn ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointProperties",
+        );
+        match &result {
+            Ok(Some(Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DisjointDataProperties(
+                _,
+                props,
+            )))) => {
+                assert_eq!(props.len(), 3, "expected 3 data properties, got {props:?}");
+            }
+            _ => panic!("expected a DisjointDataProperties axiom, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn all_disjoint_properties_undeclared_defaults_to_disjoint_object_properties() {
+        // No rdf:type declarations at all for the members -- ambiguous input,
+        // so read-back falls back to the pre-existing DisjointObjectProperties
+        // behavior (matching `OntologyDeclarations::object_or_data_property`'s
+        // own undeclared-member fallback elsewhere in this file).
+        let ttl = r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex:  <http://example.org/> .
+
+ex:Disj a owl:AllDisjointProperties ;
+    owl:members ( ex:p ex:q ex:r ) .
+"#;
+        let result = extract_type_axiom(
+            ttl,
+            "http://example.org/Disj",
+            "http://www.w3.org/2002/07/owl#AllDisjointProperties",
+        );
+        assert!(
+            matches!(
+                result,
+                Ok(Some(Axiom::AxiomObjectPropertyAxiom(
+                    ObjectPropertyAxiom::DisjointObjectProperties(_, _)
+                )))
+            ),
+            "expected a DisjointObjectProperties axiom (fallback), got {result:?}"
+        );
+    }
+
+    /// Round-trip: write an n-ary `DisjointDataProperties` axiom (with
+    /// explicit `DataPropertyDeclaration`s so the members are unambiguously
+    /// declared data properties, per #668) out via `owl2rl2datalog::owl2rdf`
+    /// (#513's `owl:AllDisjointProperties` blank-node encoding), then read it
+    /// back via `extract_axiom` and confirm it comes back as
+    /// `DisjointDataProperties`, not `DisjointObjectProperties`.
+    #[test]
+    fn disjoint_data_properties_round_trips_through_owl2rdf() {
+        use ingress::{IriReference, OntologyVersion};
+        use owl_ontology::Ontology;
+        use owl2rl2datalog::owl_to_rdf::owl2rdf;
+
+        fn dp(name: &str) -> FullIri {
+            FullIri(IriReference(format!("http://example.org/{name}")))
+        }
+
+        let axioms = vec![
+            Axiom::AxiomDeclaration((vec![], Entity::DataPropertyDeclaration(dp("firstName")))),
+            Axiom::AxiomDeclaration((vec![], Entity::DataPropertyDeclaration(dp("lastName")))),
+            Axiom::AxiomDeclaration((vec![], Entity::DataPropertyDeclaration(dp("ssn")))),
+            Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DisjointDataProperties(
+                vec![],
+                vec![dp("firstName"), dp("lastName"), dp("ssn")],
+            )),
+        ];
+        let ontology = Ontology::new(vec![], OntologyVersion::UnNamedOntology, vec![], axioms);
+
+        let mut ds = Datastore::new(100);
+        let report = owl2rdf(&mut ds, &ontology);
+        assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
+
+        let ids = WellKnownIds::new(&mut ds.resources);
+        let decls = OntologyDeclarations::build(&ds, &ids).unwrap();
+
+        let all_disjoint_properties_type_id = ids.owl_all_disjoint_properties_id;
+        let triple = ds
+            .get_triples_with_predicate(ids.rdf_type_id)
+            .find(|tr| tr.obj == all_disjoint_properties_type_id)
+            .expect("owl2rdf must emit an owl:AllDisjointProperties rdf:type triple");
+
+        let result = extract_axiom(&ds, &ids, &decls, &triple).unwrap();
+        match result {
+            Some(Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DisjointDataProperties(
+                _,
+                props,
+            ))) => {
+                assert_eq!(
+                    props.len(),
+                    3,
+                    "expected 3 data properties round-tripped, got {props:?}"
+                );
+            }
+            other => panic!("expected a DisjointDataProperties axiom, got {other:?}"),
+        }
     }
 
     // ── owl:AllDifferent (n>2 DifferentIndividuals) read-back (#667) ───────

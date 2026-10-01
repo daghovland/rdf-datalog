@@ -1,0 +1,35 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Transcript summary for PR #688 (issue #668), per
+# docs/plans/TRANSCRIPT_SUMMARY_GUIDELINES.md. Timestamps below are real
+# (from `git log 9e3b93121c93c971061b4ed0f0f4c34d6166c4b4..HEAD` on branch
+# feat/668-alldisjointproperties-readback).
+
+ghpull:688 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "rdf_owl_translator: disambiguate owl:AllDisjointProperties readback (object vs. data properties)" ;
+    bl:number 688 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:668 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr688 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:668 ;
+    prov:startedAtTime "2026-09-30T07:34:19Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-09-30T07:55:06Z"^^xsd:dateTime .
+
+session:pr688Summary a agp:TranscriptSummary ;
+    agp:abstractText "Disambiguate owl:AllDisjointProperties readback: object vs. data properties, by each member's declared kind." ;
+    agp:summaryText "Issue #668 was split off #513 (write side, merged as PR #669), which made owl2rl2datalog::owl_to_rdf encode both n>2 DisjointObjectProperties and n>2 DisjointDataProperties to the identical owl:AllDisjointProperties blank-node structure (rdf:type + owl:members rdf:List) -- the W3C mapping spec gives no distinct encoding for the two. rdf_owl_translator::axiom_parser::extract_axiom's owl_all_disjoint_properties_id arm, however, always resolved list members via decls.object_property_expression and produced DisjointObjectProperties unconditionally, so an ontology with an n>2 DisjointDataProperties axiom would silently come back as the wrong axiom kind on a full round trip (Manchester/Functional -> owl2rdf -> Turtle -> rdf2owl), per the #179/#433 round-trip-fidelity pipeline. Checked provenance for axiom_parser.rs first: PR #669 (the write side, confirming owl:AllDisjointProperties really is shared/ambiguous by design, and that #668 was filed as its own direct follow-up) and PR #686 (#667, the just-merged owl:AllDifferent read-back arm) -- #686 was the closest structural template (owl_members/get_rdf_list_elements/MultipleOwlMembers shape, and its TDD pattern of a hand-written-Turtle test pair plus one owl2rdf round-trip test). Rather than reading the raw provenance query output directly (large, mostly boilerplate PR metadata), read the two PRs' merged descriptions and provenance/summaries/*.ttl files, which already distilled the load-bearing facts. The actual fix mirrors an existing pattern already used elsewhere in the same file: OntologyDeclarations::object_or_data_property (used for owl:FunctionalProperty) resolves ambiguous single-property-IRI predicates by checking which of decls.object_property_expressions/data_property_expressions contains the id, defaulting to object property when neither/both match. Generalised that per-member check across the whole owl:members list: only when every member is declared a data property and none is declared an object property does the arm produce DisjointDataProperties; any undeclared or mixed list falls back to the pre-existing DisjointObjectProperties behavior, since the RDF encoding itself carries no other signal to disambiguate on. Followed strict TDD: pushed a minimal WIP PR immediately after writing three #[ignore]d tests (all-data-properties succeeds as DisjointDataProperties, an undeclared/no-typing-triples case falls back to DisjointObjectProperties, and a full round trip through owl2rl2datalog::owl2rdf with explicit DataPropertyDeclaration axioms so the properties are actually declared data properties in the emitted RDF -- necessary because owl_to_rdf's DisjointDataProperties translation itself uses full_iri with no implicit rdf:type emission, so the round-trip test only exercises the disambiguation path if the ontology also declares the properties). All three compiled and were confirmed red (well, ignored -- the code path existed and returned DisjointObjectProperties unconditionally, which would have made the new assertions fail had they not been ignored) before implementing; unignored and green after the ~20-line change. Full quality gate (fmt, clippy --workspace -D warnings, cargo test --workspace) passed; the one sparql-endpoint::query_timeout SIGKILL seen locally is the documented memory-pressure false alarm unrelated to this crate, and CI (all 9 checks) came back green independently." ;
+    agp:reasoningFor ghpull:688 ;
+    prov:wasGeneratedBy session:pr688 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
