@@ -72,7 +72,20 @@ fn data_conjunction<'a>(
 }
 
 /// `dataPrimary ::= [ 'not' ] dataAtomic`
-fn data_primary<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, DataRange> {
+///
+/// `pub(crate)` because `class_expr.rs`'s `data_restriction_tail` uses this
+/// (not the full `data_range`) for `some`/`only`/`min`/`max`/`exactly`
+/// fillers, per the W3C grammar's `dataPropertyExpression 'some' dataPrimary`
+/// (not `dataRange`) — using the full `dataRange` there would wrongly eat a
+/// following `and`/`or` conjunct meant for an enclosing class expression,
+/// e.g. `hasAge some xsd:integer and hasName some xsd:string` (two
+/// `dataPropertyExpression`-headed conjuncts of a *class* `conjunction`)
+/// would otherwise misparse `hasName` as another `dataConjunction` member of
+/// `hasAge`'s filler. A parenthesized compound range is still reachable as a
+/// filler via `data_atomic`'s `'(' dataRange ')'` alternative.
+pub(crate) fn data_primary<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> IResult<&'a str, DataRange> {
     move |input: &'a str| {
         let (input, negated) = nom::combinator::opt(keyword("not")).parse(input)?;
         let (input, inner) = data_atomic(ctx)(input)?;

@@ -14,9 +14,11 @@ Contact: hovlanddag@gmail.com
 //! `owl_ontology::Ontology`.
 //!
 //! See `docs/plans/MANCHESTER_SYNTAX_PLAN.md` for the grammar subset in
-//! scope. Tests marked `#[ignore] // #157` document deferred grammar
-//! (tracked in [#157](https://github.com/daghovland/rdf-datalog/issues/157))
-//! and are expected to keep failing until that follow-up is implemented.
+//! scope. A handful of grammar productions remain deliberately
+//! unimplemented (see that doc's scope table and
+//! [#157](https://github.com/daghovland/rdf-datalog/issues/157)); any test
+//! covering one of those is marked `#[ignore]` with a comment linking the
+//! tracking issue.
 
 use ingress::{IriReference, OntologyVersion, RDF, RDFS, XSD};
 use owl_ontology::{
@@ -976,12 +978,7 @@ fn rule_frame_can_be_interleaved_with_class_frames() {
     ))));
 }
 
-// ── Deferred grammar — tracked in #157 ────────────────────────────────────
-//
-// These document grammar productions this parser deliberately does not
-// support yet (see docs/plans/MANCHESTER_SYNTAX_PLAN.md's scope table).
-// They are `#[ignore]`d and expected to keep failing (return `Err`, or parse
-// but silently drop the construct) until #157 is implemented.
+// ── `ObjectProperty:` property chains (#500, formerly deferred by #157) ───
 
 #[test]
 fn object_property_subpropertychain_of_two() {
@@ -1231,4 +1228,56 @@ fn datatype_facet_restriction_multiple_facets() {
         )
     });
     assert!(found, "expected two facets, minInclusive then maxExclusive");
+}
+
+#[test]
+fn data_restriction_filler_does_not_swallow_a_following_class_conjunct() {
+    // Regression: restriction fillers (`some`/`only`/`min`/`max`/`exactly`)
+    // use `dataPrimary`, not the full `dataRange`, per the W3C grammar
+    // (`dataPropertyExpression 'some' dataPrimary`). Using the full
+    // `dataRange` here would wrongly let a bare `and`/`or` after the filler
+    // extend the *data* range instead of starting the next *class*
+    // conjunct -- i.e. `hasAge some xsd:integer and hasName some
+    // xsd:string` must parse as two class-level restrictions ANDed
+    // together, not as `hasAge some (xsd:integer and hasName)` followed by
+    // a dangling `some xsd:string`.
+    let onto = manchester_parser::parse(&doc(
+        "DataProperty: hasAge\nDataProperty: hasName\nClass: Adult\n    EquivalentTo: hasAge some xsd:integer and hasName some xsd:string",
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(_, exprs)) if exprs.iter().any(|e| matches!(
+                e,
+                ClassExpression::ObjectIntersectionOf(parts) if parts.len() == 2
+                    && matches!(&parts[0], ClassExpression::DataSomeValuesFrom(p, DataRange::NamedDataRange(dt)) if *p == vec![iri("hasAge")] && *dt == xsd("integer"))
+                    && matches!(&parts[1], ClassExpression::DataSomeValuesFrom(p, DataRange::NamedDataRange(dt)) if *p == vec![iri("hasName")] && *dt == xsd("string"))
+            ))
+        )
+    });
+    assert!(
+        found,
+        "expected two separate DataSomeValuesFrom restrictions ANDed together"
+    );
+}
+
+#[test]
+fn data_restriction_filler_accepts_parenthesized_compound_range() {
+    // A parenthesized compound range is still reachable as a filler via
+    // `dataAtomic`'s `'(' dataRange ')'` alternative.
+    let onto = manchester_parser::parse(&doc(
+        "DataProperty: hasAge Class: Adult EquivalentTo: hasAge some (xsd:integer or xsd:string)",
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(_, exprs)) if exprs.iter().any(|e| matches!(
+                e,
+                ClassExpression::DataSomeValuesFrom(_, DataRange::DataUnionOf(items)) if items.len() == 2
+            ))
+        )
+    });
+    assert!(found, "expected a DataUnionOf filler via parentheses");
 }

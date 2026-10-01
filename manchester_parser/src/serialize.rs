@@ -37,12 +37,11 @@ Contact: hovlanddag@gmail.com
 //!   members, and as a fallback for binary axioms whose members can't serve
 //!   as a frame subject (e.g. an `inverse P` object property expression).
 //! - **Out-of-scope constructs are skipped with a `log::warn!`,  never
-//!   silently emitted as invalid syntax.** This covers everything deferred by
-//!   [#157](https://github.com/daghovland/rdf-datalog/issues/157) and its
-//!   follow-up issues (compound data ranges, the `Datatype:` frame;
-//!   `DisjointUnionOf:`, `HasKey:`, and `SubPropertyChain:` are now supported)
-//!   plus a few gaps
-//!   specific to serialisation
+//!   silently emitted as invalid syntax.** This covers what remains deferred
+//!   by [#157](https://github.com/daghovland/rdf-datalog/issues/157) (just
+//!   the `Datatype:` frame, #502, as of #501; `DisjointUnionOf:`, `HasKey:`,
+//!   `SubPropertyChain:`, and compound data ranges are now supported) plus a
+//!   few gaps specific to serialisation
 //!   (standalone `AnnotationAssertion` axioms about an arbitrary subject: the
 //!   frame grammar only lets `Annotations:` attach to a frame's own entity
 //!   declaration, so an assertion about an unrelated subject has no frame
@@ -281,7 +280,7 @@ fn classify(axiom: &owl_ontology::Axiom) -> Option<Emission> {
         AxiomObjectPropertyAxiom(a) => classify_object_property_axiom(a),
         AxiomDataPropertyAxiom(a) => classify_data_property_axiom(a),
         AxiomDatatypeDefinition(..) => {
-            log_skip("Datatype: frame / DatatypeDefinition (#157, compound data ranges)");
+            log_skip("Datatype: frame / DatatypeDefinition (#502)");
             None
         }
         AxiomHasKey(anns, class_expr, obj_props, data_props) => {
@@ -313,7 +312,7 @@ fn classify_declaration(anns: &[Annotation], entity: &Entity) -> Option<Emission
             anns,
         )),
         Entity::DatatypeDeclaration(_) => {
-            log_skip("Datatype: frame (#157)");
+            log_skip("Datatype: frame (#502)");
             None
         }
     }
@@ -961,15 +960,15 @@ fn fmt_class_expr(ce: &ClassExpression) -> Option<String> {
             Some(format!("{} value {}", fmt_iri(p), fmt_literal(lit)?))
         }
         ClassExpression::DataMinQualifiedCardinality(n, p, dr) => {
-            Some(format!("{} min {n} {}", fmt_iri(p), fmt_data_range(dr)?))
+            Some(format!("{} min {n} {}", fmt_iri(p), fmt_data_primary(dr)?))
         }
         ClassExpression::DataMaxQualifiedCardinality(n, p, dr) => {
-            Some(format!("{} max {n} {}", fmt_iri(p), fmt_data_range(dr)?))
+            Some(format!("{} max {n} {}", fmt_iri(p), fmt_data_primary(dr)?))
         }
         ClassExpression::DataExactQualifiedCardinality(n, p, dr) => Some(format!(
             "{} exactly {n} {}",
             fmt_iri(p),
-            fmt_data_range(dr)?
+            fmt_data_primary(dr)?
         )),
         ClassExpression::DataMinCardinality(n, p) => Some(format!("{} min {n}", fmt_iri(p))),
         ClassExpression::DataMaxCardinality(n, p) => Some(format!("{} max {n}", fmt_iri(p))),
@@ -987,7 +986,7 @@ fn fmt_data_restriction(props: &[FullIri], dr: &DataRange, kw: &str) -> Option<S
     Some(format!(
         "{} {kw} {}",
         fmt_iri(&props[0]),
-        fmt_data_range(dr)?
+        fmt_data_primary(dr)?
     ))
 }
 
@@ -1023,7 +1022,7 @@ fn fmt_data_range(dr: &DataRange) -> Option<String> {
         DataRange::NamedDataRange(iri) => Some(fmt_iri(iri)),
         DataRange::DataIntersectionOf(items) => join_data_range(items, " and ", 2),
         DataRange::DataUnionOf(items) => join_data_range(items, " or ", 2),
-        DataRange::DataComplementOf(inner) => Some(format!("not {}", fmt_data_range(inner)?)),
+        DataRange::DataComplementOf(inner) => Some(format!("not {}", fmt_data_atomic(inner)?)),
         DataRange::DataOneOf(vals) => {
             let items: Option<Vec<String>> = vals.iter().map(fmt_literal).collect();
             Some(format!("{{ {} }}", items?.join(", ")))
@@ -1040,30 +1039,56 @@ fn fmt_data_range(dr: &DataRange) -> Option<String> {
     }
 }
 
+/// Format `dr` as a valid `dataPrimary` (`[ 'not' ] dataAtomic`) — the
+/// grammar position used for restriction fillers (`some`/`only`/`min`/`max`/
+/// `exactly`, per `class_expr.rs::data_restriction_tail`'s use of
+/// `data_range.rs::data_primary`, not the full `data_range`) and for each
+/// member of an `and`/`or` list. Every variant except `DataIntersectionOf`/
+/// `DataUnionOf` already formats as a valid `dataPrimary` on its own
+/// (`NamedDataRange`/`DatatypeRestriction`/`DataOneOf` are atomic;
+/// `DataComplementOf` formats as `not <atomic>` via `fmt_data_atomic`, which
+/// is itself a valid primary); only intersection/union need wrapping in
+/// parens to become a parenthesized-`dataRange` atomic.
+fn fmt_data_primary(dr: &DataRange) -> Option<String> {
+    match dr {
+        DataRange::DataIntersectionOf(_) | DataRange::DataUnionOf(_) => {
+            Some(format!("({})", fmt_data_range(dr)?))
+        }
+        _ => fmt_data_range(dr),
+    }
+}
+
+/// Format `dr` as a valid `dataAtomic` — the grammar position directly after
+/// `not` (`dataPrimary ::= [ 'not' ] dataAtomic`), which excludes a bare
+/// `and`/`or`/`not` expression (there is no `dataAtomic` alternative for any
+/// of those). `NamedDataRange`/`DatatypeRestriction`/`DataOneOf` are already
+/// atomic; everything else (`DataIntersectionOf`/`DataUnionOf`/nested
+/// `DataComplementOf`) is wrapped in parens to become the `'(' dataRange ')'`
+/// atomic alternative.
+fn fmt_data_atomic(dr: &DataRange) -> Option<String> {
+    match dr {
+        DataRange::NamedDataRange(_)
+        | DataRange::DatatypeRestriction(_, _)
+        | DataRange::DataOneOf(_) => fmt_data_range(dr),
+        _ => Some(format!("({})", fmt_data_range(dr)?)),
+    }
+}
+
 /// `and`/`or` join of a `DataIntersectionOf`/`DataUnionOf` list. Each member
-/// is wrapped in parentheses when it is itself a compound (non-`NamedDataRange`)
-/// data range, since Manchester Syntax's `dataConjunction`/`dataRange`
-/// precedence ladder would otherwise flatten nested `and`/`or`/`not` into
-/// the wrong grouping on re-parse. Mirrors `owl_functional_parser`'s
-/// `join_data_range`, but with infix keywords instead of a prefix function
-/// name, and `min_len` skips (rather than erroring on) a parser-unreachable
-/// 0/1-element list -- lists this serializer itself ever produces have at
-/// least 2 elements, but the check stays defensive against future producers.
+/// is formatted as a `dataPrimary` (see `fmt_data_primary`), since
+/// `dataConjunction ::= dataPrimary 'and' dataPrimary ...` (and likewise for
+/// `or`/`dataRange`) requires each member to parse back as one. Mirrors
+/// `owl_functional_parser`'s `join_data_range`, but with infix keywords
+/// instead of a prefix function name, and `min_len` skips (rather than
+/// erroring on) a parser-unreachable 0/1-element list -- lists this
+/// serializer itself ever produces have at least 2 elements, but the check
+/// stays defensive against future producers.
 fn join_data_range(items: &[DataRange], sep: &str, min_len: usize) -> Option<String> {
     if items.len() < min_len {
         log_skip("data range intersection/union with fewer than 2 members");
         return None;
     }
-    let parts: Option<Vec<String>> = items
-        .iter()
-        .map(|dr| {
-            let s = fmt_data_range(dr)?;
-            Some(match dr {
-                DataRange::NamedDataRange(_) | DataRange::DatatypeRestriction(_, _) => s,
-                _ => format!("({s})"),
-            })
-        })
-        .collect();
+    let parts: Option<Vec<String>> = items.iter().map(fmt_data_primary).collect();
     Some(parts?.join(sep))
 }
 

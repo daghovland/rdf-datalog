@@ -224,14 +224,20 @@ fn data_restriction_tail<'a>(
 ) -> impl FnMut(&'a str) -> IResult<&'a str, ClassExpression> + 'a {
     move |input: &'a str| {
         alt((
-            nom::combinator::map(nom::sequence::preceded(keyword("some"), data_range(ctx)), {
-                let prop = prop.clone();
-                move |dr: DataRange| ClassExpression::DataSomeValuesFrom(vec![prop.clone()], dr)
-            }),
-            nom::combinator::map(nom::sequence::preceded(keyword("only"), data_range(ctx)), {
-                let prop = prop.clone();
-                move |dr: DataRange| ClassExpression::DataAllValuesFrom(vec![prop.clone()], dr)
-            }),
+            nom::combinator::map(
+                nom::sequence::preceded(keyword("some"), data_primary(ctx)),
+                {
+                    let prop = prop.clone();
+                    move |dr: DataRange| ClassExpression::DataSomeValuesFrom(vec![prop.clone()], dr)
+                },
+            ),
+            nom::combinator::map(
+                nom::sequence::preceded(keyword("only"), data_primary(ctx)),
+                {
+                    let prop = prop.clone();
+                    move |dr: DataRange| ClassExpression::DataAllValuesFrom(vec![prop.clone()], dr)
+                },
+            ),
             nom::combinator::map(nom::sequence::preceded(keyword("value"), literal(ctx)), {
                 let prop = prop.clone();
                 move |lit| ClassExpression::DataHasValue(prop.clone(), lit)
@@ -241,7 +247,7 @@ fn data_restriction_tail<'a>(
                 move |input: &'a str| {
                     let (input, n) =
                         nom::sequence::preceded(keyword("min"), unsigned_integer).parse(input)?;
-                    let (input, filler) = nom::combinator::opt(data_range(ctx)).parse(input)?;
+                    let (input, filler) = nom::combinator::opt(data_primary(ctx)).parse(input)?;
                     Ok((
                         input,
                         match filler {
@@ -258,7 +264,7 @@ fn data_restriction_tail<'a>(
                 move |input: &'a str| {
                     let (input, n) =
                         nom::sequence::preceded(keyword("max"), unsigned_integer).parse(input)?;
-                    let (input, filler) = nom::combinator::opt(data_range(ctx)).parse(input)?;
+                    let (input, filler) = nom::combinator::opt(data_primary(ctx)).parse(input)?;
                     Ok((
                         input,
                         match filler {
@@ -275,7 +281,7 @@ fn data_restriction_tail<'a>(
                 move |input: &'a str| {
                     let (input, n) = nom::sequence::preceded(keyword("exactly"), unsigned_integer)
                         .parse(input)?;
-                    let (input, filler) = nom::combinator::opt(data_range(ctx)).parse(input)?;
+                    let (input, filler) = nom::combinator::opt(data_primary(ctx)).parse(input)?;
                     Ok((
                         input,
                         match filler {
@@ -356,8 +362,8 @@ fn atomic<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str,
     }
 }
 
-fn data_range<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, DataRange> {
-    crate::data_range::data_range(ctx)
+fn data_primary<'a>(ctx: &'a ParserContext) -> impl FnMut(&'a str) -> IResult<&'a str, DataRange> {
+    crate::data_range::data_primary(ctx)
 }
 
 #[cfg(test)]
