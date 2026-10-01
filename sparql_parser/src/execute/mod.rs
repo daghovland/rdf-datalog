@@ -220,15 +220,15 @@ pub fn execute_with_base(
 }
 
 /// Like [`execute_with_base`], but also collects a runtime
-/// [`crate::profile::ProfileNode`] tree of actual per-operator timing
-/// (issue [#572](https://github.com/daghovland/rdf-datalog/issues/572),
+/// [`crate::ProfileNode`] tree of actual per-operator timing (issue
+/// [#572](https://github.com/daghovland/rdf-datalog/issues/572),
 /// follow-up to #537's static-only EXPLAIN report — see
 /// `docs/plans/EXPLAIN_ENDPOINT_537_PLAN.md`).
 ///
 /// Strictly additive: `execute_with_base` (used by every other caller) is
 /// completely untouched, so the ordinary hot path never touches the
 /// profiler thread-local. The returned profile is populated even when
-/// `query` fails or times out — see [`crate::profile::ScopeGuard`]'s doc
+/// `query` fails or times out — see `crate::profile::ScopeGuard`'s doc
 /// for why a partially-filled, correctly-scoped tree survives an
 /// early-returning `?`.
 pub fn execute_with_profile(

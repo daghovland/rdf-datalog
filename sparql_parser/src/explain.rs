@@ -24,7 +24,7 @@ Contact: hovlanddag@gmail.com
 //! This module never executes anything, so it only ever reports the total
 //! caller-measured wall-clock time, never per-operator timing — actual
 //! per-operator (per-component, per-triple-pattern) timing is collected
-//! separately, from real execution, by [`crate::profile`]
+//! separately, from real execution, by `crate::profile`
 //! ([#572](https://github.com/daghovland/rdf-datalog/issues/572)) and
 //! surfaced as its own tree, not merged into this module's [`PlanNode`]
 //! tree — see `crate::profile`'s module doc for why.
