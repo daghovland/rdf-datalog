@@ -102,6 +102,12 @@ pub enum CellType {
     /// [`crate::cell::functional::execute_functional_file`] and
     /// [#633](https://github.com/daghovland/rdf-datalog/issues/633).
     Functional(PathBuf),
+    /// `%%owlxml <path>` — load an OWL 2 XML Serialization (`.owx`/`.owl`)
+    /// file: materialise its ABox as quads and its TBox as
+    /// immediately-evaluated Datalog rules. See
+    /// [`crate::cell::owl_xml::execute_owl_xml_file`] and
+    /// [#609](https://github.com/daghovland/rdf-datalog/issues/609).
+    OwlXml(PathBuf),
     /// `%%load <path>` — load a Turtle/TriG/N-Triples file.
     Load(PathBuf),
     /// `%%reason` — run OWL-RL reasoning on the current datastore.
@@ -140,6 +146,10 @@ pub fn detect_cell_type(cell: &str) -> CellType {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Functional(PathBuf::from(path))
             }
+            "owlxml" => {
+                let path = parts.next().unwrap_or("").trim();
+                CellType::OwlXml(PathBuf::from(path))
+            }
             "load" => {
                 let path = parts.next().unwrap_or("").trim();
                 CellType::Load(PathBuf::from(path))
@@ -170,6 +180,7 @@ pub mod datalog;
 pub mod functional;
 pub mod manchester;
 pub mod ottr;
+pub mod owl_xml;
 pub mod rml;
 pub mod shacl;
 pub mod sparql;
@@ -235,6 +246,24 @@ mod tests {
         assert_eq!(
             detect_cell_type(cell),
             CellType::Functional(PathBuf::from("animals.ofn"))
+        );
+    }
+
+    #[test]
+    fn test_owlxml_magic() {
+        let cell = "%%owlxml ontologies/animals.owx";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::OwlXml(PathBuf::from("ontologies/animals.owx"))
+        );
+    }
+
+    #[test]
+    fn test_owlxml_magic_trailing_newline() {
+        let cell = "%%owlxml animals.owx\n";
+        assert_eq!(
+            detect_cell_type(cell),
+            CellType::OwlXml(PathBuf::from("animals.owx"))
         );
     }
 
