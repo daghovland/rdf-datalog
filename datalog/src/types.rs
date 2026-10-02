@@ -155,6 +155,18 @@ pub struct Derivation {
 #[derive(Debug, Clone, Default)]
 pub struct DerivedFromIndex {
     index: std::collections::HashMap<dag_rdf::Quad, Vec<Derivation>>,
+    /// Reverse index: `rule_id -> { derived_quad -> count of recorded
+    /// derivations of that quad using this rule_id }`. Lets
+    /// [`crate::IncrementalReasoner`]'s negation-invalidation scan
+    /// (`negation_invalidated_seeds`) look up exactly the derived quads a
+    /// candidate `rule_id` could have produced, instead of scanning every
+    /// entry in `index` — see
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683). The
+    /// count (rather than a plain set) is needed because the same quad can
+    /// be derived more than once by the same rule with different body
+    /// witnesses; `unrecord` must not drop the quad from the reverse index
+    /// while any such derivation still exists.
+    by_rule: std::collections::HashMap<usize, std::collections::HashMap<dag_rdf::Quad, usize>>,
 }
 
 impl DerivedFromIndex {
@@ -177,7 +189,14 @@ impl DerivedFromIndex {
     pub fn record(&mut self, derived_quad: dag_rdf::Quad, derivation: Derivation) -> bool {
         let entries = self.index.entry(derived_quad).or_default();
         if !entries.contains(&derivation) {
+            let rule_id = derivation.rule_id;
             entries.push(derivation);
+            *self
+                .by_rule
+                .entry(rule_id)
+                .or_default()
+                .entry(derived_quad)
+                .or_insert(0) += 1;
             true
         } else {
             false
@@ -193,12 +212,37 @@ impl DerivedFromIndex {
     /// as a result, the key is dropped entirely. No-op if the entry is not
     /// present. See [#320](https://github.com/daghovland/rdf-datalog/issues/320).
     pub fn unrecord(&mut self, derived_quad: &dag_rdf::Quad, derivation: &Derivation) {
+        let mut removed = false;
         if let std::collections::hash_map::Entry::Occupied(mut e) = self.index.entry(*derived_quad)
         {
             let entries = e.get_mut();
+            let before = entries.len();
             entries.retain(|d| d != derivation);
+            removed = entries.len() != before;
             if entries.is_empty() {
                 e.remove();
+            }
+        }
+        if removed {
+            self.decrement_by_rule(derivation.rule_id, derived_quad);
+        }
+    }
+
+    /// Decrement (and, at zero, drop) the `by_rule[rule_id][quad]` count.
+    fn decrement_by_rule(&mut self, rule_id: usize, quad: &dag_rdf::Quad) {
+        if let std::collections::hash_map::Entry::Occupied(mut rule_entry) =
+            self.by_rule.entry(rule_id)
+        {
+            let quads = rule_entry.get_mut();
+            if let std::collections::hash_map::Entry::Occupied(mut count_entry) = quads.entry(*quad)
+            {
+                *count_entry.get_mut() -= 1;
+                if *count_entry.get() == 0 {
+                    count_entry.remove();
+                }
+            }
+            if quads.is_empty() {
+                rule_entry.remove();
             }
         }
     }
@@ -215,11 +259,134 @@ impl DerivedFromIndex {
 
     /// Remove all derivations for `quad` (e.g. when the quad is retracted).
     pub fn remove(&mut self, quad: &dag_rdf::Quad) {
-        self.index.remove(quad);
+        if let Some(derivations) = self.index.remove(quad) {
+            for d in &derivations {
+                if let Some(quads) = self.by_rule.get_mut(&d.rule_id) {
+                    quads.remove(quad);
+                    if quads.is_empty() {
+                        self.by_rule.remove(&d.rule_id);
+                    }
+                }
+            }
+        }
     }
 
     /// Iterate over all (derived_quad, derivations) pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&dag_rdf::Quad, &Vec<Derivation>)> {
         self.index.iter()
+    }
+
+    /// Every derived quad that has (or had) at least one recorded derivation
+    /// using `rule_id`, without scanning derivations for any other rule. The
+    /// indexed counterpart to filtering [`Self::iter`] by
+    /// `derivation.rule_id == rule_id` — see the `by_rule` field doc and
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683).
+    pub fn quads_for_rule(&self, rule_id: usize) -> impl Iterator<Item = &dag_rdf::Quad> {
+        self.by_rule
+            .get(&rule_id)
+            .into_iter()
+            .flat_map(|m| m.keys())
+    }
+}
+
+#[cfg(test)]
+mod derived_from_index_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn q(n: u32) -> dag_rdf::Quad {
+        dag_rdf::Quad {
+            triple_id: 0,
+            subject: n,
+            predicate: 100,
+            obj: 200,
+        }
+    }
+
+    fn derivation(rule_id: usize, witness: dag_rdf::Quad) -> Derivation {
+        Derivation {
+            rule_id,
+            body_witnesses: vec![witness],
+        }
+    }
+
+    /// `quads_for_rule` returns exactly the derived quads recorded under
+    /// that `rule_id`, not quads derived by other rules — the core
+    /// correctness property the index must have to replace the full
+    /// `iter()` scan in `negation_invalidated_seeds`. See
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683).
+    #[test]
+    fn quads_for_rule_returns_only_matching_rule() {
+        let mut idx = DerivedFromIndex::new();
+        idx.record(q(1), derivation(0, q(10)));
+        idx.record(q(2), derivation(1, q(11)));
+        idx.record(q(3), derivation(0, q(12)));
+
+        let rule0: HashSet<_> = idx.quads_for_rule(0).copied().collect();
+        assert_eq!(rule0, HashSet::from([q(1), q(3)]));
+
+        let rule1: HashSet<_> = idx.quads_for_rule(1).copied().collect();
+        assert_eq!(rule1, HashSet::from([q(2)]));
+
+        assert_eq!(idx.quads_for_rule(2).count(), 0);
+    }
+
+    /// A quad derived twice by the same rule (different witnesses) appears
+    /// exactly once in `quads_for_rule` (it is a set of quads, not of
+    /// derivations), and surviving the removal of one of the two
+    /// derivations (`unrecord`) must not drop the quad from the index since
+    /// the other derivation still uses that rule_id.
+    #[test]
+    fn quads_for_rule_dedups_and_survives_partial_unrecord() {
+        let mut idx = DerivedFromIndex::new();
+        let d_a = derivation(0, q(10));
+        let d_b = derivation(0, q(11));
+        idx.record(q(1), d_a.clone());
+        idx.record(q(1), d_b.clone());
+
+        let rule0: Vec<_> = idx.quads_for_rule(0).collect();
+        assert_eq!(rule0, vec![&q(1)]);
+
+        idx.unrecord(&q(1), &d_a);
+        // One derivation remains (d_b), so q(1) must still be reachable.
+        let rule0: Vec<_> = idx.quads_for_rule(0).collect();
+        assert_eq!(rule0, vec![&q(1)]);
+        assert!(idx.has_derivation(&q(1)));
+
+        idx.unrecord(&q(1), &d_b);
+        // No derivations left at all now.
+        assert_eq!(idx.quads_for_rule(0).count(), 0);
+        assert!(!idx.has_derivation(&q(1)));
+    }
+
+    /// `remove` (drop every derivation for a quad, e.g. on retraction) must
+    /// also clear that quad out of every `rule_id` it was indexed under,
+    /// including when two different rules both derived the same quad.
+    #[test]
+    fn remove_clears_quad_from_every_rule_bucket() {
+        let mut idx = DerivedFromIndex::new();
+        idx.record(q(1), derivation(0, q(10)));
+        idx.record(q(1), derivation(1, q(11)));
+
+        idx.remove(&q(1));
+
+        assert_eq!(idx.quads_for_rule(0).count(), 0);
+        assert_eq!(idx.quads_for_rule(1).count(), 0);
+        assert!(!idx.has_derivation(&q(1)));
+    }
+
+    /// Recording a duplicate derivation (same rule_id + body_witnesses) is a
+    /// no-op for the reverse index too — it must not inflate the recorded
+    /// count so that a single later `unrecord` already drops the quad.
+    #[test]
+    fn duplicate_record_does_not_require_double_unrecord() {
+        let mut idx = DerivedFromIndex::new();
+        let d = derivation(0, q(10));
+        assert!(idx.record(q(1), d.clone()));
+        assert!(!idx.record(q(1), d.clone())); // duplicate, ignored
+
+        idx.unrecord(&q(1), &d);
+        assert_eq!(idx.quads_for_rule(0).count(), 0);
+        assert!(!idx.has_derivation(&q(1)));
     }
 }

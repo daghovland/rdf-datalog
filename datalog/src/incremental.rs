@@ -650,19 +650,22 @@ impl IncrementalReasoner {
     /// made (in the negative sense) when the derivation was first produced.
     /// See [#679](https://github.com/daghovland/rdf-datalog/issues/679).
     ///
-    /// O(`facts.len()` × total derived facts across all programs) — every
-    /// program's whole `derived_from` index is scanned per candidate rule,
-    /// since there is no `rule_id -> derivations` reverse index yet. Fine
-    /// for correctness; tracked as a follow-up performance improvement in
-    /// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
+    /// O(`facts.len()` × derivations recorded for the candidate `rule_id`s)
+    /// — [`crate::types::DerivedFromIndex::quads_for_rule`] gives the exact
+    /// set of derived quads a candidate rule could have produced, so only
+    /// those derivations are reconstructed and checked, not the whole
+    /// program's `derived_from` index. See
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683) (this
+    /// replaced an earlier O(`facts.len()` × total derived facts across all
+    /// programs) full scan, see [#679](https://github.com/daghovland/rdf-datalog/issues/679)).
     fn negation_invalidated_seeds(&self, facts: &[Quad]) -> HashSet<Quad> {
         let mut seeds = HashSet::new();
         for fact in facts {
             for program in &self.programs {
                 for (rule_id, not_pattern) in program.negatively_triggered_rules(fact) {
                     let rule = &program.rules[rule_id];
-                    for (derived_quad, derivations) in program.derived_from.iter() {
-                        for derivation in derivations {
+                    for derived_quad in program.derived_from.quads_for_rule(rule_id) {
+                        for derivation in program.derived_from.derivations_for(derived_quad) {
                             if derivation.rule_id != rule_id {
                                 continue;
                             }
@@ -5799,6 +5802,192 @@ mod tests {
             !ds.named_graphs.contains(&is_in_package_outside),
             "isInPackage(outside,pkg) must be retracted even though isBoundaryOf(boundary,pkg) \
              was derived, not directly inserted"
+        );
+    }
+
+    /// Scale test demonstrating that [`IncrementalReasoner`]'s
+    /// negation-invalidation lookup (`negation_invalidated_seeds`) no
+    /// longer costs time proportional to the *whole* program's
+    /// derived-fact count -- only to the facts actually derivable by the
+    /// specific rule a newly-inserted fact could falsify. See
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683).
+    ///
+    /// Deliberately bypasses `IncrementalReasoner::new`/stratification:
+    /// `RulePartitioner::new`'s dependency-graph construction
+    /// (`stratifier.rs`) is itself O(rules^2), an orthogonal pre-existing
+    /// cost that would dominate setup time long before `NOISE` got large
+    /// enough to make this issue's O(NOISE) vs. O(1) difference visible
+    /// (confirmed empirically: at `NOISE = 2_500`, going through the full
+    /// `IncrementalReasoner::new` -> `apply_insertions` path, the indexed
+    /// and unindexed scans both completed in ~10ms for 200 calls -- too
+    /// fast at that scale, and too dominated by other apply_insertions
+    /// costs, for the difference to show above noise). Instead this test
+    /// builds a single tiny `DatalogProgram` directly (just `expand_rule`)
+    /// and injects `NOISE` synthetic derivation entries straight into its
+    /// `derived_from` index via [`DerivedFromIndex::record`] under
+    /// rule_ids that do not correspond to any real rule -- safe, because
+    /// `negation_invalidated_seeds` only ever indexes into `program.rules`
+    /// using the *matching* rule_id it already found via
+    /// `negatively_triggered_rules`, never a derivation's own `rule_id`
+    /// for entries it is just filtering past. This isolates exactly the
+    /// cost this issue is about, at a scale (`NOISE = 300_000`) large
+    /// enough to make an O(NOISE) scan unmistakable, without inheriting
+    /// the stratifier's unrelated quadratic cost.
+    ///
+    /// Ignored by default (like `tests/performance.rs`) since wall-clock
+    /// assertions are not suitable for routine CI runs.
+    #[test]
+    #[ignore]
+    fn negation_invalidated_seeds_scales_with_rule_derivations_not_index_size() {
+        const NOISE: usize = 300_000;
+
+        let (_ds, g, _a, _p, _b, _c) = setup_store();
+
+        // Resource ids just need to be distinct; no lookup through
+        // GraphElementManager is needed since this test never resolves
+        // them back to names, so plain disjoint u32 constants are fine.
+        let is_boundary_of: u32 = 9_000_000;
+        let is_in_package: u32 = 9_000_001;
+        let adjacent_to: u32 = 9_000_002;
+        let boundary: u32 = 9_000_003;
+        let outside: u32 = 9_000_004;
+        let pkg: u32 = 9_000_005;
+
+        let expand_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("next".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("next".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        // expand_rule is rule_id 0 in this single-rule program.
+        let expand_rule_id = 0;
+        let mut program = DatalogProgram::new(vec![expand_rule]).unwrap();
+
+        // The one real derivation: isInPackage(outside,pkg), derived via
+        // expand_rule from witnesses isInPackage(boundary,pkg) and
+        // adjacentTo(boundary,outside) -- reconstruct_substitution zips
+        // these against expand_rule's two positive body atoms in order to
+        // recover {node: boundary, next: outside, pkg: pkg}, which must
+        // unify with the inserted isBoundaryOf(boundary,pkg) fact against
+        // the NOT atom's pattern for the seed to be found.
+        let witness_is_in_package_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        let witness_adjacent_boundary_outside = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: adjacent_to,
+            obj: outside,
+        };
+        let derived_is_in_package_outside = Quad {
+            triple_id: g,
+            subject: outside,
+            predicate: is_in_package,
+            obj: pkg,
+        };
+        program.derived_from.record(
+            derived_is_in_package_outside,
+            Derivation {
+                rule_id: expand_rule_id,
+                body_witnesses: vec![
+                    witness_is_in_package_boundary,
+                    witness_adjacent_boundary_outside,
+                ],
+            },
+        );
+
+        // NOISE synthetic derivations under rule_ids that are never
+        // expand_rule_id and never looked up in `program.rules` by
+        // `negation_invalidated_seeds` (it only does that for the rule_id
+        // `negatively_triggered_rules` already matched) -- purely there to
+        // inflate `derived_from`'s total size the way an unrelated, large
+        // materialised closure would.
+        for i in 0..NOISE {
+            let noise_quad = Quad {
+                triple_id: g,
+                subject: 10_000_000 + i as u32,
+                predicate: 20_000_000,
+                obj: 30_000_000,
+            };
+            program.derived_from.record(
+                noise_quad,
+                Derivation {
+                    rule_id: expand_rule_id + 1 + i, // distinct, never expand_rule_id
+                    body_witnesses: vec![],
+                },
+            );
+        }
+
+        let reasoner = IncrementalReasoner {
+            programs: vec![program],
+            #[cfg(test)]
+            fallback_count: 0,
+        };
+
+        let f_is_boundary = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_boundary_of,
+            obj: pkg,
+        };
+
+        const ITERS: u32 = 50;
+        let start = std::time::Instant::now();
+        let mut last_seeds = HashSet::new();
+        for _ in 0..ITERS {
+            last_seeds = reasoner.negation_invalidated_seeds(std::slice::from_ref(&f_is_boundary));
+        }
+        let elapsed = start.elapsed();
+        let per_call = elapsed / ITERS;
+
+        assert_eq!(
+            last_seeds,
+            HashSet::from([derived_is_in_package_outside]),
+            "expected exactly isInPackage(outside,pkg) to be found invalidated, \
+             regardless of the {NOISE} unrelated noise derivations present"
+        );
+
+        eprintln!(
+            "negation_invalidated_seeds with {NOISE} unrelated noise derivations in the \
+             same program: {ITERS} calls took {elapsed:?} ({per_call:?}/call)"
+        );
+        // An O(NOISE) full-index scan per call (the pre-#683 behaviour)
+        // would, at this NOISE and iteration count, take whole seconds;
+        // the indexed O(rule's own derivations) lookup should stay a small
+        // fraction of that regardless of NOISE. The bound is intentionally
+        // loose (a full second per call, not microseconds) to stay robust
+        // to CI/hardware variance while still catching a reintroduced
+        // linear scan at this scale.
+        assert!(
+            per_call < std::time::Duration::from_secs(1),
+            "negation_invalidated_seeds took {per_call:?}/call with {NOISE} noise \
+             derivations present -- this looks like a reintroduced O(program size) scan \
+             rather than the O(rule's own derivations) indexed lookup"
         );
     }
 }
