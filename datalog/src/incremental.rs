@@ -5805,93 +5805,54 @@ mod tests {
         );
     }
 
-    /// Scale test demonstrating [`IncrementalReasoner::apply_insertions`]'s
-    /// negation-invalidation phase no longer costs time proportional to the
-    /// *whole* stratum's derived-fact count — only to the facts actually
-    /// derivable by the specific rule a newly-inserted fact could falsify.
-    /// See [#683](https://github.com/daghovland/rdf-datalog/issues/683).
+    /// Scale test demonstrating that [`IncrementalReasoner`]'s
+    /// negation-invalidation lookup (`negation_invalidated_seeds`) no
+    /// longer costs time proportional to the *whole* program's
+    /// derived-fact count -- only to the facts actually derivable by the
+    /// specific rule a newly-inserted fact could falsify. See
+    /// [#683](https://github.com/daghovland/rdf-datalog/issues/683).
     ///
-    /// Setup: the same boundary/expansion scenario as
-    /// `test_insert_boundary_retracts_membership_beyond_boundary`, plus
-    /// `NOISE` independent "noise" rule pairs placed — by construction of
-    /// their dependency edges — into the *same stratum* (the same
-    /// `DatalogProgram`, hence the same `derived_from` index) as
-    /// `expand_rule`:
+    /// Deliberately bypasses `IncrementalReasoner::new`/stratification:
+    /// `RulePartitioner::new`'s dependency-graph construction
+    /// (`stratifier.rs`) is itself O(rules^2), an orthogonal pre-existing
+    /// cost that would dominate setup time long before `NOISE` got large
+    /// enough to make this issue's O(NOISE) vs. O(1) difference visible
+    /// (confirmed empirically: at `NOISE = 2_500`, going through the full
+    /// `IncrementalReasoner::new` -> `apply_insertions` path, the indexed
+    /// and unindexed scans both completed in ~10ms for 200 calls -- too
+    /// fast at that scale, and too dominated by other apply_insertions
+    /// costs, for the difference to show above noise). Instead this test
+    /// builds a single tiny `DatalogProgram` directly (just `expand_rule`)
+    /// and injects `NOISE` synthetic derivation entries straight into its
+    /// `derived_from` index via [`DerivedFromIndex::record`] under
+    /// rule_ids that do not correspond to any real rule -- safe, because
+    /// `negation_invalidated_seeds` only ever indexes into `program.rules`
+    /// using the *matching* rule_id it already found via
+    /// `negatively_triggered_rules`, never a derivation's own `rule_id`
+    /// for entries it is just filtering past. This isolates exactly the
+    /// cost this issue is about, at a scale (`NOISE = 300_000`) large
+    /// enough to make an O(NOISE) scan unmistakable, without inheriting
+    /// the stratifier's unrelated quadratic cost.
     ///
-    /// ```text
-    /// noiseBoundary_i(x) :- noiseNeverTrue_i(x).           // never fires; forces a
-    ///                                                       // negative dependency edge
-    /// noiseDerived_i(x)  :- noiseFact_i(x), NOT noiseBoundary_i(x).
-    /// ```
-    ///
-    /// `noiseNeverTrue_i` has no producing rule and is never asserted, so
-    /// `noiseBoundary_i` is never derived — but the *static* negative
-    /// dependency edge it creates is what the stratifier uses to place
-    /// `noiseDerived_i` in the same later stratum as `expand_rule` (both
-    /// become ready only after a negative edge resolves in the first
-    /// round). At runtime `noiseBoundary_i(x)` is always false, so
-    /// `noiseDerived_i(x)` *is* derived for every inserted `noiseFact_i`,
-    /// inflating that stratum's `derived_from` index by `NOISE` entries
-    /// under `NOISE` distinct rule_ids, none of which is `expand_rule`'s.
-    ///
-    /// Before [#683](https://github.com/daghovland/rdf-datalog/issues/683),
-    /// `negation_invalidated_seeds` scanned every one of those `NOISE`
-    /// entries for every candidate rule; the indexed version looks up only
-    /// `expand_rule`'s own (tiny, constant-size) derivation set via
-    /// `DerivedFromIndex::quads_for_rule`. Asserts both correctness (the
-    /// retraction still happens, exactly as the non-scaled test above) and
-    /// that a single `apply_insertions` call completes well under what an
-    /// O(`NOISE`) scan would take — the regression-detection threshold here
-    /// is a hard multi-second ceiling, not a tight timing assertion, to
-    /// stay robust under CI jitter while still catching a reintroduced
-    /// linear scan at this scale. Ignored by default (like
-    /// `tests/performance.rs`) since wall-clock assertions are not suitable
-    /// for routine CI runs.
+    /// Ignored by default (like `tests/performance.rs`) since wall-clock
+    /// assertions are not suitable for routine CI runs.
     #[test]
     #[ignore]
-    fn test_insert_boundary_retraction_scales_with_rule_not_closure_size() {
-        // Kept modest: `RulePartitioner::new`'s dependency-graph construction
-        // (`stratifier.rs`) is itself O(rules²) — an orthogonal, pre-existing
-        // cost unrelated to this issue's `negation_invalidated_seeds` scan —
-        // so a much larger NOISE would make *setup* (not the call under
-        // test) dominate wall-clock time. 2500 is enough to make an O(NOISE)
-        // `negation_invalidated_seeds` scan clearly visible while keeping
-        // `IncrementalReasoner::new` itself fast.
-        const NOISE: usize = 2_500;
+    fn negation_invalidated_seeds_scales_with_rule_derivations_not_index_size() {
+        const NOISE: usize = 300_000;
 
-        let (mut ds, g, _a, _p, _b, _c) = setup_store();
-        let mk_pred = |ds: &mut Datastore, name: &str| {
-            ds.resources
-                .add_node_resource(RdfResource::Iri(IriReference(format!(
-                    "http://example.org/{name}"
-                ))))
-        };
-        let is_selected_internal = mk_pred(&mut ds, "isSelectedInternal");
-        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
-        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
-        let is_in_package = mk_pred(&mut ds, "isInPackage");
+        let (_ds, g, _a, _p, _b, _c) = setup_store();
 
-        let internal = mk_pred(&mut ds, "internal");
-        let boundary = mk_pred(&mut ds, "boundary");
-        let outside = mk_pred(&mut ds, "outside");
-        let pkg = mk_pred(&mut ds, "pkg");
-        let noise_subject = mk_pred(&mut ds, "noiseSubject");
-        let noise_object = mk_pred(&mut ds, "noiseObject");
+        // Resource ids just need to be distinct; no lookup through
+        // GraphElementManager is needed since this test never resolves
+        // them back to names, so plain disjoint u32 constants are fine.
+        let is_boundary_of: u32 = 9_000_000;
+        let is_in_package: u32 = 9_000_001;
+        let adjacent_to: u32 = 9_000_002;
+        let boundary: u32 = 9_000_003;
+        let outside: u32 = 9_000_004;
+        let pkg: u32 = 9_000_005;
 
-        let seed_rule = Rule {
-            head: RuleHead::NormalHead(QuadPattern {
-                graph: Term::Resource(g),
-                subject: Term::Variable("node".to_string()),
-                predicate: Term::Resource(is_in_package),
-                object: Term::Variable("pkg".to_string()),
-            }),
-            body: vec![RuleAtom::PositivePattern(QuadPattern {
-                graph: Term::Resource(g),
-                subject: Term::Variable("node".to_string()),
-                predicate: Term::Resource(is_selected_internal),
-                object: Term::Variable("pkg".to_string()),
-            })],
-        };
         let expand_rule = Rule {
             head: RuleHead::NormalHead(QuadPattern {
                 graph: Term::Resource(g),
@@ -5920,124 +5881,73 @@ mod tests {
                 }),
             ],
         };
+        // expand_rule is rule_id 0 in this single-rule program.
+        let expand_rule_id = 0;
+        let mut program = DatalogProgram::new(vec![expand_rule]).unwrap();
 
-        let mut rules = vec![seed_rule, expand_rule];
-
-        // NOISE independent rule pairs, placed in the same stratum as
-        // `expand_rule` by construction (see doc comment above), each
-        // contributing one derived fact under its own rule_id.
-        let mut noise_facts = Vec::with_capacity(NOISE);
-        for i in 0..NOISE {
-            let never_true = mk_pred(&mut ds, &format!("noiseNeverTrue{i}"));
-            let noise_boundary = mk_pred(&mut ds, &format!("noiseBoundary{i}"));
-            let noise_fact_pred = mk_pred(&mut ds, &format!("noiseFact{i}"));
-            let noise_derived = mk_pred(&mut ds, &format!("noiseDerived{i}"));
-
-            let noise_boundary_rule = Rule {
-                head: RuleHead::NormalHead(QuadPattern {
-                    graph: Term::Resource(g),
-                    subject: Term::Variable("x".to_string()),
-                    predicate: Term::Resource(noise_boundary),
-                    object: Term::Resource(noise_object),
-                }),
-                body: vec![RuleAtom::PositivePattern(QuadPattern {
-                    graph: Term::Resource(g),
-                    subject: Term::Variable("x".to_string()),
-                    predicate: Term::Resource(never_true),
-                    object: Term::Resource(noise_object),
-                })],
-            };
-            let noise_derived_rule = Rule {
-                head: RuleHead::NormalHead(QuadPattern {
-                    graph: Term::Resource(g),
-                    subject: Term::Variable("x".to_string()),
-                    predicate: Term::Resource(noise_derived),
-                    object: Term::Resource(noise_object),
-                }),
-                body: vec![
-                    RuleAtom::PositivePattern(QuadPattern {
-                        graph: Term::Resource(g),
-                        subject: Term::Variable("x".to_string()),
-                        predicate: Term::Resource(noise_fact_pred),
-                        object: Term::Resource(noise_object),
-                    }),
-                    RuleAtom::NotPattern(QuadPattern {
-                        graph: Term::Resource(g),
-                        subject: Term::Variable("x".to_string()),
-                        predicate: Term::Resource(noise_boundary),
-                        object: Term::Resource(noise_object),
-                    }),
-                ],
-            };
-            rules.push(noise_boundary_rule);
-            rules.push(noise_derived_rule);
-
-            noise_facts.push(Quad {
-                triple_id: g,
-                subject: noise_subject,
-                predicate: noise_fact_pred,
-                obj: noise_object,
-            });
-        }
-
-        let f_selected_internal = Quad {
+        // The one real derivation: isInPackage(outside,pkg), derived via
+        // expand_rule from witnesses isInPackage(boundary,pkg) and
+        // adjacentTo(boundary,outside) -- reconstruct_substitution zips
+        // these against expand_rule's two positive body atoms in order to
+        // recover {node: boundary, next: outside, pkg: pkg}, which must
+        // unify with the inserted isBoundaryOf(boundary,pkg) fact against
+        // the NOT atom's pattern for the seed to be found.
+        let witness_is_in_package_boundary = Quad {
             triple_id: g,
-            subject: internal,
-            predicate: is_selected_internal,
+            subject: boundary,
+            predicate: is_in_package,
             obj: pkg,
         };
-        let f_adjacent_internal_boundary = Quad {
-            triple_id: g,
-            subject: internal,
-            predicate: adjacent_to,
-            obj: boundary,
-        };
-        let f_adjacent_boundary_outside = Quad {
+        let witness_adjacent_boundary_outside = Quad {
             triple_id: g,
             subject: boundary,
             predicate: adjacent_to,
             obj: outside,
         };
-        for f in [
-            f_selected_internal,
-            f_adjacent_internal_boundary,
-            f_adjacent_boundary_outside,
-        ] {
-            ds.named_graphs.add_quad(f);
-        }
-        for f in &noise_facts {
-            ds.named_graphs.add_quad(*f);
-        }
-
-        let mut reasoner = IncrementalReasoner::new(rules, &mut ds).unwrap();
-
-        // Sanity: the noise really did land in the same stratum/program as
-        // `expand_rule` and really was derived, i.e. this benchmark
-        // actually exercises the index (and would have exercised the old
-        // full scan) rather than accidentally measuring an empty index.
-        let noise_derived_count: usize = reasoner
-            .programs
-            .iter()
-            .map(|p| p.derived_from.iter().count())
-            .sum();
-        assert!(
-            noise_derived_count >= NOISE,
-            "sanity: expected at least {NOISE} derived noise facts across all \
-             programs' derived_from indexes, got {noise_derived_count} — the \
-             benchmark setup no longer inflates the index the way this test \
-             assumes"
-        );
-
-        let is_in_package_outside = Quad {
+        let derived_is_in_package_outside = Quad {
             triple_id: g,
             subject: outside,
             predicate: is_in_package,
             obj: pkg,
         };
-        assert!(
-            ds.named_graphs.contains(&is_in_package_outside),
-            "sanity: outside should be in package before any isBoundaryOf fact exists"
+        program.derived_from.record(
+            derived_is_in_package_outside,
+            Derivation {
+                rule_id: expand_rule_id,
+                body_witnesses: vec![
+                    witness_is_in_package_boundary,
+                    witness_adjacent_boundary_outside,
+                ],
+            },
         );
+
+        // NOISE synthetic derivations under rule_ids that are never
+        // expand_rule_id and never looked up in `program.rules` by
+        // `negation_invalidated_seeds` (it only does that for the rule_id
+        // `negatively_triggered_rules` already matched) -- purely there to
+        // inflate `derived_from`'s total size the way an unrelated, large
+        // materialised closure would.
+        for i in 0..NOISE {
+            let noise_quad = Quad {
+                triple_id: g,
+                subject: 10_000_000 + i as u32,
+                predicate: 20_000_000,
+                obj: 30_000_000,
+            };
+            program.derived_from.record(
+                noise_quad,
+                Derivation {
+                    rule_id: expand_rule_id + 1 + i, // distinct, never expand_rule_id
+                    body_witnesses: vec![],
+                },
+            );
+        }
+
+        let reasoner = IncrementalReasoner {
+            programs: vec![program],
+            #[cfg(test)]
+            fallback_count: 0,
+        };
 
         let f_is_boundary = Quad {
             triple_id: g,
@@ -6046,56 +5956,38 @@ mod tests {
             obj: pkg,
         };
 
-        // Time `negation_invalidated_seeds` in isolation, not the whole
-        // `apply_insertions` call: that call also runs a full
-        // re-materialisation pass (`materialise_seminaive_tracked`) over
-        // every stratum and `cascade_pd`'s own `build_reverse_index` scan —
-        // both pre-existing O(total rules / total derived facts) costs
-        // unrelated to this issue — which at this NOISE scale dominate wall
-        // time enough to hide an O(NOISE) vs. O(1) difference confined to
-        // just this one lookup. `negation_invalidated_seeds` takes `&self`
-        // and performs no mutation, so calling it repeatedly ahead of the
-        // real (mutating) `apply_insertions` call below is safe and
-        // measures exactly the scan this issue is about.
-        const ITERS: u32 = 200;
+        const ITERS: u32 = 50;
         let start = std::time::Instant::now();
+        let mut last_seeds = HashSet::new();
         for _ in 0..ITERS {
-            let seeds = reasoner.negation_invalidated_seeds(std::slice::from_ref(&f_is_boundary));
-            assert_eq!(
-                seeds.len(),
-                1,
-                "expected exactly isInPackage(outside,pkg) to be found invalidated"
-            );
+            last_seeds = reasoner.negation_invalidated_seeds(std::slice::from_ref(&f_is_boundary));
         }
         let elapsed = start.elapsed();
         let per_call = elapsed / ITERS;
 
-        eprintln!(
-            "negation_invalidated_seeds with {NOISE} unrelated noise derivations in the \
-             same stratum: {ITERS} calls took {elapsed:?} ({per_call:?}/call)"
-        );
-        // An O(NOISE) full-index scan per call (as before #683) would, at
-        // this scale and iteration count, take whole seconds in debug
-        // builds; the indexed O(rule's own derivations) lookup should stay
-        // a small fraction of that regardless of NOISE. The bound is
-        // intentionally loose to stay robust to CI/hardware variance while
-        // still catching a reintroduced linear scan.
-        assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "{ITERS} calls to negation_invalidated_seeds took {elapsed:?} ({per_call:?}/call) \
-             with {NOISE} noise derivations present — this looks like a reintroduced \
-             O(stratum size) scan rather than the O(rule's own derivations) indexed lookup"
+        assert_eq!(
+            last_seeds,
+            HashSet::from([derived_is_in_package_outside]),
+            "expected exactly isInPackage(outside,pkg) to be found invalidated, \
+             regardless of the {NOISE} unrelated noise derivations present"
         );
 
-        // Now actually apply the insertion and confirm the real,
-        // user-visible correctness property still holds end to end.
-        reasoner
-            .apply_insertions(&mut ds, &[f_is_boundary])
-            .unwrap();
+        eprintln!(
+            "negation_invalidated_seeds with {NOISE} unrelated noise derivations in the \
+             same program: {ITERS} calls took {elapsed:?} ({per_call:?}/call)"
+        );
+        // An O(NOISE) full-index scan per call (the pre-#683 behaviour)
+        // would, at this NOISE and iteration count, take whole seconds;
+        // the indexed O(rule's own derivations) lookup should stay a small
+        // fraction of that regardless of NOISE. The bound is intentionally
+        // loose (a full second per call, not microseconds) to stay robust
+        // to CI/hardware variance while still catching a reintroduced
+        // linear scan at this scale.
         assert!(
-            !ds.named_graphs.contains(&is_in_package_outside),
-            "isInPackage(outside,pkg) must still be retracted with {NOISE} unrelated \
-             noise derivations present in the same stratum"
+            per_call < std::time::Duration::from_secs(1),
+            "negation_invalidated_seeds took {per_call:?}/call with {NOISE} noise \
+             derivations present -- this looks like a reintroduced O(program size) scan \
+             rather than the O(rule's own derivations) indexed lookup"
         );
     }
 }

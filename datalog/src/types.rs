@@ -213,8 +213,7 @@ impl DerivedFromIndex {
     /// present. See [#320](https://github.com/daghovland/rdf-datalog/issues/320).
     pub fn unrecord(&mut self, derived_quad: &dag_rdf::Quad, derivation: &Derivation) {
         let mut removed = false;
-        if let std::collections::hash_map::Entry::Occupied(mut e) =
-            self.index.entry(*derived_quad)
+        if let std::collections::hash_map::Entry::Occupied(mut e) = self.index.entry(*derived_quad)
         {
             let entries = e.get_mut();
             let before = entries.len();
@@ -235,8 +234,7 @@ impl DerivedFromIndex {
             self.by_rule.entry(rule_id)
         {
             let quads = rule_entry.get_mut();
-            if let std::collections::hash_map::Entry::Occupied(mut count_entry) =
-                quads.entry(*quad)
+            if let std::collections::hash_map::Entry::Occupied(mut count_entry) = quads.entry(*quad)
             {
                 *count_entry.get_mut() -= 1;
                 if *count_entry.get() == 0 {
