@@ -95,10 +95,11 @@ pub struct ReasoningStats {
 /// - `.ofn` → OWL 2 Functional-Style Syntax (ABox only — see below)
 /// - `.owx` → OWL 2 XML Serialization (ABox only — see below)
 /// - `.owl` → OWL 2 XML Serialization, but **only** when content-sniffing
-///   (see [`frame_ontology_ext`]) confirms an `<Ontology>` XML root;
-///   otherwise Turtle, since this repository's own test fixtures use `.owl`
-///   for Turtle-serialized ontologies (the extension alone is ambiguous —
-///   see [#609](https://github.com/daghovland/rdf-datalog/issues/609))
+///   (see `frame_ontology_ext`, private to this module) confirms an
+///   `<Ontology>` XML root; otherwise Turtle, since this repository's own
+///   test fixtures use `.owl` for Turtle-serialized ontologies (the
+///   extension alone is ambiguous — see
+///   [#609](https://github.com/daghovland/rdf-datalog/issues/609))
 /// - everything else → Turtle
 ///
 /// ## `.omn`/`.ofn`/`.owx`/`.owl` handling
@@ -236,8 +237,9 @@ fn parse_frame_ontology_file(ext: &str, path: &Path) -> Result<owl_ontology::Ont
 /// ## `.omn`/`.ofn`/`.owx`/`.owl` (Manchester / Functional-Style / OWL/XML) paths
 ///
 /// Unlike [`load_file`] (which only materialises such a file's ABox),
-/// `apply_ontologies` special-cases these extensions ([`frame_ontology_ext`]
-/// decides which, content-sniffing `.owl`) so their TBox is actually
+/// `apply_ontologies` special-cases these extensions (`frame_ontology_ext`,
+/// private to this module, decides which, content-sniffing `.owl`) so their
+/// TBox is actually
 /// reasoned over: each is parsed once, its ABox is materialised via
 /// [`owl2rl2datalog::assert_abox`], and its TBox is compiled to rules via
 /// [`owl2datalog`] — accumulated alongside the rules compiled from every
