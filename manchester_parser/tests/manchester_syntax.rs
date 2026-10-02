@@ -14,11 +14,13 @@ Contact: hovlanddag@gmail.com
 //! `owl_ontology::Ontology`.
 //!
 //! See `docs/plans/MANCHESTER_SYNTAX_PLAN.md` for the grammar subset in
-//! scope. Tests marked `#[ignore] // #157` document deferred grammar
-//! (tracked in [#157](https://github.com/daghovland/rdf-datalog/issues/157))
-//! and are expected to keep failing until that follow-up is implemented.
+//! scope. A handful of grammar productions remain deliberately
+//! unimplemented (see that doc's scope table and
+//! [#157](https://github.com/daghovland/rdf-datalog/issues/157)); any test
+//! covering one of those is marked `#[ignore]` with a comment linking the
+//! tracking issue.
 
-use ingress::{IriReference, OntologyVersion, RDFS, XSD};
+use ingress::{IriReference, OntologyVersion, RDF, RDFS, XSD};
 use owl_ontology::{
     AnnotationAxiom, AnnotationValue, Assertion, Atom, AtomArg, Axiom, ClassAxiom, ClassExpression,
     DataPropertyAxiom, DataRange, Entity, FullIri, Individual, ObjectPropertyAxiom,
@@ -976,12 +978,7 @@ fn rule_frame_can_be_interleaved_with_class_frames() {
     ))));
 }
 
-// ── Deferred grammar — tracked in #157 ────────────────────────────────────
-//
-// These document grammar productions this parser deliberately does not
-// support yet (see docs/plans/MANCHESTER_SYNTAX_PLAN.md's scope table).
-// They are `#[ignore]`d and expected to keep failing (return `Err`, or parse
-// but silently drop the construct) until #157 is implemented.
+// ── `ObjectProperty:` property chains (#500, formerly deferred by #157) ───
 
 #[test]
 fn object_property_subpropertychain_of_two() {
@@ -1060,35 +1057,227 @@ fn object_property_subpropertychain_with_annotations() {
     assert!(found, "expected an annotated SubPropertyChain: axiom");
 }
 
+// ── Compound data ranges (#501, formerly deferred by #157) ───────────────
+
 #[test]
-#[ignore] // #157: compound data ranges (and/or/not/oneOf on data ranges) are not parsed.
-fn deferred_compound_data_range() {
+fn data_range_intersection() {
     let onto = manchester_parser::parse(&doc(
         "DataProperty: hasRating Range: xsd:integer and xsd:positiveInteger",
     ))
     .unwrap();
-    assert!(onto.axioms.iter().any(|a| matches!(
-        a,
-        Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DataPropertyRange(
-            _,
-            _,
-            DataRange::DataIntersectionOf(_)
-        ))
+    assert!(onto.axioms.contains(&Axiom::AxiomDataPropertyAxiom(
+        DataPropertyAxiom::DataPropertyRange(
+            vec![],
+            iri("hasRating"),
+            DataRange::DataIntersectionOf(vec![
+                DataRange::NamedDataRange(xsd("integer")),
+                DataRange::NamedDataRange(xsd("positiveInteger")),
+            ])
+        )
     )));
 }
 
 #[test]
-#[ignore] // #157: datatype facet restrictions (Datatype[facet value,...]) are not parsed.
-fn deferred_datatype_facet_restriction() {
+fn data_range_union() {
+    let onto =
+        manchester_parser::parse(&doc("DataProperty: hasId Range: xsd:integer or xsd:string"))
+            .unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomDataPropertyAxiom(
+        DataPropertyAxiom::DataPropertyRange(
+            vec![],
+            iri("hasId"),
+            DataRange::DataUnionOf(vec![
+                DataRange::NamedDataRange(xsd("integer")),
+                DataRange::NamedDataRange(xsd("string")),
+            ])
+        )
+    )));
+}
+
+#[test]
+fn data_range_complement() {
+    let onto =
+        manchester_parser::parse(&doc("DataProperty: hasFlag Range: not xsd:boolean")).unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomDataPropertyAxiom(
+        DataPropertyAxiom::DataPropertyRange(
+            vec![],
+            iri("hasFlag"),
+            DataRange::DataComplementOf(Box::new(DataRange::NamedDataRange(xsd("boolean"))))
+        )
+    )));
+}
+
+#[test]
+fn data_range_one_of() {
+    let onto =
+        manchester_parser::parse(&doc("DataProperty: hasSize Range: { \"S\", \"M\", \"L\" }"))
+            .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DataPropertyRange(
+                _,
+                _,
+                DataRange::DataOneOf(vals)
+            )) if vals.len() == 3
+        )
+    });
+    assert!(found, "expected a 3-element DataOneOf");
+}
+
+#[test]
+fn data_range_parenthesized_and_nested() {
+    // `(xsd:integer or xsd:string) and not xsd:boolean` -- parens plus
+    // nested and/or/not, confirming precedence (and binds inside the
+    // parenthesized or, not applies to the trailing atomic only).
+    let onto = manchester_parser::parse(&doc(
+        "DataProperty: hasVal Range: (xsd:integer or xsd:string) and not xsd:boolean",
+    ))
+    .unwrap();
+    assert!(onto.axioms.contains(&Axiom::AxiomDataPropertyAxiom(
+        DataPropertyAxiom::DataPropertyRange(
+            vec![],
+            iri("hasVal"),
+            DataRange::DataIntersectionOf(vec![
+                DataRange::DataUnionOf(vec![
+                    DataRange::NamedDataRange(xsd("integer")),
+                    DataRange::NamedDataRange(xsd("string")),
+                ]),
+                DataRange::DataComplementOf(Box::new(DataRange::NamedDataRange(xsd("boolean")))),
+            ])
+        )
+    )));
+}
+
+#[test]
+fn datatype_facet_restriction_minlength() {
     let onto =
         manchester_parser::parse(&doc("DataProperty: hasName Range: xsd:string[minLength 1]"))
             .unwrap();
-    assert!(onto.axioms.iter().any(|a| matches!(
-        a,
-        Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DataPropertyRange(
-            _,
-            _,
-            DataRange::DatatypeRestriction(_, _)
-        ))
+    assert!(onto.axioms.contains(&Axiom::AxiomDataPropertyAxiom(
+        DataPropertyAxiom::DataPropertyRange(
+            vec![],
+            iri("hasName"),
+            DataRange::DatatypeRestriction(
+                xsd("string"),
+                vec![(
+                    xsd("minLength"),
+                    ingress::GraphElement::GraphLiteral(ingress::RdfLiteral::IntegerLiteral(
+                        1.into()
+                    ))
+                )]
+            )
+        )
     )));
+}
+
+#[test]
+fn datatype_facet_restriction_all_nine_tokens() {
+    // Every `constrainingFacet` token from the W3C grammar, mapped to its
+    // canonical facet IRI -- see the #501 addendum's table in
+    // docs/plans/MANCHESTER_SYNTAX_PLAN.md.
+    let cases: &[(&str, FullIri)] = &[
+        ("length", xsd("length")),
+        ("minLength", xsd("minLength")),
+        ("maxLength", xsd("maxLength")),
+        ("pattern", xsd("pattern")),
+        (
+            "langRange",
+            FullIri(IriReference(format!("{RDF}langRange"))),
+        ),
+        ("<=", xsd("maxInclusive")),
+        ("<", xsd("maxExclusive")),
+        (">=", xsd("minInclusive")),
+        (">", xsd("minExclusive")),
+    ];
+    for (token, expected_iri) in cases {
+        let onto = manchester_parser::parse(&doc(&format!(
+            "DataProperty: hasX Range: xsd:integer[{token} \"1\"]"
+        )))
+        .unwrap_or_else(|e| panic!("parse failed for facet {token}: {e}"));
+        let found = onto.axioms.iter().any(|a| {
+            matches!(
+                a,
+                Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DataPropertyRange(
+                    _,
+                    _,
+                    DataRange::DatatypeRestriction(_, facets)
+                )) if facets.len() == 1 && facets[0].0 == *expected_iri
+            )
+        });
+        assert!(found, "facet token {token} did not map to {expected_iri:?}");
+    }
+}
+
+#[test]
+fn datatype_facet_restriction_multiple_facets() {
+    let onto =
+        manchester_parser::parse(&doc("DataProperty: hasAge Range: xsd:integer[>= 0, < 150]"))
+            .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomDataPropertyAxiom(DataPropertyAxiom::DataPropertyRange(
+                _,
+                _,
+                DataRange::DatatypeRestriction(dt, facets)
+            )) if *dt == xsd("integer")
+                && facets.len() == 2
+                && facets[0].0 == xsd("minInclusive")
+                && facets[1].0 == xsd("maxExclusive")
+        )
+    });
+    assert!(found, "expected two facets, minInclusive then maxExclusive");
+}
+
+#[test]
+fn data_restriction_filler_does_not_swallow_a_following_class_conjunct() {
+    // Regression: restriction fillers (`some`/`only`/`min`/`max`/`exactly`)
+    // use `dataPrimary`, not the full `dataRange`, per the W3C grammar
+    // (`dataPropertyExpression 'some' dataPrimary`). Using the full
+    // `dataRange` here would wrongly let a bare `and`/`or` after the filler
+    // extend the *data* range instead of starting the next *class*
+    // conjunct -- i.e. `hasAge some xsd:integer and hasName some
+    // xsd:string` must parse as two class-level restrictions ANDed
+    // together, not as `hasAge some (xsd:integer and hasName)` followed by
+    // a dangling `some xsd:string`.
+    let onto = manchester_parser::parse(&doc(
+        "DataProperty: hasAge\nDataProperty: hasName\nClass: Adult\n    EquivalentTo: hasAge some xsd:integer and hasName some xsd:string",
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(_, exprs)) if exprs.iter().any(|e| matches!(
+                e,
+                ClassExpression::ObjectIntersectionOf(parts) if parts.len() == 2
+                    && matches!(&parts[0], ClassExpression::DataSomeValuesFrom(p, DataRange::NamedDataRange(dt)) if *p == vec![iri("hasAge")] && *dt == xsd("integer"))
+                    && matches!(&parts[1], ClassExpression::DataSomeValuesFrom(p, DataRange::NamedDataRange(dt)) if *p == vec![iri("hasName")] && *dt == xsd("string"))
+            ))
+        )
+    });
+    assert!(
+        found,
+        "expected two separate DataSomeValuesFrom restrictions ANDed together"
+    );
+}
+
+#[test]
+fn data_restriction_filler_accepts_parenthesized_compound_range() {
+    // A parenthesized compound range is still reachable as a filler via
+    // `dataAtomic`'s `'(' dataRange ')'` alternative.
+    let onto = manchester_parser::parse(&doc(
+        "DataProperty: hasAge Class: Adult EquivalentTo: hasAge some (xsd:integer or xsd:string)",
+    ))
+    .unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(_, exprs)) if exprs.iter().any(|e| matches!(
+                e,
+                ClassExpression::DataSomeValuesFrom(_, DataRange::DataUnionOf(items)) if items.len() == 2
+            ))
+        )
+    });
+    assert!(found, "expected a DataUnionOf filler via parentheses");
 }

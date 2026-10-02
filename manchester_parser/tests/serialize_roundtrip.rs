@@ -217,6 +217,84 @@ fn roundtrips_object_one_of() {
     );
 }
 
+// ── Compound data ranges (#501) ──────────────────────────────────────────
+
+#[test]
+fn roundtrips_data_range_intersection_union_complement() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasRating
+            Range: xsd:integer and xsd:positiveInteger
+        DataProperty: :hasId
+            Range: xsd:integer or xsd:string
+        DataProperty: :hasFlag
+            Range: not xsd:boolean
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_data_one_of() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasSize
+            Range: { "S", "M", "L" }
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_datatype_restriction_facets() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasAge
+            Range: xsd:integer[>= 0, < 150]
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_data_range_not_over_compound_range() {
+    // Regression: `not (A or B)` must re-emit with explicit parens around
+    // the compound inner range -- `not A or B` would re-parse as
+    // `(not A) or B`, a different expression.
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasVal
+            Range: not (xsd:integer or xsd:string)
+        "#,
+    );
+}
+
+#[test]
+fn roundtrips_data_restriction_with_parenthesized_compound_filler() {
+    // Regression: a `some`/`only` filler that is itself a compound range
+    // (`A or B`) must round-trip through the parenthesized-filler form,
+    // since restriction fillers parse as `dataPrimary`, not a bare
+    // `dataRange`.
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        DataProperty: :hasVal
+        Class: :Thing
+            SubClassOf: :hasVal some (xsd:integer or xsd:string)
+        "#,
+    );
+}
+
 // ── Phase 4: ObjectProperty: / DataProperty: frames ──────────────────────
 
 #[test]

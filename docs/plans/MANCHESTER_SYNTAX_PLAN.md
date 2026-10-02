@@ -125,10 +125,10 @@ dataConjunction ::= dataPrimary 'and' dataPrimary { 'and' dataPrimary } | dataPr
 dataPrimary     ::= [ 'not' ] dataAtomic
 dataAtomic      ::= Datatype | '{' literalList '}' | datatypeRestriction | '(' dataRange ')'
 ```
-Only the `Datatype` (bare named datatype) alternative of `dataAtomic` is
-implemented; `dataConjunction`/`dataRange`'s `and`/`or`, `'{' literalList '}'`
-(`DataOneOf`), and `datatypeRestriction` (facets) are **deferred** (#157) —
-`DataRange` parsing always yields `DataRange::NamedDataRange`.
+The full `dataAtomic` grammar is implemented, including `dataConjunction`/
+`dataRange`'s `and`/`or`, `'{' literalList '}'` (`DataOneOf`), and
+`datatypeRestriction` (facets) — see the "compound data ranges (#501"
+addendum below for the implementation.
 
 **Frames (§2.5):**
 ```
@@ -198,9 +198,9 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | Top-level `misc`: `EquivalentClasses:`, `DisjointClasses:`, `EquivalentProperties:`/`DisjointProperties:` (object + data), `SameIndividual:`, `DifferentIndividuals:` | Yes | |
 | Class expressions: atomic class, `(desc)`, `{ind, ind}` (`ObjectOneOf`), `not`/`and`/`or`, restrictions (`some`/`only`/`value`/`Self`/`min`/`max`/`exactly`, qualified and unqualified) | Yes | |
 | `conjunction`'s `classIRI 'that' ...` sugar | No | #157 |
-| Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | No | #157 |
-| `Datatype:` frame | No | #157 (depends on compound data ranges) |
-| `Rule:` (SWRL) frames | Yes | see addendum below; compound data ranges/`Datatype:` remain #157 follow-ups |
+| Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | Yes | see addendum below (#501) |
+| `Datatype:` frame | No | #502 (depends on compound data ranges, #501) |
+| `Rule:` (SWRL) frames | Yes | see addendum below; `Datatype:` remains a #157 follow-up (#502) |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
 
 ---
@@ -357,9 +357,10 @@ follow-up to this parser and to [#147](https://github.com/daghovland/rdf-datalog
 `manchester_parser/src/serialize.rs`, exported as `manchester_parser::serialize`.
 
 **Scope mirrors the parser's** (the table above): the same entity frames and
-sections, the same class-expression/restriction forms, the same "named
-datatype only" data ranges. Constructs deferred by [#157](https://github.com/daghovland/rdf-datalog/issues/157)
-are out of scope here too.
+sections, the same class-expression/restriction forms, and (since #501) the
+same full compound `dataRange` grammar. Constructs still deferred by
+[#157](https://github.com/daghovland/rdf-datalog/issues/157) (e.g. the
+`Datatype:` frame, #502) remain out of scope here too.
 
 Design points:
 
@@ -586,6 +587,112 @@ than two formattable elements or a non-named super-property is skipped with
 chain) lives in `serialize_roundtrip.rs` alongside the other frame kinds;
 `manchester_syntax.rs` additionally covers a three-item chain with an
 `inverse` element and a chain with per-section `Annotations:`.
+
+## Addendum: compound data ranges (#501, item 5 of #157's original six)
+
+[#157](https://github.com/daghovland/rdf-datalog/issues/157)'s remaining
+follow-ups after `DisjointUnionOf:` (#503), SWRL `Rule:` frames (#498),
+`HasKey:` (#499), and `SubPropertyChain:` (#500) are compound data ranges
+(this addendum, #501) and the `Datatype:` frame (#502, which depends on this
+one).
+
+Grammar (W3C Manchester Syntax spec §2.3):
+
+```
+dataRange       ::= dataConjunction 'or' dataConjunction { 'or' dataConjunction } | dataConjunction
+dataConjunction ::= dataPrimary 'and' dataPrimary { 'and' dataPrimary } | dataPrimary
+dataPrimary     ::= [ 'not' ] dataAtomic
+dataAtomic      ::= Datatype [ '[' facet restrictionValue (',' facet restrictionValue)* ']' ]
+                   | '{' literal (',' literal)* '}'
+                   | '(' dataRange ')'
+```
+
+This is structurally the same precedence ladder as `class_expr.rs`'s
+`description`/`conjunction`/`primary`/`atomic` for class expressions (`or`/
+`and`/`not`, parenthesization, an enumeration brace form), so
+`manchester_parser/src/data_range.rs` is restructured from its previous
+single `data_range` function (bare `Datatype` only) into the same four-level
+shape: `data_range` (`or`), `data_conjunction` (`and`), `data_primary`
+(`not`), `data_atomic` (`Datatype[...]` / `{literal,...}` / `(dataRange)`).
+`owl_ontology::DataRange`'s `DataIntersectionOf`/`DataUnionOf`/
+`DataComplementOf`/`DataOneOf`/`DatatypeRestriction` variants already exist
+(added for `owl_functional_parser`'s #180 landing) and need no changes —
+this issue is purely Manchester concrete syntax for constructs the type
+system already represents, confirmed by reading
+`owl_functional_parser/src/data_range.rs`'s equivalent recursive-descent
+parser before writing this one (same target type, same facet-pair shape).
+
+**Facet restriction, `Datatype[facet value, facet value, ...]`.** The W3C
+grammar's `constrainingFacet` is one of nine symbolic tokens —
+`length | minLength | maxLength | pattern | langRange | '<=' | '<' | '>=' |
+'>'` — each mapped to a canonical XSD (or, for `langRange`, RDF) facet IRI
+per the spec's Mapping to Functional-Style Syntax tables:
+
+| Manchester token | Facet IRI |
+|---|---|
+| `length` | `xsd:length` |
+| `minLength` | `xsd:minLength` |
+| `maxLength` | `xsd:maxLength` |
+| `pattern` | `xsd:pattern` |
+| `langRange` | `rdf:langRange` |
+| `<=` | `xsd:maxInclusive` |
+| `<` | `xsd:maxExclusive` |
+| `>=` | `xsd:minInclusive` |
+| `>` | `xsd:minExclusive` |
+
+`owl_ontology::DataRange::DatatypeRestriction(Datatype, Vec<(DataProperty,
+GraphElement)>)` represents each `(facet, value)` pair as `(DataProperty,
+GraphElement)` (both are plain `FullIri`/literal types; `DataProperty` is
+reused as a facet-IRI slot, mirroring `owl_functional_parser`'s identical
+choice) rather than inventing a new facet enum. The five word-shaped facet
+tokens (`length`, `minLength`, `maxLength`, `pattern`, `langRange`) parse via
+the existing `tokens::keyword` word-boundary matcher; the four symbolic
+tokens (`<=`, `<`, `>=`, `>`) need a small new combinator since `keyword`
+assumes identifier characters — tried longest-first (`<=` before `<`, `>=`
+before `>`) so e.g. `<= 0` doesn't parse as `<` followed by a stray `=`.
+
+**Ambiguity note.** A bare `Datatype` followed immediately by `[` is the
+only place this grammar needs lookahead: `data_atomic` parses the `Datatype`
+IRI first, then optionally consumes a `[...]` facet suffix if present,
+falling back to a plain `NamedDataRange` otherwise — no backtracking
+required, since `[` can never start anything else that could follow a
+`Datatype` in this position.
+
+**Call sites: `Range:` keeps the full grammar; restriction fillers use
+`data_primary`, not `data_range`.** `frame.rs`'s `DataProperty:` `Range:`
+section keeps calling `crate::data_range::data_range(ctx)` (the full `or`-
+level grammar) unchanged. `class_expr.rs`'s `data_restriction_tail`
+(`some`/`only`/`min`/`max`/`exactly` fillers), however, is switched from
+`data_range(ctx)` to the new `pub(crate) data_primary(ctx)` — the W3C
+grammar's actual filler position (`dataPropertyExpression 'some'
+dataPrimary`, not `dataRange`). This is not a cosmetic nicety: an initial
+draft left these call sites on `data_range`, and a two-conjunct class
+expression like `hasAge some xsd:integer and hasName some xsd:string`
+silently misparsed — `data_range`'s `many0(and data_primary)` greedily ate
+`hasName` as a second member of `hasAge`'s filler, leaving a dangling `some
+xsd:string`. Caught by an advisor review before merging; regression tests
+(`data_restriction_filler_does_not_swallow_a_following_class_conjunct`,
+`data_restriction_filler_accepts_parenthesized_compound_range`) pin both the
+fix and that a parenthesized compound range (`hasAge some (xsd:integer or
+xsd:string)`) is still reachable as a filler via `data_atomic`'s `'('
+dataRange ')'` alternative.
+
+The serializer (`serialize.rs`)'s `fmt_data_range` previously handled only
+`NamedDataRange`, skipping every other variant with `log_skip("compound data
+range (#157: ...)")`; this addendum extends it to all six variants,
+mirroring Manchester's own `and`/`or`/`not`/`{...}`/`[...]` surface syntax
+(not `owl_functional_parser`'s `DataIntersectionOf(...)` keyword-prefixed
+form). Getting parenthesization right needed two helpers, not one:
+`fmt_data_primary` (valid as an `and`/`or` list member or a restriction
+filler — only `DataIntersectionOf`/`DataUnionOf` need wrapping, since
+`DataComplementOf` already formats as `not <atomic>`, itself a valid
+primary) and `fmt_data_atomic` (valid directly after `not`, which *does*
+need to wrap a nested `DataComplementOf` too, since there's no `dataAtomic`
+alternative starting with `not`). Round-trip coverage for intersection/
+union/complement/oneOf/facet restrictions, `not` over a compound range, and
+a parenthesized compound filler lives in `serialize_roundtrip.rs`;
+`manchester_syntax.rs` additionally covers nested/parenthesized combinations
+and each of the nine facet tokens individually.
 
 ## References
 
