@@ -383,3 +383,70 @@ fn roundtrips_pizza_style_multi_axiom_ontology() {
          )",
     );
 }
+
+// ── SWRL DLSafeRule(...) (#625) ─────────────────────────────────────────
+
+/// Like `assert_roundtrip`, but also compares `ontology.rules` (which
+/// `assert_roundtrip`'s axiom-only comparison never touches, since rules
+/// are not `Axiom`s).
+#[track_caller]
+fn assert_rules_roundtrip(input: &str) -> String {
+    let onto = owl_functional_parser::parse(input).unwrap_or_else(|e| panic!("parse failed: {e}"));
+    let original_rules: HashSet<owl_ontology::SwrlRule> = onto.rules.iter().cloned().collect();
+    let text = owl_functional_parser::serialize(&onto);
+    let reparsed = owl_functional_parser::parse(&text)
+        .unwrap_or_else(|e| panic!("re-parse of serialized output failed: {e}\n---\n{text}"));
+    let round_tripped_rules: HashSet<owl_ontology::SwrlRule> = reparsed.rules.into_iter().collect();
+    assert_eq!(
+        original_rules, round_tripped_rules,
+        "rule sets differ after round-trip; serialized text was:\n{text}"
+    );
+    text
+}
+
+#[test]
+fn roundtrips_class_atom_rule() {
+    assert_rules_roundtrip(
+        "Ontology(<http://example.org/onto>\n\
+             DLSafeRule(Body(ClassAtom(<http://example.org/Person> Variable(<http://example.org/x>))) \
+                        Head(ClassAtom(<http://example.org/Human> Variable(<http://example.org/x>))))\n\
+         )",
+    );
+}
+
+#[test]
+fn roundtrips_object_and_data_property_and_builtin_atoms() {
+    assert_rules_roundtrip(
+        "Ontology(<http://example.org/onto>\n\
+             DLSafeRule(\
+                Body(ObjectPropertyAtom(<http://example.org/hasParent> Variable(<http://example.org/x>) Variable(<http://example.org/y>)) \
+                     DataPropertyAtom(<http://example.org/hasAge> Variable(<http://example.org/y>) Variable(<http://example.org/a>))) \
+                Head(BuiltInAtom(<http://www.w3.org/2003/11/swrlb#greaterThan> Variable(<http://example.org/a>) \"18\"^^<http://www.w3.org/2001/XMLSchema#integer>)))\n\
+         )",
+    );
+}
+
+#[test]
+fn roundtrips_data_range_same_and_different_individuals_atoms() {
+    assert_rules_roundtrip(
+        "Ontology(<http://example.org/onto>\n\
+             DLSafeRule(\
+                Body(DataRangeAtom(<http://www.w3.org/2001/XMLSchema#integer> Variable(<http://example.org/a>)) \
+                     SameIndividualAtom(Variable(<http://example.org/x>) <http://example.org/alice>) \
+                     DifferentIndividualsAtom(Variable(<http://example.org/x>) <http://example.org/bob>)) \
+                Head(ClassAtom(<http://example.org/Person> Variable(<http://example.org/x>))))\n\
+         )",
+    );
+}
+
+#[test]
+fn roundtrips_rule_with_annotation_and_multiple_rules() {
+    assert_rules_roundtrip(
+        "Ontology(<http://example.org/onto>\n\
+             DLSafeRule(Annotation(<http://www.w3.org/2000/01/rdf-schema#label> \"r1\") \
+                        Body() Head(ClassAtom(<http://example.org/Person> Variable(<http://example.org/x>))))\n\
+             DLSafeRule(Body(ClassAtom(<http://example.org/Human> Variable(<http://example.org/x>))) \
+                        Head(ClassAtom(<http://example.org/Mortal> Variable(<http://example.org/x>))))\n\
+         )",
+    );
+}

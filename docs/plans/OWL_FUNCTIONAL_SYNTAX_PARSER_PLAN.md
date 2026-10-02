@@ -250,7 +250,7 @@ into `GraphElement` elsewhere.
 | All `Assertion` keywords (incl. negative property assertions) | Yes | |
 | `AnnotationAssertion`, `SubAnnotationPropertyOf`, `AnnotationPropertyDomain`/`Range`, nested `Annotation(...)` on axioms/annotations | Yes | |
 | Anonymous individuals (`_:label` nodeID) | Yes | mirrors `manchester_parser::iri::node_id` |
-| SWRL `DLSafeRule` / `Rule(...)` (§11) | No | no `owl_ontology` type exists for SWRL rules at all (unlike Manchester's deferred productions, which target existing types) — filed as a follow-up issue, same rationale as Manchester's #157 split |
+| SWRL `DLSafeRule(...)` | No (originally) | deferred to [#625](https://github.com/daghovland/rdf-datalog/issues/625), same rationale as Manchester's #157 split — see "SWRL `DLSafeRule(...)` (#625)" addendum below for the implementation |
 | `SubClassOf`/expression punning edge cases (e.g. using an undeclared entity) | No | parser does not validate global consistency (declarations vs. use), matching Manchester's precedent of trusting input structurally |
 
 Everything in the "in scope" column above is targeted for this first
@@ -354,14 +354,72 @@ nothing "extra" lands before the mandated tier is complete.
 
 ---
 
-## Deferred follow-up
+## Deferred follow-up (superseded — see addendum below)
 
-SWRL `Rule(...)` / `DLSafeRule(...)` parsing (§11 of the spec) is deferred:
-`owl_ontology` has no representation for SWRL rules at all (unlike
-Manchester's #157 deferrals, which all target axiom/expression types that
-already exist), so supporting it would require designing new
-`owl_ontology` types first — out of scope for a parser-only issue. Filed as
-a follow-up issue against this epic once this PR is under way.
+SWRL `Rule(...)` / `DLSafeRule(...)` parsing was originally deferred here on
+the premise that `owl_ontology` had no representation for SWRL rules at all.
+That premise went stale: [#498](https://github.com/daghovland/rdf-datalog/issues/498)
+(PR [#636](https://github.com/daghovland/rdf-datalog/pull/636)) landed first
+and added `owl_ontology::SwrlRule`/`Atom`/`AtomArg` plus `Ontology.rules` for
+`manchester_parser`'s own `Rule:` frames, before this issue's implementation
+started. [#625](https://github.com/daghovland/rdf-datalog/issues/625) reuses
+those types rather than inventing new ones — see the addendum below.
+
+## SWRL `DLSafeRule(...)` (#625)
+
+Tracked in issue [#625](https://github.com/daghovland/rdf-datalog/issues/625),
+split out of this parser (#180) the same way Manchester's `Rule:` frame
+support was split into [#498](https://github.com/daghovland/rdf-datalog/issues/498).
+
+**Correction to the original framing above:** despite the name, `DLSafeRule(...)`
+is **not part of the W3C OWL 2 Functional-Style Syntax specification** —
+[`https://www.w3.org/TR/owl2-syntax/`](https://www.w3.org/TR/owl2-syntax/)'s
+own §11 ("Global Restrictions on Axioms in OWL 2 DL") covers property
+hierarchy/axiom-closure restrictions, not rules, and the document defines no
+`Rule`/`DLSafeRule`/`Body`/`Head`/`Atom` grammar anywhere. `DLSafeRule(...)`
+is a convention from the OWL API / Protégé for serializing SWRL rules
+("A Syntax for Rules in OWL 2", Sirin et al. — the OWL API's
+`OWLFunctionalSyntaxParser` documents and implements it) built on the SWRL
+submission's abstract syntax, not a normative OWL 2 production. The grammar
+this parser targets (per that convention):
+
+```
+DLSafeRule ::= 'DLSafeRule' '(' {Annotation} 'Body' '(' {Atom} ')' 'Head' '(' {Atom} ')' ')'
+Atom       ::= ClassAtom | DataRangeAtom | ObjectPropertyAtom | DataPropertyAtom
+             | BuiltInAtom | SameIndividualAtom | DifferentIndividualsAtom
+ClassAtom               ::= 'ClassAtom' '(' ClassExpression IArg ')'
+DataRangeAtom            ::= 'DataRangeAtom' '(' DataRange DArg ')'
+ObjectPropertyAtom       ::= 'ObjectPropertyAtom' '(' ObjectPropertyExpression IArg IArg ')'
+DataPropertyAtom         ::= 'DataPropertyAtom' '(' DataProperty IArg DArg ')'
+BuiltInAtom              ::= 'BuiltInAtom' '(' IRI DArg {DArg} ')'
+SameIndividualAtom       ::= 'SameIndividualAtom' '(' IArg IArg ')'
+DifferentIndividualsAtom ::= 'DifferentIndividualsAtom' '(' IArg IArg ')'
+IArg ::= Individual | 'Variable' '(' IRI ')'
+DArg ::= Literal | 'Variable' '(' IRI ')'
+```
+
+**Reuses `owl_ontology::SwrlRule`/`Atom`/`AtomArg` from #498/PR #636** rather
+than inventing new types, per this issue's own scope note. Mapping onto the
+existing (Manchester-shaped) `Atom` enum:
+
+- `ClassAtom(CE, IArg)` → `Atom::ClassAtom(ClassExpression, AtomArg)` directly.
+- `DataPropertyAtom(DP, IArg, DArg)` → `Atom::PropertyAtom(Iri, AtomArg, AtomArg)` directly (`DataPropertyExpression` is always a bare IRI).
+- `ObjectPropertyAtom(OPE, IArg, IArg)` with a **named** property → `Atom::PropertyAtom` directly.
+- `ObjectPropertyAtom(ObjectInverseOf(P), x, y)` → `Atom::PropertyAtom(P, y, x)` (arguments swapped) — semantically exact, needs no new type; recurses/tracks swap parity for (unusual) nested `ObjectInverseOf`.
+- `BuiltInAtom(IRI, DArg, {DArg})` → `Atom::BuiltInAtom(Iri, Vec<AtomArg>)` at **any** arity, including 2. Unlike Manchester's `generic_atom`, functional syntax is never ambiguous about arity-2 predicates (the keyword itself says which atom kind it is), so this parser does **not** reuse Manchester's "arity 2 defaults to PropertyAtom" heuristic for `BuiltInAtom`.
+- `DataRangeAtom`, `SameIndividualAtom`, `DifferentIndividualsAtom` have **no faithful encoding** in the existing three-variant `Atom` enum (conflating a `DataRangeAtom` into `ClassAtom` would blur datatypes with classes; `Same`/`DifferentIndividualsAtom` carry no predicate IRI at all, unlike `PropertyAtom`). Added as three new `Atom` variants in `owl_ontology::axioms`: `Atom::DataRangeAtom(DataRange, AtomArg)`, `Atom::SameIndividualAtom(AtomArg, AtomArg)`, `Atom::DifferentIndividualsAtom(AtomArg, AtomArg)`. Every exhaustive match on `Atom` across the workspace is updated; `manchester_parser`'s own `serialize.rs` gains arms for these that `log::warn!` and skip (its `Rule:` grammar, per #498, has no concrete syntax for them).
+- `Variable(IRI)` → `AtomArg::Variable(<full IRI string>)`. Note this differs from Manchester's convention of storing the bare name without the leading `?` — documented on `AtomArg::Variable`'s doc comment; harmless since variable identity is only ever compared within a single rule, never across syntaxes.
+
+`Body(...)`/`Head(...)` use `many0`, not Manchester's `separated_list1(',')`
+(functional syntax is whitespace-separated, no commas). Rules are not
+`Axiom`s, so the top-level `Ontology(...)` body parser (`lib.rs`) parses
+`many0(alt((axiom → an Axiom, dl_safe_rule → a SwrlRule)))`, partitions the
+two, and attaches rules via `Ontology::with_rules` (same builder #498 added).
+
+The serializer (`owl_functional_parser::serialize`, #634) is extended to
+emit `ontology.rules` as `DLSafeRule(...)` lines, with a round-trip test,
+mirroring #498's own parser+serializer pairing for Manchester's `Rule:`
+frames.
 
 ## Serialiser (`owl_functional_parser::serialize`)
 
