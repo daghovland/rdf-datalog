@@ -9,6 +9,7 @@ use crate::cell::{
     functional::execute_functional_file,
     manchester::execute_manchester_file,
     ottr::{execute_ottr_file, execute_ottr_inline},
+    owl_xml::execute_owl_xml_file,
     rml::execute_rml,
     shacl::execute_validate,
     sparql::execute_sparql,
@@ -258,6 +259,14 @@ fn dispatch_cell(cell_type: CellType, ds: &mut Datastore) -> Result<CellOutput, 
             // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
             check_path_safe(&path)?;
             execute_functional_file(ds, &path)
+                .map(CellOutput::Stream)
+                .map_err(CellError::Execution)
+        }
+        CellType::OwlXml(path) => {
+            // Reject path-traversal attempts before touching the filesystem.
+            // See [#85](https://github.com/daghovland/rdf-datalog/issues/85).
+            check_path_safe(&path)?;
+            execute_owl_xml_file(ds, &path)
                 .map(CellOutput::Stream)
                 .map_err(CellError::Execution)
         }

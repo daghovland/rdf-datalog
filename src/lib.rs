@@ -1113,8 +1113,8 @@ Ontology(
 
         let mut ds = Datastore::new(1_000);
         assert_fido_is_dog(&mut ds);
-        let stats = apply_ontologies(&mut ds, &[path])
-            .expect("should sniff .owl as OWL/XML and apply it");
+        let stats =
+            apply_ontologies(&mut ds, &[path]).expect("should sniff .owl as OWL/XML and apply it");
         assert!(stats.axiom_count > 0);
         assert!(stats.rule_count > 0);
         assert!(
@@ -1134,8 +1134,8 @@ Ontology(
     #[test]
     fn load_file_turtle_syntax_owl_fixture_still_loads_as_turtle() {
         let mut ds = Datastore::new(10_000);
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/testdata/equality.owl");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/equality.owl");
         load_file(&mut ds, &path).expect("equality.owl (Turtle) should still load");
         assert!(
             ds.named_graphs.quad_count > 0,
