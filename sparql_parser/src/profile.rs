@@ -49,17 +49,50 @@ Contact: hovlanddag@gmail.com
 //!   take-and-merge explicitly in `components.rs`; kinds that call it at
 //!   most once (`Minus`, `Group`, `Subquery`) need no extra code, since the
 //!   generic wrapper in `eval_components_budgeted` already consumes
-//!   whatever was left pending. Leaf kinds (`Filter`/`Bind`/`Values`/
-//!   `PathPattern`/`Service`) explicitly *discard* any pending children —
-//!   the guard against a future nested profiled call inside expression
-//!   evaluation (e.g. `EXISTS`, not instrumented here — see
-//!   [#697](https://github.com/daghovland/rdf-datalog/issues/697)) leaking
-//!   onto an unrelated sibling's node.
+//!   whatever was left pending. True leaf kinds (`Bind`/`Values`/
+//!   `Service`) explicitly *discard* any pending children — the guard
+//!   against a future nested profiled call inside expression evaluation
+//!   leaking onto an unrelated sibling's node. `Filter` and `PathPattern`
+//!   are no longer leaves in this sense (see below, #697): they consume
+//!   pending children left by `EXISTS`/`NOT EXISTS` and property-path
+//!   internals respectively, with their own per-row merge since both run
+//!   their inner evaluation once per outer row.
 //!
-//! `EXISTS`/`NOT EXISTS` and property-path step-level timing are
-//! deliberately out of scope — see #697.
+//! **`EXISTS`/`NOT EXISTS` and property-path step-level timing** (issue
+//! [#697](https://github.com/daghovland/rdf-datalog/issues/697)) reuse the
+//! same single-slot `pending_children` channel described above, but
+//! *without* going through [`enter_scope`]/[`finish`]'s frame-stack at all:
+//! `execute/expressions.rs`'s `Exists`/`NotExists` arms and
+//! `execute/paths.rs`'s composite `PropertyPath` arms (`Sequence`,
+//! `Alternative`, `ZeroOrOne`, `Repeat`, `ZeroOrMore`/`OneOrMore`) build
+//! their own [`ProfileNode`]s directly (via [`ProfileNode::new`]) and hand
+//! them to the caller with [`set_pending_children`] — the same mechanism
+//! `components.rs`'s `Union` arm already uses for its synthetic
+//! `"UnionLeft"`/`"UnionRight"` wrappers. This is necessary because these
+//! sites sit *inside* expression/path evaluation, below any
+//! `eval_components_budgeted` frame — calling `finish` there would record
+//! the new node into whatever frame happens to be on top of the *component*
+//! stack (a sibling of the enclosing `Filter`/`PathPattern`, not its
+//! child). `QueryComponent::Filter` and `QueryComponent::PathPattern` are
+//! themselves now `profile_has_children` kinds (no longer leaves — see
+//! `components.rs`), consuming whatever these inner arms left pending, with
+//! the same per-row take-and-merge discipline `Optional`/`Graph` use (an
+//! `EXISTS` inside a `FILTER`, or a path pattern, both run once per outer
+//! row).
+//!
+//! Property-path traversal adds one more wrinkle a plain per-row merge
+//! doesn't cover: `ZeroOrMore`/`OneOrMore` (`transitive_closure`) do a BFS
+//! that calls `eval_path_pattern` once per queue pop — proportional to
+//! graph size, i.e. exactly the "never per matched quad" granularity this
+//! module's doc already rules out for BGP patterns. Rather than let that
+//! BFS recurse into (potentially nested) instrumented `PropertyPath` arms
+//! and explode the profile tree, `transitive_closure` wraps its whole body
+//! in a [`SuspendGuard`] ([`suspend_guard`]): every nested profiled call
+//! made while the guard is held is a no-op (`is_active()` is false), and
+//! the BFS's caller in `paths.rs` builds exactly ONE aggregate
+//! `"TransitiveClosure"` node from its own start/elapsed timing instead.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 /// One node of the runtime profile tree, as opposed to
@@ -89,7 +122,13 @@ pub struct ProfileNode {
 }
 
 impl ProfileNode {
-    fn new(
+    /// Build a one-invocation node directly, for call sites that manage
+    /// `pending_children` themselves via [`set_pending_children`] instead
+    /// of going through [`finish`]'s frame-stack `record` (`Union`'s
+    /// `"UnionLeft"`/`"UnionRight"` wrappers, and `EXISTS`/property-path
+    /// internals — see the module doc's "`EXISTS`/`NOT EXISTS` and
+    /// property-path step-level timing" section, #697).
+    pub(crate) fn new(
         kind: &'static str,
         label: Option<String>,
         rows_in: usize,
@@ -160,14 +199,55 @@ struct ProfilerState {
 
 thread_local! {
     static PROFILER: RefCell<Option<ProfilerState>> = const { RefCell::new(None) };
+    /// Suspension depth (see [`SuspendGuard`]) — a counter, not a bool, so
+    /// nested suspensions (a transitive-closure path whose inner path is
+    /// itself a transitive closure) compose correctly.
+    static SUSPENDED: Cell<u32> = const { Cell::new(0) };
 }
 
 /// True iff a profiler is active on this thread — i.e. this query is being
-/// evaluated via [`crate::execute::execute_with_profile`]. Every
-/// instrumentation call site checks this first so the non-`explain` path
-/// pays only this one cheap check.
+/// evaluated via [`crate::execute::execute_with_profile`] — AND profiling
+/// isn't currently suspended (see [`SuspendGuard`]). Every instrumentation
+/// call site checks this first so the non-`explain` path pays only this
+/// one cheap check (an inactive profiler short-circuits before the
+/// suspension check even runs).
 pub(crate) fn is_active() -> bool {
-    PROFILER.with(|p| p.borrow().is_some())
+    PROFILER.with(|p| p.borrow().is_some()) && SUSPENDED.with(|c| c.get() == 0)
+}
+
+/// RAII guard that suspends profiling for its lifetime: while held,
+/// [`is_active`] returns `false`, so every nested instrumented call site
+/// (however deep or however many times it recurses) skips its profiling
+/// bookkeeping entirely. Used by
+/// `crate::execute::paths::transitive_closure`'s BFS (issue
+/// [#697](https://github.com/daghovland/rdf-datalog/issues/697)): the BFS
+/// calls `eval_path_pattern` once per queue pop, proportional to graph
+/// size — exactly the "never per matched quad" granularity this module's
+/// doc already rules out — so the BFS's caller builds one aggregate node
+/// from its own timing instead of letting the traversal recurse into
+/// (potentially nested) instrumented `PropertyPath` arms.
+pub(crate) struct SuspendGuard {
+    active: bool,
+}
+
+/// Suspend profiling until the returned guard drops. A no-op (its guard a
+/// no-op on drop) if no profiler is active on this thread — mirrors
+/// [`enter_scope`]'s own "already inactive" short-circuit.
+pub(crate) fn suspend_guard() -> SuspendGuard {
+    if PROFILER.with(|p| p.borrow().is_some()) {
+        SUSPENDED.with(|c| c.set(c.get() + 1));
+        SuspendGuard { active: true }
+    } else {
+        SuspendGuard { active: false }
+    }
+}
+
+impl Drop for SuspendGuard {
+    fn drop(&mut self) {
+        if self.active {
+            SUSPENDED.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
 }
 
 /// Start collecting a fresh profile on this thread.

@@ -12,6 +12,7 @@ use super::functions::{
 };
 use super::solutions::solution_row_to_partial;
 use super::*;
+use crate::profile;
 
 /// Evaluate a SPARQL expression as a boolean filter guard.
 ///
@@ -497,6 +498,22 @@ pub(crate) fn eval_expression_bool(
             // like `Query::Ask` (issue #536), budget the evaluation to a
             // single row: an unselective `inner` pattern stops scanning after
             // the first match instead of enumerating every match.
+            //
+            // Issue #697: when profiling, `eval_components_budgeted` opens
+            // its own scope and leaves `inner`'s evaluated component tree
+            // pending when it returns (same mechanism `Optional`/`Union`
+            // already rely on) — take it, build an `"Exists"` node from
+            // our own start/elapsed timing wrapping it, and hand the
+            // *single* resulting node back to the caller via
+            // `set_pending_children` (not `profile::finish`: we are below
+            // any `eval_components_budgeted` frame here, so `finish` would
+            // record into the wrong — sibling, not parent — scope). The
+            // enclosing `Filter`'s own arm in `components.rs` merges this
+            // across rows, since `EXISTS` runs once per row being
+            // filtered, just like `Optional`'s body runs once per outer
+            // row.
+            let profiling = profile::is_active();
+            let t0 = profiling.then(profile::now);
             let sols = eval_components_budgeted(
                 inner,
                 vec![sub.clone()],
@@ -506,12 +523,27 @@ pub(crate) fn eval_expression_bool(
                 &Deadline::none(),
             )
             .unwrap_or_default();
+            if let Some(t0) = t0 {
+                let children = profile::take_pending_children();
+                let node = profile::ProfileNode::new(
+                    "Exists",
+                    None,
+                    1,
+                    sols.len(),
+                    t0.elapsed(),
+                    children,
+                );
+                profile::set_pending_children(vec![node]);
+            }
             Some(!sols.is_empty())
         }
         Expression::NotExists(inner) => {
             // See the comment on the `Exists` arm above (including the
             // #536 budget-of-1 short-circuit — inverting the boolean does
-            // not change how many solutions are needed to decide it).
+            // not change how many solutions are needed to decide it — and
+            // the #697 profiling note).
+            let profiling = profile::is_active();
+            let t0 = profiling.then(profile::now);
             let sols = eval_components_budgeted(
                 inner,
                 vec![sub.clone()],
@@ -521,6 +553,18 @@ pub(crate) fn eval_expression_bool(
                 &Deadline::none(),
             )
             .unwrap_or_default();
+            if let Some(t0) = t0 {
+                let children = profile::take_pending_children();
+                let node = profile::ProfileNode::new(
+                    "NotExists",
+                    None,
+                    1,
+                    sols.len(),
+                    t0.elapsed(),
+                    children,
+                );
+                profile::set_pending_children(vec![node]);
+            }
             Some(sols.is_empty())
         }
         _ => {

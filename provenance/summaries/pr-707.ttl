@@ -1,0 +1,39 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log
+# 5d650ce7776eb09f69e1dd7476c46ec4aec37d41..HEAD` on branch
+# feat/697-explain-exists-path-timing).
+
+ghpull:707 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: EXISTS/NOT EXISTS and property-path step-level timing in EXPLAIN profile" ;
+    bl:number 707 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:697 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr707 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:697 ;
+    prov:startedAtTime "2026-10-08T07:52:05Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-08T07:52:05Z"^^xsd:dateTime .
+
+session:pr707Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #697 was filed by #698 itself as the explicit follow-up for the two cases #572's per-operator EXPLAIN profiler deliberately deferred: FILTER EXISTS/NOT EXISTS and property-path internals. Before writing code I read pr-698.ttl in full (per the provenance-check step) and it named the exact reason: eval_filter's EXISTS evaluation runs once per solution row with no existing take-and-merge discipline, and rushing that into #698's scope risked a stale-pending-children leak. That framing shaped the whole design here: every new instrumentation site had to decide, explicitly, whether it owns a merge-across-invocations loop or can rely on a caller's. For EXISTS/NotExists (expressions.rs), eval_components_budgeted already opens and closes its own scope internally, so the arm just times the call, takes whatever it left pending, wraps it in one new node via ProfileNode::new, and hands it up via set_pending_children -- not profile::finish, since finish's record() pushes into whatever frame is currently open on the component-list stack, which at an expression-evaluation call site is the wrong (sibling, not parent) frame; recognizing this before writing any code -- by tracing exactly which scope frame is open at that call depth -- was the key design decision that made every subsequent arm (Alternative, ZeroOrOne, Repeat, TransitiveClosure) follow the same set_pending_children idiom rather than profile::finish. Filter's own arm in components.rs, previously a one-line .filter() iterator, had to become an explicit per-row loop merging each row's pending Exists/NotExists node, mirroring Optional's established per-row discipline, since FILTER's rows and EXISTS's per-row body are the exact same repetition shape #698 flagged. Property-path step-level timing turned out to need one case #698's precedent didn't have: ZeroOrMore/OneOrMore's BFS calls eval_path_pattern once per queue pop, proportional to graph size -- exactly the granularity crate::profile's own module doc already rules out for BGP patterns ('never per matched quad'). Rather than let that BFS recurse into instrumented PropertyPath arms and explode the profile tree (or worse, corrupt the single-slot pending_children discipline across thousands of pops), I added a new profile::SuspendGuard: a thread-local suspension counter that makes is_active() report false for its entire lifetime, so every nested call inside transitive_closure's body is a no-op regardless of depth, and the OneOrMore/ZeroOrMore call sites build exactly one aggregate TransitiveClosure node from their own start/elapsed timing once the guard drops. Sequence's per-step breakdown needed the same per-row merge as Optional (a step's inner call runs once per row in the current intermediate result set, which can grow via fan-out from an earlier step), built via ProfileNode::new per row merged positionally with merge_children rather than hand-summing fields, so invocations/rowsIn/rowsOut accumulate through the exact same mechanism Optional's aggregation already relies on instead of a parallel ad-hoc one. I added a defensive clear_pending_children() at eval_path_pattern's entry (and before each k in eval_repeat_path's bounded loop, since k=0 bypasses eval_path_pattern entirely via zero_hop_solutions) establishing the invariant every arm needs: after any call returns, the pending slot holds exactly what that call set, never a stale value from an unrelated earlier call -- the identical class of bug #698's own doc warns about, just one level deeper in the call graph. All 9 explain_profile.rs tests (4 pre-existing, 5 new) passed on the first implementation attempt once this design settled, and the only test failure seen locally (query_timeout's SIGKILL under a 3-million-triple load) reproduced identically on an isolated rerun and is independent of this PR's changes (which only add bookkeeping gated behind ?explain=true) -- confirmed unrelated when the PR's own CI run, including the release test suite, came back fully green." ;
+    agp:reasoningFor ghpull:707 ;
+    prov:wasGeneratedBy session:pr707 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr707Summary agp:decisionPoint session:pr707Decision .
+
+session:pr707Decision a agp:Decision ;
+    agp:summaryText "Suspend profiling entirely (via a new thread-local profile::SuspendGuard) for the whole body of transitive_closure's BFS, rather than letting eval_path_pattern's existing per-arm instrumentation recurse naturally into whatever PropertyPath structure the BFS's inner path happens to have." ;
+    agp:alternative "Considered letting the BFS's repeated eval_path_pattern calls profile normally and merging them the same per-row way Sequence/Optional do. Rejected: the BFS calls eval_path_pattern once per queue pop, a count proportional to graph size/connectivity rather than to the query's own static structure -- exactly the 'never per matched quad' granularity crate::profile's pre-existing module doc already rules out for BGP triple patterns, for the same reason (profile-tree size and construction cost must track query complexity, not data size). A suspend-and-aggregate approach (one TransitiveClosure node built from the call site's own timing, nothing recorded from inside) keeps the cost and tree size bounded regardless of how large or densely connected the traversed graph is." .

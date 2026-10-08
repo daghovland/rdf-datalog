@@ -255,3 +255,176 @@ async fn test_profile_present_even_with_zero_result_rows() {
     assert_eq!(profile.len(), 1);
     assert_eq!(profile[0]["rowsOut"], 0);
 }
+
+/// Test 6 (issue #697) — a `FILTER EXISTS { ... }` evaluated once per outer
+/// row is merged into ONE aggregate `"Exists"` node under the `Filter`
+/// node, mirroring test 3's `OPTIONAL` aggregation: `Filter` itself
+/// dispatches once (`invocations: 1`), while the nested `"Exists"` node's
+/// `invocations` equals the outer row count (how many times the EXISTS
+/// sub-pattern actually ran).
+#[tokio::test]
+async fn test_profile_exists_aggregates_per_row_invocations() {
+    let mut turtle = String::new();
+    for i in 0..3 {
+        turtle.push_str(&format!(
+            "<http://example.org/s{i}> <http://example.org/p> <http://example.org/o{i}> .\n"
+        ));
+    }
+    // Only s0 has the witness property, so EXISTS succeeds for exactly one
+    // of the 3 outer rows.
+    turtle.push_str("<http://example.org/s0> <http://example.org/witness> \"yes\" .\n");
+    let server = common::TestServer::start(&turtle).await;
+
+    let sparql = "SELECT ?s WHERE { \
+        ?s <http://example.org/p> ?o . \
+        FILTER EXISTS { ?s <http://example.org/witness> ?w } \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+    assert_eq!(body["rowCount"], 1, "body: {body:?}");
+    let profile = body["profile"].as_array().expect("profile array");
+    assert_eq!(profile.len(), 2, "profile: {profile:?}");
+    assert_eq!(profile[0]["kind"], "BGP");
+    assert_eq!(profile[1]["kind"], "Filter");
+
+    assert_eq!(
+        profile[1]["invocations"], 1,
+        "the Filter component itself is one dispatch, summarizing all outer rows: {:?}",
+        profile[1]
+    );
+    assert_eq!(
+        profile[1]["rowsIn"], 3,
+        "rowsIn sums across all 3 rows filtered: {:?}",
+        profile[1]
+    );
+
+    let exists_children = profile[1]["children"]
+        .as_array()
+        .expect("Filter must have children (the merged EXISTS node)");
+    assert_eq!(
+        exists_children.len(),
+        1,
+        "exists_children: {exists_children:?}"
+    );
+    let exists_node = &exists_children[0];
+    assert_eq!(exists_node["kind"], "Exists");
+    assert_eq!(
+        exists_node["invocations"], 3,
+        "EXISTS ran once per outer row, merged into one node: {:?}",
+        exists_node
+    );
+    assert!(
+        exists_node["totalTimeMs"]
+            .as_f64()
+            .expect("totalTimeMs must be a number")
+            >= 0.0
+    );
+}
+
+/// Test 7 (issue #697) — a `FILTER NOT EXISTS { ... }` produces a
+/// `"NotExists"` node (distinct kind string from plain `EXISTS`), still
+/// merged across outer rows the same way.
+#[tokio::test]
+async fn test_profile_not_exists_produces_not_exists_node() {
+    let mut turtle = String::new();
+    for i in 0..2 {
+        turtle.push_str(&format!(
+            "<http://example.org/s{i}> <http://example.org/p> <http://example.org/o{i}> .\n"
+        ));
+    }
+    let server = common::TestServer::start(&turtle).await;
+
+    let sparql = "SELECT ?s WHERE { \
+        ?s <http://example.org/p> ?o . \
+        FILTER NOT EXISTS { ?s <http://example.org/witness> ?w } \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+    assert_eq!(body["rowCount"], 2, "body: {body:?}");
+    let body: serde_json::Value = body;
+    let profile = body["profile"].as_array().expect("profile array");
+    let filter_node = profile
+        .iter()
+        .find(|n| n["kind"] == "Filter")
+        .expect("a Filter node must be present");
+    let children = filter_node["children"].as_array().expect("Filter children");
+    assert_eq!(children.len(), 1, "children: {children:?}");
+    assert_eq!(children[0]["kind"], "NotExists");
+    assert_eq!(children[0]["invocations"], 2);
+}
+
+/// Test 8 (issue #697) — a sequence property path (`:p1/:p2`) reports one
+/// `"Step"` child per static step under the `PathPattern` node, in order,
+/// with each step's own rows-in/rows-out.
+#[tokio::test]
+async fn test_profile_path_sequence_reports_one_step_per_hop() {
+    let turtle = r#"
+        <http://example.org/a> <http://example.org/p1> <http://example.org/b> .
+        <http://example.org/b> <http://example.org/p2> <http://example.org/c> .
+    "#;
+    let server = common::TestServer::start(turtle).await;
+    let sparql = "SELECT ?x WHERE { \
+        <http://example.org/a> <http://example.org/p1>/<http://example.org/p2> ?x \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+    assert_eq!(body["rowCount"], 1, "body: {body:?}");
+    let profile = body["profile"].as_array().expect("profile array");
+    assert_eq!(profile.len(), 1);
+    assert_eq!(profile[0]["kind"], "PathPattern");
+
+    let steps = profile[0]["children"]
+        .as_array()
+        .expect("PathPattern must have Step children");
+    assert_eq!(steps.len(), 2, "steps: {steps:?}");
+    assert_eq!(steps[0]["kind"], "Step");
+    assert_eq!(steps[1]["kind"], "Step");
+    assert_eq!(steps[0]["rowsOut"], steps[1]["rowsIn"], "steps: {steps:?}");
+}
+
+/// Test 9 (issue #697) — a transitive-closure path (`:p+`) reports one
+/// `"TransitiveClosure"` child under the `PathPattern` node, with NO
+/// further children of its own (the BFS inside is suspended — see
+/// `crate::profile::SuspendGuard` — never broken down per queue pop).
+#[tokio::test]
+async fn test_profile_transitive_closure_is_one_node_with_no_children() {
+    let turtle = r#"
+        <http://example.org/a> <http://example.org/p> <http://example.org/b> .
+        <http://example.org/b> <http://example.org/p> <http://example.org/c> .
+    "#;
+    let server = common::TestServer::start(turtle).await;
+    let sparql = "SELECT ?x WHERE { \
+        <http://example.org/a> <http://example.org/p>+ ?x \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+    assert_eq!(body["rowCount"], 2, "body: {body:?}");
+    let profile = body["profile"].as_array().expect("profile array");
+    assert_eq!(profile.len(), 1);
+    assert_eq!(profile[0]["kind"], "PathPattern");
+
+    let children = profile[0]["children"]
+        .as_array()
+        .expect("PathPattern must have a TransitiveClosure child");
+    assert_eq!(children.len(), 1, "children: {children:?}");
+    assert_eq!(children[0]["kind"], "TransitiveClosure");
+    assert_eq!(children[0]["rowsOut"], 2);
+    assert_eq!(
+        children[0]["children"].as_array().unwrap().len(),
+        0,
+        "the BFS inside a transitive closure is suspended, never broken down: {:?}",
+        children[0]
+    );
+}

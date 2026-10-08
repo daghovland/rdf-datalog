@@ -39,16 +39,26 @@ fn profile_kind(comp: &QueryComponent) -> &'static str {
 /// `eval_components_budgeted`'s generic wrapper to consume as this node's
 /// `children`. False for leaf kinds, whose pending slot is explicitly
 /// discarded instead — see `crate::profile`'s module doc.
+///
+/// `Filter` and `PathPattern` were leaves before #697: `Filter`'s own arm
+/// now merges per-row `EXISTS`/`NOT EXISTS` nodes (`eval_filter` ->
+/// `eval_expression_bool`'s `Exists`/`NotExists` arms in
+/// `expressions.rs`), and `PathPattern`'s now merges per-row property-path
+/// internals (`eval_path_pattern`'s composite arms in `paths.rs`) —  both
+/// via the same `Vec<PartialSub>`-per-row + merge discipline `Optional`/
+/// `Graph` already use below.
 fn profile_has_children(comp: &QueryComponent) -> bool {
     matches!(
         comp,
         QueryComponent::BGP(_)
+            | QueryComponent::PathPattern(_, _, _)
             | QueryComponent::Subquery(_)
             | QueryComponent::Optional(_)
             | QueryComponent::Union(_, _)
             | QueryComponent::Minus(_)
             | QueryComponent::Graph(_, _)
             | QueryComponent::Group(_)
+            | QueryComponent::Filter(_)
     )
 }
 
@@ -303,10 +313,27 @@ pub(crate) fn eval_component(
         QueryComponent::BGP(tps) => eval_bgp(tps, solutions, budget, ctx),
 
         QueryComponent::PathPattern(subject, path, object) => {
+            // `eval_path_pattern` is called once per outer row (like
+            // `Optional`'s body). Its composite `PropertyPath` arms
+            // (`Sequence`, `Alternative`, ...) leave their own step-level
+            // breakdown pending — see `paths.rs` and `crate::profile`'s
+            // module doc, "`EXISTS`/`NOT EXISTS` and property-path
+            // step-level timing" (#697) — so each row's pending children
+            // must be taken and merged immediately, then re-set once at
+            // the end for this call's own `profile::finish` to consume.
+            let profiling = profile::is_active();
+            let mut merged_children: Vec<profile::ProfileNode> = Vec::new();
             let mut result = Vec::new();
             for sub in solutions {
                 deadline.check()?;
-                result.extend(eval_path_pattern(subject, path, object, sub, ctx)?);
+                let extended = eval_path_pattern(subject, path, object, sub, ctx)?;
+                if profiling {
+                    profile::merge_children(&mut merged_children, profile::take_pending_children());
+                }
+                result.extend(extended);
+            }
+            if profiling {
+                profile::set_pending_children(merged_children);
             }
             Ok(result)
         }
@@ -325,10 +352,35 @@ pub(crate) fn eval_component(
             Ok(result)
         }
 
-        QueryComponent::Filter(expr) => Ok(solutions
-            .into_iter()
-            .filter(|sub| eval_filter(expr, sub, datastore, active_graph))
-            .collect()),
+        QueryComponent::Filter(expr) => {
+            // `eval_filter` may evaluate an `EXISTS`/`NOT EXISTS`
+            // sub-expression once per row being filtered (see
+            // `expressions.rs`'s `eval_expression_bool`) — the same
+            // per-row-body shape `Optional`'s inner evaluation has, so the
+            // same take-and-merge discipline applies: each row's pending
+            // children (if any) must be taken immediately, before the
+            // next row's `eval_filter` call can overwrite the single
+            // slot. See `crate::profile`'s module doc (#697). For a
+            // `FILTER` with no `EXISTS`/`NOT EXISTS` at all, every row
+            // leaves pending empty, so `merged_children` stays empty and
+            // this is unobservable in the profile.
+            let profiling = profile::is_active();
+            let mut merged_children: Vec<profile::ProfileNode> = Vec::new();
+            let mut result = Vec::new();
+            for sub in solutions {
+                let keep = eval_filter(expr, &sub, datastore, active_graph);
+                if profiling {
+                    profile::merge_children(&mut merged_children, profile::take_pending_children());
+                }
+                if keep {
+                    result.push(sub);
+                }
+            }
+            if profiling {
+                profile::set_pending_children(merged_children);
+            }
+            Ok(result)
+        }
 
         QueryComponent::Optional(inner) => {
             let mut result = Vec::new();
