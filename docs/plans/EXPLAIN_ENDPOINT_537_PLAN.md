@@ -94,19 +94,36 @@ before designing the report shape:
   pattern rendered as text, its estimated cardinality
   (`known_cardinality`), and its index description.
 
-  **Known limitation, documented in the report itself and in code comments**:
-  this walk uses `already_bound = ∅` at every BGP, since the real
+  **Known limitation (original #537 landing), resolved by
+  [#573](https://github.com/daghovland/rdf-datalog/issues/573)**: this walk
+  originally used `already_bound = ∅` at every BGP, since the real
   already-bound set at execution time depends on what upstream *rows* (not
   just upstream *components*) bound, which is a per-solution runtime fact,
-  not a static property of the query tree. A future refinement could thread
-  a conservative static over-approximation (e.g. "every variable that any
-  earlier sibling component could ever bind", mirroring
-  `component_ordering::variables_in_components`) through the walk; that's
-  deferred to a follow-up (filed below) rather than built here, since it
-  changes the *reported* order only in cases where a BGP is preceded by a
-  sibling that provably binds one of its variables, which the empty-set
-  approximation handles conservatively (never worse than reporting BGP-only
-  selectivity) but not always exactly.
+  not a static property of the query tree. #573 threads a conservative
+  static over-approximation through the walk instead: `component_ordering::
+  must_bind_vars`/`must_bind_sequence`'s "guaranteed bound on every
+  surviving row" set, accumulated over preceding siblings in the same
+  component list (in actual evaluation order, after `order_components`'s
+  own reordering), and passed into a nested BGP's `order_patterns` call and
+  into an `OPTIONAL`/`GRAPH` body's recursive walk (both are seeded per-row
+  with the outer solution at runtime — see below). This deliberately
+  deviates from this plan's originally suggested approximation
+  (`component_ordering::variables_in_components`, "every variable any
+  sibling *references*"): that set over-credits variables that aren't
+  actually guaranteed bound on every row (a `MINUS` body's variables, an
+  `OPTIONAL` body's variables, a `BIND` alias that stays unbound on an
+  expression error, a variable only one `UNION` arm binds), which would
+  make the reported order claim a binding that might not hold — the
+  opposite of conservative. `must_bind_vars` is the existing true
+  under-approximation `order_components` itself already relies on for its
+  `OPTIONAL`/`MINUS`-hoisting correctness check, so reusing it carries the
+  same already-reviewed soundness argument (see `component_ordering.rs`'s
+  module docs, and `sparql_parser/src/explain.rs`'s module doc for the full
+  writeup). This still isn't exact — a specific runtime row can bind
+  strictly more than `must_bind_vars` guarantees (e.g. a non-matching
+  `OPTIONAL` that happens to match for this particular row) — but it is
+  strictly more precise than the old `∅` baseline and never claims a
+  binding that isn't actually guaranteed.
 
   **Component-level reordering must also be mirrored, not just BGP-level.**
   `eval_components_budgeted` (`execute/components.rs:58`) performs two purely
@@ -129,10 +146,12 @@ before designing the report shape:
   pathology was exactly this class of problem (a `UNION` evaluated before a
   constraining conjunct), so an EXPLAIN report that silently prints source
   order would misrepresent the one failure mode this endpoint most needs to
-  surface. `OPTIONAL` bodies are the one case that isn't reproducible this
-  way (their inner components are seeded per-row with `sub.clone()`,
-  `execute/components.rs`'s `Optional` arm) — walked with the same `∅`
-  approximation as the BGP case above, for the same reason.
+  surface. `OPTIONAL` and `GRAPH` bodies are the two cases that aren't
+  reproducible this way (their inner components are seeded per-row with
+  the outer solution — `execute/components.rs`'s `Optional`/`Graph` arms,
+  `vec![sub.clone()]`/`vec![sub]`) — originally walked with the same `∅`
+  approximation as the BGP case above; #573 (see above) replaces that `∅`
+  with the accumulated `must_bind_vars` set for both.
 
 - **Timing**: entirely separate from the static plan above, and zero-cost
   when `explain` isn't requested — it does not touch `eval_bgp`/
@@ -358,7 +377,7 @@ each side's subtree is distinguishable without a bare unlabeled pair.
 - Per-operator/per-stage timing (see Decision 2 above).
 - Using a non-empty, conservatively-computed `already_bound` set when
   walking sibling components for the static plan (see Decision 2's "Known
-  limitation").
+  limitation") — resolved by #573, see that section above.
 - `explain=true` combined with `txId` (transactional reads) — see "Smaller
   decisions" above.
 
