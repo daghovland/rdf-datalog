@@ -4248,7 +4248,6 @@ fn regression_519_no_suitable_validator_ignored() {
 /// own `sh:path` (here a bare predicate, `ex:age`) before the embedded
 /// `sh:select` query executes, and `$this` must still be the focus node.
 #[test]
-#[ignore = "not yet implemented, see #520"]
 fn spec_s520_property_sparql_select_path_substitution() {
     let data = load("shacl_s520_property_sparql_select_data.ttl");
     let shapes = load("shacl_s520_property_sparql_select_shapes.ttl");
@@ -4261,7 +4260,10 @@ fn spec_s520_property_sparql_select_path_substitution() {
     );
     let r = &report.results[0];
     assert_eq!(r.focus_node.as_deref(), Some("http://example.org/ns#Bob"));
-    assert_eq!(r.value.as_deref(), Some("-5"));
+    assert_eq!(
+        r.value.as_deref(),
+        Some("\"-5\"^^<http://www.w3.org/2001/XMLSchema#integer>")
+    );
 }
 
 /// `$this` pre-binding correctness for a property-shape-scoped `sh:sparql`
@@ -4269,7 +4271,6 @@ fn spec_s520_property_sparql_select_path_substitution() {
 /// `spec_s6_1_sparql_this_binding`'s node-shape regression). A broken/no-op
 /// `$this` join would produce 0 or 3 results instead of exactly 1.
 #[test]
-#[ignore = "not yet implemented, see #520"]
 fn spec_s520_property_sparql_this_binding() {
     let data = load("shacl_s520_property_sparql_this_data.ttl");
     let shapes = load("shacl_s520_property_sparql_this_shapes.ttl");
@@ -4291,7 +4292,6 @@ fn spec_s520_property_sparql_this_binding() {
 /// compound path (here a sequence, `ex:hasParent/ex:hasParent`) also works
 /// correctly inside the embedded query's own graph pattern.
 #[test]
-#[ignore = "not yet implemented, see #520"]
 fn spec_s520_property_sparql_sequence_path_substitution() {
     let data = load("shacl_s520_property_sparql_sequence_path_data.ttl");
     let shapes = load("shacl_s520_property_sparql_sequence_path_shapes.ttl");

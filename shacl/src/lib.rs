@@ -238,11 +238,19 @@ pub fn validate(data: &Datastore, shapes: &Datastore) -> Result<ValidationReport
         }
         for target in &shape.targets {
             if let shapes::Target::Sparql(sq) = target {
-                sparql_constraints::check_query_syntax(sq)?;
+                sparql_constraints::check_query_syntax(sq, None)?;
             }
         }
         for constraint in &shape.sparql_constraints {
-            sparql_constraints::check_query_syntax(&constraint.query)?;
+            sparql_constraints::check_query_syntax(&constraint.query, None)?;
+        }
+        for prop in &shape.property_shapes {
+            if prop.deactivated {
+                continue;
+            }
+            for constraint in &prop.sparql_constraints {
+                sparql_constraints::check_query_syntax(&constraint.query, Some(&prop.path))?;
+            }
         }
     }
 

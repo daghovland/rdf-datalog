@@ -19,10 +19,12 @@ Contact: hovlanddag@gmail.com
 //! than batched, and why a malformed/failing embedded query is a hard `Err` rather
 //! than a silently-skipped constraint).
 
+use crate::Severity;
 use crate::ValidationResult;
 use crate::graph;
+use crate::path;
 use crate::path::ShPath;
-use crate::shapes::{ParsedShape, SparqlConstraint, SparqlQuery};
+use crate::shapes::{ParsedPropShape, ParsedShape, SparqlConstraint, SparqlQuery};
 use dag_rdf::{Datastore, GraphElement, GraphElementId, RdfResource};
 use ingress::NetworkPolicy;
 use regex::Regex;
@@ -41,19 +43,42 @@ use std::sync::LazyLock;
 static DOLLAR_VAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 
+/// Matches the literal `$PATH`/`?PATH` token (SHACL-AF §6.1/W3C SHACL spec
+/// §6.2.3.1) so it can be textually replaced with a property shape's actual
+/// `sh:path`, rendered in SPARQL property-path surface syntax — a one-time
+/// macro expansion, not a pre-bound variable (a path may be a compound
+/// expression with no single term to bind). Shared with
+/// `custom_components.rs`'s `sh:propertyValidator` substitution, which calls
+/// [`build_query_text`] rather than keeping its own copy of this regex. See
+/// [#520](https://github.com/daghovland/rdf-datalog/issues/520).
+static PATH_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[$?]PATH\b").unwrap());
+
 /// Rewrite every `$name` in `query` to `?name`.
 pub(crate) fn normalize_dollar_vars(query: &str) -> String {
     DOLLAR_VAR.replace_all(query, "?$1").into_owned()
 }
 
 /// Build the full query text for `sq`: its `sh:prefixes` PREFIX declarations,
-/// then the (dollar-normalized) query body.
-fn build_query_text(sq: &SparqlQuery) -> String {
+/// `$PATH`/`?PATH` substituted with `path_scope`'s SPARQL property-path
+/// syntax when present (a property-shape-scoped `sh:sparql` constraint, or a
+/// `sh:propertyValidator` query via `custom_components.rs`), then the usual
+/// `$name` -> `?name` dollar-normalization. `path_scope` is `None` for every
+/// node-shape-scoped caller (`$PATH` has no meaning there — see
+/// [#520](https://github.com/daghovland/rdf-datalog/issues/520)).
+pub(crate) fn build_query_text(sq: &SparqlQuery, path_scope: Option<&ShPath>) -> String {
     let mut text = String::new();
     for (prefix, namespace) in &sq.prefixes {
         text.push_str(&format!("PREFIX {prefix}: <{namespace}>\n"));
     }
-    text.push_str(&normalize_dollar_vars(&sq.query));
+    let body = if let Some(p) = path_scope {
+        let syntax = path::to_sparql_path(p);
+        PATH_TOKEN
+            .replace_all(&sq.query, |_: &regex::Captures| syntax.clone())
+            .into_owned()
+    } else {
+        sq.query.clone()
+    };
+    text.push_str(&normalize_dollar_vars(&body));
     text
 }
 
@@ -235,8 +260,11 @@ pub(crate) fn ge_display(e: &GraphElement) -> String {
 /// check at least catches a typo'd/unsupported query unconditionally, rather
 /// than only when the target happens to be non-empty. See
 /// [#54](https://github.com/daghovland/rdf-datalog/issues/54).
-pub(crate) fn check_query_syntax(sq: &SparqlQuery) -> Result<(), String> {
-    parse(&build_query_text(sq)).map(|_| ())
+pub(crate) fn check_query_syntax(
+    sq: &SparqlQuery,
+    path_scope: Option<&ShPath>,
+) -> Result<(), String> {
+    parse(&build_query_text(sq, path_scope)).map(|_| ())
 }
 
 /// Run every `sh:target [ a sh:SPARQLTarget ; sh:select "..." ]` query on
@@ -248,7 +276,7 @@ pub(crate) fn eval_sparql_target(
     sq: &SparqlQuery,
     store: &Datastore,
 ) -> Result<Vec<GraphElement>, String> {
-    let query = parse(&build_query_text(sq))?;
+    let query = parse(&build_query_text(sq, None))?;
     let rows = run_select(&query, store)?;
     Ok(rows
         .into_iter()
@@ -256,9 +284,48 @@ pub(crate) fn eval_sparql_target(
         .collect())
 }
 
+/// The shape/property-shape scope a `sh:sparql` constraint is being
+/// evaluated in: the shapes-graph node to report as `sh:sourceShape`, the
+/// severity/message to fall back to when the constraint doesn't declare its
+/// own, and (property-shape scope only) the `sh:path` used both for `$PATH`
+/// substitution and as the `sh:resultPath` fallback when a SELECT's own row
+/// doesn't bind a `?path` column. `path` is `None` for node-shape scope
+/// (`$PATH` has no meaning there, and a node shape's violations carry no
+/// result path by default). See
+/// [#520](https://github.com/daghovland/rdf-datalog/issues/520).
+struct ConstraintScope<'a> {
+    shapes_id: GraphElementId,
+    severity: &'a Severity,
+    message: Option<&'a str>,
+    path: Option<&'a ShPath>,
+}
+
+impl<'a> ConstraintScope<'a> {
+    fn for_shape(shape: &'a ParsedShape) -> Self {
+        ConstraintScope {
+            shapes_id: shape.shapes_id,
+            severity: &shape.severity,
+            message: shape.message.as_deref(),
+            path: None,
+        }
+    }
+
+    fn for_property(shape: &'a ParsedShape, prop: &'a ParsedPropShape) -> Self {
+        ConstraintScope {
+            shapes_id: prop.shapes_id,
+            severity: prop.severity.as_ref().unwrap_or(&shape.severity),
+            message: prop.message.as_deref().or(shape.message.as_deref()),
+            path: Some(&prop.path),
+        }
+    }
+}
+
 /// Evaluate every `sh:sparql` constraint on every non-deactivated shape in
-/// `parsed`, against `data` (the original, un-materialised data graph — see
-/// module docs), returning one `ValidationResult` per failing solution/ASK.
+/// `parsed` — both node-shape-scoped (`shape.sparql_constraints`) and
+/// property-shape-scoped (`prop.sparql_constraints`, with `$PATH`
+/// substitution — see [#520](https://github.com/daghovland/rdf-datalog/issues/520))
+/// — against `data` (the original, un-materialised data graph — see module
+/// docs), returning one `ValidationResult` per failing solution/ASK.
 ///
 /// `focus_nodes_of` supplies each shape's focus nodes (shared with the rest of
 /// `crate` via `crate::data_targets`, so SPARQL and Core targets agree).
@@ -270,34 +337,55 @@ pub fn eval_all(
 ) -> Result<Vec<ValidationResult>, String> {
     let mut results = Vec::new();
     for shape in parsed {
-        if shape.deactivated || shape.sparql_constraints.is_empty() {
+        if shape.deactivated {
+            continue;
+        }
+        let has_any = !shape.sparql_constraints.is_empty()
+            || shape
+                .property_shapes
+                .iter()
+                .any(|p| !p.deactivated && !p.sparql_constraints.is_empty());
+        if !has_any {
             continue;
         }
         let focus_nodes = focus_nodes_of(shape)?;
         if focus_nodes.is_empty() {
             continue;
         }
+        let node_scope = ConstraintScope::for_shape(shape);
         for constraint in &shape.sparql_constraints {
-            let mut r = eval_one_constraint(shape, constraint, &focus_nodes, shapes_store, data)?;
+            let mut r =
+                eval_one_constraint(&node_scope, constraint, &focus_nodes, shapes_store, data)?;
             results.append(&mut r);
+        }
+        for prop in &shape.property_shapes {
+            if prop.deactivated {
+                continue;
+            }
+            let prop_scope = ConstraintScope::for_property(shape, prop);
+            for constraint in &prop.sparql_constraints {
+                let mut r =
+                    eval_one_constraint(&prop_scope, constraint, &focus_nodes, shapes_store, data)?;
+                results.append(&mut r);
+            }
         }
     }
     Ok(results)
 }
 
 fn eval_one_constraint(
-    shape: &ParsedShape,
+    scope: &ConstraintScope,
     constraint: &SparqlConstraint,
     focus_nodes: &[GraphElementId],
     shapes_store: &Datastore,
     data: &Datastore,
 ) -> Result<Vec<ValidationResult>, String> {
-    let query_text = build_query_text(&constraint.query);
+    let query_text = build_query_text(&constraint.query, scope.path);
     let base_query = parse(&query_text)?;
 
     if !constraint.is_ask && is_batchable(&base_query) {
         return eval_batched_select(
-            shape,
+            scope,
             constraint,
             focus_nodes,
             shapes_store,
@@ -314,7 +402,7 @@ fn eval_one_constraint(
         if constraint.is_ask {
             if !run_ask(&query, data)? {
                 results.push(make_result(
-                    shape,
+                    scope,
                     constraint,
                     shapes_store,
                     data,
@@ -327,7 +415,7 @@ fn eval_one_constraint(
             for row in run_select(&query, data)? {
                 let (value, path) = row_value_and_path(&row);
                 results.push(make_result(
-                    shape,
+                    scope,
                     constraint,
                     shapes_store,
                     data,
@@ -349,7 +437,7 @@ fn eval_one_constraint(
 /// `docs/plans/SHACL_SPARQL_BATCHING_521_PLAN.md`'s "Batched execution
 /// design" section.
 fn eval_batched_select(
-    shape: &ParsedShape,
+    scope: &ConstraintScope,
     constraint: &SparqlConstraint,
     focus_nodes: &[GraphElementId],
     shapes_store: &Datastore,
@@ -383,7 +471,7 @@ fn eval_batched_select(
         };
         let (value, path) = row_value_and_path(&row);
         results.push(make_result(
-            shape,
+            scope,
             constraint,
             shapes_store,
             data,
@@ -409,7 +497,7 @@ pub(crate) fn row_value_and_path(row: &SolutionRow) -> (Option<String>, Option<S
 
 #[allow(clippy::too_many_arguments)]
 fn make_result(
-    shape: &ParsedShape,
+    scope: &ConstraintScope,
     constraint: &SparqlConstraint,
     shapes_store: &Datastore,
     data: &Datastore,
@@ -422,10 +510,18 @@ fn make_result(
         severity: constraint
             .severity
             .clone()
-            .unwrap_or_else(|| shape.severity.clone()),
-        message: constraint.message.clone().or_else(|| shape.message.clone()),
-        result_path: path,
-        source_shape: graph::element_display(shapes_store, shape.shapes_id),
+            .unwrap_or_else(|| scope.severity.clone()),
+        message: constraint
+            .message
+            .clone()
+            .or_else(|| scope.message.map(str::to_string)),
+        // A property-shape-scoped constraint's row may bind its own `?path`
+        // (handled above by `path`); absent that, fall back to the property
+        // shape's own path (mirrors `custom_components::eval_property_scope`).
+        // Node-shape scope (`scope.path` is `None`) keeps the old behavior of
+        // no default result path.
+        result_path: path.or_else(|| scope.path.cloned()),
+        source_shape: graph::element_display(shapes_store, scope.shapes_id),
         source_constraint: Some(crate::vocab::CC_SPARQL.to_string()),
         value,
     }
