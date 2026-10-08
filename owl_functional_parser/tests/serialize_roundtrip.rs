@@ -179,6 +179,36 @@ fn roundtrips_subclassof_with_annotation() {
     );
 }
 
+/// A meta-annotation (annotation on an annotation, issue #695): the
+/// `SubClassOf` axiom's own `Annotation(...)` itself carries a nested
+/// `Annotation(...)`. `assert_roundtrip`'s `HashSet<Axiom>` comparison
+/// already fails if serialization or re-parsing silently drops the nested
+/// payload (`Annotation` derives `PartialEq`/`Eq` recursively), but the
+/// explicit length check below pins down exactly what's being compared.
+#[test]
+fn roundtrips_subclassof_with_meta_annotation() {
+    let text = assert_roundtrip(
+        "Ontology(<http://example.org/onto>\n\
+             SubClassOf(Annotation(Annotation(<http://www.w3.org/2000/01/rdf-schema#comment> \"src\") <http://www.w3.org/2000/01/rdf-schema#label> \"why\") <http://example.org/Dog> <http://example.org/Animal>)\n\
+         )",
+    );
+    let reparsed = owl_functional_parser::parse(&text).unwrap();
+    let anns = reparsed
+        .axioms
+        .iter()
+        .find_map(|ax| match ax {
+            owl_ontology::Axiom::AxiomClassAxiom(owl_ontology::ClassAxiom::SubClassOf(
+                anns,
+                _,
+                _,
+            )) => Some(anns),
+            _ => None,
+        })
+        .expect("expected a SubClassOf axiom");
+    assert_eq!(anns.len(), 1);
+    assert_eq!(anns[0].annotations.len(), 1);
+}
+
 #[test]
 fn roundtrips_equivalent_and_disjoint_classes_nary() {
     assert_roundtrip(
