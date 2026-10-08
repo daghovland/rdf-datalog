@@ -180,6 +180,60 @@ async fn test_explain_hoists_constraining_bgp_before_union() {
     );
 }
 
+/// Test case 2c — issue #573: an `OPTIONAL` body preceded by a sibling BGP
+/// that provably binds one of the body's variables must be reported with
+/// that variable credited as already-bound, so the body's internal join
+/// order reflects it rather than the old `already_bound = ∅` baseline.
+///
+/// `?y pb ?v` (connects to the outer BGP's `?y`) is deliberately given a
+/// *higher* raw cardinality than `?w pc ?z` (no connection to anything
+/// outer), so with `already_bound = ∅` the cheaper, disconnected pattern
+/// would be scheduled first — but once `?y` is credited as bound by the
+/// outer `?x pa ?y` BGP, the connected pattern must be scheduled first
+/// instead (connectedness outranks raw cardinality — see
+/// `join_ordering::order_patterns`).
+#[tokio::test]
+async fn test_explain_optional_body_order_reflects_outer_binding() {
+    let mut turtle = String::new();
+    turtle.push_str("<http://example.org/x0> <http://example.org/pa> <http://example.org/y0> .\n");
+    for i in 0..5 {
+        turtle.push_str(&format!(
+            "<http://example.org/y0> <http://example.org/pb> <http://example.org/v{i}> .\n"
+        ));
+    }
+    for i in 0..2 {
+        turtle.push_str(&format!(
+            "<http://example.org/w{i}> <http://example.org/pc> <http://example.org/z{i}> .\n"
+        ));
+    }
+    let server = common::TestServer::start(&turtle).await;
+
+    let sparql = "SELECT ?x ?y WHERE { \
+        ?x <http://example.org/pa> ?y . \
+        OPTIONAL { ?y <http://example.org/pb> ?v . ?w <http://example.org/pc> ?z } \
+    }";
+    let url = format!("{}&explain=true", server.sparql_query_url(sparql));
+    let resp = server.client.get(url).send().await.expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be JSON");
+
+    let plan = body["plan"].as_array().expect("plan must be an array");
+    assert_eq!(plan.len(), 2, "plan: {plan:?}");
+    assert_eq!(plan[0]["kind"], "BGP");
+    assert_eq!(plan[1]["kind"], "Optional");
+
+    let optional_patterns = plan[1]["children"][0]["patterns"]
+        .as_array()
+        .expect("Optional's single child must be a BGP with a patterns array");
+    assert_eq!(optional_patterns.len(), 2);
+    let first = optional_patterns[0]["pattern"].as_str().unwrap();
+    assert!(
+        first.contains("?y") && first.contains("/pb"),
+        "the pattern sharing `?y` with the outer BGP must be scheduled first once `?y` is credited as already-bound, not the cheaper-but-disconnected `pc` pattern: {optional_patterns:?}"
+    );
+}
+
 /// Test case 3 — normal (non-`explain`) query behavior is completely
 /// unaffected: identical rows, status, and content-type whether or not the
 /// `explain` code path exists, both with the parameter absent and with

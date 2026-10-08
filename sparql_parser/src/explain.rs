@@ -29,20 +29,57 @@ Contact: hovlanddag@gmail.com
 //! surfaced as its own tree, not merged into this module's [`PlanNode`]
 //! tree — see `crate::profile`'s module doc for why.
 //!
-//! One thing this module deliberately does *not* do, filed as a follow-up
-//! rather than built here (see the plan doc):
-//! - A non-empty, conservatively-computed `already_bound` set when
-//!   recursing into a BGP or an `OPTIONAL` body
-//!   ([#573](https://github.com/daghovland/rdf-datalog/issues/573)) — every
-//!   BGP and `OPTIONAL` body in the walk is scored as if no outer variable
-//!   were already bound, which is exactly right for the query's top level
-//!   and for every independently-evaluated scope (`UNION` arms, bare
-//!   `Group` bodies, `MINUS`'s RHS — see `execute::components::
-//!   eval_independent_then_join`), but only a conservative approximation
-//!   for an `OPTIONAL` body, whose inner components are in reality seeded
-//!   per-row with whatever the outer solution already bound.
+//! ## The `already_bound` set (issue #573)
+//!
+//! A BGP's (and, as of this issue, an `OPTIONAL`/`GRAPH` body's) reported
+//! join order depends on which variables are already bound when it starts
+//! evaluating. At the query's top level, and at the start of every
+//! independently-evaluated scope (`UNION` arms, bare `Group` bodies,
+//! `MINUS`'s RHS — see `execute::components::eval_independent_then_join`,
+//! which always starts these from an unseeded `vec![HashMap::new()]`), this
+//! set is genuinely `∅` — no approximation needed. But `OPTIONAL` and
+//! `GRAPH` bodies are seeded per-row with whatever the outer solution
+//! already bound (`eval_component`'s `Optional`/`Graph` arms pass
+//! `vec![sub.clone()]`/`vec![sub]`, not an unseeded start), and a later BGP
+//! sibling in the *same* component list also sees whatever earlier
+//! siblings bound — so reporting `∅` there was a conservative, but
+//! sometimes misleading, placeholder.
+//!
+//! This module instead threads a conservative *static* approximation:
+//! `component_ordering::must_bind_vars`/`must_bind_sequence`'s
+//! "guaranteed bound on every surviving row" set, accumulated over
+//! preceding siblings in the same component list (in their *actual*
+//! evaluation order, after `component_ordering`'s own static reordering —
+//! not their textual order), and passed down into a nested BGP's
+//! `order_patterns` call or an `OPTIONAL`/`GRAPH` body's recursive walk.
+//!
+//! This deliberately does *not* use `component_ordering::
+//! variables_in_components` ("every variable any sibling references"),
+//! despite that being the issue's originally suggested approximation: that
+//! set is only a sound over-approximation for the specific use it was built
+//! for (a cheap pre-filter for `MINUS`'s domain-disjointness check, where
+//! over-crediting only costs a missed short-circuit). Reused here, it would
+//! over-credit variables that are not actually guaranteed bound on every
+//! row — e.g. a `MINUS` body's own variables (`MINUS` never extends the
+//! outer solution), an `OPTIONAL` body's variables (unbound on a
+//! non-matching row), a `BIND` alias (left unbound when its expression
+//! errors, per W3C `bind04`), or a variable only one `UNION` arm binds —
+//! which would make the reported order claim a binding that might not
+//! actually hold, the opposite of conservative. `must_bind_vars` is exactly
+//! the existing "true under-approximation" set `component_ordering::
+//! order_components` itself relies on for its `OPTIONAL`/`MINUS`-hoisting
+//! correctness check, so reusing it here costs nothing new and keeps the
+//! soundness argument identical to that already-reviewed code (see
+//! `component_ordering.rs`'s module docs for the full argument). The
+//! remaining gap, inherent to any static approximation: a particular
+//! runtime row can bind strictly *more* than `must_bind_vars` guarantees
+//! (e.g. a non-matching `OPTIONAL` that happens to match for this row), so
+//! the reported order can still differ from what a specific row's actual
+//! execution would do — it is a closer, still-sound approximation, not an
+//! exact reproduction.
 
 use crate::ast::{Query, QueryComponent, Term, TriplePattern};
+use crate::component_ordering::must_bind_vars;
 use crate::join_ordering::{cardinality_and_index, order_patterns};
 use dag_rdf::Datastore;
 use std::collections::HashSet;
@@ -143,14 +180,28 @@ pub fn explain_query(query: &Query, datastore: &Datastore) -> ExplainPlan {
     explain_components(where_clause, datastore)
 }
 
+/// Build the static plan for a `WHERE` clause (or any nested, independently-
+/// evaluated component list — `UNION` arms, bare `Group` bodies, `MINUS`'s
+/// RHS, a subquery's own `WHERE`): the top of any of these scopes genuinely
+/// has `already_bound = ∅` (see the module doc), so this is the public/
+/// top-level entry point and seeds that empty set itself.
+pub(crate) fn explain_components(
+    components: &[QueryComponent],
+    datastore: &Datastore,
+) -> ExplainPlan {
+    explain_components_with_bound(components, &HashSet::new(), datastore)
+}
+
 /// Build the static plan for `components`, applying the same
 /// [`crate::component_ordering`] static reordering
 /// `execute::components::eval_components_budgeted` applies before
-/// evaluating a component list. See the module doc for the `∅`
-/// already-bound/guaranteed-bound approximation this relies on being exact
-/// at every call site in this module.
-pub(crate) fn explain_components(
+/// evaluating a component list, given `inherited` — the set of variables
+/// statically guaranteed bound *before this list starts* (see the module
+/// doc: `∅` for every independently-evaluated scope, non-empty only when
+/// recursing into an `OPTIONAL`/`GRAPH` body).
+fn explain_components_with_bound(
     components: &[QueryComponent],
+    inherited: &HashSet<String>,
     datastore: &Datastore,
 ) -> ExplainPlan {
     let non_filters: Vec<QueryComponent> = components
@@ -163,26 +214,42 @@ pub(crate) fn explain_components(
         .filter(|c| matches!(c, QueryComponent::Filter(_)))
         .collect();
 
-    let empty: HashSet<String> = HashSet::new();
     let mut ordered: Vec<&QueryComponent> =
         if crate::component_ordering::should_reorder(&non_filters) {
-            crate::component_ordering::order_components(&non_filters, &empty, &empty, datastore)
+            crate::component_ordering::order_components(
+                &non_filters,
+                inherited,
+                inherited,
+                datastore,
+            )
         } else {
             non_filters.iter().collect()
         };
     ordered.extend(filters);
 
-    let nodes = ordered
-        .into_iter()
-        .map(|c| explain_component(c, datastore))
-        .collect();
+    // Accumulate `must_bind_vars` over `ordered` in actual evaluation
+    // order (not textual order — a component hoisted ahead of an
+    // `OPTIONAL`/`MINUS` barrier by `order_components` must contribute its
+    // variables to what follows it in *this* order), so a later sibling
+    // (or an `OPTIONAL`/`GRAPH` body) is credited with exactly what every
+    // earlier sibling here is guaranteed to have bound.
+    let mut bound = inherited.clone();
+    let mut nodes = Vec::with_capacity(ordered.len());
+    for comp in ordered {
+        nodes.push(explain_component(comp, &bound, datastore));
+        bound.extend(must_bind_vars(comp));
+    }
     ExplainPlan { nodes }
 }
 
-fn explain_component(comp: &QueryComponent, datastore: &Datastore) -> PlanNode {
+fn explain_component(
+    comp: &QueryComponent,
+    bound: &HashSet<String>,
+    datastore: &Datastore,
+) -> PlanNode {
     match comp {
         QueryComponent::BGP(patterns) => {
-            let order = order_patterns(patterns, &HashSet::new(), datastore);
+            let order = order_patterns(patterns, bound, datastore);
             let plan_patterns = order
                 .into_iter()
                 .enumerate()
@@ -216,13 +283,22 @@ fn explain_component(comp: &QueryComponent, datastore: &Datastore) -> PlanNode {
                 Query::Construct { where_clause, .. } => where_clause.as_slice(),
                 Query::Describe { where_clause, .. } => where_clause.as_slice(),
             };
+            // Independently-evaluated scope (its own `WHERE`, planned like
+            // a top-level query) — genuinely `∅`, not `bound`.
             PlanNode::Subquery {
                 plan: Box::new(explain_components(where_clause, datastore)),
             }
         }
+        // `OPTIONAL` is seeded per-row with the outer solution
+        // (`eval_component`'s `Optional` arm: `vec![sub.clone()]`), so
+        // `bound` — everything guaranteed bound by earlier siblings in this
+        // same list — is a sound (if not always exact) approximation of
+        // what flows in. See the module doc.
         QueryComponent::Optional(inner) => PlanNode::Optional {
-            children: Box::new(explain_components(inner, datastore)),
+            children: Box::new(explain_components_with_bound(inner, bound, datastore)),
         },
+        // Independently-evaluated scope (`eval_independent_then_join`
+        // always starts both arms from an unseeded `vec![HashMap::new()]`).
         QueryComponent::Union(left, right) => PlanNode::Union {
             left: Box::new(explain_components(left, datastore)),
             right: Box::new(explain_components(right, datastore)),
@@ -236,13 +312,24 @@ fn explain_component(comp: &QueryComponent, datastore: &Datastore) -> PlanNode {
         QueryComponent::Values(vars, rows) => PlanNode::Values {
             detail: format!("VALUES ({}) — {} row(s)", vars.join(" "), rows.len()),
         },
+        // Independently-evaluated scope: `eval_component`'s `Minus` arm
+        // always evaluates its body unseeded (`vec![HashMap::new()]`), and
+        // never extends the outer solution with it regardless.
         QueryComponent::Minus(inner) => PlanNode::Minus {
             children: Box::new(explain_components(inner, datastore)),
         },
+        // `GRAPH` is seeded per-row with the outer solution exactly like
+        // `OPTIONAL` (`eval_component`'s `Graph` arm: `vec![sub]`, not an
+        // unseeded start) — same `bound` propagation, same rationale. The
+        // graph term itself is never added to `bound`: at runtime a
+        // variable graph term that isn't already in `sub` becomes
+        // `ActiveGraph::Variable`, not a new binding threaded into the
+        // inner body.
         QueryComponent::Graph(graph_term, inner) => PlanNode::Graph {
             detail: render_term(graph_term),
-            children: Box::new(explain_components(inner, datastore)),
+            children: Box::new(explain_components_with_bound(inner, bound, datastore)),
         },
+        // Independently-evaluated scope, like a `UNION` arm (issue #198).
         QueryComponent::Group(inner) => PlanNode::Group {
             children: Box::new(explain_components(inner, datastore)),
         },
@@ -275,5 +362,337 @@ pub(crate) fn render_term(term: &Term) -> String {
         Term::Variable(v) => format!("?{v}"),
         Term::Constant(gel) => gel.to_string(),
         Term::TripleTerm(inner) => format!("<<( {} )>>", render_triple_pattern(inner)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dag_rdf::{GraphElement, IriReference, Quad, RdfResource};
+
+    fn iri_node(iri: &str) -> GraphElement {
+        GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.to_string())))
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Variable(name.to_string())
+    }
+
+    fn iri_const(iri: &str) -> Term {
+        Term::Constant(iri_node(iri))
+    }
+
+    fn tp(s: Term, p: Term, o: Term) -> TriplePattern {
+        TriplePattern {
+            subject: s,
+            predicate: p,
+            object: o,
+        }
+    }
+
+    /// Add a quad in the default graph, registering all three resources.
+    fn add_default_graph_quad(ds: &mut Datastore, s: &str, p: &str, o: &str) {
+        let subject = ds.add_resource(iri_node(s));
+        let predicate = ds.add_resource(iri_node(p));
+        let object = ds.add_resource(iri_node(o));
+        ds.add_quad(Quad {
+            triple_id: dag_rdf::DEFAULT_GRAPH_ELEMENT_ID,
+            subject,
+            predicate,
+            obj: object,
+        });
+    }
+
+    const PA: &str = "http://example.org/pa";
+    const PB: &str = "http://example.org/pb";
+    const PC: &str = "http://example.org/pc";
+
+    /// Pull the `patterns` list out of a single top-level `PlanNode::Bgp`,
+    /// panicking with a useful message otherwise.
+    fn bgp_patterns(plan: &ExplainPlan) -> &[PatternPlan] {
+        assert_eq!(plan.nodes.len(), 1, "expected exactly one node: {plan:?}");
+        match &plan.nodes[0] {
+            PlanNode::Bgp { patterns } => patterns,
+            other => panic!("expected a Bgp node, got {other:?}"),
+        }
+    }
+
+    /// Two-pattern body used by several tests below: `?y PB ?v` has `?y` as
+    /// its only shared variable with an outer binder, and `?w PC ?z` shares
+    /// nothing. `PB` is deliberately given a *higher* raw cardinality than
+    /// `PC` so that, with `already_bound = ∅`, `PC`'s pattern (cheaper, and
+    /// tied on bound_count 0) is scheduled first — but once `?y` is credited
+    /// as already bound, `PB`'s pattern gets bound_count 1 (connected) and
+    /// must be scheduled first instead. This makes the two orders
+    /// (`∅` vs `{y}`) provably different, which is the property the
+    /// `already_bound` fix is supposed to change.
+    fn asymmetric_body() -> Vec<TriplePattern> {
+        vec![
+            tp(var("y"), iri_const(PB), var("v")),
+            tp(var("w"), iri_const(PC), var("z")),
+        ]
+    }
+
+    fn populate_asymmetric_body_store(ds: &mut Datastore) {
+        // PB: 5 quads (less selective).
+        for i in 0..5 {
+            add_default_graph_quad(
+                ds,
+                &format!("http://example.org/yb_{i}"),
+                PB,
+                &format!("http://example.org/vb_{i}"),
+            );
+        }
+        // PC: 2 quads (more selective) — wins on cardinality alone.
+        for i in 0..2 {
+            add_default_graph_quad(
+                ds,
+                &format!("http://example.org/wc_{i}"),
+                PC,
+                &format!("http://example.org/zc_{i}"),
+            );
+        }
+    }
+
+    /// Sanity check backing every precision test below: confirm
+    /// `order_patterns` really does choose different orders for
+    /// `asymmetric_body()` depending on whether `y` is already bound.
+    /// Without this, a precision test could pass vacuously (both orders
+    /// identical) and prove nothing about the fix.
+    #[test]
+    fn asymmetric_body_order_differs_with_and_without_bound_y() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        let body = asymmetric_body();
+
+        let order_empty = order_patterns(&body, &HashSet::new(), &ds);
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let order_with_y = order_patterns(&body, &bound_y, &ds);
+
+        assert_ne!(
+            order_empty, order_with_y,
+            "fixture must actually be sensitive to already_bound, or the precision tests below are vacuous"
+        );
+        assert_eq!(
+            order_with_y,
+            vec![0, 1],
+            "PB (connected via bound y) should be scheduled first once y is bound"
+        );
+    }
+
+    /// Issue #573's precision property: an `OPTIONAL` body preceded by a
+    /// sibling BGP that provably binds one of the body's variables must be
+    /// reported with that variable credited as already-bound, matching
+    /// `order_patterns(body, {y}, ds)` rather than the old `∅` baseline.
+    #[test]
+    fn optional_body_order_reflects_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        // Outer BGP guarantees `y` is bound (`PA` is irrelevant to ordering
+        // here — any single-quad predicate would do).
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+        let outer = QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]);
+
+        let components = vec![
+            outer,
+            QueryComponent::Optional(vec![QueryComponent::BGP(asymmetric_body())]),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        assert_eq!(plan.nodes.len(), 2);
+        let PlanNode::Optional { children } = &plan.nodes[1] else {
+            panic!("expected second node to be Optional: {:?}", plan.nodes[1]);
+        };
+        let patterns = bgp_patterns(children);
+
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let expected_order = order_patterns(&asymmetric_body(), &bound_y, &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[expected_order[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "OPTIONAL body's reported order must match order_patterns computed with the preceding BGP's guaranteed bindings, not ∅: {patterns:?}"
+        );
+    }
+
+    /// `GRAPH` bodies are seeded with the outer solution at runtime exactly
+    /// like `OPTIONAL` (`eval_component`'s `Graph` arm passes `vec![sub]`,
+    /// not an unseeded `vec![HashMap::new()]`), so they must receive the
+    /// same inherited already-bound set.
+    #[test]
+    fn graph_body_order_reflects_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+
+        let components = vec![
+            QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]),
+            QueryComponent::Graph(
+                Term::Constant(iri_node("http://example.org/g1")),
+                vec![QueryComponent::BGP(asymmetric_body())],
+            ),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let PlanNode::Graph { children, .. } = &plan.nodes[1] else {
+            panic!("expected second node to be Graph: {:?}", plan.nodes[1]);
+        };
+        let patterns = bgp_patterns(children);
+
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let expected_order = order_patterns(&asymmetric_body(), &bound_y, &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[expected_order[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "GRAPH body's reported order must reflect the preceding BGP's guaranteed bindings: {patterns:?}"
+        );
+    }
+
+    /// Independent-scope soundness: a `UNION` arm is evaluated unseeded at
+    /// runtime (`eval_independent_then_join` always starts from
+    /// `vec![HashMap::new()]`) regardless of what a preceding sibling binds,
+    /// so its inner BGP must still be reported with `already_bound = ∅`
+    /// even when a preceding BGP sibling guarantees `y`.
+    #[test]
+    fn union_arm_bgp_not_credited_with_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+
+        let components = vec![
+            QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]),
+            QueryComponent::Union(
+                vec![QueryComponent::BGP(asymmetric_body())],
+                vec![QueryComponent::BGP(vec![tp(
+                    var("q"),
+                    iri_const(PA),
+                    var("r"),
+                )])],
+            ),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        // Find the Union node (order_components may place it before or
+        // after the BGP depending on connectedness scoring; locate by kind).
+        let union_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Union { left, .. } => Some(left),
+                _ => None,
+            })
+            .expect("plan must contain a Union node");
+        let patterns = bgp_patterns(union_node);
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "UNION arm's BGP must be reported with already_bound = ∅ (independent scope), not credited with the sibling BGP's binding: {patterns:?}"
+        );
+    }
+
+    /// Soundness negative: `MINUS` never binds a new variable into the
+    /// surviving outer rows (`eval_component`'s `Minus` arm only ever
+    /// filters `sub`, never extends it), so a BGP sibling *after* a `MINUS`
+    /// must not be credited with variables only the `MINUS` body binds,
+    /// even though `MINUS`'s body does share no barrier-crossing issue here.
+    #[test]
+    fn bgp_after_minus_not_credited_with_minus_body_bindings() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        // MINUS body binds `y` (and `v`), but MINUS must never be credited
+        // downstream.
+        let components = vec![
+            QueryComponent::Minus(vec![QueryComponent::BGP(vec![tp(
+                var("y"),
+                iri_const(PB),
+                var("v"),
+            )])]),
+            QueryComponent::BGP(asymmetric_body()),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let bgp_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Bgp { patterns } => Some(patterns),
+                _ => None,
+            })
+            .expect("plan must contain the BGP node");
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            bgp_node[0].pattern, expected_first_pattern,
+            "BGP after MINUS must not be credited with the MINUS body's bindings: {bgp_node:?}"
+        );
+    }
+
+    /// Soundness negative: a `UNION` only guarantees a variable that *every*
+    /// arm binds. `?y` is bound by the left arm only here, so a BGP sibling
+    /// after the `UNION` must not be credited with `y`.
+    #[test]
+    fn bgp_after_union_not_credited_with_single_arm_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        let components = vec![
+            QueryComponent::Union(
+                vec![QueryComponent::BGP(vec![tp(
+                    var("y"),
+                    iri_const(PB),
+                    var("v"),
+                )])],
+                vec![QueryComponent::BGP(vec![tp(
+                    var("q"),
+                    iri_const(PC),
+                    var("r"),
+                )])],
+            ),
+            QueryComponent::BGP(asymmetric_body()),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let bgp_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Bgp { patterns } => Some(patterns),
+                _ => None,
+            })
+            .expect("plan must contain the trailing BGP node");
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            bgp_node[0].pattern, expected_first_pattern,
+            "BGP after UNION must not be credited with a variable only one arm binds: {bgp_node:?}"
+        );
     }
 }
