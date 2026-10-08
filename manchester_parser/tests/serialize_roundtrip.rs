@@ -574,3 +574,47 @@ fn roundtrips_swrl_rule() {
         "rules differ after round-trip; serialized text was:\n{text}"
     );
 }
+
+// ── `Datatype:` frame (#502) ─────────────────────────────────────────────
+
+#[test]
+#[ignore = "Datatype: frame not yet implemented, see #502"]
+fn roundtrips_datatype_bare_declaration() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Ontology: <http://example.org/onto>
+        Datatype: :NegInt
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "Datatype: frame not yet implemented, see #502"]
+fn roundtrips_datatype_equivalentto_facet_restriction() {
+    let text = assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+        Ontology: <http://example.org/onto>
+        Datatype: :NegInt
+            EquivalentTo: xsd:integer[< 0]
+        "#,
+    );
+    assert!(text.contains("Datatype:"));
+    assert!(text.contains("EquivalentTo:"));
+}
+
+#[test]
+#[ignore = "Datatype: frame not yet implemented, see #502"]
+fn roundtrips_datatype_declaration_annotations() {
+    assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        Ontology: <http://example.org/onto>
+        Datatype: :NegInt
+            Annotations: rdfs:comment "negative integers"
+        "#,
+    );
+}

@@ -199,8 +199,8 @@ misc ::= 'EquivalentClasses:' annotations description2List
 | Class expressions: atomic class, `(desc)`, `{ind, ind}` (`ObjectOneOf`), `not`/`and`/`or`, restrictions (`some`/`only`/`value`/`Self`/`min`/`max`/`exactly`, qualified and unqualified) | Yes | |
 | `conjunction`'s `classIRI 'that' ...` sugar | No | #157 |
 | Data ranges beyond a bare named datatype (`and`/`or`/`not`/`{lit,...}`/facet restrictions) | Yes | see addendum below (#501) |
-| `Datatype:` frame | No | #502 (depends on compound data ranges, #501) |
-| `Rule:` (SWRL) frames | Yes | see addendum below; `Datatype:` remains a #157 follow-up (#502) |
+| `Datatype:` frame | Yes | see addendum below (#502) |
+| `Rule:` (SWRL) frames | Yes | see addendum below |
 | Literals: typed, plain string, lang string, integer, decimal, float | Yes | |
 
 ---
@@ -693,6 +693,59 @@ union/complement/oneOf/facet restrictions, `not` over a compound range, and
 a parenthesized compound filler lives in `serialize_roundtrip.rs`;
 `manchester_syntax.rs` additionally covers nested/parenthesized combinations
 and each of the nine facet tokens individually.
+
+## Addendum: `Datatype:` frame (#502, item 6 of #157's original six)
+
+The last of #157's six deferred grammar productions, after `DisjointUnionOf:`
+(#503), SWRL `Rule:` frames (#498), `HasKey:` (#499), `SubPropertyChain:`
+(#500), and compound data ranges (#501, which this addendum depends on for
+its `EquivalentTo:` section).
+
+Grammar (W3C Manchester Syntax spec §2.5):
+
+```
+datatypeFrame ::= 'Datatype:' datatype
+                    { 'Annotations:' annotations }
+                    [ 'EquivalentTo:' annotations dataRange ]
+                    { 'Annotations:' annotations }
+```
+
+This is a new top-level frame type, following the same `frame.rs` shape as
+`Class:`/`ObjectProperty:`/`DataProperty:`/`Individual:`/
+`AnnotationProperty:`: a `keyword("Datatype:")` header, the datatype IRI, then
+`many0` over a small per-frame `DatatypeSection` enum (`Annotations:` folded
+into the frame's single `AxiomDeclaration`, same as every other frame; one
+`EquivalentTo:` occurrence per `AxiomDatatypeDefinition` emitted — the W3C
+grammar only ever expects at most one, but nothing stops a document from
+repeating the section, and `many0` over the section alt handles that for
+free without extra code, the same permissive choice this crate already makes
+for every other frame's sections). Unlike `Class:`'s `EquivalentTo:` (a
+comma-separated list producing one binary `EquivalentClasses` axiom per
+list member), `Datatype:`'s `EquivalentTo:` takes exactly one `dataRange`,
+matching `AxiomDatatypeDefinition(Vec<Annotation>, Datatype, DataRange)`'s
+shape (a single data range, not a list) — so this section parses via
+`opt_annotations` (the same `'Annotations:' annotation {',' annotation}`
+prefix `DisjointUnionOf:`/`HasKey:` already use) followed directly by
+`crate::data_range::data_range(ctx)`, not `annotated_list`.
+
+Both `owl_ontology::Axiom::AxiomDatatypeDefinition` and
+`Entity::DatatypeDeclaration(Datatype)` (`Datatype = FullIri`) already exist
+in the type model — added for `owl_functional_parser`'s earlier landing — so
+this issue is purely Manchester concrete syntax, no new types needed, exactly
+like #501.
+
+The serializer (`serialize.rs`) previously `log_skip`'d both
+`Entity::DatatypeDeclaration` (in `classify_declaration`) and
+`AxiomDatatypeDefinition` (in `classify`) unconditionally; both are now
+handled via a new `FrameKey::Datatype(String)` variant alongside the other
+five, reusing the existing `fmt_data_range` (added by #501) to format the
+`EquivalentTo:` line's data range.
+
+Round-trip coverage (bare declaration, `EquivalentTo:` with a facet
+restriction, and declaration `Annotations:`) lives in
+`manchester_parser/tests/serialize_roundtrip.rs`; parser-level coverage
+(bare frame, `EquivalentTo:`, multiple `Annotations:` sections) lives in
+`manchester_parser/tests/manchester_syntax.rs`.
 
 ## References
 
