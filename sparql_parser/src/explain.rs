@@ -277,3 +277,336 @@ pub(crate) fn render_term(term: &Term) -> String {
         Term::TripleTerm(inner) => format!("<<( {} )>>", render_triple_pattern(inner)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dag_rdf::{GraphElement, IriReference, Quad, RdfResource};
+
+    fn iri_node(iri: &str) -> GraphElement {
+        GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(iri.to_string())))
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Variable(name.to_string())
+    }
+
+    fn iri_const(iri: &str) -> Term {
+        Term::Constant(iri_node(iri))
+    }
+
+    fn tp(s: Term, p: Term, o: Term) -> TriplePattern {
+        TriplePattern {
+            subject: s,
+            predicate: p,
+            object: o,
+        }
+    }
+
+    /// Add a quad in the default graph, registering all three resources.
+    fn add_default_graph_quad(ds: &mut Datastore, s: &str, p: &str, o: &str) {
+        let subject = ds.add_resource(iri_node(s));
+        let predicate = ds.add_resource(iri_node(p));
+        let object = ds.add_resource(iri_node(o));
+        ds.add_quad(Quad {
+            triple_id: dag_rdf::DEFAULT_GRAPH_ELEMENT_ID,
+            subject,
+            predicate,
+            obj: object,
+        });
+    }
+
+    const PA: &str = "http://example.org/pa";
+    const PB: &str = "http://example.org/pb";
+    const PC: &str = "http://example.org/pc";
+
+    /// Pull the `patterns` list out of a single top-level `PlanNode::Bgp`,
+    /// panicking with a useful message otherwise.
+    fn bgp_patterns(plan: &ExplainPlan) -> &[PatternPlan] {
+        assert_eq!(plan.nodes.len(), 1, "expected exactly one node: {plan:?}");
+        match &plan.nodes[0] {
+            PlanNode::Bgp { patterns } => patterns,
+            other => panic!("expected a Bgp node, got {other:?}"),
+        }
+    }
+
+    /// Two-pattern body used by several tests below: `?y PB ?v` has `?y` as
+    /// its only shared variable with an outer binder, and `?w PC ?z` shares
+    /// nothing. `PB` is deliberately given a *higher* raw cardinality than
+    /// `PC` so that, with `already_bound = ∅`, `PC`'s pattern (cheaper, and
+    /// tied on bound_count 0) is scheduled first — but once `?y` is credited
+    /// as already bound, `PB`'s pattern gets bound_count 1 (connected) and
+    /// must be scheduled first instead. This makes the two orders
+    /// (`∅` vs `{y}`) provably different, which is the property the
+    /// `already_bound` fix is supposed to change.
+    fn asymmetric_body() -> Vec<TriplePattern> {
+        vec![
+            tp(var("y"), iri_const(PB), var("v")),
+            tp(var("w"), iri_const(PC), var("z")),
+        ]
+    }
+
+    fn populate_asymmetric_body_store(ds: &mut Datastore) {
+        // PB: 5 quads (less selective).
+        for i in 0..5 {
+            add_default_graph_quad(
+                ds,
+                &format!("http://example.org/yb_{i}"),
+                PB,
+                &format!("http://example.org/vb_{i}"),
+            );
+        }
+        // PC: 2 quads (more selective) — wins on cardinality alone.
+        for i in 0..2 {
+            add_default_graph_quad(
+                ds,
+                &format!("http://example.org/wc_{i}"),
+                PC,
+                &format!("http://example.org/zc_{i}"),
+            );
+        }
+    }
+
+    /// Sanity check backing every precision test below: confirm
+    /// `order_patterns` really does choose different orders for
+    /// `asymmetric_body()` depending on whether `y` is already bound.
+    /// Without this, a precision test could pass vacuously (both orders
+    /// identical) and prove nothing about the fix.
+    #[test]
+    fn asymmetric_body_order_differs_with_and_without_bound_y() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        let body = asymmetric_body();
+
+        let order_empty = order_patterns(&body, &HashSet::new(), &ds);
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let order_with_y = order_patterns(&body, &bound_y, &ds);
+
+        assert_ne!(
+            order_empty, order_with_y,
+            "fixture must actually be sensitive to already_bound, or the precision tests below are vacuous"
+        );
+        assert_eq!(order_with_y, vec![0, 1], "PB (connected via bound y) should be scheduled first once y is bound");
+    }
+
+    /// Issue #573's precision property: an `OPTIONAL` body preceded by a
+    /// sibling BGP that provably binds one of the body's variables must be
+    /// reported with that variable credited as already-bound, matching
+    /// `order_patterns(body, {y}, ds)` rather than the old `∅` baseline.
+    #[test]
+    #[ignore = "issue #573: already_bound set not yet threaded through explain_components"]
+    fn optional_body_order_reflects_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        // Outer BGP guarantees `y` is bound (`PA` is irrelevant to ordering
+        // here — any single-quad predicate would do).
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+        let outer = QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]);
+
+        let components = vec![
+            outer,
+            QueryComponent::Optional(vec![QueryComponent::BGP(asymmetric_body())]),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        assert_eq!(plan.nodes.len(), 2);
+        let PlanNode::Optional { children } = &plan.nodes[1] else {
+            panic!("expected second node to be Optional: {:?}", plan.nodes[1]);
+        };
+        let patterns = bgp_patterns(children);
+
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let expected_order = order_patterns(&asymmetric_body(), &bound_y, &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[expected_order[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "OPTIONAL body's reported order must match order_patterns computed with the preceding BGP's guaranteed bindings, not ∅: {patterns:?}"
+        );
+    }
+
+    /// `GRAPH` bodies are seeded with the outer solution at runtime exactly
+    /// like `OPTIONAL` (`eval_component`'s `Graph` arm passes `vec![sub]`,
+    /// not an unseeded `vec![HashMap::new()]`), so they must receive the
+    /// same inherited already-bound set.
+    #[test]
+    #[ignore = "issue #573: already_bound set not yet threaded through explain_components"]
+    fn graph_body_order_reflects_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+
+        let components = vec![
+            QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]),
+            QueryComponent::Graph(
+                Term::Constant(iri_node("http://example.org/g1")),
+                vec![QueryComponent::BGP(asymmetric_body())],
+            ),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let PlanNode::Graph { children, .. } = &plan.nodes[1] else {
+            panic!("expected second node to be Graph: {:?}", plan.nodes[1]);
+        };
+        let patterns = bgp_patterns(children);
+
+        let mut bound_y = HashSet::new();
+        bound_y.insert("y".to_string());
+        let expected_order = order_patterns(&asymmetric_body(), &bound_y, &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[expected_order[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "GRAPH body's reported order must reflect the preceding BGP's guaranteed bindings: {patterns:?}"
+        );
+    }
+
+    /// Independent-scope soundness: a `UNION` arm is evaluated unseeded at
+    /// runtime (`eval_independent_then_join` always starts from
+    /// `vec![HashMap::new()]`) regardless of what a preceding sibling binds,
+    /// so its inner BGP must still be reported with `already_bound = ∅`
+    /// even when a preceding BGP sibling guarantees `y`.
+    #[test]
+    #[ignore = "issue #573: already_bound set not yet threaded through explain_components"]
+    fn union_arm_bgp_not_credited_with_preceding_sibling_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+        add_default_graph_quad(
+            &mut ds,
+            "http://example.org/x0",
+            PA,
+            "http://example.org/y0",
+        );
+
+        let components = vec![
+            QueryComponent::BGP(vec![tp(var("x"), iri_const(PA), var("y"))]),
+            QueryComponent::Union(
+                vec![QueryComponent::BGP(asymmetric_body())],
+                vec![QueryComponent::BGP(vec![tp(
+                    var("q"),
+                    iri_const(PA),
+                    var("r"),
+                )])],
+            ),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        // Find the Union node (order_components may place it before or
+        // after the BGP depending on connectedness scoring; locate by kind).
+        let union_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Union { left, .. } => Some(left),
+                _ => None,
+            })
+            .expect("plan must contain a Union node");
+        let patterns = bgp_patterns(union_node);
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            patterns[0].pattern, expected_first_pattern,
+            "UNION arm's BGP must be reported with already_bound = ∅ (independent scope), not credited with the sibling BGP's binding: {patterns:?}"
+        );
+    }
+
+    /// Soundness negative: `MINUS` never binds a new variable into the
+    /// surviving outer rows (`eval_component`'s `Minus` arm only ever
+    /// filters `sub`, never extends it), so a BGP sibling *after* a `MINUS`
+    /// must not be credited with variables only the `MINUS` body binds,
+    /// even though `MINUS`'s body does share no barrier-crossing issue here.
+    #[test]
+    #[ignore = "issue #573: already_bound set not yet threaded through explain_components"]
+    fn bgp_after_minus_not_credited_with_minus_body_bindings() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        // MINUS body binds `y` (and `v`), but MINUS must never be credited
+        // downstream.
+        let components = vec![
+            QueryComponent::Minus(vec![QueryComponent::BGP(vec![tp(
+                var("y"),
+                iri_const(PB),
+                var("v"),
+            )])]),
+            QueryComponent::BGP(asymmetric_body()),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let bgp_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Bgp { patterns } => Some(patterns),
+                _ => None,
+            })
+            .expect("plan must contain the BGP node");
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            bgp_node[0].pattern, expected_first_pattern,
+            "BGP after MINUS must not be credited with the MINUS body's bindings: {bgp_node:?}"
+        );
+    }
+
+    /// Soundness negative: a `UNION` only guarantees a variable that *every*
+    /// arm binds. `?y` is bound by the left arm only here, so a BGP sibling
+    /// after the `UNION` must not be credited with `y`.
+    #[test]
+    #[ignore = "issue #573: already_bound set not yet threaded through explain_components"]
+    fn bgp_after_union_not_credited_with_single_arm_binding() {
+        let mut ds = Datastore::new(1_000);
+        populate_asymmetric_body_store(&mut ds);
+
+        let components = vec![
+            QueryComponent::Union(
+                vec![QueryComponent::BGP(vec![tp(
+                    var("y"),
+                    iri_const(PB),
+                    var("v"),
+                )])],
+                vec![QueryComponent::BGP(vec![tp(
+                    var("q"),
+                    iri_const(PC),
+                    var("r"),
+                )])],
+            ),
+            QueryComponent::BGP(asymmetric_body()),
+        ];
+
+        let plan = explain_components(&components, &ds);
+        let bgp_node = plan
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                PlanNode::Bgp { patterns } => Some(patterns),
+                _ => None,
+            })
+            .expect("plan must contain the trailing BGP node");
+
+        let order_empty = order_patterns(&asymmetric_body(), &HashSet::new(), &ds);
+        let expected_first_pattern = render_triple_pattern(&asymmetric_body()[order_empty[0]]);
+
+        assert_eq!(
+            bgp_node[0].pattern, expected_first_pattern,
+            "BGP after UNION must not be credited with a variable only one arm binds: {bgp_node:?}"
+        );
+    }
+}

@@ -326,7 +326,7 @@ fn barrier_internal_only_vars(
 /// always safe (it only makes a barrier's internal-only-variable set look
 /// larger than necessary, missing an optimisation); returning too many would
 /// make it look smaller and could permit an unsafe hoist. See module docs.
-fn must_bind_vars(comp: &QueryComponent) -> HashSet<String> {
+pub(crate) fn must_bind_vars(comp: &QueryComponent) -> HashSet<String> {
     match comp {
         QueryComponent::BGP(patterns) => {
             let mut vars = HashSet::new();
@@ -399,7 +399,7 @@ fn must_bind_vars(comp: &QueryComponent) -> HashSet<String> {
 /// in a conjunctive pipeline must succeed for a row to survive, the
 /// guaranteed-bound set for the whole sequence is the union of each
 /// component's own contribution.
-fn must_bind_sequence(components: &[QueryComponent]) -> HashSet<String> {
+pub(crate) fn must_bind_sequence(components: &[QueryComponent]) -> HashSet<String> {
     let mut vars = HashSet::new();
     for c in components {
         vars.extend(must_bind_vars(c));
