@@ -93,12 +93,16 @@ consistent with the old `(property, value)` tuple's own comparison order
 
 ## Follow-up issues filed (Status `Todo`, awaiting review)
 
-1. `owl_xml_parser`: parse nested `<Annotation>` into the new field, once
+1. [#710](https://github.com/daghovland/rdf-datalog/issues/710):
+   `owl_xml_parser`: parse nested `<Annotation>` into the new field, once
    #608 merges and its own stopgap error for nested `<Annotation>` can be
    replaced with real support.
-2. `owl2rl2datalog`/`rdf_owl_translator`: decide and implement (or
+2. [#711](https://github.com/daghovland/rdf-datalog/issues/711):
+   `owl2rl2datalog`/`rdf_owl_translator`: decide and implement (or
    explicitly reject) an RDF encoding for meta-annotations (annotations on
    a reified annotation triple), in both directions.
+
+Both are sub-issues of parent epic #564.
 
 ## TDD sequence
 

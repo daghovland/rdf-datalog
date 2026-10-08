@@ -825,13 +825,13 @@ fn fmt_individual(ind: &Individual) -> String {
 }
 
 fn fmt_annotation(a: &Annotation) -> Option<String> {
-    let (prop, value) = a;
-    let val = match value {
+    let val = match &a.value {
         AnnotationValue::IriAnnotation(iri) => fmt_iri(iri),
         AnnotationValue::LiteralAnnotation(ge) => fmt_literal(ge)?,
         AnnotationValue::IndividualAnnotation(ind) => fmt_individual(ind),
     };
-    Some(format!("{} {val}", fmt_iri(prop)))
+    let meta = ann_prefix(&a.annotations)?;
+    Some(format!("{meta}{} {val}", fmt_iri(&a.property)))
 }
 
 fn fmt_annotation_list(anns: &[Annotation]) -> Option<String> {

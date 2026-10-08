@@ -10,15 +10,9 @@ Contact: hovlanddag@gmail.com
 //! `axiomAnnotations ::= { Annotation }`, `annotationAnnotations ::= { Annotation }`
 //!
 //! Meta-annotations (an `Annotation(...)` nested inside another
-//! `Annotation(...)`'s own `annotationAnnotations`) are parsed but their
-//! payload is discarded: `owl_ontology::Annotation` is a flat
-//! `(AnnotationProperty, AnnotationValue)` pair with no slot for annotations
-//! on an annotation, the same limitation `manchester_parser` documents (see
-//! its `annotation.rs` module docs, #157) — parsing them (rather than
-//! failing) still lets a document that happens to use meta-annotations parse
-//! successfully, matching this crate's general policy of dropping
-//! unrepresentable input with a warning rather than rejecting the whole
-//! document.
+//! `Annotation(...)`'s own `annotationAnnotations`) are parsed and threaded
+//! into `owl_ontology::Annotation::annotations` — see
+//! [#695](https://github.com/daghovland/rdf-datalog/issues/695).
 
 use crate::iri::{ParserContext, iri, node_id};
 use crate::literal::literal;
@@ -53,10 +47,10 @@ pub(crate) fn annotation<'a>(
 ) -> impl FnMut(&'a str) -> IResult<&'a str, Annotation> {
     move |input: &'a str| {
         paren_form("Annotation", |input| {
-            let (input, _meta) = many0_no_sep(annotation(ctx)).parse(input)?;
+            let (input, meta) = many0_no_sep(annotation(ctx)).parse(input)?;
             let (input, prop) = iri(ctx)(input)?;
             let (input, value) = annotation_value(ctx)(input)?;
-            Ok((input, (prop, value)))
+            Ok((input, Annotation::with_meta(prop, value, meta)))
         })
         .parse(input)
     }
@@ -120,12 +114,32 @@ mod tests {
     fn parses_annotation_with_literal_value() {
         let ctx = ParserContext::new();
         ctx.declare_prefix("rdfs", ingress::RDFS);
-        let (_, (prop, value)) = annotation(&ctx)("Annotation(rdfs:label \"Pizza\")").unwrap();
-        let owl_ontology::FullIri(ingress::IriReference(prop_iri)) = &prop;
+        let (_, ann) = annotation(&ctx)("Annotation(rdfs:label \"Pizza\")").unwrap();
+        let owl_ontology::FullIri(ingress::IriReference(prop_iri)) = &ann.property;
         assert_eq!(*prop_iri, format!("{}label", ingress::RDFS));
-        match value {
+        match ann.value {
             AnnotationValue::LiteralAnnotation(_) => {}
             other => panic!("expected LiteralAnnotation, got {other:?}"),
+        }
+        assert!(ann.annotations.is_empty());
+    }
+
+    #[test]
+    fn parses_nested_meta_annotation() {
+        let ctx = ParserContext::new();
+        ctx.declare_prefix("ex", "http://example.org/");
+        let (_, ann) =
+            annotation(&ctx)("Annotation(Annotation(ex:source ex:Textbook) ex:comment \"hello\")")
+                .unwrap();
+        let owl_ontology::FullIri(ingress::IriReference(prop_iri)) = &ann.property;
+        assert_eq!(*prop_iri, "http://example.org/comment");
+        assert_eq!(ann.annotations.len(), 1);
+        let meta = &ann.annotations[0];
+        let owl_ontology::FullIri(ingress::IriReference(meta_prop_iri)) = &meta.property;
+        assert_eq!(*meta_prop_iri, "http://example.org/source");
+        match &meta.value {
+            AnnotationValue::IriAnnotation(_) => {}
+            other => panic!("expected IriAnnotation, got {other:?}"),
         }
     }
 
