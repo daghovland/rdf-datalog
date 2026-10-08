@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:705 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_parser: conservative already_bound set for EXPLAIN (#573)" ;
+    bl:number 705 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:573 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr705 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:573 ;
+    prov:startedAtTime "2026-10-08T06:18:32Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-08T07:08:49Z"^^xsd:dateTime .
+
+session:pr705Summary a agp:TranscriptSummary ;
+    agp:summaryText "#537's static EXPLAIN plan walk used already_bound = emptyset at every BGP and OPTIONAL body, since the real set depends on which runtime rows flowed in, not just static tree position -- a correctness-over-precision choice documented in Decision 2 of the plan doc. This issue asked for a more precise, still-sound static approximation. The issue's own suggested approach (variables_in_components) was rejected after analysis: it would over-credit variables from MINUS/OPTIONAL/BIND branches that aren't actually guaranteed bound on every surviving row, which breaks the soundness property the static walk exists to preserve (claiming a variable is bound when it might not be is worse than claiming none are). Used component_ordering::must_bind_vars/must_bind_sequence instead -- the crate's own existing 'guaranteed bound on every surviving row' computation -- accumulated over preceding siblings in their actual evaluation order (post component_ordering's static reordering) and threaded into both order_patterns for BGPs and into OPTIONAL/GRAPH body recursion, since both are seeded per-row with the outer solution at runtime. GRAPH wasn't named in the original issue but has the identical bug (confirmed against execute/components.rs) and was fixed under the same change. UNION arms, GROUP, MINUS's RHS, and subqueries keep the exact emptyset, since each runs in a scope independent of its siblings where emptyset is already precise, not merely conservative. Mid-task, PR #698 (#572's runtime profiler) merged to main and touched the same file (renaming two render_* functions to pub(crate), adding a module-doc pointer to crate::profile) -- rebased onto the new main, merged both module-doc sections, and re-verified the 6 unit tests plus the full quality gate post-rebase before finalizing." ;
+    agp:reasoningFor ghpull:705 ;
+    prov:wasGeneratedBy session:pr705 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
