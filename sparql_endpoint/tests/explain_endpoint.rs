@@ -18,6 +18,161 @@ Contact: hovlanddag@gmail.com
 
 mod common;
 
+// ── `?explain=true` combined with `?txId=` (issue #574) ──────────────────────
+
+/// `?explain=true` together with a `txId` (transactional read) must return
+/// the same EXPLAIN JSON shape as a plain (non-transactional) explain
+/// request, evaluated against the transaction's snapshot+delta view rather
+/// than the live store — so a pending insert made inside the transaction is
+/// reflected in the EXPLAIN plan's reported result (e.g. `rowCount`), not
+/// just in an ordinary transactional read.
+///
+/// Related: [#574](https://github.com/daghovland/rdf-datalog/issues/574),
+/// follow-up to [#537](https://github.com/daghovland/rdf-datalog/issues/537).
+#[tokio::test]
+async fn test_explain_with_tx_id_sees_pending_insert() {
+    let server = common::TestServer::start_writable("").await;
+
+    let begin_resp = server
+        .client
+        .post(format!("{}/transaction/begin", server.base_url))
+        .send()
+        .await
+        .expect("POST /transaction/begin failed");
+    assert_eq!(begin_resp.status().as_u16(), 200);
+    let begin_body: serde_json::Value = begin_resp.json().await.unwrap();
+    let tx_id = begin_body["txId"].as_str().expect("txId").to_owned();
+
+    // Buffer an insert inside the transaction — not yet visible to the live
+    // store.
+    let update = "INSERT DATA { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> \"Alice\" . }";
+    let update_resp = server
+        .client
+        .post(format!(
+            "{}/sparql?txId={}",
+            server.base_url,
+            urlencoding::encode(&tx_id)
+        ))
+        .header("content-type", "application/sparql-update")
+        .body(update)
+        .send()
+        .await
+        .expect("POST buffered update failed");
+    assert_eq!(update_resp.status().as_u16(), 200);
+
+    let sparql = "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
+    let explain_resp = server
+        .client
+        .get(format!(
+            "{}/sparql?txId={}&query={}&explain=true",
+            server.base_url,
+            urlencoding::encode(&tx_id),
+            urlencoding::encode(sparql)
+        ))
+        .send()
+        .await
+        .expect("GET transactional explain failed");
+
+    assert_eq!(
+        explain_resp.status(),
+        200,
+        "explain=true combined with txId must now be supported"
+    );
+    let ct = explain_resp.headers()["content-type"].to_str().unwrap();
+    assert!(
+        ct.contains("application/json"),
+        "explain response must be JSON, got content-type: {ct}"
+    );
+    let body: serde_json::Value = explain_resp.json().await.expect("body must be JSON");
+    assert_eq!(body["queryType"], "Select");
+    assert_eq!(
+        body["rowCount"], 1,
+        "the EXPLAIN result summary must reflect the transaction's pending \
+         insert, not just the (empty) live store: {body:?}"
+    );
+    let plan = body["plan"].as_array().expect("plan must be an array");
+    assert_eq!(plan.len(), 1, "single top-level BGP: {plan:?}");
+    assert_eq!(plan[0]["kind"], "BGP");
+
+    // Clean up: rollback.
+    server
+        .client
+        .post(format!("{}/transaction/{tx_id}/rollback", server.base_url))
+        .send()
+        .await
+        .expect("rollback failed");
+}
+
+/// `explain=true` combined with `txId` must not affect the live store: the
+/// pending insert used to make the EXPLAIN plan non-trivial above must still
+/// be invisible to a plain (non-transactional) read.
+#[tokio::test]
+async fn test_explain_with_tx_id_does_not_leak_to_live_store() {
+    let server = common::TestServer::start_writable("").await;
+
+    let begin_resp = server
+        .client
+        .post(format!("{}/transaction/begin", server.base_url))
+        .send()
+        .await
+        .expect("POST /transaction/begin failed");
+    let begin_body: serde_json::Value = begin_resp.json().await.unwrap();
+    let tx_id = begin_body["txId"].as_str().expect("txId").to_owned();
+
+    let update = "INSERT DATA { <http://example.org/bob> <http://xmlns.com/foaf/0.1/name> \"Bob\" . }";
+    server
+        .client
+        .post(format!(
+            "{}/sparql?txId={}",
+            server.base_url,
+            urlencoding::encode(&tx_id)
+        ))
+        .header("content-type", "application/sparql-update")
+        .body(update)
+        .send()
+        .await
+        .expect("POST buffered update failed");
+
+    let sparql = "ASK { <http://example.org/bob> <http://xmlns.com/foaf/0.1/name> \"Bob\" }";
+    let explain_url = format!(
+        "{}/sparql?txId={}&query={}&explain=true",
+        server.base_url,
+        urlencoding::encode(&tx_id),
+        urlencoding::encode(sparql)
+    );
+    let explain_resp = server
+        .client
+        .get(&explain_url)
+        .send()
+        .await
+        .expect("GET transactional explain failed");
+    assert_eq!(explain_resp.status(), 200);
+
+    // Plain (non-transactional, non-explain) read of the live store must
+    // still not see the pending insert.
+    let plain_resp = server
+        .client
+        .get(server.sparql_query_url(sparql))
+        .header("accept", "application/sparql-results+json")
+        .send()
+        .await
+        .expect("GET non-transactional read failed");
+    assert_eq!(plain_resp.status().as_u16(), 200);
+    let plain_body: serde_json::Value = plain_resp.json().await.unwrap();
+    assert_eq!(
+        plain_body["boolean"],
+        serde_json::Value::Bool(false),
+        "the live store must be unaffected by an explain+txId read: {plain_body:?}"
+    );
+
+    server
+        .client
+        .post(format!("{}/transaction/{tx_id}/rollback", server.base_url))
+        .send()
+        .await
+        .expect("rollback failed");
+}
+
 /// Test case 1 — single-pattern query's explain output.
 ///
 /// A one-triple-pattern BGP: the plan must contain exactly one BGP node
