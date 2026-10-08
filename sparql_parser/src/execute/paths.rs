@@ -9,6 +9,7 @@ Contact: hovlanddag@gmail.com
 use super::bgp::{eval_triple_pattern, resolve_match_term, MatchTerm};
 use super::solutions::{partial_subs_equal, psv_eq};
 use super::*;
+use crate::profile;
 
 /// Evaluate a property path pattern against the datastore, extending one solution.
 /// Zero-hop ("identity") solutions for a path pattern: subject and object
@@ -173,17 +174,40 @@ pub(crate) fn eval_repeat_path(
             if min > max_n {
                 return Ok(Vec::new());
             }
+            // Issue #697: one `"Repeat"` node per `k`, bounded by the
+            // query's own `{min,max}` range, not by data size. `k == 0`
+            // goes through `eval_exact_repeat`'s `zero_hop_solutions`
+            // path, which never touches `pending_children` at all — clear
+            // it explicitly before each `k` (rather than relying solely on
+            // `eval_path_pattern`'s own entry-guard, which that path never
+            // reaches) so `take_pending_children` below is always correct,
+            // not just for `k > 0`'s `Sequence`-routed case.
+            let profiling = profile::is_active();
             let mut results = Vec::new();
+            let mut k_nodes: Vec<profile::ProfileNode> = Vec::new();
             for k in min..=max_n {
                 ctx.deadline.check()?;
-                results.extend(eval_exact_repeat(
-                    subject_term,
-                    inner,
-                    object_term,
-                    sub.clone(),
-                    k,
-                    ctx,
-                )?);
+                if profiling {
+                    profile::clear_pending_children();
+                }
+                let t0 = profiling.then(profile::now);
+                let k_results =
+                    eval_exact_repeat(subject_term, inner, object_term, sub.clone(), k, ctx)?;
+                if let Some(t0) = t0 {
+                    let children = profile::take_pending_children();
+                    k_nodes.push(profile::ProfileNode::new(
+                        "Repeat",
+                        Some(format!("{{{k}}}")),
+                        1,
+                        k_results.len(),
+                        t0.elapsed(),
+                        children,
+                    ));
+                }
+                results.extend(k_results);
+            }
+            if profiling {
+                profile::set_pending_children(k_nodes);
             }
             Ok(results)
         }
@@ -231,6 +255,19 @@ pub(crate) fn eval_path_pattern(
     let datastore = ctx.datastore;
     let active_graph = ctx.active_graph;
     let deadline = ctx.deadline;
+    // Issue #697: establish the invariant every arm below relies on —
+    // `pending_children` holds exactly what THIS call set, nothing left
+    // over from an unrelated earlier call (e.g. a sibling step evaluated
+    // just before this one). A composite arm (`Sequence`, `Alternative`,
+    // `ZeroOrOne`, `ZeroOrMore`/`OneOrMore`) re-sets it before returning;
+    // a leaf arm (`Iri`, `NegatedSet`) does nothing further, so it stays
+    // cleared — correctly reporting "no children" rather than leaking a
+    // stale value. No-op when no profiler is active, or while suspended
+    // (see `crate::profile::SuspendGuard`) — same one-check cost as every
+    // other instrumentation site.
+    if profile::is_active() {
+        profile::clear_pending_children();
+    }
     match path {
         PropertyPath::Iri(gel) => {
             let tp = TriplePattern {
@@ -255,6 +292,17 @@ pub(crate) fn eval_path_pattern(
             let mut current_subs = vec![sub];
             let n = steps.len();
             let mut bridge_names: Vec<String> = Vec::new();
+            // Issue #697: one `"Step"` node per static step, in order —
+            // bounded by the query's own step count, not by data size.
+            // Each step's inner `eval_path_pattern` call runs once per row
+            // in `current_subs` (the step's own fan-in, which can grow
+            // beyond 1 as earlier steps fan out) — the same per-row-body
+            // shape `Optional` has, so each row's node is merged via
+            // `profile::merge_children` into one aggregate per step before
+            // moving to the next step, mirroring `Optional`'s "merge
+            // immediately, re-set once at the end" discipline.
+            let profiling = profile::is_active();
+            let mut step_nodes: Vec<profile::ProfileNode> = Vec::new();
             for (i, step) in steps.iter().enumerate() {
                 let current_object = if i + 1 == n {
                     object_term.clone()
@@ -264,18 +312,36 @@ pub(crate) fn eval_path_pattern(
                     Term::Variable(name)
                 };
                 let mut next_subs = Vec::new();
+                let mut merged_step: Vec<profile::ProfileNode> = Vec::new();
                 for s in current_subs {
                     deadline.check()?;
-                    next_subs.extend(eval_path_pattern(
-                        &current_subject,
-                        step,
-                        &current_object,
-                        s,
-                        ctx,
-                    )?);
+                    let t0 = profiling.then(profile::now);
+                    let extended =
+                        eval_path_pattern(&current_subject, step, &current_object, s, ctx)?;
+                    if let Some(t0) = t0 {
+                        let row_children = profile::take_pending_children();
+                        let node = profile::ProfileNode::new(
+                            "Step",
+                            Some(format!("Step {}: {:?}", i + 1, step)),
+                            1,
+                            extended.len(),
+                            t0.elapsed(),
+                            row_children,
+                        );
+                        profile::merge_children(&mut merged_step, vec![node]);
+                    }
+                    next_subs.extend(extended);
                 }
+                // `merged_step` is empty iff this step had zero rows to
+                // evaluate (an earlier step already produced no results) —
+                // no node for a step that never ran, rather than a
+                // misleading zero-invocation placeholder.
+                step_nodes.extend(merged_step);
                 current_subs = next_subs;
                 current_subject = current_object;
+            }
+            if profiling {
+                profile::set_pending_children(step_nodes);
             }
             // Remove internal bridge variables from each solution
             Ok(current_subs
@@ -290,23 +356,79 @@ pub(crate) fn eval_path_pattern(
         }
 
         PropertyPath::Alternative(left, right) => {
+            // Issue #697: one `"Left"`/`"Right"` node per branch, mirroring
+            // `components.rs`'s `Union` arm (same shape: two independent
+            // sub-evaluations, each contributing one node to the pending
+            // slot via `set_pending_children` — not `profile::finish`,
+            // since we're below any `eval_components_budgeted` frame
+            // here).
+            let profiling = profile::is_active();
+            let left_t0 = profiling.then(profile::now);
             let mut left_subs =
                 eval_path_pattern(subject_term, left, object_term, sub.clone(), ctx)?;
+            let left_node = left_t0.map(|t0| {
+                let children = profile::take_pending_children();
+                profile::ProfileNode::new(
+                    "Left",
+                    Some(format!("{left:?}")),
+                    1,
+                    left_subs.len(),
+                    t0.elapsed(),
+                    children,
+                )
+            });
+
+            let right_t0 = profiling.then(profile::now);
             let right_subs = eval_path_pattern(subject_term, right, object_term, sub, ctx)?;
+            let right_node = right_t0.map(|t0| {
+                let children = profile::take_pending_children();
+                profile::ProfileNode::new(
+                    "Right",
+                    Some(format!("{right:?}")),
+                    1,
+                    right_subs.len(),
+                    t0.elapsed(),
+                    children,
+                )
+            });
+
+            if let (Some(l), Some(r)) = (left_node, right_node) {
+                profile::set_pending_children(vec![l, r]);
+            }
+
             left_subs.extend(right_subs);
             Ok(left_subs)
         }
 
         PropertyPath::Inverse(inner) => {
-            // Swap subject and object
+            // Swap subject and object. Transparent for profiling: `inner`'s
+            // recursive call manages `pending_children` itself (or leaves
+            // it cleared, per the entry guard above), so no extra node is
+            // needed — `Inverse` has no cost or structure of its own.
             eval_path_pattern(object_term, inner, subject_term, sub, ctx)
         }
 
         PropertyPath::ZeroOrOne(inner) => {
-            // Zero hops: subject == object
+            // Zero hops: subject == object. Cheap, non-recursive — no
+            // profiling node of its own; only the one-hop branch (which
+            // recurses into `inner`) gets one (issue #697).
             let zero_hop =
                 zero_hop_solutions(subject_term, object_term, &sub, datastore, active_graph);
+            let profiling = profile::is_active();
+            let t0 = profiling.then(profile::now);
             let one_hop = eval_path_pattern(subject_term, inner, object_term, sub, ctx)?;
+            if let Some(t0) = t0 {
+                let children = profile::take_pending_children();
+                let node = profile::ProfileNode::new(
+                    "OneHop",
+                    Some(format!("{inner:?}")),
+                    1,
+                    one_hop.len(),
+                    t0.elapsed(),
+                    children,
+                );
+                profile::set_pending_children(vec![node]);
+            }
             // Deduplicate (zero-hop and one-hop may produce the same solution).
             // Compare by resolved value: zero-hop bindings are `Computed` while
             // one-hop bindings from a BGP match are `Interned`, so the same
@@ -322,11 +444,49 @@ pub(crate) fn eval_path_pattern(
         }
 
         PropertyPath::OneOrMore(inner) => {
-            transitive_closure(subject_term, inner, object_term, sub, false, ctx)
+            // Issue #697: `transitive_closure`'s BFS suspends profiling
+            // for its own duration (see `crate::profile::SuspendGuard` and
+            // `transitive_closure`'s doc comment) — it calls
+            // `eval_path_pattern` once per queue pop, proportional to
+            // graph size, which would otherwise blow up the profile tree
+            // (and defeat the "never per matched quad" granularity rule).
+            // So this call site builds the ONE aggregate node itself, from
+            // its own start/elapsed timing, with no children (there are
+            // none — everything inside was suspended).
+            let profiling = profile::is_active();
+            let t0 = profiling.then(profile::now);
+            let result = transitive_closure(subject_term, inner, object_term, sub, false, ctx)?;
+            if let Some(t0) = t0 {
+                let node = profile::ProfileNode::new(
+                    "TransitiveClosure",
+                    Some(format!("{inner:?}+")),
+                    1,
+                    result.len(),
+                    t0.elapsed(),
+                    Vec::new(),
+                );
+                profile::set_pending_children(vec![node]);
+            }
+            Ok(result)
         }
 
         PropertyPath::ZeroOrMore(inner) => {
-            transitive_closure(subject_term, inner, object_term, sub, true, ctx)
+            // See the `OneOrMore` arm above (#697) — identical, `*` vs `+`.
+            let profiling = profile::is_active();
+            let t0 = profiling.then(profile::now);
+            let result = transitive_closure(subject_term, inner, object_term, sub, true, ctx)?;
+            if let Some(t0) = t0 {
+                let node = profile::ProfileNode::new(
+                    "TransitiveClosure",
+                    Some(format!("{inner:?}*")),
+                    1,
+                    result.len(),
+                    t0.elapsed(),
+                    Vec::new(),
+                );
+                profile::set_pending_children(vec![node]);
+            }
+            Ok(result)
         }
 
         PropertyPath::Repeat(inner, min, max) => {
@@ -413,6 +573,16 @@ pub(crate) fn resolve_term_to_gel(
 ///
 /// Strategy: BFS from the subject if it is bound (forward traversal).
 /// If the subject is unbound and the object is bound, reverse BFS using ^path.
+///
+/// Issue #697: suspends profiling for its entire body. The BFS below calls
+/// `eval_path_pattern` once per queue pop — proportional to graph size,
+/// i.e. exactly the "never per matched quad" granularity
+/// `crate::profile`'s module doc already rules out for BGP patterns — so
+/// none of those recursive calls may record anything, no matter how deep
+/// or structurally rich `path` is. The `OneOrMore`/`ZeroOrMore` call sites
+/// in `eval_path_pattern` build the one aggregate `"TransitiveClosure"`
+/// node from their own start/elapsed timing instead, once this function
+/// returns and the guard drops.
 pub(crate) fn transitive_closure(
     subject_term: &Term,
     path: &PropertyPath,
@@ -421,6 +591,7 @@ pub(crate) fn transitive_closure(
     include_zero: bool,
     ctx: EvalCtx,
 ) -> Result<Vec<PartialSub>, ExecError> {
+    let _suspend = profile::suspend_guard();
     let datastore = ctx.datastore;
     let active_graph = ctx.active_graph;
     let deadline = ctx.deadline;
