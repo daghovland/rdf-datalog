@@ -1285,7 +1285,6 @@ fn data_restriction_filler_accepts_parenthesized_compound_range() {
 // ── `Datatype:` frame (#502) ─────────────────────────────────────────────
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn datatype_frame_bare_declaration() {
     let onto = manchester_parser::parse(&doc("Datatype: NegInt")).unwrap();
     assert!(
@@ -1296,9 +1295,9 @@ fn datatype_frame_bare_declaration() {
 }
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn datatype_frame_equivalentto_named_datatype() {
-    let onto = manchester_parser::parse(&doc("Datatype: NegInt EquivalentTo: xsd:integer")).unwrap();
+    let onto =
+        manchester_parser::parse(&doc("Datatype: NegInt EquivalentTo: xsd:integer")).unwrap();
     let found = onto.axioms.iter().any(|a| {
         matches!(
             a,
@@ -1306,11 +1305,13 @@ fn datatype_frame_equivalentto_named_datatype() {
                 if *dt == iri("NegInt") && *target == xsd("integer")
         )
     });
-    assert!(found, "expected AxiomDatatypeDefinition(NegInt, xsd:integer)");
+    assert!(
+        found,
+        "expected AxiomDatatypeDefinition(NegInt, xsd:integer)"
+    );
 }
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn datatype_frame_equivalentto_facet_restriction() {
     let onto =
         manchester_parser::parse(&doc("Datatype: NegInt EquivalentTo: xsd:integer[< 0]")).unwrap();
@@ -1333,7 +1334,6 @@ fn datatype_frame_equivalentto_facet_restriction() {
 }
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn datatype_frame_annotations_fold_into_declaration() {
     let text = format!(
         "Prefix: rdfs: <{RDFS}>\n{}",

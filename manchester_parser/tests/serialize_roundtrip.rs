@@ -578,7 +578,6 @@ fn roundtrips_swrl_rule() {
 // ── `Datatype:` frame (#502) ─────────────────────────────────────────────
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn roundtrips_datatype_bare_declaration() {
     assert_roundtrip(
         r#"
@@ -590,7 +589,6 @@ fn roundtrips_datatype_bare_declaration() {
 }
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn roundtrips_datatype_equivalentto_facet_restriction() {
     let text = assert_roundtrip(
         r#"
@@ -606,7 +604,6 @@ fn roundtrips_datatype_equivalentto_facet_restriction() {
 }
 
 #[test]
-#[ignore = "Datatype: frame not yet implemented, see #502"]
 fn roundtrips_datatype_declaration_annotations() {
     assert_roundtrip(
         r#"
