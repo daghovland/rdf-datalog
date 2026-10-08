@@ -834,6 +834,70 @@ pub(crate) fn annotation_property_frame<'a>(
     }
 }
 
+// ── Datatype: frame ──────────────────────────────────────────────────────
+
+/// `datatypeFrame ::= 'Datatype:' datatype { 'Annotations:' annotations }`
+/// `                  [ 'EquivalentTo:' annotations dataRange ]`
+/// `                  { 'Annotations:' annotations }`
+///
+/// Unlike `Class:`'s `EquivalentTo:` (a comma-separated list, one binary
+/// `EquivalentClasses` axiom per member), `Datatype:`'s `EquivalentTo:`
+/// takes exactly one `dataRange`, matching
+/// `owl_ontology::Axiom::AxiomDatatypeDefinition(Vec<Annotation>, Datatype,
+/// DataRange)`'s shape — so this parses via `opt_annotations` (the same
+/// `'Annotations:' annotation {',' annotation}` prefix `DisjointUnionOf:`/
+/// `HasKey:` already use) followed directly by `data_range`, not
+/// `annotated_list`. See the #502 addendum in
+/// `docs/plans/MANCHESTER_SYNTAX_PLAN.md`.
+enum DatatypeSection {
+    Annotations(Vec<Annotation>),
+    EquivalentTo(Vec<Annotation>, DataRange),
+}
+
+fn datatype_section<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> IResult<&'a str, DatatypeSection> {
+    move |input: &'a str| {
+        alt((
+            nom::combinator::map(annotations_section(ctx), DatatypeSection::Annotations),
+            nom::combinator::map(
+                nom::sequence::preceded(
+                    keyword("EquivalentTo:"),
+                    nom::sequence::pair(opt_annotations(ctx), data_range(ctx)),
+                ),
+                |(anns, dr)| DatatypeSection::EquivalentTo(anns, dr),
+            ),
+        ))
+        .parse(input)
+    }
+}
+
+pub(crate) fn datatype_frame<'a>(
+    ctx: &'a ParserContext,
+) -> impl FnMut(&'a str) -> IResult<&'a str, Vec<Axiom>> {
+    move |input: &'a str| {
+        let (input, _) = keyword("Datatype:")(input)?;
+        let (input, dt_iri) = iri(ctx)(input)?;
+        let (input, sections) = many0(datatype_section(ctx)).parse(input)?;
+
+        let mut decl_annotations = Vec::new();
+        let mut axioms = Vec::new();
+        for section in sections {
+            match section {
+                DatatypeSection::Annotations(anns) => decl_annotations.extend(anns),
+                DatatypeSection::EquivalentTo(anns, dr) => {
+                    axioms.push(Axiom::AxiomDatatypeDefinition(anns, dt_iri.clone(), dr));
+                }
+            }
+        }
+        axioms.insert(
+            0,
+            Axiom::AxiomDeclaration((decl_annotations, Entity::DatatypeDeclaration(dt_iri))),
+        );
+        Ok((input, axioms))
+    }
+}
+
 // ── Top-level misc ───────────────────────────────────────────────────────
 
 /// `misc` — top-level axioms not tied to any single entity frame.
@@ -955,6 +1019,7 @@ pub(crate) fn any_frame<'a>(
             data_property_frame(ctx),
             individual_frame(ctx),
             annotation_property_frame(ctx),
+            datatype_frame(ctx),
             nom::combinator::map(misc(ctx), |a| vec![a]),
         ))
         .parse(input)

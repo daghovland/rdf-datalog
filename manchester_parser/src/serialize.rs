@@ -37,15 +37,14 @@ Contact: hovlanddag@gmail.com
 //!   members, and as a fallback for binary axioms whose members can't serve
 //!   as a frame subject (e.g. an `inverse P` object property expression).
 //! - **Out-of-scope constructs are skipped with a `log::warn!`,  never
-//!   silently emitted as invalid syntax.** This covers what remains deferred
-//!   by [#157](https://github.com/daghovland/rdf-datalog/issues/157) (just
-//!   the `Datatype:` frame, #502, as of #501; `DisjointUnionOf:`, `HasKey:`,
-//!   `SubPropertyChain:`, and compound data ranges are now supported) plus a
-//!   few gaps specific to serialisation
-//!   (standalone `AnnotationAssertion` axioms about an arbitrary subject: the
-//!   frame grammar only lets `Annotations:` attach to a frame's own entity
-//!   declaration, so an assertion about an unrelated subject has no frame
-//!   form to serialize into).
+//!   silently emitted as invalid syntax.** As of
+//!   [#502](https://github.com/daghovland/rdf-datalog/issues/502), every
+//!   grammar production [#157](https://github.com/daghovland/rdf-datalog/issues/157)
+//!   originally deferred is now supported; what remains is a couple of gaps
+//!   specific to serialisation (standalone `AnnotationAssertion` axioms about
+//!   an arbitrary subject: the frame grammar only lets `Annotations:` attach
+//!   to a frame's own entity declaration, so an assertion about an unrelated
+//!   subject has no frame form to serialize into).
 //!
 //! Anonymous individuals (`Individual::AnonymousIndividual(u32)`) are
 //! serialized as `_:b<id>`; since ids are assigned by first-occurrence order
@@ -196,6 +195,7 @@ enum FrameKey {
     DataProperty(String),
     AnnotationProperty(String),
     Individual(IndividualKey),
+    Datatype(String),
 }
 
 #[derive(Default)]
@@ -239,6 +239,7 @@ fn emit_frame(out: &mut String, key: &FrameKey, body: &FrameBody) {
         FrameKey::Individual(k) => {
             out.push_str(&format!("Individual: {}\n", fmt_individual_key(k)))
         }
+        FrameKey::Datatype(iri) => out.push_str(&format!("Datatype: <{iri}>\n")),
     }
     if !body.decl_annotations.is_empty()
         && let Some(s) = fmt_annotation_list(&body.decl_annotations)
@@ -290,10 +291,7 @@ fn classify(axiom: &owl_ontology::Axiom) -> Option<Emission> {
         AxiomClassAxiom(a) => classify_class_axiom(a),
         AxiomObjectPropertyAxiom(a) => classify_object_property_axiom(a),
         AxiomDataPropertyAxiom(a) => classify_data_property_axiom(a),
-        AxiomDatatypeDefinition(..) => {
-            log_skip("Datatype: frame / DatatypeDefinition (#502)");
-            None
-        }
+        AxiomDatatypeDefinition(anns, dt, dr) => classify_datatype_definition(anns, dt, dr),
         AxiomHasKey(anns, class_expr, obj_props, data_props) => {
             classify_has_key(anns, class_expr, obj_props, data_props)
         }
@@ -322,9 +320,8 @@ fn classify_declaration(anns: &[Annotation], entity: &Entity) -> Option<Emission
             FrameKey::Individual(individual_key(ind)),
             anns,
         )),
-        Entity::DatatypeDeclaration(_) => {
-            log_skip("Datatype: frame (#502)");
-            None
+        Entity::DatatypeDeclaration(dt) => {
+            Some(decl_emission(FrameKey::Datatype(dt.0.0.clone()), anns))
         }
     }
 }
@@ -335,6 +332,23 @@ fn decl_emission(key: FrameKey, anns: &[Annotation]) -> Emission {
     } else {
         Emission::FrameAnnotations(key, anns.to_vec())
     }
+}
+
+/// `Datatype:` frame's `EquivalentTo:` section — reuses `fmt_data_range`
+/// (added by #501) for the single `dataRange`, since `AxiomDatatypeDefinition`
+/// carries exactly one (unlike `Class:`'s `EquivalentTo:`, which is a list).
+fn classify_datatype_definition(
+    anns: &[Annotation],
+    dt: &FullIri,
+    dr: &DataRange,
+) -> Option<Emission> {
+    let rhs = fmt_data_range(dr)?;
+    let ann = ann_prefix(anns)?;
+    let line = format!("    EquivalentTo: {ann}{rhs}\n");
+    Some(Emission::FrameLine(
+        FrameKey::Datatype(dt.0.0.clone()),
+        line,
+    ))
 }
 
 fn classify_class_axiom(a: &ClassAxiom) -> Option<Emission> {

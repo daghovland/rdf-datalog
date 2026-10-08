@@ -1281,3 +1281,74 @@ fn data_restriction_filler_accepts_parenthesized_compound_range() {
     });
     assert!(found, "expected a DataUnionOf filler via parentheses");
 }
+
+// ── `Datatype:` frame (#502) ─────────────────────────────────────────────
+
+#[test]
+fn datatype_frame_bare_declaration() {
+    let onto = manchester_parser::parse(&doc("Datatype: NegInt")).unwrap();
+    assert!(
+        onto.axioms
+            .iter()
+            .any(|a| matches!(a, Axiom::AxiomDeclaration((_, Entity::DatatypeDeclaration(dt))) if *dt == iri("NegInt")))
+    );
+}
+
+#[test]
+fn datatype_frame_equivalentto_named_datatype() {
+    let onto =
+        manchester_parser::parse(&doc("Datatype: NegInt EquivalentTo: xsd:integer")).unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomDatatypeDefinition(_, dt, DataRange::NamedDataRange(target))
+                if *dt == iri("NegInt") && *target == xsd("integer")
+        )
+    });
+    assert!(
+        found,
+        "expected AxiomDatatypeDefinition(NegInt, xsd:integer)"
+    );
+}
+
+#[test]
+fn datatype_frame_equivalentto_facet_restriction() {
+    let onto =
+        manchester_parser::parse(&doc("Datatype: NegInt EquivalentTo: xsd:integer[< 0]")).unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomDatatypeDefinition(
+                _,
+                dt,
+                DataRange::DatatypeRestriction(target, facets)
+            ) if *dt == iri("NegInt") && *target == xsd("integer")
+                && facets.len() == 1
+                && facets[0].0 == xsd("maxExclusive")
+        )
+    });
+    assert!(
+        found,
+        "expected AxiomDatatypeDefinition(NegInt, xsd:integer[< 0])"
+    );
+}
+
+#[test]
+fn datatype_frame_annotations_fold_into_declaration() {
+    let text = format!(
+        "Prefix: rdfs: <{RDFS}>\n{}",
+        doc("Datatype: NegInt Annotations: rdfs:comment \"negative integers\"")
+    );
+    let onto = manchester_parser::parse(&text).unwrap();
+    let found = onto.axioms.iter().any(|a| {
+        matches!(
+            a,
+            Axiom::AxiomDeclaration((anns, Entity::DatatypeDeclaration(dt)))
+                if *dt == iri("NegInt") && anns.len() == 1
+        )
+    });
+    assert!(
+        found,
+        "expected the Annotations: section folded into the single AxiomDeclaration"
+    );
+}

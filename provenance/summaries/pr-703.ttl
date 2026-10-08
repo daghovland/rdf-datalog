@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:703 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "manchester_parser: Datatype: frame (#502)" ;
+    bl:number 703 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:502 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr703 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:502 ;
+    prov:startedAtTime "2026-10-08T06:13:48Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-08T06:32:09Z"^^xsd:dateTime .
+
+session:pr703Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #502 was the last remaining deferred production from the original #157 umbrella (DisjointUnionOf:, HasKey:, SubPropertyChain:, and compound data ranges had all already landed via #516/#499/#500/#501). Datatype: declares a new datatype, optionally via EquivalentTo: to an existing data range -- owl_ontology already had Axiom::AxiomDatatypeDefinition and Entity::DatatypeDeclaration from owl_functional_parser's earlier landing, so no new types were needed; this PR is purely the Manchester concrete-syntax front end for constructs the type system already represented. The EquivalentTo: clause reused #501's data_range/data_primary parsing and fmt_data_range serialization directly rather than re-deriving data-range grammar handling, and the optional-annotations-plus-single-value shape followed #499's HasKey: precedent (opt_annotations, not the annotated_list helper used for genuinely list-valued sections). Two unconditional log_skip paths in the serializer (for Entity::DatatypeDeclaration and AxiomDatatypeDefinition) were replaced with real emission, closing the last silent-drop gap this crate's serializer had for round-tripping ontologies that declare custom datatypes." ;
+    agp:reasoningFor ghpull:703 ;
+    prov:wasGeneratedBy session:pr703 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
