@@ -46,7 +46,7 @@ Contact: hovlanddag@gmail.com
 //! sometimes misleading, placeholder.
 //!
 //! This module instead threads a conservative *static* approximation:
-//! [`crate::component_ordering::must_bind_vars`]/`must_bind_sequence`'s
+//! `component_ordering::must_bind_vars`/`must_bind_sequence`'s
 //! "guaranteed bound on every surviving row" set, accumulated over
 //! preceding siblings in the same component list (in their *actual*
 //! evaluation order, after `component_ordering`'s own static reordering —
