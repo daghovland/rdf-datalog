@@ -6,8 +6,7 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! `<Annotation>` -> `owl_ontology::Annotation` (`(AnnotationProperty,
-//! AnnotationValue)`).
+//! `<Annotation>` -> `owl_ontology::Annotation`.
 //!
 //! `AnnotationSubject ::= IRI | AnonymousIndividual` /
 //! `AnnotationValue ::= AnonymousIndividual | IRI | Literal` per the spec's
@@ -15,6 +14,12 @@ Contact: hovlanddag@gmail.com
 //! `AnonymousIndividual` value needs `individual.rs`, which doesn't exist
 //! until [#608](https://github.com/daghovland/rdf-datalog/issues/608)
 //! introduces ABox/individual handling).
+//!
+//! A nested `<Annotation>` child (meta-annotation, per
+//! [#695](https://github.com/daghovland/rdf-datalog/issues/695)) is not yet
+//! parsed here -- `Annotation::annotations` is always empty from this
+//! crate. Tracked as a follow-up once #608 merges: see
+//! [#710](https://github.com/daghovland/rdf-datalog/issues/710).
 
 use crate::iri::{Prefixes, resolve_iri};
 use ingress::{GraphElement, IriReference, RdfLiteral};
@@ -88,7 +93,7 @@ pub(crate) fn parse_annotation(
     let property =
         property.ok_or_else(|| "<Annotation> has no <AnnotationProperty>".to_string())?;
     let value = value.ok_or_else(|| "<Annotation> has no value element".to_string())?;
-    Ok((property, value))
+    Ok(Annotation::new(property, value))
 }
 
 #[cfg(test)]
@@ -105,13 +110,17 @@ mod tests {
                  <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
                  <Literal>hello</Literal>
                </Annotation>"#);
-        let (prop, value) = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
-        assert_eq!(prop.0.0, "http://www.w3.org/2000/01/rdf-schema#comment");
+        let ann = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
         assert_eq!(
-            value,
+            ann.property.0.0,
+            "http://www.w3.org/2000/01/rdf-schema#comment"
+        );
+        assert_eq!(
+            ann.value,
             AnnotationValue::LiteralAnnotation(GraphElement::GraphLiteral(
                 RdfLiteral::LiteralString("hello".to_string())
             ))
         );
+        assert!(ann.annotations.is_empty());
     }
 }

@@ -420,13 +420,13 @@ fn fmt_individual(ind: &Individual) -> String {
 }
 
 fn fmt_annotation(a: &Annotation) -> Option<String> {
-    let (prop, value) = a;
-    let val = match value {
+    let val = match &a.value {
         AnnotationValue::IriAnnotation(iri) => fmt_iri(iri),
         AnnotationValue::LiteralAnnotation(ge) => fmt_literal(ge)?,
         AnnotationValue::IndividualAnnotation(ind) => fmt_individual(ind),
     };
-    Some(format!("Annotation({} {val})", fmt_iri(prop)))
+    let meta = fmt_axiom_annotations(&a.annotations);
+    Some(format!("Annotation({meta}{} {val})", fmt_iri(&a.property)))
 }
 
 /// `""` if `anns` is empty, else every `Annotation(...)` form

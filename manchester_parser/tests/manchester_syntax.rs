@@ -104,9 +104,9 @@ fn header_annotations_with_custom_prefix() {
     ))
     .unwrap();
     assert_eq!(onto.annotations.len(), 1);
-    let (prop, value) = &onto.annotations[0];
-    assert_eq!(*prop, iri("createdBy"));
-    match value {
+    let ann = &onto.annotations[0];
+    assert_eq!(ann.property, iri("createdBy"));
+    match &ann.value {
         AnnotationValue::LiteralAnnotation(_) => {}
         other => panic!("expected LiteralAnnotation, got {other:?}"),
     }

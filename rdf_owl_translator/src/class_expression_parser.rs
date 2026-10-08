@@ -426,7 +426,7 @@ fn build_annotations(
             let ann_value = create_annotation_value(individuals, tr.obj, obj_gel);
             map.entry(annotated_obj)
                 .or_default()
-                .push((ann_prop.clone(), ann_value));
+                .push(Annotation::new(ann_prop.clone(), ann_value));
         }
     }
 

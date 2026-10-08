@@ -293,14 +293,14 @@ impl AnonRenumberer {
         }
     }
 
-    fn annotation(&mut self, (prop, value): &Annotation) -> Annotation {
-        let value = match value {
+    fn annotation(&mut self, a: &Annotation) -> Annotation {
+        let value = match &a.value {
             AnnotationValue::IndividualAnnotation(ind) => {
                 AnnotationValue::IndividualAnnotation(self.individual(ind))
             }
             other => other.clone(),
         };
-        (prop.clone(), value)
+        Annotation::with_meta(a.property.clone(), value, self.annotations(&a.annotations))
     }
 
     fn annotations(&mut self, anns: &[Annotation]) -> Vec<Annotation> {
