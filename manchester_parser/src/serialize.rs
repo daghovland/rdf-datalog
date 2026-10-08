@@ -154,6 +154,17 @@ fn fmt_atom(atom: &owl_ontology::Atom) -> Option<String> {
             let items: Option<Vec<String>> = args.iter().map(fmt_atom_arg).collect();
             Some(format!("{}({})", fmt_iri(iri), items?.join(", ")))
         }
+        Atom::DataRangeAtom(_, _)
+        | Atom::SameIndividualAtom(_, _)
+        | Atom::DifferentIndividualsAtom(_, _) => {
+            // Manchester's `Rule:` grammar (#498) has no concrete syntax for
+            // these atom kinds -- only reachable from a `DLSafeRule(...)`
+            // parsed by owl_functional_parser (#625), never produced by this
+            // crate's own parser, but an `Ontology` built by hand or by
+            // another parser could still carry one here.
+            log_skip("Rule: atom kind has no Manchester Rule: concrete syntax");
+            None
+        }
     }
 }
 

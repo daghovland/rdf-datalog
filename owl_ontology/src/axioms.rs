@@ -291,7 +291,12 @@ pub type Declaration = (Vec<Annotation>, Entity);
 /// syntactically reachable regardless of the atom's semantic kind.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AtomArg {
-    /// A SWRL variable, named without its leading `?` (e.g. `?p` is `"p"`).
+    /// A SWRL variable. Manchester's `Rule:` frames store the bare name
+    /// without its leading `?` (e.g. `?p` is `"p"`); OWL 2 Functional-Style
+    /// Syntax's `Variable(IRI)` stores the full variable IRI string
+    /// instead. The two conventions are never compared across syntaxes
+    /// (variable identity only matters within a single rule), so both are
+    /// safe to store verbatim here without normalizing to one scheme.
     Variable(String),
     /// A literal value.
     Literal(GraphElement),
@@ -301,22 +306,46 @@ pub enum AtomArg {
 
 /// A single atom in a SWRL rule's body or head.
 ///
-/// See the [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/MANCHESTER_SYNTAX_PLAN.md)
+/// For Manchester's `Rule:` frames (concrete syntax `predicate(arg, ...)`),
+/// see the [`docs/plans/MANCHESTER_SYNTAX_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/MANCHESTER_SYNTAX_PLAN.md)
 /// "`Rule:` SWRL frames" addendum for why there is no arity-1
-/// `BuiltInAtom`/data-range-atom variant here: every single-argument atom is
-/// parsed as a [`Atom::ClassAtom`].
+/// `BuiltInAtom`/data-range-atom variant reachable from that parser: every
+/// single-argument atom there is parsed as a [`Atom::ClassAtom`], and every
+/// two-argument `iri(...)` atom as `Atom::PropertyAtom` regardless of
+/// `BuiltInAtom` vs. object-/data-property-atom, since Manchester's syntax
+/// can't tell them apart without resolving `iri`'s declared type.
+///
+/// OWL 2 Functional-Style Syntax's `DLSafeRule(...)` (see
+/// [`docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md`](https://github.com/daghovland/rdf-datalog/blob/main/docs/plans/OWL_FUNCTIONAL_SYNTAX_PARSER_PLAN.md)'s
+/// "SWRL `DLSafeRule(...)` (#625)" section) has no such ambiguity — every
+/// atom kind has its own keyword — so that parser reaches `BuiltInAtom` at
+/// any arity including 2, and `DataRangeAtom`/`SameIndividualAtom`/
+/// `DifferentIndividualsAtom` below, which Manchester's grammar has no
+/// concrete syntax for at all.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Atom {
     /// `description(arg)` — `arg` is asserted to be an instance of the class
     /// expression.
     ClassAtom(ClassExpression, AtomArg),
     /// `iri(arg1, arg2)` — an object-property atom, a data-property atom, or
-    /// a two-argument built-in, indistinguishable without resolving `iri`'s
-    /// declared entity type.
+    /// (from a functional-syntax `DLSafeRule`) a two-argument built-in.
     PropertyAtom(Iri, AtomArg, AtomArg),
-    /// `iri(arg, ...)` with any arity other than 1 or 2 — a built-in atom
-    /// (e.g. a 0- or 3+-argument `swrlb:` predicate).
+    /// A built-in atom, e.g. a `swrlb:` predicate: `iri(arg, ...)` at any
+    /// arity. Reachable at arity 2 only from `DLSafeRule(...)`'s
+    /// `BuiltInAtom(...)` (unambiguous there); Manchester's concrete syntax
+    /// can never distinguish this from `PropertyAtom` at arity 2, so its
+    /// parser never produces this variant at arity 2.
     BuiltInAtom(Iri, Vec<AtomArg>),
+    /// `DataRangeAtom(DataRange, arg)` — `arg` is asserted to be a member of
+    /// the data range. Functional-syntax only; Manchester's grammar has no
+    /// concrete syntax for this (every unary atom there is a `ClassAtom`).
+    DataRangeAtom(DataRange, AtomArg),
+    /// `SameIndividualAtom(arg1, arg2)` — the two individuals are the same.
+    /// Functional-syntax only.
+    SameIndividualAtom(AtomArg, AtomArg),
+    /// `DifferentIndividualsAtom(arg1, arg2)` — the two individuals are
+    /// different. Functional-syntax only.
+    DifferentIndividualsAtom(AtomArg, AtomArg),
 }
 
 /// A SWRL rule: `body -> head`, both conjunctions of [`Atom`]s.
