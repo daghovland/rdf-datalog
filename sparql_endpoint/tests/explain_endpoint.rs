@@ -45,7 +45,8 @@ async fn test_explain_with_tx_id_sees_pending_insert() {
 
     // Buffer an insert inside the transaction — not yet visible to the live
     // store.
-    let update = "INSERT DATA { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> \"Alice\" . }";
+    let update =
+        "INSERT DATA { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> \"Alice\" . }";
     let update_resp = server
         .client
         .post(format!(
@@ -60,7 +61,8 @@ async fn test_explain_with_tx_id_sees_pending_insert() {
         .expect("POST buffered update failed");
     assert_eq!(update_resp.status().as_u16(), 200);
 
-    let sparql = "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
+    let sparql =
+        "SELECT ?name WHERE { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> ?name }";
     let explain_resp = server
         .client
         .get(format!(
@@ -119,7 +121,8 @@ async fn test_explain_with_tx_id_does_not_leak_to_live_store() {
     let begin_body: serde_json::Value = begin_resp.json().await.unwrap();
     let tx_id = begin_body["txId"].as_str().expect("txId").to_owned();
 
-    let update = "INSERT DATA { <http://example.org/bob> <http://xmlns.com/foaf/0.1/name> \"Bob\" . }";
+    let update =
+        "INSERT DATA { <http://example.org/bob> <http://xmlns.com/foaf/0.1/name> \"Bob\" . }";
     server
         .client
         .post(format!(

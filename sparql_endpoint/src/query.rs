@@ -77,14 +77,11 @@ pub async fn sparql_get_with_state(
     let explain = crate::explain::is_explain_requested(&params);
 
     // If a txId is provided, execute the query against a snapshot of the store
-    // with the transaction's pending delta applied. `explain` is not
-    // supported together with `txId` yet — see
+    // with the transaction's pending delta applied. `explain=true` is
+    // supported here too — see
     // https://github.com/daghovland/rdf-datalog/issues/574.
     if let Some(tx_id) = params.get("txId") {
-        if explain {
-            return explain_with_tx_id_unsupported();
-        }
-        return run_transactional_query(query_str, tx_id, &headers, &state).await;
+        return run_transactional_query(query_str, tx_id, explain, &headers, &state).await;
     }
 
     run_select_query(query_str, &headers, &state, explain).await
@@ -165,13 +162,10 @@ pub async fn sparql_post_with_state(
     let explain = crate::explain::is_explain_requested(&params);
 
     // Transactional read: execute query against snapshot + pending delta.
-    // `explain` is not supported together with `txId` yet — see
+    // `explain=true` is supported here too — see
     // https://github.com/daghovland/rdf-datalog/issues/574.
     if let Some(tx_id) = params.get("txId") {
-        if explain {
-            return explain_with_tx_id_unsupported();
-        }
-        return run_transactional_query(&query_str, tx_id, &headers, &state).await;
+        return run_transactional_query(&query_str, tx_id, explain, &headers, &state).await;
     }
 
     run_select_query(&query_str, &headers, &state, explain).await
@@ -315,9 +309,16 @@ async fn run_update(update_str: &str, state: &AppState, headers: &HeaderMap) -> 
 ///
 /// Returns 404 if the transaction is not found.  No ETag is set — the snapshot
 /// is not a committed state.
+///
+/// `explain`, when `true`, returns the same `?explain=true` JSON plan report
+/// `run_select_query` returns, computed against this transaction's
+/// snapshot+delta view rather than the live store — see
+/// `crate::explain::explain_query_response` and
+/// [#574](https://github.com/daghovland/rdf-datalog/issues/574).
 async fn run_transactional_query(
     query_str: &str,
     tx_id: &str,
+    explain: bool,
     headers: &HeaderMap,
     state: &AppState,
 ) -> Response {
@@ -352,6 +353,17 @@ async fn run_transactional_query(
             return (StatusCode::BAD_REQUEST, format!("Parse error: {:?}", e)).into_response();
         }
     };
+
+    if explain {
+        return crate::explain::explain_query_response(
+            &query,
+            &view,
+            state.network_policy.clone(),
+            ctx.base.as_deref(),
+            configured_query_timeout(state.config.max_query_timeout_secs),
+        );
+    }
+
     // Thread the effective base through so `IRI()`/`URI()` can resolve a
     // runtime string argument at evaluation time too, not just IRIs written
     // directly in query syntax (`ParserContext::base` handles those at parse
@@ -698,19 +710,6 @@ async fn run_select_query(
             )
         }
     }
-}
-
-/// `?explain=true` combined with a `txId` (transactional read) parameter is
-/// not supported yet — `run_transactional_query` doesn't share
-/// `run_select_query`'s explain handling. See
-/// <https://github.com/daghovland/rdf-datalog/issues/574>.
-fn explain_with_tx_id_unsupported() -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        "explain=true is not yet supported together with txId; \
-         see https://github.com/daghovland/rdf-datalog/issues/574",
-    )
-        .into_response()
 }
 
 /// Convert `Config::max_query_timeout_secs` into the `Option<Duration>`
