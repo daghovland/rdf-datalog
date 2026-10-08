@@ -22,6 +22,15 @@ pub(crate) fn eval_bgp(
         .unwrap_or_default();
     let order = crate::join_ordering::order_patterns(patterns, &already_bound, ctx.datastore);
 
+    // Opens a scope whose children (one `"Pattern"` node per triple
+    // pattern below, pushed via `crate::profile::finish`) become this BGP's
+    // own `ProfileNode::children` when the enclosing
+    // `eval_components_budgeted` call finishes building this component's
+    // node — see `crate::profile`'s module doc. `Drop` (not a manual pop)
+    // is what lets a partial pattern list survive a `deadline.check()?`
+    // early return below.
+    let _scope = crate::profile::enter_scope();
+
     let mut current = solutions;
     let last = order.len().saturating_sub(1);
     for (pos, &idx) in order.iter().enumerate() {
@@ -30,6 +39,18 @@ pub(crate) fn eval_bgp(
         // only it may honour the row budget (issue #165). Earlier patterns
         // feed the join and must be fully materialised.
         let pat_budget = if pos == last { budget } else { None };
+        // Per-pattern timing granularity: one `Instant` pair per pattern
+        // per BGP pass (not per row, not per matched quad) — see
+        // `crate::profile`'s module doc for why this is the right
+        // granularity. `profiling`/`rows_in`/`t0` are all `None`/unused
+        // when no profiler is active, at the cost of one cheap check.
+        let profiling = crate::profile::is_active();
+        let rows_in = if profiling { current.len() } else { 0 };
+        let t0 = if profiling {
+            Some(crate::profile::now())
+        } else {
+            None
+        };
         current = match pat_budget {
             Some(b) => {
                 // Accumulate across input solutions with a shrinking budget so
@@ -55,6 +76,16 @@ pub(crate) fn eval_bgp(
                 acc
             }
         };
+        if let Some(t0) = t0 {
+            crate::profile::finish(
+                "Pattern",
+                Some(crate::explain::render_triple_pattern(pattern)),
+                rows_in,
+                current.len(),
+                t0.elapsed(),
+                false,
+            );
+        }
         if current.is_empty() {
             break;
         }

@@ -224,6 +224,135 @@ Non-`BGP` components appear as `{"kind": "Optional"/"Union"/"Filter"/...,
   an EXPLAIN response describe a single, consistent store generation —
   no separate read-lock acquisition needed for the plan step.
 
+## #572 — per-operator (per-BGP, per-component) actual timing
+
+Follow-up to the deferred scope above. Read `sparql_parser/src/execute/mod.rs`
+(`EvalCtx`, from PR #673/#466), `components.rs` and `bgp.rs` before
+designing.
+
+### Why `EvalCtx` alone isn't the vehicle
+
+`EvalCtx<'a>` (datastore/active_graph/deadline, `#673`) reaches
+`eval_bgp`/`eval_triple_pattern*`/`eval_path_pattern*`, but
+`eval_component`/`eval_components_budgeted` (the functions that actually
+dispatch on `QueryComponent` kind and are therefore where "per-component"
+timing has to live) were deliberately left on separate parameters by #673 —
+they build an `EvalCtx` locally instead. Converting them to take `EvalCtx`
+wouldn't help anyway: the real obstacle is correlating a *timing
+measurement* with a *tree position*, not parameter plumbing.
+
+### Why the runtime profile is a separate tree from the static `plan`
+
+The static `plan` (`explain.rs`) is built by **re-walking** the query with
+`∅` already-bound sets, which is exact at the top level and in every
+independently-evaluated scope (`UNION` arms, bare `Group` bodies, `MINUS`'s
+RHS) but only a conservative approximation inside an `OPTIONAL` body (see
+`explain.rs`'s module doc, and #573 for tightening it). The *real*
+evaluator's per-row behavior can therefore diverge from what the static walk
+printed, and `OPTIONAL`/`GRAPH` bodies run **once per outer row**, not once —
+so there is no stable 1:1 position to merge actual timings into `plan`'s
+node array. Rather than bolt an approximate mapping onto `plan`, the runtime
+measurements are collected into their own tree and surfaced as a sibling
+`"profile"` field, independently shaped by the *actual* recursion that ran
+(see `sparql_parser::profile::ProfileNode`). A repeated invocation (e.g. an
+`OPTIONAL` body evaluated once per outer row) is merged into one aggregate
+node — `invocations` counts how many, `totalTimeMs`/`rowsIn`/`rowsOut` are
+sums — rather than emitted as N siblings.
+
+### Mechanism: thread-local, RAII-scoped, opt-in by construction
+
+Mirrors the `CURRENT_BASE` thread-local pattern already in
+`execute/mod.rs` (#346) rather than adding an `Option<&RefCell<_>>` field to
+`EvalCtx` (the alternative considered): `eval_component`/
+`eval_components_budgeted`'s signatures don't need to change at all, and
+every other crate consuming `sparql_parser::execute` (there's exactly one
+call site reaching `eval_components_budgeted` per query — `execute_inner`
+dispatches on query type, so only one of its four arms runs) keeps working
+unmodified.
+
+- `sparql_parser::profile` (new, crate-private module; only `ProfileNode`
+  is re-exported publicly from `lib.rs`) holds a thread-local
+  `Option<ProfilerState>`. Inactive (the overwhelmingly common case — every
+  non-`explain` query) means every instrumented call site pays one
+  `RefCell::borrow()` + `Option::is_some()` check and nothing else: no
+  `Instant::now()`, no allocation, no branch beyond that check.
+- `ScopeGuard` (RAII): `enter_scope()` pushes a fresh child-list frame;
+  `Drop` pops it into a single-slot `pending_children`. Using `Drop` rather
+  than a manual pop call is what makes a partial profile survive a
+  `deadline.check()?` early return (a #372 timeout) or any other `?`-propagated
+  `ExecError` mid-query — the guard still runs during unwinding, so whatever
+  siblings were already recorded in that frame are preserved. This is why a
+  503 timeout response can still carry a (partial) profile, matching #537's
+  existing "plan survives a failing execution" precedent.
+- **Granularity: one `Instant` pair per operator *invocation*, never per
+  solution row.** `eval_components_budgeted`'s loop times each
+  `eval_component` call once per pass over the component list (not once per
+  row); `eval_bgp`'s loop times each triple pattern once per pass over
+  *all* accumulated rows for that pattern (`bgp.rs`'s existing structure is
+  already pattern-at-a-time across rows, not row-at-a-time across patterns —
+  confirmed by reading it before committing to this). No timer sits inside
+  the per-quad `quads_matching_limited` loop in
+  `eval_triple_pattern_core` — that stays completely untouched. This keeps
+  the instrumentation's own overhead, even when active, well below the cost
+  of the row/quad-level work it's measuring.
+- **Single-slot discipline.** `pending_children` is one `Option`, not a
+  stack-keyed map, so only the function that just produced it may consume
+  it, immediately, before any other profiled call can overwrite the slot.
+  Three `QueryComponent` kinds call their recursive evaluator **more than
+  once** per `eval_component` invocation and therefore need explicit
+  take-and-merge code at each call (`Optional`, `Graph` — once per outer
+  row — and `Union` — exactly twice, left then right, so each side is taken
+  immediately after its own call before the next overwrites the slot).
+  `Minus`/`Group`/`Subquery` call their inner evaluator **exactly once**
+  (`Minus`'s is additionally memoized across rows, so even its lazy
+  first-use case is still a single call), so the generic wrapper in
+  `eval_components_budgeted` picks up `pending_children` correctly with no
+  per-arm code. Leaf kinds (`Filter`/`Bind`/`Values`/`PathPattern`/
+  `Service`) explicitly *discard* (not take) any pending children before
+  building their own node — this is the guard against a future nested
+  profiled call inside expression evaluation (e.g. `EXISTS`, not
+  instrumented by this PR — see "Deferred" below) leaking into an unrelated
+  sibling's children.
+- `sparql_parser::execute::execute_with_profile` (new `pub fn`, additive —
+  `execute_with_base` is untouched) wraps `execute_with_base` with
+  `profile::start()`/`profile::stop_and_take()`. `sparql_endpoint::explain`
+  calls this instead of `execute_with_base` only on the `?explain=true`
+  path.
+
+### JSON shape
+
+```json
+{
+  "queryType": "Select",
+  "totalTimeMs": 1.234,
+  "plan": [ ... unchanged from #537 ... ],
+  "profile": [
+    {
+      "kind": "BGP",
+      "label": null,
+      "totalTimeMs": 0.842,
+      "invocations": 1,
+      "rowsIn": 1,
+      "rowsOut": 3,
+      "children": [
+        { "kind": "Pattern", "label": "?x <http://ex/p1> ?y", "totalTimeMs": 0.5, "invocations": 1, "rowsIn": 1, "rowsOut": 3, "children": [] }
+      ]
+    }
+  ]
+}
+```
+
+`Union`'s two arms appear as synthetic `"UnionLeft"`/`"UnionRight"` wrapper
+nodes (no timing of their own — `totalTimeMs: 0.0`, `invocations: 1`) so
+each side's subtree is distinguishable without a bare unlabeled pair.
+
+### Deferred (follow-ups filed, Status `Todo`)
+
+- `EXISTS`/`NOT EXISTS` (evaluated inside `eval_filter`,
+  `expressions.rs`) and property-path step-level timing
+  (`paths.rs`) are not instrumented by this PR — see
+  [#697](https://github.com/daghovland/rdf-datalog/issues/697).
+
 ## Scope explicitly deferred (filed as follow-up issues)
 
 - Per-operator/per-stage timing (see Decision 2 above).

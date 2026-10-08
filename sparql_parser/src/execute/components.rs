@@ -11,6 +11,79 @@ use super::expressions::{eval_bind_expr, eval_filter};
 use super::paths::eval_path_pattern;
 use super::solutions::{compatible, join_solutions_with_values};
 use super::*;
+use crate::profile;
+
+/// `profile::ProfileNode::kind` string for `comp`, mirroring
+/// `explain::PlanNode`'s `"kind"` JSON tag exactly (one vocabulary, not
+/// two) — see `crate::profile`'s module doc.
+fn profile_kind(comp: &QueryComponent) -> &'static str {
+    match comp {
+        QueryComponent::BGP(_) => "BGP",
+        QueryComponent::PathPattern(_, _, _) => "PathPattern",
+        QueryComponent::Subquery(_) => "Subquery",
+        QueryComponent::Optional(_) => "Optional",
+        QueryComponent::Union(_, _) => "Union",
+        QueryComponent::Filter(_) => "Filter",
+        QueryComponent::Bind(_, _) => "Bind",
+        QueryComponent::Values(_, _) => "Values",
+        QueryComponent::Minus(_) => "Minus",
+        QueryComponent::Graph(_, _) => "Graph",
+        QueryComponent::Group(_) => "Group",
+        QueryComponent::Service(_, _, _) => "Service",
+    }
+}
+
+/// True for `QueryComponent` kinds whose `eval_component` arm may leave a
+/// nested scope's children pending (BGP's own pattern loop, or a recursive
+/// `eval_components`/`eval_independent_then_join` call) for
+/// `eval_components_budgeted`'s generic wrapper to consume as this node's
+/// `children`. False for leaf kinds, whose pending slot is explicitly
+/// discarded instead — see `crate::profile`'s module doc.
+fn profile_has_children(comp: &QueryComponent) -> bool {
+    matches!(
+        comp,
+        QueryComponent::BGP(_)
+            | QueryComponent::Subquery(_)
+            | QueryComponent::Optional(_)
+            | QueryComponent::Union(_, _)
+            | QueryComponent::Minus(_)
+            | QueryComponent::Graph(_, _)
+            | QueryComponent::Group(_)
+    )
+}
+
+/// Rendered label for `comp`'s profile node, mirroring
+/// `explain::explain_component`'s `detail` text for the same
+/// `QueryComponent` variants (one rendering, not two that could drift).
+fn profile_label(comp: &QueryComponent) -> Option<String> {
+    match comp {
+        QueryComponent::PathPattern(subject, path, object) => Some(format!(
+            "{} {:?} {}",
+            crate::explain::render_term(subject),
+            path,
+            crate::explain::render_term(object)
+        )),
+        QueryComponent::Filter(expr) => Some(format!("{expr:?}")),
+        QueryComponent::Bind(expr, alias) => Some(format!("{expr:?} AS ?{alias}")),
+        QueryComponent::Values(vars, rows) => Some(format!(
+            "VALUES ({}) — {} row(s)",
+            vars.join(" "),
+            rows.len()
+        )),
+        QueryComponent::Graph(graph_term, _) => Some(crate::explain::render_term(graph_term)),
+        QueryComponent::Service(endpoint, _, silent) => Some(format!(
+            "{}{}",
+            crate::explain::render_term(endpoint),
+            if *silent { " SILENT" } else { "" }
+        )),
+        QueryComponent::BGP(_)
+        | QueryComponent::Subquery(_)
+        | QueryComponent::Optional(_)
+        | QueryComponent::Union(_, _)
+        | QueryComponent::Minus(_)
+        | QueryComponent::Group(_) => None,
+    }
+}
 
 pub(crate) fn eval_components(
     components: &[QueryComponent],
@@ -123,19 +196,52 @@ pub(crate) fn eval_components_budgeted(
         };
     ordered.extend(filters);
 
+    // Opens a scope whose children — one `ProfileNode` per sibling
+    // component in `ordered`, pushed below via `profile::finish` — become
+    // this call's result (the list `eval_components`/`eval_component`'s
+    // container arms, or the top-level caller, attach as a node's
+    // `children` or as the whole query's root profile). `Drop` (not a
+    // manual pop) is what lets a partial component list survive a
+    // `deadline.check()?` early return. See `crate::profile`'s module doc.
+    let _scope = profile::enter_scope();
+
     let mut current = solutions;
     let last = ordered.len().saturating_sub(1);
     for (i, comp) in ordered.into_iter().enumerate() {
         deadline.check()?;
         let comp_budget = if i == last { budget } else { None };
-        current = eval_component(
-            comp,
-            current,
-            datastore,
-            &active_graph,
-            comp_budget,
-            deadline,
-        )?;
+        // Per-component timing granularity: one `Instant` pair per
+        // `eval_component` call (not per row) — see `crate::profile`'s
+        // module doc.
+        if profile::is_active() {
+            let rows_in = current.len();
+            let t0 = profile::now();
+            current = eval_component(
+                comp,
+                current,
+                datastore,
+                &active_graph,
+                comp_budget,
+                deadline,
+            )?;
+            profile::finish(
+                profile_kind(comp),
+                profile_label(comp),
+                rows_in,
+                current.len(),
+                t0.elapsed(),
+                profile_has_children(comp),
+            );
+        } else {
+            current = eval_component(
+                comp,
+                current,
+                datastore,
+                &active_graph,
+                comp_budget,
+                deadline,
+            )?;
+        }
         if current.is_empty() {
             break;
         }
@@ -226,6 +332,15 @@ pub(crate) fn eval_component(
 
         QueryComponent::Optional(inner) => {
             let mut result = Vec::new();
+            // `inner` is evaluated once per outer row, so (when profiling)
+            // each row's `eval_components` call sets the single
+            // `pending_children` slot independently — must be taken and
+            // merged immediately after each call, before the next row's
+            // call overwrites it, then re-set once at the end so
+            // `eval_components_budgeted`'s generic wrapper picks up the
+            // *merged* (not just-the-last-row's) children. See
+            // `crate::profile`'s module doc, "single-slot discipline".
+            let mut merged_children: Vec<profile::ProfileNode> = Vec::new();
             for sub in solutions {
                 deadline.check()?;
                 let extended = eval_components(
@@ -235,11 +350,17 @@ pub(crate) fn eval_component(
                     (*active_graph).clone(),
                     deadline,
                 )?;
+                if profile::is_active() {
+                    profile::merge_children(&mut merged_children, profile::take_pending_children());
+                }
                 if extended.is_empty() {
                     result.push(sub);
                 } else {
                     result.extend(extended);
                 }
+            }
+            if profile::is_active() {
+                profile::set_pending_children(merged_children);
             }
             Ok(result)
         }
@@ -252,8 +373,20 @@ pub(crate) fn eval_component(
                 active_graph,
                 deadline,
             )?;
+            // Must take the left arm's pending children before issuing the
+            // right arm's call, which would otherwise overwrite the
+            // single-slot value before anyone read it — see
+            // `crate::profile`'s module doc, "single-slot discipline".
+            let left_children = profile::is_active().then(profile::take_pending_children);
             let right_sols =
                 eval_independent_then_join(right, solutions, datastore, active_graph, deadline)?;
+            let right_children = profile::is_active().then(profile::take_pending_children);
+            if let (Some(lc), Some(rc)) = (left_children, right_children) {
+                profile::set_pending_children(vec![
+                    profile::ProfileNode::wrapper("UnionLeft", lc),
+                    profile::ProfileNode::wrapper("UnionRight", rc),
+                ]);
+            }
             let mut result = left_sols;
             result.extend(right_sols);
             Ok(result)
@@ -343,6 +476,11 @@ pub(crate) fn eval_component(
 
         QueryComponent::Graph(graph_term, inner) => {
             let mut result = Vec::new();
+            // Like `Optional` above: `inner` is evaluated once per outer
+            // row, so each row's pending children must be taken and merged
+            // immediately, then re-set once at the end. See
+            // `crate::profile`'s module doc, "single-slot discipline".
+            let mut merged_children: Vec<profile::ProfileNode> = Vec::new();
             for sub in solutions {
                 deadline.check()?;
                 let scoped_graph = match graph_term {
@@ -361,13 +499,15 @@ pub(crate) fn eval_component(
                     // A triple term can never name a graph.
                     Term::TripleTerm(_) => continue,
                 };
-                result.extend(eval_components(
-                    inner,
-                    vec![sub],
-                    datastore,
-                    scoped_graph,
-                    deadline,
-                )?);
+                let row_result =
+                    eval_components(inner, vec![sub], datastore, scoped_graph, deadline)?;
+                if profile::is_active() {
+                    profile::merge_children(&mut merged_children, profile::take_pending_children());
+                }
+                result.extend(row_result);
+            }
+            if profile::is_active() {
+                profile::set_pending_children(merged_children);
             }
             Ok(result)
         }

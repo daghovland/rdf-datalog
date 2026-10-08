@@ -26,14 +26,17 @@ pub mod error;
 pub mod execute;
 pub mod explain;
 mod join_ordering;
+mod profile;
 pub use deadline::Deadline;
 pub use error::ExecError;
 pub use execute::{
     eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute,
-    execute_with_base, QueryResult, ResolvedTriple, SelectResult, SolutionRow,
+    execute_with_base, execute_with_profile, QueryResult, ResolvedTriple, SelectResult,
+    SolutionRow,
 };
 pub use explain::{explain_query, query_type_label, ExplainPlan, PatternPlan, PlanNode};
 pub use ingress::NetworkPolicy;
+pub use profile::ProfileNode;
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
