@@ -30,12 +30,6 @@ use regex::Regex;
 use sparql_parser::ast::{Query, QueryComponent};
 use std::sync::LazyLock;
 
-/// Matches the literal `$PATH`/`?PATH` token (spec §6.2.3.1) so it can be
-/// textually replaced with a `sh:propertyValidator`'s invoking property
-/// shape's actual path, in SPARQL property-path surface syntax — a one-time
-/// macro expansion, not a pre-bound variable.
-static PATH_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[$?]PATH\b").unwrap());
-
 /// Matches a `{$name}`/`{?name}` message-template placeholder (spec
 /// §6.2.2's templating syntax, reused verbatim by validator `sh:message`).
 static MESSAGE_PLACEHOLDER: LazyLock<Regex> =
@@ -43,26 +37,13 @@ static MESSAGE_PLACEHOLDER: LazyLock<Regex> =
 
 /// Build the full query text for `query`, with `$PATH` replaced by
 /// `path_sub`'s SPARQL surface syntax when present (a `sh:propertyValidator`
-/// query), then the usual `PREFIX` header and `$name` -> `?name`
-/// normalization `sparql_constraints::build_query_text` also does (kept
-/// separate here since this crate's private `build_query_text` isn't
-/// `pub(crate)` and this one additionally needs the `$PATH` substitution
-/// step *before* normalization turns `$PATH` into `?PATH`).
+/// query) — delegates to `sparql_constraints::build_query_text`, which
+/// implements the same `$PATH`/`$name` substitution for property-shape-scoped
+/// `sh:sparql` constraints (see
+/// [#520](https://github.com/daghovland/rdf-datalog/issues/520)), rather than
+/// keeping a second copy of the `$PATH` regex/substitution logic here.
 fn build_validator_query_text(query: &SparqlQuery, path_sub: Option<&path::ShPath>) -> String {
-    let mut text = String::new();
-    for (prefix, namespace) in &query.prefixes {
-        text.push_str(&format!("PREFIX {prefix}: <{namespace}>\n"));
-    }
-    let body = if let Some(p) = path_sub {
-        let syntax = path::to_sparql_path(p);
-        PATH_TOKEN
-            .replace_all(&query.query, |_: &regex::Captures| syntax.clone())
-            .into_owned()
-    } else {
-        query.query.clone()
-    };
-    text.push_str(&sparql_constraints::normalize_dollar_vars(&body));
-    text
+    sparql_constraints::build_query_text(query, path_sub)
 }
 
 /// Prepend a single-row `VALUES (?var1 ?var2 …) { (v1 v2 …) }` block binding

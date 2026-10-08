@@ -1,0 +1,24 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# #520: sh:sparql declared on a sh:property block (property shape), with
+# $PATH substituted by the property shape's own sh:path (a bare predicate
+# here) before the query executes. $this is still the focus node (SHACL-AF
+# §6.1) -- $PATH lets the query traverse the path itself.
+ex:PersonShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Person ;
+    sh:property [
+        sh:path ex:age ;
+        sh:sparql [
+            a sh:SPARQLConstraint ;
+            sh:message "age reached via $PATH must not be negative" ;
+            sh:select """
+                SELECT $this ?value
+                WHERE {
+                    $this $PATH ?value .
+                    FILTER (?value < 0)
+                }
+                """ ;
+        ] ;
+    ] .

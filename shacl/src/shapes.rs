@@ -246,6 +246,12 @@ pub struct ParsedPropShape {
     /// more registered components' parameters). See
     /// [#519](https://github.com/daghovland/rdf-datalog/issues/519).
     pub component_invocations: Vec<ComponentInvocation>,
+    /// SHACL-AF §6.1 `sh:sparql` custom constraints declared directly on
+    /// this property shape. `$this` is still always the focus node; the
+    /// query additionally has `$PATH`/`?PATH` substituted with this
+    /// property shape's own `path`, rendered as SPARQL property-path
+    /// syntax. See [#520](https://github.com/daghovland/rdf-datalog/issues/520).
+    pub sparql_constraints: Vec<SparqlConstraint>,
 }
 
 /// A reference to an inner shape node in the shapes store.
@@ -461,6 +467,7 @@ pub(crate) fn parse_one_shape(
                 message: graph::get_object(shapes, shape_id, SH_MESSAGE)
                     .and_then(|id| literal_string(shapes, id)),
                 component_invocations: Vec::new(),
+                sparql_constraints: parse_sparql_constraints(shapes, shape_id),
             });
         }
     }
@@ -501,7 +508,20 @@ pub(crate) fn parse_one_shape(
     let message =
         graph::get_object(shapes, shape_id, SH_MESSAGE).and_then(|id| literal_string(shapes, id));
 
-    let sparql_constraints = parse_sparql_constraints(shapes, shape_id);
+    // A shape node that itself carries sh:path is really a property shape,
+    // already folded into `property_shapes` above (including its own
+    // sh:sparql constraints, parsed with $PATH substitution) — its node-level
+    // scope contributes no constraints, mirroring
+    // `attach_component_invocations`'s identical `has_direct_path` handling
+    // for sh:ConstraintComponent invocations. Without this, a direct-path
+    // shape's sh:sparql would be evaluated twice: once (correctly, with
+    // $PATH substitution) via the property-shape entry above, and once more
+    // (incorrectly, with no $PATH) via this node-level field.
+    let sparql_constraints = if has_direct_path {
+        Vec::new()
+    } else {
+        parse_sparql_constraints(shapes, shape_id)
+    };
 
     ParsedShape {
         idx,
@@ -853,6 +873,7 @@ fn parse_property_shapes(shapes: &Datastore, shape_id: GraphElementId) -> Vec<Pa
                 message: graph::get_object(shapes, prop_node, SH_MESSAGE)
                     .and_then(|id| literal_string(shapes, id)),
                 component_invocations: Vec::new(),
+                sparql_constraints: parse_sparql_constraints(shapes, prop_node),
             })
         })
         .collect()

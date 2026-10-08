@@ -1,0 +1,29 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:704 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "shacl: sh:sparql on property shapes, $PATH substitution (#520)" ;
+    bl:number 704 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:520 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr704 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:520 ;
+    prov:startedAtTime "2026-10-08T06:16:27Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-08T06:48:55Z"^^xsd:dateTime .
+
+session:pr704Summary a agp:TranscriptSummary ;
+    agp:summaryText "#54 implemented sh:sparql only on node shapes; this issue extends it to property shapes, which requires substituting $PATH/?PATH in the embedded query text with the actual SPARQL property-path syntax for the shape's sh:path before execution, per the SHACL-SPARQL spec. ParsedPropShape gained a sparql_constraints field populated the same way node shapes already were, with one correctness wrinkle: a shape node that itself carries sh:path (the direct-path-on-shape-node case #519/#522 already handle specially for other constraint kinds) must not also evaluate its sh:sparql entry as a property-shape constraint, or it fires twice -- once correctly with $PATH bound, once incorrectly without -- so that path mirrors attach_component_invocations's existing has_direct_path guard. build_query_text (already existing from #54) took a new path_scope parameter and does the textual $PATH/?PATH substitution via path::to_sparql_path (added by #519 for its own validator-parameter substitution) before the existing $name->?name normalization, reusing that helper directly rather than writing a second path-to-SPARQL-syntax serializer. A ConstraintScope struct unifies node- and property-shape evaluation through eval_one_constraint/eval_batched_select/make_result instead of duplicating the evaluation loop per shape kind. Incidental cleanup: custom_components.rs (#519/PR #672) had its own duplicate PATH_TOKEN regex for the same substitution -- deleted in favor of delegating to the now-shared build_query_text, a pure dedup with no behavior change." ;
+    agp:reasoningFor ghpull:704 ;
+    prov:wasGeneratedBy session:pr704 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
