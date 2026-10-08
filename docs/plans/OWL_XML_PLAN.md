@@ -443,6 +443,147 @@ mis-parsed.
 
 ---
 
+## Grammar productions in scope (#608: ABox axioms, remaining annotation axioms, `AnonymousIndividual`, axiom-level `<Annotation>`)
+
+Quoted (lightly reformatted) from the W3C spec, `Assertion` and the
+remaining `AnnotationAxiom` productions, plus the general `Axiom` shape that
+every element in this crate follows:
+
+```
+Axiom := axiomAnnotations
+   (Declaration | ClassAxiom | ObjectPropertyAxiom | DataPropertyAxiom
+    | DatatypeDefinition | HasKey | Assertion | AnnotationAxiom)
+axiomAnnotations := { Annotation }
+
+Assertion := SameIndividual | DifferentIndividuals | ClassAssertion
+  | ObjectPropertyAssertion | NegativeObjectPropertyAssertion
+  | DataPropertyAssertion | NegativeDataPropertyAssertion
+
+ClassAssertion := axiomAnnotations ClassExpression Individual
+ObjectPropertyAssertion | NegativeObjectPropertyAssertion :=
+    axiomAnnotations ObjectPropertyExpression Individual Individual
+DataPropertyAssertion | NegativeDataPropertyAssertion :=
+    axiomAnnotations DataPropertyExpression Individual Literal
+SameIndividual | DifferentIndividuals := axiomAnnotations Individual Individual { Individual }
+
+Individual := NamedIndividual | AnonymousIndividual
+AnonymousIndividual := '<AnonymousIndividual' 'nodeID=' quotedNodeID '/>'
+
+AnnotationAssertion := axiomAnnotations AnnotationProperty AnnotationSubject AnnotationValue
+SubAnnotationPropertyOf := axiomAnnotations AnnotationProperty AnnotationProperty
+AnnotationPropertyDomain | AnnotationPropertyRange := axiomAnnotations AnnotationProperty (IRI | AbbreviatedIRI)
+AnnotationSubject := IRI | AbbreviatedIRI | AnonymousIndividual
+AnnotationValue := IRI | AbbreviatedIRI | AnonymousIndividual | Literal
+```
+
+The one cross-cutting change this issue makes (not visible in the grammar
+above, since every axiom already had `axiomAnnotations` as its first
+production per the spec — #605-#607 just hadn't implemented that leading
+piece yet): `axiomAnnotations` is now parsed instead of being rejected.
+`axiom.rs`/`property_axiom.rs`'s `reject_axiom_level_annotation` helpers are
+replaced by a single shared `annotation::split_axiom_annotations(children,
+prefixes) -> Result<(Vec<Annotation>, Vec<Node>), String>` that consumes the
+*leading* run of `<Annotation>` children (matching the grammar's fixed
+`axiomAnnotations, ...` ordering — an `<Annotation>` appearing after the
+content children is a document error, not a second annotations group) and
+returns the remainder for the existing per-tag content parsing to run on
+unchanged. Every `Vec::new()` placeholder passed as an axiom's annotations
+in #606/#607's code becomes the parsed `anns`.
+
+`AnnotationProperty`'s own element always uses the `IRI=`/`abbreviatedIRI=`
+*attribute* form (`resolve_iri`, same as every other entity reference) —
+this was already true for `<Annotation>`'s own property child, handled by
+#605. The plain `(IRI | AbbreviatedIRI)` production used for
+`AnnotationPropertyDomain`/`Range`'s second argument and for
+`AnnotationSubject`/`AnnotationValue` is a different shape: a *text-content*
+child element, `<IRI>http://...</IRI>` or
+`<AbbreviatedIRI>prefix:local</AbbreviatedIRI>` — already handled inline in
+`annotation.rs`'s `parse_annotation` for `<Annotation>`'s own value
+position; this issue factors that out into a shared
+`annotation::parse_iri_text_element` and reuses it for the three new call
+sites (`AnnotationPropertyDomain`/`Range`'s range argument, and as one
+alternative of `AnnotationSubject`/`AnnotationValue`).
+
+`AnnotationSubject`/`AnnotationValue` lower to `owl_ontology::GraphElement`
+(the type `AnnotationAssertion`'s subject/value fields actually carry, per
+`owl_functional_parser`'s own documented type-model limitation) via a shared
+`annotation::parse_annotation_filler_as_graph_element`, mirroring
+`owl_functional_parser/src/annotation.rs`'s `annotation_subject`/
+`annotation_value_as_graph_element` (an IRI becomes
+`GraphElement::NodeOrEdge(RdfResource::Iri(..))`, an `AnonymousIndividual`
+becomes `GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id))`, a
+`Literal` stays a literal `GraphElement`). The function is shared between
+the subject and value positions even though the grammar disallows `Literal`
+as a subject — not separately validated, matching this crate's existing
+policy (e.g. `HasKey`'s loose tag-based dispatch) of relying on well-formed
+input rather than re-deriving every grammar constraint the XML schema
+already enforces.
+
+### `AnonymousIndividual` and the `Prefixes` -> parsing-context change
+
+`<AnonymousIndividual nodeID="...">` needs a stable per-document
+label -> numeric-id assignment, exactly as `manchester_parser`/
+`owl_functional_parser`'s `ParserContext::anon_individual_for_label` does.
+Since this crate's `Prefixes` (in `iri.rs`) is the one value already
+threaded through every recursive-descent function as `&Prefixes`, this issue
+turns it from a plain `HashMap<String, String>` into a small struct holding
+the prefix map plus `next_anon: Cell<u32>` and
+`labels: RefCell<HashMap<String, u32>>`, with a new
+`anon_individual_for_label(&self, &str) -> u32` method — copied from
+`owl_functional_parser/src/iri.rs`'s implementation. `get`/`insert` keep
+their existing signatures so every other module's `&Prefixes` usage is
+unaffected; only `individual.rs` (the `<NamedIndividual>`/
+`<AnonymousIndividual>` dispatch) and `annotation.rs`'s
+`AnonymousIndividual`-as-filler path call the new method. `iri.rs`'s module
+doc, which currently states "no interior mutability is needed here", is
+corrected to describe this.
+
+### Module layout (new this issue)
+
+- `src/assertion.rs` — `ClassAssertion`/`ObjectPropertyAssertion`/
+  `NegativeObjectPropertyAssertion`/`DataPropertyAssertion`/
+  `NegativeDataPropertyAssertion`/`SameIndividual`/`DifferentIndividuals` →
+  `owl_ontology::Axiom::AxiomAssertion`.
+- `src/annotation.rs` (extended) — `split_axiom_annotations` (shared
+  helper), `parse_iri_text_element` (factored out of `parse_annotation`),
+  `parse_annotation_filler_as_graph_element`, and a new
+  `parse_annotation_axiom` covering `AnnotationAssertion`/
+  `SubAnnotationPropertyOf`/`AnnotationPropertyDomain`/
+  `AnnotationPropertyRange` → `owl_ontology::Axiom::AxiomAnnotationAxiom`.
+- `src/individual.rs` (extended) — `<AnonymousIndividual nodeID="...">`
+  handling, replacing the #605-era "not yet supported" error.
+- `src/iri.rs` (extended) — `Prefixes` becomes a struct with
+  `anon_individual_for_label`, as above.
+- `src/axiom.rs`, `src/property_axiom.rs` (extended) — their
+  `reject_axiom_level_annotation`/inline rejection checks are replaced by
+  `annotation::split_axiom_annotations`, and the parsed annotations are
+  threaded into each axiom variant in place of the previous `Vec::new()`.
+- `src/lib.rs` — dispatch on `<Ontology>`'s children extended to recognize
+  the seven ABox tags via `assertion::parse_assertion` and the four
+  remaining annotation-axiom tags via `annotation::parse_annotation_axiom`.
+
+### Deferred within #608 (real follow-ups, filed as new issues at Status `Todo`)
+
+- `<DatatypeDefinition>` is the one `Axiom` alternative this crate still
+  doesn't parse after #605-#608 — it wasn't listed in any of the four
+  sub-issues' scope. Filed as a follow-up once identified here (see the
+  issue this paragraph links once filed) rather than silently left for
+  whoever next greps for "608" to rediscover; `lib.rs`'s catch-all error
+  points there instead of #608 now that #608 is resolved.
+- A meta-annotation (an `<Annotation>` nested inside another `<Annotation>`'s
+  own leading annotations — `annotationAnnotations` in the spec) is a
+  genuine type-model gap, not a parsing gap: `owl_ontology::Annotation` is a
+  flat `(AnnotationProperty, AnnotationValue)` pair with no slot for
+  annotations on an annotation, the same limitation
+  `owl_functional_parser`/`manchester_parser` already document for their own
+  crates. `annotation.rs`'s catch-all still errors on this case (rather than
+  silently dropping it, consistent with this crate's policy elsewhere) but
+  points at a separate new follow-up issue, not #608, since fixing it needs
+  an `owl_ontology` type-model change shared across all three parsers, out
+  of this crate's scope alone.
+
+---
+
 ## Deferred follow-up
 
 - `xml:base`-driven relative-IRI resolution (an entity's `IRI="#Pizza"`

@@ -6,19 +6,64 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! `<Prefix>` collection and `IRI=`/`abbreviatedIRI=` resolution to
-//! [`owl_ontology::FullIri`]. See `docs/plans/OWL_XML_PLAN.md`'s
-//! "Intermediate design" section: unlike `manchester_parser`/
-//! `owl_functional_parser`'s `ParserContext`, no interior mutability is
-//! needed here — the whole document is already parsed into a tree by
-//! `roxmltree::Document::parse`, so prefixes are collected once, up front,
-//! into a plain `HashMap`.
+//! `<Prefix>` collection, `IRI=`/`abbreviatedIRI=` resolution to
+//! [`owl_ontology::FullIri`], and `<AnonymousIndividual nodeID="...">`
+//! label assignment. See `docs/plans/OWL_XML_PLAN.md`'s "Intermediate
+//! design" / "#608" sections: unlike `manchester_parser`/
+//! `owl_functional_parser`'s `ParserContext`, prefixes don't need interior
+//! mutability -- the whole document is already parsed into a tree by
+//! `roxmltree::Document::parse`, so they're collected once, up front.
+//! `AnonymousIndividual` label -> numeric-id assignment (#608) does need
+//! interior mutability, since it's discovered lazily while descending into
+//! `Individual`/`AnnotationValue` positions rather than collected in one
+//! up-front pass like prefixes are -- so `Prefixes` (kept as one struct
+//! threaded everywhere a `&Prefixes` was already threaded, rather than
+//! introducing a second parameter into every function in this crate) grew
+//! a `next_anon`/`labels` pair mirroring
+//! `owl_functional_parser::iri::ParserContext::anon_individual_for_label`.
 
 use owl_ontology::FullIri;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-/// Prefix name (`""` for the default `:` prefix) -> namespace IRI.
-pub(crate) type Prefixes = HashMap<String, String>;
+/// Prefix map (`""` for the default `:` prefix -> namespace IRI) plus
+/// per-document `<AnonymousIndividual nodeID="...">` label -> numeric-id
+/// assignment. One instance is built per [`crate::parse`] call, so ids are
+/// scoped per document automatically.
+#[derive(Default)]
+pub(crate) struct Prefixes {
+    map: HashMap<String, String>,
+    next_anon: Cell<u32>,
+    labels: RefCell<HashMap<String, u32>>,
+}
+
+impl Prefixes {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&String> {
+        self.map.get(name)
+    }
+
+    pub(crate) fn insert(&mut self, name: String, iri: String) {
+        self.map.insert(name, iri);
+    }
+
+    /// Assign (or look up) a stable numeric id for an `<AnonymousIndividual
+    /// nodeID="...">` label, for use as `Individual::AnonymousIndividual`
+    /// / `GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(..))`.
+    /// The same label always resolves to the same id within one document.
+    pub(crate) fn anon_individual_for_label(&self, label: &str) -> u32 {
+        if let Some(id) = self.labels.borrow().get(label) {
+            return *id;
+        }
+        let id = self.next_anon.get();
+        self.next_anon.set(id + 1);
+        self.labels.borrow_mut().insert(label.to_string(), id);
+        id
+    }
+}
 
 /// Collect every `<Prefix name="..." IRI="..."/>` that is a direct child of
 /// the `<Ontology>` root element.

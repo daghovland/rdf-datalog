@@ -8,12 +8,16 @@ Contact: hovlanddag@gmail.com
 
 //! Integration tests for `owl_xml_parser::parse`, one OWL/XML snippet per
 //! test. See `docs/plans/OWL_XML_PLAN.md` for the phase this coverage maps
-//! to (phases 1-6, this issue's #605 scope only: ontology header, prefixes,
-//! imports, ontology-level annotations, declarations — no class/property/
-//! ABox axioms yet, those are #606-608).
+//! to: #605 (ontology header, prefixes, imports, ontology-level
+//! annotations, declarations), #606 (class expressions/axioms), #607
+//! (object/data property axioms, HasKey), #608 (ABox axioms, remaining
+//! annotation axioms, AnonymousIndividual fillers, axiom-level
+//! `<Annotation>` children on every axiom kind).
 
-use ingress::IriReference;
-use owl_ontology::{Axiom, ClassAxiom, ClassExpression, Entity, FullIri, Individual};
+use ingress::{GraphElement, IriReference, RdfResource};
+use owl_ontology::{
+    AnnotationAxiom, Assertion, Axiom, ClassAxiom, ClassExpression, Entity, FullIri, Individual,
+};
 
 fn iri(s: &str) -> FullIri {
     FullIri(IriReference(s.to_string()))
@@ -467,7 +471,7 @@ fn object_one_of_named_individuals() {
 }
 
 #[test]
-fn object_one_of_rejects_anonymous_individual() {
+fn object_one_of_accepts_anonymous_individual() {
     let src = wrap(
         "",
         r#"<SubClassOf>
@@ -477,9 +481,16 @@ fn object_one_of_rejects_anonymous_individual() {
              <Class IRI="http://example.org/pizza#Person"/>
            </SubClassOf>"#,
     );
-    match owl_xml_parser::parse(&src) {
-        Err(e) => assert!(e.contains("608")),
-        Ok(_) => panic!("expected an error for AnonymousIndividual (see #608)"),
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(_, sub, _)) => match sub {
+            ClassExpression::ObjectOneOf(inds) => {
+                assert_eq!(inds.len(), 1);
+                assert!(matches!(inds[0], Individual::AnonymousIndividual(_)));
+            }
+            other => panic!("expected ObjectOneOf, got {other:?}"),
+        },
+        other => panic!("expected SubClassOf, got {other:?}"),
     }
 }
 
@@ -734,7 +745,7 @@ fn deeply_nested_class_expression() {
 }
 
 #[test]
-fn class_axiom_annotation_children_deferred_to_608() {
+fn class_axiom_accepts_axiom_level_annotation() {
     let src = wrap(
         "",
         r#"<SubClassOf>
@@ -746,9 +757,12 @@ fn class_axiom_annotation_children_deferred_to_608() {
              <Class IRI="http://example.org/pizza#Food"/>
            </SubClassOf>"#,
     );
-    match owl_xml_parser::parse(&src) {
-        Err(e) => assert!(e.contains("608")),
-        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(anns, _, _)) => {
+            assert_eq!(anns.len(), 1);
+        }
+        other => panic!("expected SubClassOf, got {other:?}"),
     }
 }
 
@@ -1083,7 +1097,7 @@ fn has_key_with_object_and_data_properties() {
 }
 
 #[test]
-fn property_axiom_annotation_children_deferred_to_608() {
+fn property_axiom_accepts_axiom_level_annotation() {
     let src = wrap(
         "",
         r#"<ObjectPropertyDomain>
@@ -1095,14 +1109,19 @@ fn property_axiom_annotation_children_deferred_to_608() {
              <Class IRI="http://example.org/pizza#Pizza"/>
            </ObjectPropertyDomain>"#,
     );
-    match owl_xml_parser::parse(&src) {
-        Err(e) => assert!(e.contains("608")),
-        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomObjectPropertyAxiom(
+            owl_ontology::ObjectPropertyAxiom::ObjectPropertyDomain(anns, _, _),
+        ) => {
+            assert_eq!(anns.len(), 1);
+        }
+        other => panic!("expected ObjectPropertyDomain, got {other:?}"),
     }
 }
 
 #[test]
-fn has_key_annotation_children_deferred_to_608() {
+fn has_key_accepts_axiom_level_annotation() {
     let src = wrap(
         "",
         r#"<HasKey>
@@ -1113,8 +1132,442 @@ fn has_key_annotation_children_deferred_to_608() {
              <Class IRI="http://example.org/pizza#Person"/>
            </HasKey>"#,
     );
-    match owl_xml_parser::parse(&src) {
-        Err(e) => assert!(e.contains("608")),
-        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomHasKey(anns, _, _, _) => {
+            assert_eq!(anns.len(), 1);
+        }
+        other => panic!("expected AxiomHasKey, got {other:?}"),
     }
+}
+
+// === #608: ABox axioms, remaining annotation axioms, AnonymousIndividual ===
+// See docs/plans/OWL_XML_PLAN.md's "#608" section for the grammar subset.
+
+fn assertion(onto: &owl_ontology::Ontology) -> &Assertion {
+    match &onto.axioms[0] {
+        Axiom::AxiomAssertion(a) => a,
+        other => panic!("expected AxiomAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn class_assertion() {
+    let src = wrap(
+        "",
+        r#"<ClassAssertion>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+           </ClassAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::ClassAssertion(anns, ce, ind) => {
+            assert!(anns.is_empty());
+            assert_eq!(
+                *ce,
+                ClassExpression::ClassName(iri("http://example.org/pizza#Pizza"))
+            );
+            assert_eq!(
+                *ind,
+                Individual::NamedIndividual(iri("http://example.org/pizza#Margherita"))
+            );
+        }
+        other => panic!("expected ClassAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn object_property_assertion() {
+    let src = wrap(
+        "",
+        r#"<ObjectPropertyAssertion>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <NamedIndividual IRI="http://example.org/pizza#Mozzarella"/>
+           </ObjectPropertyAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::ObjectPropertyAssertion(anns, _, s, o) => {
+            assert!(anns.is_empty());
+            assert_eq!(
+                *s,
+                Individual::NamedIndividual(iri("http://example.org/pizza#Margherita"))
+            );
+            assert_eq!(
+                *o,
+                Individual::NamedIndividual(iri("http://example.org/pizza#Mozzarella"))
+            );
+        }
+        other => panic!("expected ObjectPropertyAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn negative_object_property_assertion() {
+    let src = wrap(
+        "",
+        r#"<NegativeObjectPropertyAssertion>
+             <ObjectProperty IRI="http://example.org/pizza#hasTopping"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <NamedIndividual IRI="http://example.org/pizza#Anchovy"/>
+           </NegativeObjectPropertyAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        assertion(&onto),
+        Assertion::NegativeObjectPropertyAssertion(_, _, _, _)
+    ));
+}
+
+#[test]
+fn data_property_assertion() {
+    let src = wrap(
+        "",
+        r#"<DataPropertyAssertion>
+             <DataProperty IRI="http://example.org/pizza#hasName"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <Literal>Margherita</Literal>
+           </DataPropertyAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::DataPropertyAssertion(anns, _, ind, lit) => {
+            assert!(anns.is_empty());
+            assert_eq!(
+                *ind,
+                Individual::NamedIndividual(iri("http://example.org/pizza#Margherita"))
+            );
+            assert_eq!(
+                *lit,
+                GraphElement::GraphLiteral(ingress::RdfLiteral::LiteralString(
+                    "Margherita".to_string()
+                ))
+            );
+        }
+        other => panic!("expected DataPropertyAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn negative_data_property_assertion() {
+    let src = wrap(
+        "",
+        r#"<NegativeDataPropertyAssertion>
+             <DataProperty IRI="http://example.org/pizza#hasName"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <Literal>Diavola</Literal>
+           </NegativeDataPropertyAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert!(matches!(
+        assertion(&onto),
+        Assertion::NegativeDataPropertyAssertion(_, _, _, _)
+    ));
+}
+
+#[test]
+fn same_individual() {
+    let src = wrap(
+        "",
+        r#"<SameIndividual>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <NamedIndividual IRI="http://example.org/pizza#MargheritaPizza"/>
+           </SameIndividual>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::SameIndividual(anns, inds) => {
+            assert!(anns.is_empty());
+            assert_eq!(inds.len(), 2);
+        }
+        other => panic!("expected SameIndividual, got {other:?}"),
+    }
+}
+
+#[test]
+fn different_individuals() {
+    let src = wrap(
+        "",
+        r#"<DifferentIndividuals>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+             <NamedIndividual IRI="http://example.org/pizza#Diavola"/>
+             <NamedIndividual IRI="http://example.org/pizza#Marinara"/>
+           </DifferentIndividuals>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::DifferentIndividuals(anns, inds) => {
+            assert!(anns.is_empty());
+            assert_eq!(inds.len(), 3);
+        }
+        other => panic!("expected DifferentIndividuals, got {other:?}"),
+    }
+}
+
+#[test]
+fn assertion_rejects_too_few_children() {
+    let src = wrap(
+        "",
+        r#"<ClassAssertion><Class IRI="http://example.org/pizza#Pizza"/></ClassAssertion>"#,
+    );
+    assert!(owl_xml_parser::parse(&src).is_err());
+}
+
+#[test]
+fn assertion_axiom_level_annotation() {
+    let src = wrap(
+        "",
+        r#"<ClassAssertion>
+             <Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+           </ClassAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::ClassAssertion(anns, _, _) => assert_eq!(anns.len(), 1),
+        other => panic!("expected ClassAssertion, got {other:?}"),
+    }
+}
+
+// --- AnonymousIndividual -----------------------------------------------
+
+#[test]
+fn class_assertion_with_anonymous_individual() {
+    let src = wrap(
+        "",
+        r#"<ClassAssertion>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+             <AnonymousIndividual nodeID="b0"/>
+           </ClassAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::ClassAssertion(_, _, ind) => {
+            assert!(matches!(ind, Individual::AnonymousIndividual(_)));
+        }
+        other => panic!("expected ClassAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn same_node_id_resolves_to_the_same_anonymous_individual() {
+    let src = wrap(
+        "",
+        r#"<SameIndividual>
+             <AnonymousIndividual nodeID="b0"/>
+             <AnonymousIndividual nodeID="b0"/>
+           </SameIndividual>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::SameIndividual(_, inds) => {
+            assert_eq!(inds[0], inds[1]);
+        }
+        other => panic!("expected SameIndividual, got {other:?}"),
+    }
+}
+
+#[test]
+fn different_node_ids_resolve_to_different_anonymous_individuals() {
+    let src = wrap(
+        "",
+        r#"<DifferentIndividuals>
+             <AnonymousIndividual nodeID="b0"/>
+             <AnonymousIndividual nodeID="b1"/>
+           </DifferentIndividuals>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match assertion(&onto) {
+        Assertion::DifferentIndividuals(_, inds) => {
+            assert_ne!(inds[0], inds[1]);
+        }
+        other => panic!("expected DifferentIndividuals, got {other:?}"),
+    }
+}
+
+#[test]
+fn missing_node_id_is_an_error() {
+    let src = wrap(
+        "",
+        r#"<ClassAssertion>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+             <AnonymousIndividual/>
+           </ClassAssertion>"#,
+    );
+    assert!(owl_xml_parser::parse(&src).is_err());
+}
+
+// --- Remaining annotation axioms ----------------------------------------
+
+fn annotation_axiom(onto: &owl_ontology::Ontology) -> &AnnotationAxiom {
+    match &onto.axioms[0] {
+        Axiom::AxiomAnnotationAxiom(a) => a,
+        other => panic!("expected AxiomAnnotationAxiom, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_assertion_with_iri_subject_and_literal_value() {
+    let src = wrap(
+        "",
+        r#"<AnnotationAssertion>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+             <IRI>http://example.org/pizza#Margherita</IRI>
+             <Literal>Margherita</Literal>
+           </AnnotationAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::AnnotationAssertion(anns, prop, subj, val) => {
+            assert!(anns.is_empty());
+            assert_eq!(prop.0.0, "http://www.w3.org/2000/01/rdf-schema#label");
+            assert_eq!(
+                *subj,
+                GraphElement::NodeOrEdge(RdfResource::Iri(IriReference(
+                    "http://example.org/pizza#Margherita".to_string()
+                )))
+            );
+            assert_eq!(
+                *val,
+                GraphElement::GraphLiteral(ingress::RdfLiteral::LiteralString(
+                    "Margherita".to_string()
+                ))
+            );
+        }
+        other => panic!("expected AnnotationAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_assertion_with_anonymous_individual_subject() {
+    let src = wrap(
+        "",
+        r#"<AnnotationAssertion>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+             <AnonymousIndividual nodeID="b0"/>
+             <Literal>anon</Literal>
+           </AnnotationAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::AnnotationAssertion(_, _, subj, _) => {
+            assert!(matches!(
+                subj,
+                GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(_))
+            ));
+        }
+        other => panic!("expected AnnotationAssertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn sub_annotation_property_of() {
+    let src = wrap(
+        "",
+        r#"<SubAnnotationPropertyOf>
+             <AnnotationProperty IRI="http://example.org/pizza#shortLabel"/>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+           </SubAnnotationPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::SubAnnotationPropertyOf(anns, sub, sup) => {
+            assert!(anns.is_empty());
+            assert_eq!(sub.0.0, "http://example.org/pizza#shortLabel");
+            assert_eq!(sup.0.0, "http://www.w3.org/2000/01/rdf-schema#label");
+        }
+        other => panic!("expected SubAnnotationPropertyOf, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_property_domain() {
+    let src = wrap(
+        "",
+        r#"<AnnotationPropertyDomain>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+             <IRI>http://example.org/pizza#Pizza</IRI>
+           </AnnotationPropertyDomain>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::AnnotationPropertyDomain(anns, prop, dom) => {
+            assert!(anns.is_empty());
+            assert_eq!(prop.0.0, "http://www.w3.org/2000/01/rdf-schema#label");
+            assert_eq!(dom.0.0, "http://example.org/pizza#Pizza");
+        }
+        other => panic!("expected AnnotationPropertyDomain, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_property_range() {
+    let src = wrap(
+        "",
+        &format!(
+            r#"<Prefix name="xsd" IRI="{}"/>
+           <AnnotationPropertyRange>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+             <AbbreviatedIRI>xsd:string</AbbreviatedIRI>
+           </AnnotationPropertyRange>"#,
+            ingress::XSD
+        ),
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::AnnotationPropertyRange(anns, prop, rng) => {
+            assert!(anns.is_empty());
+            assert_eq!(prop.0.0, "http://www.w3.org/2000/01/rdf-schema#label");
+            assert_eq!(rng.0.0, format!("{}string", ingress::XSD));
+        }
+        other => panic!("expected AnnotationPropertyRange, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_axiom_level_annotation() {
+    let src = wrap(
+        "",
+        r#"<SubAnnotationPropertyOf>
+             <Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <AnnotationProperty IRI="http://example.org/pizza#shortLabel"/>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+           </SubAnnotationPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::SubAnnotationPropertyOf(anns, _, _) => assert_eq!(anns.len(), 1),
+        other => panic!("expected SubAnnotationPropertyOf, got {other:?}"),
+    }
+}
+
+// --- Full-document integration ------------------------------------------
+
+#[test]
+fn full_document_with_abox_and_annotations() {
+    let src = wrap(
+        r#"ontologyIRI="http://example.org/pizza""#,
+        r#"<Declaration><Class IRI="http://example.org/pizza#Pizza"/></Declaration>
+           <Declaration><NamedIndividual IRI="http://example.org/pizza#Margherita"/></Declaration>
+           <ClassAssertion>
+             <Class IRI="http://example.org/pizza#Pizza"/>
+             <NamedIndividual IRI="http://example.org/pizza#Margherita"/>
+           </ClassAssertion>
+           <AnnotationAssertion>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+             <IRI>http://example.org/pizza#Margherita</IRI>
+             <Literal>Margherita</Literal>
+           </AnnotationAssertion>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert_eq!(onto.axioms.len(), 4);
 }
