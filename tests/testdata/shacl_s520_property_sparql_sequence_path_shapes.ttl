@@ -1,0 +1,21 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/ns#> .
+
+# #520: $PATH substitution must render the property shape's actual SPARQL
+# property-path *syntax*, not just a bound IRI term -- here a sequence path
+# (ex:hasParent/ex:hasParent, "grandparent"), reusing
+# shacl_spath_sequence_{data,shapes}.ttl's own scenario (#307) but checked
+# via an embedded sh:sparql ASK instead of sh:minCount.
+ex:GrandparentShape
+    a sh:NodeShape ;
+    sh:targetNode ex:Alice, ex:Carol ;
+    sh:property [
+        sh:path ( ex:hasParent ex:hasParent ) ;
+        sh:sparql [
+            a sh:SPARQLConstraint ;
+            sh:message "must have a grandparent reachable via $PATH" ;
+            sh:ask """
+                ASK { $this $PATH ?gp }
+                """ ;
+        ] ;
+    ] .

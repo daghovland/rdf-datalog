@@ -244,6 +244,12 @@ fn shacl_testdata_parses() {
         "shacl_s519_missing_required_shapes.ttl",
         "shacl_s519_no_suitable_validator_data.ttl",
         "shacl_s519_no_suitable_validator_shapes.ttl",
+        "shacl_s520_property_sparql_select_data.ttl",
+        "shacl_s520_property_sparql_select_shapes.ttl",
+        "shacl_s520_property_sparql_this_data.ttl",
+        "shacl_s520_property_sparql_this_shapes.ttl",
+        "shacl_s520_property_sparql_sequence_path_data.ttl",
+        "shacl_s520_property_sparql_sequence_path_shapes.ttl",
     ];
     for f in &files {
         let _ = load(f);
@@ -4228,5 +4234,76 @@ fn regression_519_no_suitable_validator_ignored() {
         "no suitable validator (only sh:propertyValidator, node-scope invocation) \
          must be silently ignored, not violated; got: {:?}",
         report.results
+    );
+}
+
+// ── #520: sh:sparql on property shapes, including $PATH substitution ──────
+//
+// See docs/plans/SHACL_SPARQL_PATH_SUBSTITUTION_520_PLAN.md and
+// [#520](https://github.com/daghovland/rdf-datalog/issues/520).
+
+/// `sh:sparql [ a sh:SPARQLConstraint ; ... ]` declared inside a
+/// `sh:property [ ... ]` block (not just directly on a node shape, #54's
+/// original scope): `$PATH` must be substituted with the property shape's
+/// own `sh:path` (here a bare predicate, `ex:age`) before the embedded
+/// `sh:select` query executes, and `$this` must still be the focus node.
+#[test]
+#[ignore = "not yet implemented, see #520"]
+fn spec_s520_property_sparql_select_path_substitution() {
+    let data = load("shacl_s520_property_sparql_select_data.ttl");
+    let shapes = load("shacl_s520_property_sparql_select_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Bob's age (-5) should violate"
+    );
+    let r = &report.results[0];
+    assert_eq!(r.focus_node.as_deref(), Some("http://example.org/ns#Bob"));
+    assert_eq!(r.value.as_deref(), Some("-5"));
+}
+
+/// `$this` pre-binding correctness for a property-shape-scoped `sh:sparql`
+/// `sh:ask` constraint: three focus nodes, exactly one violating (mirrors
+/// `spec_s6_1_sparql_this_binding`'s node-shape regression). A broken/no-op
+/// `$this` join would produce 0 or 3 results instead of exactly 1.
+#[test]
+#[ignore = "not yet implemented, see #520"]
+fn spec_s520_property_sparql_this_binding() {
+    let data = load("shacl_s520_property_sparql_this_data.ttl");
+    let shapes = load("shacl_s520_property_sparql_this_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "$this must be pre-bound per-node: only ex:N2 (ex:score 0) should violate"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.org/ns#N2")
+    );
+}
+
+/// `$PATH` must substitute the property shape's path rendered as actual
+/// SPARQL property-path *syntax* -- not merely a bound IRI term -- so a
+/// compound path (here a sequence, `ex:hasParent/ex:hasParent`) also works
+/// correctly inside the embedded query's own graph pattern.
+#[test]
+#[ignore = "not yet implemented, see #520"]
+fn spec_s520_property_sparql_sequence_path_substitution() {
+    let data = load("shacl_s520_property_sparql_sequence_path_data.ttl");
+    let shapes = load("shacl_s520_property_sparql_sequence_path_shapes.ttl");
+    let report = shacl::validate(&data, &shapes).expect("validation must not error");
+    assert!(!report.conforms);
+    assert_eq!(
+        report.results.len(),
+        1,
+        "only ex:Carol has no grandparent reachable via ex:hasParent/ex:hasParent"
+    );
+    assert_eq!(
+        report.results[0].focus_node.as_deref(),
+        Some("http://example.com/ns#Carol")
     );
 }

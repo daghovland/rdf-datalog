@@ -1,0 +1,22 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/ns#> .
+
+# #520: $this binding correctness for a property-shape-scoped sh:sparql
+# ASK -- mirrors the node-shape regression in shacl_s6_sparql_this_shapes.ttl
+# (three focus nodes, exactly one violating). A broken/no-op $this join
+# would produce 0 or 3 results instead of exactly 1. $PATH is substituted
+# with ex:score (the property shape's own sh:path) so the query traverses
+# the path itself rather than relying on any external $value binding.
+ex:ScoreShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:property [
+        sh:path ex:score ;
+        sh:sparql [
+            a sh:SPARQLConstraint ;
+            sh:message "score reached via $PATH must be positive" ;
+            sh:ask """
+                ASK { $this $PATH ?s . FILTER (?s > 0) }
+                """ ;
+        ] ;
+    ] .

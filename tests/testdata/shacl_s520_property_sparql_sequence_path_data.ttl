@@ -1,0 +1,6 @@
+@prefix ex: <http://example.com/ns#> .
+
+# ex:Alice's grandparent (ex:hasParent/ex:hasParent) is ex:Carol.
+# ex:Carol has no grandparent at all.
+ex:Alice ex:hasParent ex:Bob .
+ex:Bob ex:hasParent ex:Carol .
