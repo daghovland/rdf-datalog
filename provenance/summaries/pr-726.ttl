@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:726 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "deps: fix 2026-10-22 RUSTSEC batch (quinn-proto/rustls/webpki)" ;
+    bl:number 726 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:724 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr726 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:724 ;
+    prov:startedAtTime "2026-10-22T17:48:27Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-22T17:48:27Z"^^xsd:dateTime .
+
+session:pr726Summary a agp:TranscriptSummary ;
+    agp:summaryText "A fresh RUSTSEC database update (2026-10-22) started failing Security Audit CI on every open PR and on main, unrelated to any of those PRs' own diffs -- discovered while landing #517 and #694's PRs, both blocked solely on this. cargo audit showed 14 findings across quinn-proto, rustls, rustls-webpki, webpki-root-certs, and zip. The first four fixed cleanly via a plain cargo update to patched versions, no code changes. zip was different: its fix requires zip >= 9.0.0, which only arrives transitively through utoipa-swagger-ui >= 10.0 and utoipa >= 6.0 -- a major, breaking bump. Attempted it directly (bumping sparql_endpoint/Cargo.toml's utoipa/utoipa-swagger-ui version constraints) to see if it was mechanical; it compiled the lockfile fine but broke sparql_endpoint/src/openapi.rs's build (utoipa 6.0 changed Parameter to need RefOr<Parameter> wrapping at several Vec::insert call sites)." ;
+    agp:reasoningFor ghpull:726 ;
+    prov:wasGeneratedBy session:pr726 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr726Decision .
+
+session:pr726Decision a agp:Decision ;
+    agp:summaryText "Reverted the utoipa/utoipa-swagger-ui bump and instead added the three zip RUSTSEC IDs to .cargo/audit.toml's existing ignore list, with a documented not-reachable rationale (utoipa-swagger-ui's vendored feature only ever extracts its own pinned, build-time Swagger UI archive, never attacker/user-controlled zip input -- the actual symlink/permission-escape vectors in these advisories don't apply here), following the same style as the two pre-existing ignore entries. Filed #725 to do the real bump properly later." ;
+    agp:alternative "Pushing the utoipa 6.0 migration through now was rejected for a reason specific to this moment, not a general objection to the bump itself: sparql_endpoint/src/openapi.rs is the exact file #517's PR is actively, concurrently editing in its own worktree. Landing an API-breaking dependency bump to that same file right now would guarantee a merge conflict and duplicate work neither PR asked for. Better to unblock CI immediately with a scoped, justified, reversible ignore entry and do the real migration as its own issue (#725) once #517 has merged and the file is quiet." .
