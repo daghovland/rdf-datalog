@@ -188,9 +188,7 @@ async fn openapi_json_lists_deferred_386_routes() {
         "missing POST /transaction/{{txId}}/commit"
     );
     assert!(
-        paths["/transaction/{txId}/rollback"]
-            .get("post")
-            .is_some(),
+        paths["/transaction/{txId}/rollback"].get("post").is_some(),
         "missing POST /transaction/{{txId}}/rollback"
     );
 }

@@ -105,6 +105,19 @@ fn ok_json_response(description: &str) -> utoipa::openapi::response::Response {
         .build()
 }
 
+/// A plain `application/json` response (used by handlers that return axum
+/// `Json<...>`, as opposed to the SPARQL-results-shaped JSON of
+/// [`ok_json_response`]).
+fn ok_plain_json_response(description: &str) -> utoipa::openapi::response::Response {
+    ResponseBuilder::new()
+        .description(description.to_owned())
+        .content(
+            "application/json",
+            ContentBuilder::new().schema(Some(string_schema())).build(),
+        )
+        .build()
+}
+
 fn ok_text_response(description: &str) -> utoipa::openapi::response::Response {
     ResponseBuilder::new()
         .description(description.to_owned())
@@ -179,6 +192,19 @@ fn sparql_query_path_item(dataset_scoped: bool) -> PathItem {
             false,
         ),
     ];
+    // `txId` (proprietary transaction API, #125) is only honored by the
+    // root `/sparql` handler (`query::sparql_get`/`sparql_post_with_state`);
+    // the dataset-scoped `/{name}/sparql`/`/{name}/query` handlers in
+    // `dataset_routes.rs` don't look at it.
+    if !dataset_scoped {
+        params.push(query_param(
+            "txId",
+            "Execute against the open transaction's pending delta (proprietary \
+             transaction API; see `POST /transaction/begin`). Not yet supported \
+             together with `explain`.",
+            false,
+        ));
+    }
     if dataset_scoped {
         params.insert(0, path_param("name", "Dataset name."));
     }
@@ -198,6 +224,34 @@ fn sparql_query_path_item(dataset_scoped: bool) -> PathItem {
     .response("503", no_content_response("Query timed out."))
     .build();
 
+    // The root `/sparql` POST handler (`query::sparql_post_with_state`) also
+    // accepts a raw `application/sparql-update` body (or `update=...` form
+    // field) and dispatches it as a SPARQL Update — this is the only way to
+    // write within a transaction (`?txId=...`), since the dataset-scoped
+    // `/{name}/update` route doesn't honor `txId` (see `sparql_query_path_item`
+    // above). The dataset-scoped `/{name}/sparql`/`/{name}/query` routes don't
+    // have this dual behavior, so only document it for the root path.
+    let post_body = if dataset_scoped {
+        text_request_body("Raw SPARQL query text.", "application/sparql-query")
+    } else {
+        RequestBodyBuilder::new()
+            .description(Some(
+                "Raw SPARQL query text, or (to write within a transaction via \
+                 `?txId=...`) a raw SPARQL Update body."
+                    .to_owned(),
+            ))
+            .content(
+                "application/sparql-query",
+                ContentBuilder::new().schema(Some(string_schema())).build(),
+            )
+            .content(
+                "application/sparql-update",
+                ContentBuilder::new().schema(Some(string_schema())).build(),
+            )
+            .required(Some(Required::True))
+            .build()
+    };
+
     let post = op(
         "Execute a SPARQL query (POST)",
         "SPARQL 1.1 Protocol query operation. Accepts `application/x-www-form-urlencoded` \
@@ -205,10 +259,7 @@ fn sparql_query_path_item(dataset_scoped: bool) -> PathItem {
         "SPARQL Query",
     )
     .parameters(Some(params))
-    .request_body(Some(text_request_body(
-        "Raw SPARQL query text.",
-        "application/sparql-query",
-    )))
+    .request_body(Some(post_body))
     .response(
         "200",
         ok_json_response("Query results (format per Accept header)."),
@@ -448,10 +499,16 @@ fn rml_dataset_path_item() -> PathItem {
         "200",
         ok_text_response("Mapping applied; number of triples inserted."),
     )
-    .response("400", no_content_response("Malformed mapping or multipart body."))
+    .response(
+        "400",
+        no_content_response("Malformed mapping or multipart body."),
+    )
     .response("403", no_content_response("Server is read-only."))
     .response("404", no_content_response("Dataset does not exist."))
-    .response("413", no_content_response("Upload exceeds the configured size limit."))
+    .response(
+        "413",
+        no_content_response("Upload exceeds the configured size limit."),
+    )
     .build();
     item1(HttpMethod::Post, post)
 }
@@ -473,8 +530,14 @@ fn rml_map_path_item() -> PathItem {
         "200",
         ok_rdf_response("Generated RDF graph (format per Accept header)."),
     )
-    .response("400", no_content_response("Malformed mapping or multipart body."))
-    .response("413", no_content_response("Upload exceeds the configured size limit."))
+    .response(
+        "400",
+        no_content_response("Malformed mapping or multipart body."),
+    )
+    .response(
+        "413",
+        no_content_response("Upload exceeds the configured size limit."),
+    )
     .build();
     item1(HttpMethod::Post, post)
 }
@@ -497,7 +560,10 @@ fn ottr_path_item() -> PathItem {
         "200",
         ok_text_response("Expansion applied; number of triples inserted."),
     )
-    .response("400", no_content_response("Malformed OTTR document or multipart body."))
+    .response(
+        "400",
+        no_content_response("Malformed OTTR document or multipart body."),
+    )
     .response("403", no_content_response("Server is read-only."))
     .response("404", no_content_response("Dataset does not exist."))
     .build();
@@ -520,10 +586,7 @@ fn rules_path_item() -> PathItem {
         "Datalog rules text.",
         "text/x-datalog",
     )))
-    .response(
-        "200",
-        ok_json_response("`{\"rules_loaded\": <n>}`."),
-    )
+    .response("200", ok_plain_json_response("`{\"rules_loaded\": <n>}`."))
     .response("400", no_content_response("Malformed rules body."))
     .response("403", no_content_response("Server is read-only."))
     .response("404", no_content_response("Dataset does not exist."))
@@ -548,14 +611,17 @@ fn rules_by_id_path_item() -> PathItem {
         "Runtime Ruleset",
     )
     .parameter(path_param("name", "Dataset name."))
-    .parameter(path_param("ruleset_id", "Ruleset id, scoped to this dataset."))
+    .parameter(path_param(
+        "ruleset_id",
+        "Ruleset id, scoped to this dataset.",
+    ))
     .request_body(Some(text_request_body(
         "Datalog rules text.",
         "text/x-datalog",
     )))
     .response(
         "200",
-        ok_json_response("`{\"rules_loaded\": <n>, \"ruleset_id\": <id>}`."),
+        ok_plain_json_response("`{\"rules_loaded\": <n>, \"ruleset_id\": <id>}`."),
     )
     .response("400", no_content_response("Malformed rules body."))
     .response("403", no_content_response("Server is read-only."))
@@ -574,12 +640,22 @@ fn rules_by_id_path_item() -> PathItem {
         "Runtime Ruleset",
     )
     .parameter(path_param("name", "Dataset name."))
-    .parameter(path_param("ruleset_id", "Ruleset id, scoped to this dataset."))
-    .response("200", ok_json_response("`{\"rules_removed\": <n>}`."))
+    .parameter(path_param(
+        "ruleset_id",
+        "Ruleset id, scoped to this dataset.",
+    ))
+    .response(
+        "200",
+        ok_plain_json_response("`{\"rules_removed\": <n>, \"ruleset_id\": <id>}`."),
+    )
     .response("403", no_content_response("Server is read-only."))
     .response(
         "404",
         no_content_response("Dataset does not exist, or ruleset_id was never loaded."),
+    )
+    .response(
+        "409",
+        no_content_response("Remaining ruleset is contradictory over the dataset's existing data."),
     )
     .build();
 
@@ -612,10 +688,16 @@ fn transaction_commit_path_item() -> PathItem {
          changed since the transaction began (optimistic concurrency).",
         "Transaction",
     )
-    .parameter(path_param("txId", "Transaction id, from `POST /transaction/begin`."))
+    .parameter(path_param(
+        "txId",
+        "Transaction id, from `POST /transaction/begin`.",
+    ))
     .response("204", no_content_response("Transaction committed."))
     .response("403", no_content_response("Server is read-only."))
-    .response("404", no_content_response("Transaction not found (or already expired)."))
+    .response(
+        "404",
+        no_content_response("Transaction not found (or already expired)."),
+    )
     .response(
         "409",
         no_content_response("Store was modified since the transaction began."),
@@ -633,9 +715,15 @@ fn transaction_rollback_path_item() -> PathItem {
          changes. The store is never modified.",
         "Transaction",
     )
-    .parameter(path_param("txId", "Transaction id, from `POST /transaction/begin`."))
+    .parameter(path_param(
+        "txId",
+        "Transaction id, from `POST /transaction/begin`.",
+    ))
     .response("204", no_content_response("Transaction rolled back."))
-    .response("404", no_content_response("Transaction not found (or already expired)."))
+    .response(
+        "404",
+        no_content_response("Transaction not found (or already expired)."),
+    )
     .build();
     item1(HttpMethod::Post, post)
 }
