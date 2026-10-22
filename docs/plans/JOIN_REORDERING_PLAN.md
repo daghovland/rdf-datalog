@@ -234,19 +234,78 @@ filter (`sparql_parser::component_ordering`, hooked into `eval_components`):
 
 ### Phase D — Worst-case-optimal join for cyclic star BGPs (exploratory)
 
-- Detect when a BGP's join graph is cyclic (e.g. 3+ patterns mutually
-  joined on shared variables, the classic star/triangle shape) and route
-  those through a Leapfrog-Triejoin-style multi-way merge instead of a
-  sequence of binary joins. Binary joins, in any order, are provably
-  suboptimal on cyclic queries (the source of the "worst-case optimal join"
-  literature); Phase A's DP search picks the *best available* binary order
-  but cannot escape that ceiling.
+- Detect when a BGP's join graph is cyclic (3+ patterns mutually joined on
+  shared variables such that no single variable is shared by all of them —
+  the classic triangle shape, e.g. `?a :e ?b . ?b :e ?c . ?c :e ?a`) and
+  route those through a Leapfrog-Triejoin-style multi-way merge instead of
+  a sequence of binary joins. Binary joins, in any order, are provably
+  suboptimal on genuinely cyclic queries (the source of the "worst-case
+  optimal join" literature); Phase A's **greedy** selectivity heuristic
+  (`order_patterns` — not DP; see Phase A's own section above, corrected
+  from an earlier draft of this plan) picks the *best available* binary
+  order but cannot escape that ceiling. **A star BGP** (`?s p1 ?o1 . ?s p2
+  ?o2 . ?s p3 ?o3`, every pattern sharing the one variable `?s`) is **not**
+  this shape — its join graph is a tree, not a cycle, and ordinary binary
+  joins handle it fine once selectivity ordering (Phase A) is in place.
+  See [#507](https://github.com/daghovland/rdf-datalog/issues/507)'s
+  re-evaluation below for why this distinction is the whole answer.
 - Significant new code: needs sorted/seekable iterators over each index
   (dagalog's `Vec<QuadListIndex>` per index entry would need to support
   ordered seeking, not just iteration) and a merge-join driver.
 - Treat as a follow-up investigation after A–C land and are measured against
-  the benchmark, not a near-term commitment — worthwhile only if star-shaped
-  queries remain the dominant cost after the cheaper fixes.
+  the benchmark, not a near-term commitment — worthwhile only if genuinely
+  cyclic queries are shown to be a real cost in practice.
+
+#### Re-evaluation after Phases A–C (issue [#507](https://github.com/daghovland/rdf-datalog/issues/507))
+
+Phases A ([#36](https://github.com/daghovland/rdf-datalog/issues/36)), B
+([#37](https://github.com/daghovland/rdf-datalog/issues/37)/[#141](https://github.com/daghovland/rdf-datalog/issues/141))
+and C ([#38](https://github.com/daghovland/rdf-datalog/issues/38)) are all
+merged on `main`. This section records the benchmark re-evaluation #507
+asked for, before deciding whether to pursue Phase D now.
+
+**Methodology:**
+
+1. A scripted scan of all 105 queries in
+   `tests/testdata/dblp.benchmark.tsv` (the Sparqloscope/QLever DBLP
+   benchmark `tests/dblp_benchmark.rs` already runs) built each query's
+   triple-pattern join graph (nodes = variables, edges = patterns joining
+   two variable terms) and checked, per connected component, whether
+   `edges >= nodes` (i.e. a cycle exists). **Zero** of the 105 queries —
+   including every query whose name contains "star"
+   (`join-3-star-largest-sum-of-join-sizes`,
+   `join-xlarge-star-on-small-predicates`, `optional-join-3-star-*`,
+   `minus-join-3-star-*`, `exists-join-3-star-*`) — has a cyclic join
+   graph. Every one of them is a star: several patterns sharing one common
+   variable, which is a tree-shaped (acyclic) join graph that ordinary
+   binary joins, correctly ordered (Phase A), handle without any
+   asymptotic penalty. This is the central finding: **the benchmark corpus
+   this repo actually measures against contains no instance of the shape
+   Phase D would help with.**
+2. `tests/join_reorder_benchmark.rs` (new, added by this issue) constructs
+   the genuinely cyclic shape synthetically, since the DBLP corpus has none:
+   a "hub" vertex with degree `n` in both directions, plus a small fixed
+   number `k` of independent closing edges that each complete exactly one
+   directed 3-cycle through the hub. The real triangle count stays fixed at
+   `3k` as `n` grows; any binary join order materializes `O(n^2)`
+   intermediate rows before the final pattern's filter brings it back down
+   — by symmetry (every pattern uses the same predicate, so Phase A's
+   cardinality tie-break can't distinguish them), every binary order is
+   equally bad, exactly the ceiling the worst-case-optimal join literature
+   describes.
+3. `synthetic_triangle_query_matches_brute_force_count` (not `#[ignore]`d)
+   is the correctness check: the executor's result count for the triangle
+   query matches an independently computed brute-force ground truth.
+   `synthetic_triangle_scaling_sweep` (`#[ignore]`d, timing diagnostic —
+   run with `cargo test --test join_reorder_benchmark --release --
+   --ignored --nocapture synthetic_triangle_scaling_sweep`) sweeps the
+   hub degree `n` and reports wall-clock time.
+
+**Result and recommendation:** see the comment on
+[#39](https://github.com/daghovland/rdf-datalog/issues/39) for the measured
+numbers and the priority call — this doc intentionally doesn't carry
+work-status/priority prose (see `CLAUDE.md`'s Github backlog section); it
+only records what was measured and how to reproduce it.
 
 ### Phase E — Multi-threading (last, not first)
 
