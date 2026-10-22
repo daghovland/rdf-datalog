@@ -19,10 +19,15 @@ Contact: hovlanddag@gmail.com
 //! [`docs/plans/OPENAPI_FRONTEND_386_PLAN.md`](../../../docs/plans/OPENAPI_FRONTEND_386_PLAN.md)
 //! and [#386](https://github.com/daghovland/rdf-datalog/issues/386).
 //!
-//! Route coverage in this first pass: the SPARQL 1.1 Protocol, Graph Store
-//! HTTP Protocol, and admin (`/$/...`) routes, which have stable,
-//! mostly-textual request/response shapes. SHACL, RML, OTTR, the runtime
-//! ruleset endpoint, and the proprietary transaction API are deferred — see
+//! Route coverage: the SPARQL 1.1 Protocol, Graph Store HTTP Protocol, and
+//! admin (`/$/...`) routes landed first, since they have stable,
+//! mostly-textual request/response shapes — see
+//! [#386](https://github.com/daghovland/rdf-datalog/issues/386). SHACL
+//! validation, RML/OTTR mapping, the runtime-ruleset endpoint, and the
+//! proprietary transaction API were deferred from that first pass because
+//! their request bodies are multipart, mapping-language-specific, or
+//! otherwise awkward to express cleanly in a first-pass OpenAPI schema; they
+//! are covered below, following the same hand-built pattern — see
 //! [#517](https://github.com/daghovland/rdf-datalog/issues/517).
 //!
 //! Auth treatment: both `GET /api-docs/openapi.json` and `GET /swagger-ui/`
@@ -107,6 +112,19 @@ fn ok_text_response(description: &str) -> utoipa::openapi::response::Response {
             "text/plain",
             ContentBuilder::new().schema(Some(string_schema())).build(),
         )
+        .build()
+}
+
+/// A `multipart/form-data` request body (used for RML and OTTR mapping
+/// uploads, each of which accepts multiple named parts).
+fn multipart_request_body(description: &str) -> utoipa::openapi::request_body::RequestBody {
+    RequestBodyBuilder::new()
+        .description(Some(description.to_owned()))
+        .content(
+            "multipart/form-data",
+            ContentBuilder::new().schema(Some(string_schema())).build(),
+        )
+        .required(Some(Required::True))
         .build()
 }
 
@@ -382,6 +400,246 @@ fn simple_post(summary: &str, description: &str, tag: &str) -> PathItem {
     item1(HttpMethod::Post, post)
 }
 
+/// `POST /{name}/shacl` — SHACL validation. See
+/// [`crate::shacl_endpoint::dataset_shacl_post`].
+fn shacl_path_item() -> PathItem {
+    let post = op(
+        "Validate a dataset against SHACL shapes",
+        "Fuseki-compatible SHACL validation endpoint. Validates the dataset's \
+         default-graph-union against the shapes graph in the request body and \
+         returns a SHACL validation report graph.",
+        "SHACL",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .parameter(query_param(
+        "graph",
+        "Graph selector. Only `union` (the default) is currently supported.",
+        false,
+    ))
+    .request_body(Some(text_request_body(
+        "SHACL shapes graph (Turtle).",
+        "text/turtle",
+    )))
+    .response(
+        "200",
+        ok_rdf_response("SHACL validation report graph (Turtle)."),
+    )
+    .response("400", no_content_response("Malformed shapes graph."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /{name}/rml` — apply an RML mapping into a named dataset. See
+/// [`crate::rml_endpoint::dataset_rml_post`].
+fn rml_dataset_path_item() -> PathItem {
+    let post = op(
+        "Apply an RML mapping to a dataset",
+        "Applies an RML mapping (a `mapping` part plus zero or more named \
+         source-file parts, uploaded as `multipart/form-data`) and inserts the \
+         generated RDF into the named dataset.",
+        "RML",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .request_body(Some(multipart_request_body(
+        "Multipart body: a `mapping` part (RML mapping Turtle) plus named source-file parts.",
+    )))
+    .response(
+        "200",
+        ok_text_response("Mapping applied; number of triples inserted."),
+    )
+    .response("400", no_content_response("Malformed mapping or multipart body."))
+    .response("403", no_content_response("Server is read-only."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .response("413", no_content_response("Upload exceeds the configured size limit."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /rml/map` — apply an RML mapping statelessly, returning the
+/// generated RDF directly. See [`crate::rml_endpoint::rml_map_post`].
+fn rml_map_path_item() -> PathItem {
+    let post = op(
+        "Apply an RML mapping and return the resulting RDF",
+        "Applies an RML mapping (same multipart shape as `POST /{name}/rml`) \
+         without touching any dataset, and returns the generated RDF graph \
+         (format per Accept header).",
+        "RML",
+    )
+    .request_body(Some(multipart_request_body(
+        "Multipart body: a `mapping` part (RML mapping Turtle) plus named source-file parts.",
+    )))
+    .response(
+        "200",
+        ok_rdf_response("Generated RDF graph (format per Accept header)."),
+    )
+    .response("400", no_content_response("Malformed mapping or multipart body."))
+    .response("413", no_content_response("Upload exceeds the configured size limit."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /{name}/ottr` — expand stOTTR/wOTTR documents into a named
+/// dataset. See [`crate::ottr_endpoint::dataset_ottr_post`].
+fn ottr_path_item() -> PathItem {
+    let post = op(
+        "Expand OTTR templates into a dataset",
+        "Expands stOTTR (default) or wOTTR (Turtle/TriG `Content-Type` per \
+         part) template/instance documents, uploaded as `multipart/form-data`, \
+         and inserts the resulting RDF into the named dataset.",
+        "OTTR",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .request_body(Some(multipart_request_body(
+        "Multipart body: one or more stOTTR or wOTTR document parts.",
+    )))
+    .response(
+        "200",
+        ok_text_response("Expansion applied; number of triples inserted."),
+    )
+    .response("400", no_content_response("Malformed OTTR document or multipart body."))
+    .response("403", no_content_response("Server is read-only."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /{name}/rules` — replace a dataset's entire live ruleset. See
+/// [`crate::rules_endpoint::dataset_rules_post`].
+fn rules_path_item() -> PathItem {
+    let post = op(
+        "Load/replace a dataset's runtime ruleset",
+        "Parses the request body as Datalog rules and replaces the dataset's \
+         entire live ruleset: rules not present in the new body stop firing, \
+         and every rule in the new body ends up derived. An empty body clears \
+         the ruleset entirely.",
+        "Runtime Ruleset",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .request_body(Some(text_request_body(
+        "Datalog rules text.",
+        "text/x-datalog",
+    )))
+    .response(
+        "200",
+        ok_json_response("`{\"rules_loaded\": <n>}`."),
+    )
+    .response("400", no_content_response("Malformed rules body."))
+    .response("403", no_content_response("Server is read-only."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .response(
+        "409",
+        no_content_response("New ruleset is contradictory over the dataset's existing data."),
+    )
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST`/`DELETE /{name}/rules/{ruleset_id}` — load/replace or retract one
+/// named ruleset within a dataset's live combined ruleset (#473). See
+/// [`crate::rules_endpoint::dataset_rules_id_post`] and
+/// [`crate::rules_endpoint::dataset_rules_id_delete`].
+fn rules_by_id_path_item() -> PathItem {
+    let post = op(
+        "Load/replace one named ruleset",
+        "Parses the request body as Datalog rules and replaces exactly the \
+         named ruleset's rules within the dataset's live combined ruleset, \
+         leaving every other named ruleset untouched.",
+        "Runtime Ruleset",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .parameter(path_param("ruleset_id", "Ruleset id, scoped to this dataset."))
+    .request_body(Some(text_request_body(
+        "Datalog rules text.",
+        "text/x-datalog",
+    )))
+    .response(
+        "200",
+        ok_json_response("`{\"rules_loaded\": <n>, \"ruleset_id\": <id>}`."),
+    )
+    .response("400", no_content_response("Malformed rules body."))
+    .response("403", no_content_response("Server is read-only."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .response(
+        "409",
+        no_content_response("New ruleset is contradictory over the dataset's existing data."),
+    )
+    .build();
+
+    let delete = op(
+        "Retract one named ruleset",
+        "Retracts exactly the named ruleset's rules from the dataset's live \
+         combined ruleset. A rule also belonging to a different still-live \
+         ruleset id survives.",
+        "Runtime Ruleset",
+    )
+    .parameter(path_param("name", "Dataset name."))
+    .parameter(path_param("ruleset_id", "Ruleset id, scoped to this dataset."))
+    .response("200", ok_json_response("`{\"rules_removed\": <n>}`."))
+    .response("403", no_content_response("Server is read-only."))
+    .response(
+        "404",
+        no_content_response("Dataset does not exist, or ruleset_id was never loaded."),
+    )
+    .build();
+
+    merge(item1(HttpMethod::Post, post), HttpMethod::Delete, delete)
+}
+
+/// `POST /transaction/begin` — begin a transaction. See
+/// [`crate::transaction_routes::transaction_begin`].
+fn transaction_begin_path_item() -> PathItem {
+    let post = op(
+        "Begin a transaction",
+        "Proprietary transaction API: snapshots the current store generation \
+         and returns a transaction id. Reads/writes against `/sparql` with a \
+         `txId` query parameter are buffered against this transaction until \
+         `/commit` or `/rollback`, or a 60-second idle timeout.",
+        "Transaction",
+    )
+    .response("200", ok_json_response("`{\"txId\": \"<uuid>\"}`."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /transaction/{txId}/commit` — commit a transaction. See
+/// [`crate::transaction_routes::transaction_commit`].
+fn transaction_commit_path_item() -> PathItem {
+    let post = op(
+        "Commit a transaction",
+        "Proprietary transaction API: atomically applies the transaction's \
+         buffered inserts/deletes. Returns 409 if the store's generation has \
+         changed since the transaction began (optimistic concurrency).",
+        "Transaction",
+    )
+    .parameter(path_param("txId", "Transaction id, from `POST /transaction/begin`."))
+    .response("204", no_content_response("Transaction committed."))
+    .response("403", no_content_response("Server is read-only."))
+    .response("404", no_content_response("Transaction not found (or already expired)."))
+    .response(
+        "409",
+        no_content_response("Store was modified since the transaction began."),
+    )
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `POST /transaction/{txId}/rollback` — roll back a transaction. See
+/// [`crate::transaction_routes::transaction_rollback`].
+fn transaction_rollback_path_item() -> PathItem {
+    let post = op(
+        "Roll back a transaction",
+        "Proprietary transaction API: discards the transaction's buffered \
+         changes. The store is never modified.",
+        "Transaction",
+    )
+    .parameter(path_param("txId", "Transaction id, from `POST /transaction/begin`."))
+    .response("204", no_content_response("Transaction rolled back."))
+    .response("404", no_content_response("Transaction not found (or already expired)."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
 /// Build the full OpenAPI document for this crate's public HTTP surface.
 pub fn build_openapi() -> OpenApi {
     let paths: Paths = PathsBuilder::new()
@@ -425,6 +683,18 @@ pub fn build_openapi() -> OpenApi {
         .path(
             "/void",
             simple_get("VoID dataset description", "RDF VoID (Vocabulary of Interlinked Datasets) description of this server's datasets.", "Discovery"),
+        )
+        .path("/{name}/shacl", shacl_path_item())
+        .path("/{name}/rml", rml_dataset_path_item())
+        .path("/rml/map", rml_map_path_item())
+        .path("/{name}/ottr", ottr_path_item())
+        .path("/{name}/rules", rules_path_item())
+        .path("/{name}/rules/{ruleset_id}", rules_by_id_path_item())
+        .path("/transaction/begin", transaction_begin_path_item())
+        .path("/transaction/{txId}/commit", transaction_commit_path_item())
+        .path(
+            "/transaction/{txId}/rollback",
+            transaction_rollback_path_item(),
         )
         .build();
 
