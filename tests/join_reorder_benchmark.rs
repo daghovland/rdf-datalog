@@ -93,7 +93,7 @@ fn parse_benchmark_tsv(path: &Path) -> Vec<(String, String)> {
 /// hyperedge away to nothing. Constants and `TripleTerm` subjects don't
 /// contribute vertices — consistent with `join_ordering::bound_count`'s
 /// treatment of what actually drives join selectivity.
-fn bgp_has_cyclic_join_graph(patterns: &[TriplePattern]) -> bool {
+fn bgp_has_cyclic_join_graph(patterns: &[&TriplePattern]) -> bool {
     use std::collections::HashSet;
 
     let mut edges: Vec<HashSet<String>> = patterns
@@ -158,10 +158,21 @@ fn bgp_has_cyclic_join_graph(patterns: &[TriplePattern]) -> bool {
 /// `MINUS`/`GRAPH`/`SERVICE`/bare `GROUP`/`{ SELECT ... }` subqueries) —
 /// each is its own evaluation scope but still a place a cyclic BGP could
 /// hide.
-fn collect_bgps<'a>(components: &'a [QueryComponent], out: &mut Vec<&'a [TriplePattern]>) {
+///
+/// All `BGP` entries that are *direct siblings* within one component list
+/// are merged into a single pattern list before being pushed to `out`,
+/// rather than pushed as separate entries. The parser splits a single
+/// textual `{ ... }` block into multiple adjacent `QueryComponent::BGP`
+/// entries whenever a `FILTER`/`BIND` sits between triple patterns (e.g.
+/// `?a :e ?b . FILTER(...) ?b :e ?c . ?c :e ?a .` becomes two `BGP`
+/// siblings), but those patterns are still joined together at evaluation
+/// time — splitting them for this check would hide a real cross-pattern
+/// cycle that only closes across the `FILTER`.
+fn collect_bgps<'a>(components: &'a [QueryComponent], out: &mut Vec<Vec<&'a TriplePattern>>) {
+    let mut merged: Vec<&'a TriplePattern> = Vec::new();
     for c in components {
         match c {
-            QueryComponent::BGP(patterns) => out.push(patterns),
+            QueryComponent::BGP(patterns) => merged.extend(patterns.iter()),
             QueryComponent::Optional(inner)
             | QueryComponent::Minus(inner)
             | QueryComponent::Graph(_, inner)
@@ -177,6 +188,9 @@ fn collect_bgps<'a>(components: &'a [QueryComponent], out: &mut Vec<&'a [TripleP
             | QueryComponent::Bind(..)
             | QueryComponent::Values(..) => {}
         }
+    }
+    if !merged.is_empty() {
+        out.push(merged);
     }
 }
 
@@ -217,7 +231,7 @@ fn dblp_benchmark_queries_have_no_cyclic_bgp() {
         analyzed += 1;
         let mut bgps = Vec::new();
         collect_bgps(where_clause_of(&query), &mut bgps);
-        for patterns in bgps {
+        for patterns in &bgps {
             if bgp_has_cyclic_join_graph(patterns) {
                 cyclic.push(name.clone());
             }
@@ -237,6 +251,75 @@ fn dblp_benchmark_queries_have_no_cyclic_bgp() {
         cyclic.is_empty(),
         "expected no cyclic BGP join graphs in the DBLP benchmark suite, found: {cyclic:?}"
     );
+}
+
+/// Positive/negative controls for [`bgp_has_cyclic_join_graph`] itself.
+/// `dblp_benchmark_queries_have_no_cyclic_bgp` finding "zero cyclic BGPs in
+/// 105 queries" is only meaningful evidence if the checker can actually
+/// return `true` on a genuine cycle — an earlier draft of this check
+/// (pairwise cliques instead of hypergraph/GYO reduction) produced eight
+/// false positives on exactly this suite (see the `BGP hypergraph`
+/// comment on [`bgp_has_cyclic_join_graph`]). This test pins both
+/// directions.
+#[test]
+fn join_graph_cycle_check_positive_and_negative_controls() {
+    fn bgps_of(query_str: &str) -> Vec<Vec<&TriplePattern>> {
+        // Leak the parsed AST so its borrowed `TriplePattern`s can outlive
+        // this helper — fine for a test helper that's called a handful of
+        // times with tiny queries.
+        let mut ctx = ParserContext {
+            prefixes: HashMap::new(),
+            base: None,
+        };
+        let (_, query) = parse_query(query_str, &mut ctx).expect("control query must parse");
+        let query: &'static Query = Box::leak(Box::new(query));
+        let mut bgps = Vec::new();
+        collect_bgps(where_clause_of(query), &mut bgps);
+        bgps
+    }
+
+    // Positive controls: genuinely cyclic.
+    for (label, query_str) in [
+        ("adversarial triangle", TRIANGLE_QUERY),
+        ("LUBM Q9-style triangle", LUBM_Q9_QUERY),
+        (
+            "triangle split by a FILTER into two adjacent BGP siblings",
+            "PREFIX : <http://example.org/jrb#> SELECT * WHERE { \
+             ?a :e ?b . FILTER(?a != ?b) ?b :e ?c . ?c :e ?a . }",
+        ),
+    ] {
+        let bgps = bgps_of(query_str);
+        assert!(
+            bgps.iter().any(|p| bgp_has_cyclic_join_graph(p)),
+            "expected a cyclic join graph for: {label}"
+        );
+    }
+
+    // Negative controls: acyclic (star / single-pattern / multi-column-on-
+    // one-shared-pair), each previously a false positive under the
+    // pairwise-clique bug.
+    for (label, query_str) in [
+        (
+            "star on one shared variable",
+            "PREFIX : <http://example.org/jrb#> SELECT * WHERE { \
+             ?s :p1 ?o1 . ?s :p2 ?o2 . ?s :p3 ?o3 . }",
+        ),
+        (
+            "single pattern, three distinct variables",
+            "SELECT * WHERE { ?s ?p ?o . }",
+        ),
+        (
+            "multicolumn join on the same subject/object pair",
+            "PREFIX : <http://example.org/jrb#> SELECT * WHERE { \
+             ?s :p ?o . ?s :q ?o . }",
+        ),
+    ] {
+        let bgps = bgps_of(query_str);
+        assert!(
+            !bgps.iter().any(|p| bgp_has_cyclic_join_graph(p)),
+            "expected an acyclic join graph for: {label}"
+        );
+    }
 }
 
 // ── Part 2: synthetic adversarial cyclic triangle (hub-degree scaling) ─────
@@ -303,13 +386,15 @@ fn brute_force_triangle_count(n: usize, k: usize) -> usize {
     let mut count = 0usize;
     for (&a, bs) in &out_edges {
         for &b in bs {
-            if let Some(cs) = out_edges.get(&b) {
-                for &c in cs {
-                    if let Some(a_edges) = out_edges.get(&c) {
-                        if a_edges.contains(&a) {
-                            count += 1;
-                        }
-                    }
+            let Some(cs) = out_edges.get(&b) else {
+                continue;
+            };
+            for &c in cs {
+                if out_edges
+                    .get(&c)
+                    .is_some_and(|a_edges| a_edges.contains(&a))
+                {
+                    count += 1;
                 }
             }
         }
@@ -396,10 +481,16 @@ fn print_pattern_profile(nodes: &[ProfileNode], indent: usize) {
 ///
 /// `#[ignore]`d like `tests/dblp_benchmark.rs`'s diagnostics — this is a
 /// timing probe, not a correctness test, and debug-mode timings are
-/// meaningless for it. `n` is capped at 2000 (4,000,000-ish intermediate
-/// rows) deliberately — this repo's worktrees share one machine and a
-/// `PartialSub`-per-row materialization at `n=4000` risks real memory
-/// pressure against concurrent builds. Run with:
+/// meaningless for it. `n` is capped at 1000 (~1,000,000 intermediate
+/// rows) deliberately — this measurement environment has ~3.8 GB RAM and
+/// no swap (confirmed with `free -m` while writing this), shared with
+/// concurrent worktree builds, and a `PartialSub`-per-row materialization
+/// at `n=2000` (~4,000,000 rows) or higher risks an OOM that could take
+/// down other agents' builds on the same machine — exactly the failure
+/// mode the #38 comment thread hit at 2M DBLP triples on its own
+/// 3.7 GB/no-swap measurement box. Only raise the cap after checking
+/// `free -m` has real headroom and running under `/usr/bin/time -v` to see
+/// peak RSS first. Run with:
 /// ```bash
 /// cargo test --test join_reorder_benchmark --release -- --ignored --nocapture synthetic_triangle_scaling_sweep
 /// ```
@@ -410,7 +501,7 @@ fn synthetic_triangle_scaling_sweep() {
     println!("(#507, precursor measurement for #39 / JOIN_REORDERING_PLAN.md Phase D)\n");
 
     let k = 5;
-    for &n in &[200usize, 500, 1000, 2000] {
+    for &n in &[200usize, 500, 1000] {
         let nt = synthetic_triangle_graph(n, k);
         let datastore = load_graph(&nt);
         let mut ctx = ParserContext {
@@ -457,10 +548,24 @@ fn synthetic_triangle_scaling_sweep() {
 /// professors, each teaching `courses_per_prof` courses; `n_students`
 /// students, each with exactly one advisor (round-robin over professors,
 /// mirroring LUBM's near-functional advisor relation) and
-/// `courses_taken_per_student` courses drawn from the whole course pool
-/// (only sometimes overlapping with their own advisor's course list,
-/// mirroring the real LUBM data where most students do *not* take a course
-/// their advisor teaches).
+/// `courses_taken_per_student` courses drawn deterministically from the
+/// whole course pool, only sometimes overlapping with their own advisor's
+/// course list — most `(student, course)` pairs do *not* close a triangle,
+/// matching the sparsity real Q9 answers have.
+///
+/// **This is not reusing `benches/lubm.rs`'s own LUBM generator**, and that
+/// is itself a finding worth recording: reading `add_students`/
+/// `add_courses` there (`benches/lubm.rs:239-294`) shows every student's
+/// `takesCourse` object is a uniquely-named `gradcourse{s}`/`course{s}`
+/// IRI, while every professor's `teacherOf` object is a disjoint,
+/// separately-named `taught{c}` IRI — the two sets never intersect by
+/// construction. Running the literal Q9 query (`?x advisor ?y . ?y
+/// teacherOf ?z . ?x takesCourse ?z`) against that fixture as it stands
+/// today would always return **zero** rows, telling us nothing about join
+/// cost. This function instead builds a deliberately overlapping dataset
+/// so the query has a real, nonzero (but still sparse — see
+/// [`lubm_style_triangle_query_realistic`]'s `expected > 0` assertion)
+/// answer to measure.
 ///
 /// Unlike [`synthetic_triangle_graph`], the three predicates here
 /// (`advisor`, `teacherOf`, `takesCourse`) are distinct, so Phase A's
@@ -483,7 +588,7 @@ fn lubm_style_graph(
     let total_courses = n_profs * courses_per_prof;
     let mut nt = String::new();
     let mut prof_courses: Vec<Vec<usize>> = vec![Vec::new(); n_profs];
-    for p in 0..n_profs {
+    for (p, courses) in prof_courses.iter_mut().enumerate() {
         for c in 0..courses_per_prof {
             let course_id = p * courses_per_prof + c;
             nt.push_str(&format!(
@@ -491,7 +596,7 @@ fn lubm_style_graph(
                 prof(p),
                 course(course_id)
             ));
-            prof_courses[p].push(course_id);
+            courses.push(course_id);
         }
     }
 
@@ -538,6 +643,11 @@ const LUBM_Q9_QUERY: &str = concat!(
 #[test]
 fn lubm_style_triangle_query_realistic() {
     let (nt, expected) = lubm_style_graph(50, 4, 500, 3);
+    assert!(
+        expected > 0,
+        "construction must actually produce some closed triangles, \
+         otherwise this test would also pass if the executor returned no rows at all"
+    );
     let datastore = load_graph(&nt);
     let mut ctx = ParserContext {
         prefixes: HashMap::new(),

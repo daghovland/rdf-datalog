@@ -246,7 +246,8 @@ filter (`sparql_parser::component_ordering`, hooked into `eval_components`):
   order but cannot escape that ceiling. **A star BGP** (`?s p1 ?o1 . ?s p2
   ?o2 . ?s p3 ?o3`, every pattern sharing the one variable `?s`) is **not**
   this shape — its join graph is a tree, not a cycle, and ordinary binary
-  joins handle it fine once selectivity ordering (Phase A) is in place.
+  joins have no WCOJ-type asymptotic ceiling on, once selectivity ordering
+  (Phase A) is in place.
   See [#507](https://github.com/daghovland/rdf-datalog/issues/507)'s
   re-evaluation below for why this distinction is the whole answer.
 - Significant new code: needs sorted/seekable iterators over each index
@@ -266,23 +267,41 @@ asked for, before deciding whether to pursue Phase D now.
 
 **Methodology:**
 
-1. A scripted scan of all 105 queries in
-   `tests/testdata/dblp.benchmark.tsv` (the Sparqloscope/QLever DBLP
-   benchmark `tests/dblp_benchmark.rs` already runs) built each query's
-   triple-pattern join graph (nodes = variables, edges = patterns joining
-   two variable terms) and checked, per connected component, whether
-   `edges >= nodes` (i.e. a cycle exists). **Zero** of the 105 queries —
-   including every query whose name contains "star"
+1. `tests/join_reorder_benchmark.rs::dblp_benchmark_queries_have_no_cyclic_bgp`
+   parses every one of the 105 queries in `tests/testdata/dblp.benchmark.tsv`
+   (the Sparqloscope/QLever DBLP benchmark `tests/dblp_benchmark.rs` already
+   runs) with the real `sparql_parser::parse_query`, builds each BGP's join
+   **hypergraph** (one hyperedge per triple pattern, connecting all of its
+   variables at once — not a clique of pairwise edges between them), and
+   checks hypergraph acyclicity via the standard
+   [Graham/Yu-Özsoyoğlu (GYO) reduction](https://en.wikipedia.org/wiki/GYO_algorithm):
+   repeatedly drop a hyperedge that's a subset of another, and drop a
+   vertex that occurs in only one remaining hyperedge, until nothing
+   changes; acyclic iff everything reduces away. The hyperedge framing
+   matters and was learned the hard way: an earlier draft of this check
+   modeled each pattern's variables as a pairwise clique instead, which
+   produced 8 false positives — a single pattern with three distinct
+   variables (`?s ?p ?o .`, e.g. the suite's `number-of-triples` COUNT
+   query) forms a "triangle" under the clique model even though it's one
+   atom, not a join between atoms at all.
+   `join_graph_cycle_check_positive_and_negative_controls` pins both
+   directions of the checker itself (true on the adversarial/LUBM-style
+   triangles below and on a triangle deliberately split across a `FILTER`
+   into two adjacent `BGP` siblings; false on a star, a single pattern, and
+   a multi-column join on one shared variable pair) — without that, "zero
+   cyclic BGPs found" would only mean the checker never fires, not that
+   there's nothing to find. Result: **zero** of the 105/105-parsed queries
+   — including every query whose name contains "star"
    (`join-3-star-largest-sum-of-join-sizes`,
    `join-xlarge-star-on-small-predicates`, `optional-join-3-star-*`,
    `minus-join-3-star-*`, `exists-join-3-star-*`) — has a cyclic join
    graph. Every one of them is a star: several patterns sharing one common
-   variable, which is a tree-shaped (acyclic) join graph that ordinary
-   binary joins, correctly ordered (Phase A), handle without any
-   asymptotic penalty. This is the central finding: **the benchmark corpus
-   this repo actually measures against contains no instance of the shape
-   Phase D would help with.**
-2. `tests/join_reorder_benchmark.rs` (new, added by this issue) constructs
+   variable, a tree-shaped (acyclic) join graph that ordinary binary
+   joins, correctly ordered (Phase A), have no WCOJ-type asymptotic ceiling
+   on. This is the central finding: **the DBLP benchmark corpus this repo
+   actually measures against contains no instance of the shape Phase D
+   would help with.**
+2. `tests/join_reorder_benchmark.rs`'s `synthetic_triangle_graph` constructs
    the genuinely cyclic shape synthetically, since the DBLP corpus has none:
    a "hub" vertex with degree `n` in both directions, plus a small fixed
    number `k` of independent closing edges that each complete exactly one
@@ -292,14 +311,25 @@ asked for, before deciding whether to pursue Phase D now.
    — by symmetry (every pattern uses the same predicate, so Phase A's
    cardinality tie-break can't distinguish them), every binary order is
    equally bad, exactly the ceiling the worst-case-optimal join literature
-   describes.
-3. `synthetic_triangle_query_matches_brute_force_count` (not `#[ignore]`d)
-   is the correctness check: the executor's result count for the triangle
-   query matches an independently computed brute-force ground truth.
-   `synthetic_triangle_scaling_sweep` (`#[ignore]`d, timing diagnostic —
-   run with `cargo test --test join_reorder_benchmark --release --
-   --ignored --nocapture synthetic_triangle_scaling_sweep`) sweeps the
-   hub degree `n` and reports wall-clock time.
+   describes. `synthetic_triangle_query_matches_brute_force_count` (not
+   `#[ignore]`d) is the correctness check against an independently
+   computed brute-force ground truth; `synthetic_triangle_scaling_sweep`
+   (`#[ignore]`d, timing diagnostic) sweeps the hub degree `n` and reports
+   wall-clock time plus each pattern's actual `rows_in`/`rows_out` via
+   `execute_with_profile` (#572).
+3. This adversarial case is intentionally unrealistic (all three patterns
+   share one predicate). `tests/join_reorder_benchmark.rs`'s
+   `lubm_style_graph` adds a second, realistic cyclic triangle modeled on
+   LUBM's canonical Q9 shape (`?x advisor ?y . ?y teacherOf ?z . ?x
+   takesCourse ?z`), where the three predicates differ and `advisor` is
+   near-functional. Notably, this could **not** reuse `benches/lubm.rs`'s
+   existing LUBM generator as-is: reading `add_students`/`add_courses`
+   there (`benches/lubm.rs:239-294`) shows every student's `takesCourse`
+   object and every professor's `teacherOf` object are disjoint,
+   separately-named IRIs by construction, so the literal Q9 query would
+   always return zero rows against that fixture — telling us nothing.
+   `lubm_style_graph` instead builds a deliberately overlapping dataset so
+   the query has a real, sparse, nonzero answer to measure.
 
 **Result and recommendation:** see the comment on
 [#39](https://github.com/daghovland/rdf-datalog/issues/39) for the measured
