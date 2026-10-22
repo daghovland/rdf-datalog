@@ -1118,3 +1118,69 @@ fn has_key_annotation_children_deferred_to_608() {
         Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
     }
 }
+
+// --- DatatypeDefinition (#694) ---------------------------------------------
+
+#[test]
+#[ignore = "not yet implemented, see #694"]
+fn datatype_definition_named_range() {
+    let src = wrap(
+        "",
+        r#"<DatatypeDefinition>
+             <Datatype IRI="http://example.org/pizza#AdultAge"/>
+             <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
+           </DatatypeDefinition>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    assert_eq!(onto.axioms.len(), 1);
+    assert!(matches!(
+        &onto.axioms[0],
+        Axiom::AxiomDatatypeDefinition(_, _, _)
+    ));
+}
+
+#[test]
+#[ignore = "not yet implemented, see #694"]
+fn datatype_definition_compound_range() {
+    let src = wrap(
+        "",
+        r#"<DatatypeDefinition>
+             <Datatype IRI="http://example.org/pizza#NegInt"/>
+             <DatatypeRestriction>
+               <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
+               <FacetRestriction facet="http://www.w3.org/2001/XMLSchema#maxExclusive"><Literal>0</Literal></FacetRestriction>
+             </DatatypeRestriction>
+           </DatatypeDefinition>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match &onto.axioms[0] {
+        Axiom::AxiomDatatypeDefinition(_, dt, dr) => {
+            assert_eq!(dt.0.0, "http://example.org/pizza#NegInt");
+            assert!(matches!(
+                dr,
+                owl_ontology::DataRange::DatatypeRestriction(_, _)
+            ));
+        }
+        other => panic!("expected AxiomDatatypeDefinition, got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "not yet implemented, see #694"]
+fn datatype_definition_annotation_children_deferred_to_608() {
+    let src = wrap(
+        "",
+        r#"<DatatypeDefinition>
+             <Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <Datatype IRI="http://example.org/pizza#AdultAge"/>
+             <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
+           </DatatypeDefinition>"#,
+    );
+    match owl_xml_parser::parse(&src) {
+        Err(e) => assert!(e.contains("608")),
+        Ok(_) => panic!("expected an error for axiom-level Annotation (see #608)"),
+    }
+}

@@ -22,6 +22,7 @@ mod annotation;
 mod axiom;
 mod class_expr;
 mod data_range;
+mod datatype_definition;
 mod declaration;
 mod individual;
 mod iri;
@@ -107,6 +108,10 @@ pub fn parse(input: &str) -> Result<Ontology, String> {
             }
             "HasKey" => {
                 let axiom = property_axiom::parse_has_key(child, &prefixes)?;
+                axioms.push(axiom);
+            }
+            "DatatypeDefinition" => {
+                let axiom = datatype_definition::parse_datatype_definition(child, &prefixes)?;
                 axioms.push(axiom);
             }
             other => {
