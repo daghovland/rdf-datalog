@@ -1122,7 +1122,6 @@ fn has_key_annotation_children_deferred_to_608() {
 // --- DatatypeDefinition (#694) ---------------------------------------------
 
 #[test]
-#[ignore = "not yet implemented, see #694"]
 fn datatype_definition_named_range() {
     let src = wrap(
         "",
@@ -1140,7 +1139,6 @@ fn datatype_definition_named_range() {
 }
 
 #[test]
-#[ignore = "not yet implemented, see #694"]
 fn datatype_definition_compound_range() {
     let src = wrap(
         "",
@@ -1166,7 +1164,6 @@ fn datatype_definition_compound_range() {
 }
 
 #[test]
-#[ignore = "not yet implemented, see #694"]
 fn datatype_definition_annotation_children_deferred_to_608() {
     let src = wrap(
         "",

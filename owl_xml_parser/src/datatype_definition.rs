@@ -9,11 +9,6 @@ Contact: hovlanddag@gmail.com
 //! `DatatypeDefinition := axiomAnnotations Datatype DataRange`
 //! -> `owl_ontology::Axiom::AxiomDatatypeDefinition`.
 //!
-//! Stubbed per [#694](https://github.com/daghovland/rdf-datalog/issues/694):
-//! tests below are `#[ignore]`d pending implementation, following this
-//! repo's TDD workflow (plan -> ignored tests + compiling stub ->
-//! implement test-by-test).
-//!
 //! Axiom-level `<Annotation>` children on `<DatatypeDefinition>` (as opposed
 //! to `<Declaration>`'s own leading annotations, handled by #605) are out of
 //! scope for this issue -- deferred to
@@ -22,19 +17,47 @@ Contact: hovlanddag@gmail.com
 //! other non-`Declaration` axiom. Encountering one produces a clear error
 //! rather than being silently dropped.
 
-use crate::iri::Prefixes;
+use crate::data_range::data_range;
+use crate::iri::{Prefixes, resolve_iri};
 use owl_ontology::Axiom;
+
+fn element_children<'a>(node: roxmltree::Node<'a, 'a>) -> Vec<roxmltree::Node<'a, 'a>> {
+    node.children().filter(|n| n.is_element()).collect()
+}
 
 /// Parse a `<DatatypeDefinition>` element into an
 /// [`Axiom::AxiomDatatypeDefinition`].
-///
-/// Stub for [#694](https://github.com/daghovland/rdf-datalog/issues/694):
-/// not yet implemented.
 pub(crate) fn parse_datatype_definition(
-    _node: roxmltree::Node,
-    _prefixes: &Prefixes,
+    node: roxmltree::Node,
+    prefixes: &Prefixes,
 ) -> Result<Axiom, String> {
-    Err("<DatatypeDefinition> not yet implemented (see #694)".to_string())
+    let children = element_children(node);
+
+    if children.iter().any(|n| n.tag_name().name() == "Annotation") {
+        return Err(
+            "<DatatypeDefinition> axiom-level <Annotation> is not yet supported (see #608)"
+                .to_string(),
+        );
+    }
+
+    if children.len() != 2 {
+        return Err(format!(
+            "<DatatypeDefinition> expects exactly a <Datatype> child followed by one DataRange child, found {} children",
+            children.len()
+        ));
+    }
+
+    if children[0].tag_name().name() != "Datatype" {
+        return Err(format!(
+            "<DatatypeDefinition>'s first child must be <Datatype>, found <{}>",
+            children[0].tag_name().name()
+        ));
+    }
+
+    let datatype = resolve_iri(children[0], prefixes)?;
+    let range = data_range(children[1], prefixes)?;
+
+    Ok(Axiom::AxiomDatatypeDefinition(Vec::new(), datatype, range))
 }
 
 #[cfg(test)]
@@ -46,14 +69,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #694"]
     fn parses_simple_datatype_definition() {
-        let d = doc(
-            r#"<DatatypeDefinition>
+        let d = doc(r#"<DatatypeDefinition>
                  <Datatype IRI="http://example.org/AdultAge"/>
                  <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
-               </DatatypeDefinition>"#,
-        );
+               </DatatypeDefinition>"#);
         let axiom = parse_datatype_definition(d.root_element(), &Prefixes::new()).unwrap();
         match axiom {
             Axiom::AxiomDatatypeDefinition(anns, dt, dr) => {
@@ -73,17 +93,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #694"]
     fn parses_datatype_definition_with_restriction() {
-        let d = doc(
-            r#"<DatatypeDefinition>
+        let d = doc(r#"<DatatypeDefinition>
                  <Datatype IRI="http://example.org/NegInt"/>
                  <DatatypeRestriction>
                    <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
                    <FacetRestriction facet="http://www.w3.org/2001/XMLSchema#maxExclusive"><Literal>0</Literal></FacetRestriction>
                  </DatatypeRestriction>
-               </DatatypeDefinition>"#,
-        );
+               </DatatypeDefinition>"#);
         let axiom = parse_datatype_definition(d.root_element(), &Prefixes::new()).unwrap();
         match axiom {
             Axiom::AxiomDatatypeDefinition(_, dt, dr) => {
@@ -98,7 +115,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #694"]
     fn errors_on_wrong_child_count() {
         let d = doc(
             r#"<DatatypeDefinition><Datatype IRI="http://example.org/AdultAge"/></DatatypeDefinition>"#,
@@ -108,18 +124,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not yet implemented, see #694"]
     fn errors_on_axiom_level_annotation() {
-        let d = doc(
-            r#"<DatatypeDefinition>
+        let d = doc(r#"<DatatypeDefinition>
                  <Annotation>
                    <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
                    <Literal>why</Literal>
                  </Annotation>
                  <Datatype IRI="http://example.org/AdultAge"/>
                  <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
-               </DatatypeDefinition>"#,
-        );
+               </DatatypeDefinition>"#);
         let err = parse_datatype_definition(d.root_element(), &Prefixes::new()).unwrap_err();
         assert!(err.contains("608"));
     }
