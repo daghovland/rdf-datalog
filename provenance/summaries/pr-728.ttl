@@ -1,0 +1,34 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+ghpull:728 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "deps: bump ctutils for 2026-10-23 RUSTSEC-2026-0385" ;
+    bl:number 728 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:727 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr728 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:727 ;
+    prov:startedAtTime "2026-10-23T16:22:57Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-23T16:22:57Z"^^xsd:dateTime .
+
+session:pr728Summary a agp:TranscriptSummary ;
+    agp:summaryText "A second fresh RUSTSEC advisory in two days (RUSTSEC-2026-0385, ctutils 0.4.2, non-constant-time mask generation) started failing Security Audit CI again right after #726 (the previous day's batch fix) had cleared PR #720/#721/#722 and they'd been rebased onto it. Same root cause class as #724/#726 -- a brand-new advisory, unrelated to any open PR's own diff. Initially verified the fix inside #517's own worktree (feat/517-openapi-docs-coverage) to confirm cargo update -p ctutils alone (0.4.2 -> 0.4.5) cleared the finding (cargo audit: 1 vulnerability -> 0, same 3 pre-existing informational warnings unchanged) before deciding where the change belonged." ;
+    agp:reasoningFor ghpull:728 ;
+    prov:wasGeneratedBy session:pr728 ;
+    prov:wasAttributedTo session:claudeSonnet5 ;
+    agp:decisionPoint session:pr728Decision .
+
+session:pr728Decision a agp:Decision ;
+    agp:summaryText "Reverted the verification change out of #517's worktree and instead opened a dedicated issue/worktree/PR (#727/#728) for the dependency bump, exactly mirroring #724/#726's shape, rather than committing the fix inside whichever feature PR happened to be open when the advisory landed." ;
+    agp:alternative "Landing the ctutils bump directly inside #517's (or #507's or #694's) branch was rejected: it's an unrelated, repo-wide CI infrastructure fix that happens to block three unrelated PRs simultaneously, not something that belongs to any one of them. Mixing it into a feature branch would misattribute the change, complicate that PR's own review, and need repeating in the other two branches anyway -- a single shared dependency PR that each blocked branch rebases onto (as already established by #724/#726 the day before) is the right unit of change." .
