@@ -284,6 +284,39 @@
     .sample-btn { background: none; border: 1px solid #ccc; color: #444; border-radius: 4px;
                   padding: 0.3rem 0.75rem; font-size: 0.82rem; cursor: pointer; }
     .sample-btn:hover { background: #f0f0f0; }
+    /* LLM chat panel (#626, epic #184) */
+    .chat-toggle-btn { position: fixed; bottom: 1.25rem; right: 1.25rem; z-index: 90;
+                       width: 3rem; height: 3rem; border-radius: 50%; background: #2b6cb0;
+                       color: #fff; font-size: 1.3rem; line-height: 1; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+                       display: flex; align-items: center; justify-content: center; }
+    .chat-toggle-btn:hover { background: #2c5282; }
+    .chat-panel { position: fixed; bottom: 5rem; right: 1.25rem; z-index: 90; width: 22rem;
+                  max-height: 70vh; background: #fff; border: 1px solid #ccc; border-radius: 8px;
+                  box-shadow: 0 4px 24px rgba(0,0,0,0.25); display: flex; flex-direction: column;
+                  overflow: hidden; }
+    .chat-panel[hidden] { display: none; }
+    .chat-header { display: flex; align-items: center; justify-content: space-between;
+                   padding: 0.6rem 0.8rem; background: #222; color: #fff; }
+    .chat-header h3 { margin: 0; font-size: 0.95rem; }
+    .chat-header-close { background: none; border: none; color: #fff; font-size: 1.1rem;
+                         cursor: pointer; padding: 0; line-height: 1; }
+    .chat-key-row { padding: 0.5rem 0.7rem; border-bottom: 1px solid #eee; display: flex;
+                    flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+    .chat-key-row input { flex: 1; min-width: 7rem; font-size: 0.78rem; padding: 0.22rem 0.4rem;
+                          border: 1px solid #ccc; border-radius: 3px; }
+    .chat-key-row button { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
+    .chat-key-status { font-size: 0.72rem; color: #276749; width: 100%; }
+    .chat-history { flex: 1; overflow-y: auto; padding: 0.6rem 0.7rem; min-height: 8rem;
+                    max-height: 28rem; font-size: 0.82rem; }
+    .chat-msg { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; border-radius: 6px; max-width: 90%; }
+    .chat-msg.user { background: #e8f0fb; margin-left: auto; }
+    .chat-msg.assistant { background: #f0f0f0; }
+    .chat-msg-role { display: block; font-size: 0.68rem; color: #888; margin-bottom: 0.1rem; }
+    .chat-empty-hint { font-size: 0.78rem; color: #888; }
+    .chat-input-row { display: flex; gap: 0.4rem; padding: 0.5rem 0.7rem; border-top: 1px solid #eee; }
+    .chat-input-row textarea { flex: 1; resize: none; font-size: 0.82rem; padding: 0.35rem 0.5rem;
+                               border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+    .chat-input-row button { padding: 0.35rem 0.9rem; font-size: 0.82rem; }
   </style>
 </head>
 <body>
@@ -2545,6 +2578,7 @@
       renderPrefixList();
       renderHistory();
       initAuth();   // set up auth panel (async; runs in parallel with other init)
+      initChatPanel();
       loadStats();
       initDropZone();
       initKeyboardShortcuts();
@@ -2635,8 +2669,132 @@ SELECT ?person ?label ?age WHERE {
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') {
         document.getElementById('sparql-help-modal').classList.remove('open');
+        document.getElementById('chat-privacy-modal').classList.remove('open');
       }
     });
+
+    // ── LLM chat panel (#626, epic #184) ────────────────────────────────────
+    //
+    // Draft-only UI: a provider API key (stored separately from the dagalog
+    // bearer token above), a one-time privacy notice, and session-only
+    // message history. No LLM API call is made here — that is #628; sending
+    // a message currently just appends it and a placeholder reply so the
+    // history/notice/key plumbing can be exercised and reused as-is once
+    // #628 lands.
+    const CHAT_APIKEY_KEY = 'dagalog-llm-provider-key';   // localStorage — persists across sessions
+    const CHAT_PRIVACY_ACK_KEY = 'dagalog-llm-privacy-ack'; // localStorage — "don't show again"
+    let chatHistory = [];   // session-only: in-memory, never persisted; lost on reload
+    let chatPanelOpen = false;
+
+    function toggleChatPanel() {
+      chatPanelOpen = !chatPanelOpen;
+      document.getElementById('chat-panel').hidden = !chatPanelOpen;
+      if (chatPanelOpen) {
+        const input = document.getElementById('chat-input');
+        if (input) input.focus();
+      }
+    }
+
+    function setChatApiKey() {
+      const val = document.getElementById('chat-apikey-input').value.trim();
+      if (!val) return;
+      try { localStorage.setItem(CHAT_APIKEY_KEY, val); } catch { /* storage unavailable */ }
+      document.getElementById('chat-apikey-input').value = '';
+      document.getElementById('chat-apikey-status').textContent = 'Key saved';
+      document.getElementById('chat-clear-key-btn').style.display = '';
+    }
+
+    function clearChatApiKey() {
+      try { localStorage.removeItem(CHAT_APIKEY_KEY); } catch { /* storage unavailable */ }
+      document.getElementById('chat-apikey-status').textContent = '';
+      document.getElementById('chat-clear-key-btn').style.display = 'none';
+    }
+
+    function initChatPanel() {
+      try {
+        if (localStorage.getItem(CHAT_APIKEY_KEY)) {
+          document.getElementById('chat-apikey-status').textContent = 'Key saved';
+          document.getElementById('chat-clear-key-btn').style.display = '';
+        }
+      } catch { /* storage unavailable — leave key panel in its default state */ }
+      const originEl = document.getElementById('chat-privacy-origin');
+      if (originEl) originEl.textContent = location.origin;
+      const input = document.getElementById('chat-input');
+      if (input) {
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendChatMessage();
+          }
+        });
+      }
+    }
+
+    function appendChatMessage(role, text) {
+      chatHistory.push({ role, text });
+      const hint = document.getElementById('chat-empty-hint');
+      if (hint) hint.remove();
+      const container = document.getElementById('chat-history');
+      const msg = document.createElement('div');
+      msg.className = 'chat-msg ' + role;
+      const roleLabel = document.createElement('span');
+      roleLabel.className = 'chat-msg-role';
+      roleLabel.textContent = role === 'user' ? 'You' : 'Assistant';
+      const body = document.createElement('span');
+      body.textContent = text;   // textContent, never innerHTML — this will carry LLM output (#628)
+      msg.appendChild(roleLabel);
+      msg.appendChild(body);
+      container.appendChild(msg);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Resolved when the privacy notice has been accepted this time (or was
+    // already acknowledged previously). Rejected if the user cancels.
+    let pendingChatPrivacyResolve = null;
+    let pendingChatPrivacyReject = null;
+
+    function ensureChatPrivacyAck() {
+      let acked = false;
+      try { acked = localStorage.getItem(CHAT_PRIVACY_ACK_KEY) === '1'; } catch { /* unavailable */ }
+      if (acked) return Promise.resolve();
+      document.getElementById('chat-privacy-modal').classList.add('open');
+      return new Promise((resolve, reject) => {
+        pendingChatPrivacyResolve = resolve;
+        pendingChatPrivacyReject = reject;
+      });
+    }
+
+    function acceptChatPrivacyNotice() {
+      try { localStorage.setItem(CHAT_PRIVACY_ACK_KEY, '1'); } catch { /* unavailable */ }
+      document.getElementById('chat-privacy-modal').classList.remove('open');
+      if (pendingChatPrivacyResolve) { pendingChatPrivacyResolve(); }
+      pendingChatPrivacyResolve = null;
+      pendingChatPrivacyReject = null;
+    }
+
+    function declineChatPrivacyNotice(e) {
+      // Clicking inside the modal box must not dismiss it — only a click on
+      // the backdrop itself, the close button, or Cancel (all of which call
+      // this with no event or with the backdrop as target).
+      if (e && e.target !== document.getElementById('chat-privacy-modal')) return;
+      document.getElementById('chat-privacy-modal').classList.remove('open');
+      if (pendingChatPrivacyReject) { pendingChatPrivacyReject(new Error('privacy notice declined')); }
+      pendingChatPrivacyResolve = null;
+      pendingChatPrivacyReject = null;
+    }
+
+    function sendChatMessage() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      ensureChatPrivacyAck().then(() => {
+        appendChatMessage('user', text);
+        input.value = '';
+        // No LLM API integration yet — see #628. This placeholder keeps the
+        // history/UI plumbing exercisable until the real call is wired in.
+        appendChatMessage('assistant', 'LLM integration is not wired up yet (see issue #628). Your message was recorded above.');
+      }).catch(() => { /* user declined the privacy notice — message not sent */ });
+    }
   </script>
 
   <!-- ── SPARQL help modal ──────────────────────────────────────────────────── -->
@@ -2681,6 +2839,65 @@ SELECT ?contact WHERE {
         Full guide: <a href="docs/user/sparql-guide.md" target="_blank" rel="noopener">docs/user/sparql-guide.md</a>
         &middot; <a href="https://www.w3.org/TR/sparql11-query/" target="_blank" rel="noopener">W3C SPARQL 1.1 spec</a>
       </p>
+    </div>
+  </div>
+
+  <!-- ── LLM chat panel (#626, epic #184) ────────────────────────────────────
+       Draft-only chat UI: provider-key input (localStorage, separate from the
+       dagalog bearer-token sessionStorage above), one-time privacy notice,
+       session-only message history. No LLM API call is wired up yet — that is
+       issue #628. -->
+  <button class="chat-toggle-btn" id="chat-toggle-btn" onclick="toggleChatPanel()"
+          title="LLM chat (draft only)" aria-label="Open LLM chat panel">&#128172;</button>
+
+  <div class="chat-panel" id="chat-panel" hidden>
+    <div class="chat-header">
+      <h3>Chat (draft only)</h3>
+      <button class="chat-header-close" onclick="toggleChatPanel()" aria-label="Collapse chat panel">&#x2715;</button>
+    </div>
+    <div class="chat-key-row">
+      <span>Provider key:</span>
+      <input id="chat-apikey-input" type="password" placeholder="Paste LLM provider API key…" />
+      <button onclick="setChatApiKey()">Save</button>
+      <button onclick="clearChatApiKey()" id="chat-clear-key-btn" style="display:none">Forget</button>
+      <span id="chat-apikey-status" class="chat-key-status"></span>
+    </div>
+    <div class="chat-history" id="chat-history">
+      <p class="chat-empty-hint" id="chat-empty-hint">
+        Ask a question about this dataset. Nothing is sent anywhere until you send
+        your first message (see the privacy notice).
+      </p>
+    </div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="Type a message…"></textarea>
+      <button id="chat-send-btn" onclick="sendChatMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- ── LLM chat privacy notice ──────────────────────────────────────────────
+       Shown once, before the first chat message is sent (localStorage-gated,
+       "don't show again" — same persisted-per-viewer pattern as the graph-view
+       layout save, PR #255). -->
+  <div class="modal-backdrop" id="chat-privacy-modal" onclick="declineChatPrivacyNotice(event)">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-label="LLM chat privacy notice">
+      <button class="modal-close" onclick="declineChatPrivacyNotice()" aria-label="Close">&#x2715;</button>
+      <h3>Before you chat</h3>
+      <p style="font-size:0.85rem">
+        Sending a chat message sends a summary of this dataset's schema (predicates
+        and classes, not your raw data unless you paste it) and your message text
+        to the LLM provider's API (<code>api.anthropic.com</code>), along with the
+        provider API key you entered above. This dagalog server
+        (<code id="chat-privacy-origin"></code>) never sees that key and is not
+        involved in the chat call.
+      </p>
+      <p style="font-size:0.85rem">
+        Draft-only: the assistant can only propose SPARQL/Turtle for you to review
+        and run yourself — it never executes a query on its own.
+      </p>
+      <div class="actions">
+        <button onclick="acceptChatPrivacyNotice()">I understand, continue</button>
+        <button class="sample-btn" onclick="declineChatPrivacyNotice()">Cancel</button>
+      </div>
     </div>
   </div>
 

@@ -1604,3 +1604,264 @@ async fn construct_wildcard_renders_as_pre_block() {
 
     driver.quit().await.unwrap();
 }
+
+// ── LLM chat panel (#626, epic #184) ────────────────────────────────────────
+//
+// Draft-only chat UI: provider-key input/storage, one-time privacy notice,
+// session-only message history. No LLM API call is made by this feature
+// (that's #628) — these tests only exercise the panel's own UI plumbing.
+// See docs/plans/LLM_CHAT_ARCHITECTURE_PLAN.md for the design this implements.
+
+#[tokio::test]
+async fn chat_panel_toggles_open_and_closed() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Collapsed by default.
+    let panel = driver.find(By::Css("#chat-panel")).await.unwrap();
+    assert!(
+        !panel.is_displayed().await.unwrap(),
+        "chat panel should start collapsed"
+    );
+
+    driver
+        .find(By::Css("#chat-toggle-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(
+            &driver,
+            "return document.getElementById('chat-panel').hidden === false;",
+            2000
+        )
+        .await,
+        "chat panel should expand after clicking the toggle button"
+    );
+
+    driver
+        .find(By::Css(".chat-header-close"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert!(
+        wait_for_js(
+            &driver,
+            "return document.getElementById('chat-panel').hidden === true;",
+            2000
+        )
+        .await,
+        "chat panel should collapse after clicking its close button"
+    );
+
+    driver.quit().await.unwrap();
+}
+
+/// The provider key must land in `localStorage` under its own key, distinct
+/// from the dagalog bearer-token/API-key storage (which uses `sessionStorage`
+/// under different key names). See
+/// docs/plans/LLM_CHAT_ARCHITECTURE_PLAN.md §1 ("Two credentials in the browser").
+#[tokio::test]
+async fn chat_provider_key_saved_separately_from_dagalog_token() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    driver
+        .find(By::Css("#chat-toggle-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    let input = driver.find(By::Css("#chat-apikey-input")).await.unwrap();
+    input.send_keys("sk-test-provider-key").await.unwrap();
+    driver
+        .find(By::Css(".chat-key-row button"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    let stored = driver
+        .execute(
+            "return localStorage.getItem('dagalog-llm-provider-key');",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.json().as_str(), Some("sk-test-provider-key"));
+
+    // Must never land in the dagalog token's own sessionStorage slot.
+    let dagalog_key = driver
+        .execute(
+            "return sessionStorage.getItem('dagalog-api-key');",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert!(dagalog_key.json().as_str().is_none());
+
+    assert!(
+        wait_for_text(&driver, "#chat-apikey-status", 1000).await,
+        "status text should confirm the key was saved"
+    );
+
+    // "Forget" clears it.
+    driver
+        .find(By::Css("#chat-clear-key-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    let cleared = driver
+        .execute(
+            "return localStorage.getItem('dagalog-llm-provider-key');",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        cleared.json().as_str().is_none(),
+        "forget should remove the stored key"
+    );
+
+    driver.quit().await.unwrap();
+}
+
+/// The privacy notice appears before the first message is sent, and does not
+/// reappear on a later send/reload once acknowledged (localStorage-gated
+/// "don't show again", same persisted-per-viewer pattern as PR #255's
+/// graph-view layout save).
+#[tokio::test]
+async fn chat_privacy_notice_shown_once_before_first_send() {
+    let driver = match connect_driver().await {
+        Some(d) => d,
+        None => return,
+    };
+    let server = common::TestServer::start(FIXTURE).await;
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    driver
+        .find(By::Css("#chat-toggle-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    driver
+        .find(By::Css("#chat-input"))
+        .await
+        .unwrap()
+        .send_keys("hello")
+        .await
+        .unwrap();
+    driver
+        .find(By::Css("#chat-send-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_js(
+            &driver,
+            "return document.getElementById('chat-privacy-modal').classList.contains('open');",
+            2000
+        )
+        .await,
+        "privacy notice should appear before the first message is sent"
+    );
+
+    // Message must not have been recorded yet — only after the user accepts.
+    let msg_count_before = driver.find_all(By::Css(".chat-msg")).await.unwrap().len();
+    assert_eq!(
+        msg_count_before, 0,
+        "message must not be sent until the notice is accepted"
+    );
+
+    driver
+        .find(By::Css("#chat-privacy-modal .actions button:first-child"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    assert!(
+        wait_for_element(&driver, ".chat-msg.user", 2000).await,
+        "message should be appended once the privacy notice is accepted"
+    );
+    let acked = driver
+        .execute(
+            "return localStorage.getItem('dagalog-llm-privacy-ack');",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(acked.json().as_str(), Some("1"));
+
+    // Reload: history is session-only (cleared), but the privacy ack persists
+    // so a second send does not show the notice again.
+    driver.goto(&server.base_url).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    driver
+        .find(By::Css("#chat-toggle-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert_eq!(
+        driver.find_all(By::Css(".chat-msg")).await.unwrap().len(),
+        0,
+        "message history must not persist across a reload"
+    );
+
+    driver
+        .find(By::Css("#chat-input"))
+        .await
+        .unwrap()
+        .send_keys("second message")
+        .await
+        .unwrap();
+    driver
+        .find(By::Css("#chat-send-btn"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let modal_open_again = driver
+        .execute(
+            "return document.getElementById('chat-privacy-modal').classList.contains('open');",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        modal_open_again.json().as_bool(),
+        Some(false),
+        "notice must not reappear once previously acknowledged"
+    );
+
+    driver.quit().await.unwrap();
+}
