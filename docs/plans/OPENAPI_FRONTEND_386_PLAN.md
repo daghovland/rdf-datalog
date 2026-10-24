@@ -70,3 +70,36 @@ Integration tests in `sparql_endpoint/tests/` verifying:
 - `GET /swagger-ui/` returns 200 HTML referencing the spec URL.
 - Existing auth tests extended/checked to confirm the new routes behave like
   other `GET` read routes under `AuthConfig::ApiKey { require_for_reads: true, .. }`.
+
+## Follow-up coverage ([#517](https://github.com/daghovland/rdf-datalog/issues/517))
+
+The routes deferred above were added to `build_openapi()` following the
+same hand-built pattern. Design decisions specific to that follow-up:
+
+- **Multipart bodies** (RML's `POST /{name}/rml`/`POST /rml/map`, OTTR's
+  `POST /{name}/ottr`) are documented as a single opaque
+  `multipart/form-data` string-schema body, not a per-part schema (utoipa's
+  `Content`/`Schema` types don't have a clean way to express "one named part
+  plus N arbitrarily-named file parts" short of a bespoke JSON Schema). This
+  is the resolution to the "awkward to express cleanly as a single OpenAPI
+  schema" problem cited above for these two areas.
+- **`txId`** (proprietary transaction API) is documented only as a query
+  parameter on the root `/sparql` route. `dataset_routes.rs`'s
+  `/{name}/sparql`/`/{name}/query`/`/{name}/update` handlers don't look at
+  `txId` at all, so adding the parameter there would misdocument behavior
+  that doesn't exist.
+- Root `POST /sparql`'s request body now documents two content types
+  (`application/sparql-query` and `application/sparql-update`), since that
+  handler dispatches on `Content-Type` to either a query or an update —
+  the update path is the only way to write within a transaction, since
+  `/{name}/update` doesn't honor `txId`.
+- The rules endpoints (`POST /{name}/rules(/{ruleset_id})`,
+  `DELETE /{name}/rules/{ruleset_id}`) and `POST /transaction/begin` return
+  axum `Json<...>` bodies, i.e. plain `application/json` — distinct from
+  the SPARQL-results-shaped `application/sparql-results+json` the admin/
+  query routes use, so a separate `ok_plain_json_response` helper documents
+  them correctly.
+
+Several other wired routes were found undocumented along the way (some
+incorrectly listed as covered above) and are out of scope for #517 — see
+follow-up [#723](https://github.com/daghovland/rdf-datalog/issues/723).
