@@ -48,8 +48,49 @@ pub enum AnnotationValue {
     IriAnnotation(Iri),
 }
 
-/// An annotation: a property paired with its value.
-pub type Annotation = (AnnotationProperty, AnnotationValue);
+/// An annotation: a property paired with its value, plus any
+/// meta-annotations (annotations on this annotation itself), per the OWL 2
+/// structural spec's recursive `Annotation := annotationAnnotations
+/// AnnotationProperty AnnotationValue` production. A type alias can't
+/// express this (a self-referential `type Annotation = (Vec<Annotation>,
+/// ...)` is an infinite-size type error), hence the struct. See
+/// [#695](https://github.com/daghovland/rdf-datalog/issues/695) and
+/// [`docs/plans/OWL_META_ANNOTATIONS_695_PLAN.md`](../../docs/plans/OWL_META_ANNOTATIONS_695_PLAN.md).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Annotation {
+    /// The annotation property.
+    pub property: AnnotationProperty,
+    /// The annotation's value.
+    pub value: AnnotationValue,
+    /// Meta-annotations on this annotation. Empty for every concrete
+    /// syntax/translator that doesn't yet populate it — see the plan doc's
+    /// per-crate scope table.
+    pub annotations: Vec<Annotation>,
+}
+
+impl Annotation {
+    /// A plain (non-meta-annotated) annotation — the common case.
+    pub fn new(property: AnnotationProperty, value: AnnotationValue) -> Self {
+        Self {
+            property,
+            value,
+            annotations: Vec::new(),
+        }
+    }
+
+    /// An annotation that itself carries meta-annotations.
+    pub fn with_meta(
+        property: AnnotationProperty,
+        value: AnnotationValue,
+        annotations: Vec<Annotation>,
+    ) -> Self {
+        Self {
+            property,
+            value,
+            annotations,
+        }
+    }
+}
 
 /// Axioms about annotation properties and assertions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

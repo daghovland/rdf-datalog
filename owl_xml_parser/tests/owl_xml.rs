@@ -246,7 +246,7 @@ fn ontology_level_annotation() {
     let onto = owl_xml_parser::parse(&src).unwrap();
     assert_eq!(onto.annotations.len(), 1);
     assert_eq!(
-        onto.annotations[0].0,
+        onto.annotations[0].property,
         iri("http://www.w3.org/2000/01/rdf-schema#comment")
     );
 }

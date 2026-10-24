@@ -445,6 +445,62 @@ fn roundtrips_class_frame_with_declaration_annotations() {
     );
 }
 
+/// A meta-annotation (annotation on an annotation, issue #695): the
+/// `Annotations:` section's single item has its own leading `Annotations:`
+/// block. `assert_roundtrip`'s `HashSet<Axiom>` comparison already fails if
+/// serialization or re-parsing silently drops the nested annotation (since
+/// `Annotation` -- and hence `Axiom::AxiomDeclaration`'s containing tuple --
+/// derives `PartialEq`/`Eq` recursively), but the explicit length checks
+/// below pin down exactly what's being compared rather than relying on that
+/// implicitly.
+#[test]
+fn roundtrips_class_frame_with_meta_annotation() {
+    let text = assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        Ontology: <http://example.org/onto>
+        Class: :Pizza
+            Annotations: Annotations: rdfs:comment "src" rdfs:label "Pizza"
+            SubClassOf: :Food
+        "#,
+    );
+    let reparsed = manchester_parser::parse(&text).unwrap();
+    let decl_anns = reparsed
+        .axioms
+        .iter()
+        .find_map(|ax| match ax {
+            owl_ontology::Axiom::AxiomDeclaration((
+                anns,
+                owl_ontology::Entity::ClassDeclaration(_),
+            )) if !anns.is_empty() => Some(anns),
+            _ => None,
+        })
+        .expect("expected an annotated ClassDeclaration");
+    assert_eq!(decl_anns.len(), 1);
+    assert_eq!(decl_anns[0].annotations.len(), 1);
+}
+
+/// Two meta-annotations on the inner `Annotations:` block, followed by a
+/// second outer list item -- the one place the recursive
+/// `annotatedList(annotation)` grammar could attach a meta-annotation to
+/// the wrong list item across the comma separating list items.
+#[test]
+fn roundtrips_header_annotations_with_meta_annotations_and_second_item() {
+    let text = assert_roundtrip(
+        r#"
+        Prefix: : <http://example.org/onto#>
+        Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        Ontology: <http://example.org/onto>
+        Annotations: Annotations: rdfs:comment "m1", rdfs:seeAlso "m2" rdfs:label "Pizza", rdfs:creator "Dag"
+        "#,
+    );
+    let reparsed = manchester_parser::parse(&text).unwrap();
+    assert_eq!(reparsed.annotations.len(), 2);
+    assert_eq!(reparsed.annotations[0].annotations.len(), 2);
+    assert_eq!(reparsed.annotations[1].annotations.len(), 0);
+}
+
 // ── Phase 7: top-level misc (n-ary forms) ────────────────────────────────
 
 #[test]

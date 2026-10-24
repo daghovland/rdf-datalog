@@ -1,0 +1,37 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log main..HEAD --format=%aI` on
+# branch feat/695-owl-meta-annotations).
+
+ghpull:709 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "owl_ontology: Annotation type gains a slot for meta-annotations" ;
+    bl:number 709 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:695 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr709 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:695 ;
+    prov:startedAtTime "2026-10-08T12:47:55Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-08T13:16:12Z"^^xsd:dateTime .
+
+session:pr709Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #695 (filed while working #608, OWL/XML ABox axioms) asked for owl_ontology::Annotation -- a flat (AnnotationProperty, AnnotationValue) tuple -- to gain a slot for the OWL 2 structural spec's recursive annotationAnnotations production (an annotation can carry annotations on itself, a 'meta-annotation'). Checked provenance for owl_ontology/src/axioms.rs and crate:owl_ontology up front; related_to_file returned nothing, but grepping provenance/summaries for '#514'/'#588' found pr-571.ttl and pr-640.ttl, which established the Vec<Annotation>-per-axiom-variant convention and the practice of filing a real follow-up issue rather than leaving a code comment when a type-model gap turns out to be out of scope for the PR doing the discovering. A type alias can't be recursive (Annotation = (Vec<Annotation>, ...) is an infinite-size compile error), so Annotation became a struct (property, value, annotations: Vec<Annotation>) with Annotation::new/with_meta constructors. Grepped every *.rs file mentioning Annotation across the workspace, then let `cargo check --workspace --all-targets` iteratively surface every tuple-destructuring call site grep missed (two `for (ap, av) in annotations` loops in owl_to_rdf.rs, a test helper in tests/manchester_roundtrip.rs) rather than trusting the grep alone to be exhaustive. Read manchester_parser's and owl_functional_parser's actual grammars before deciding scope per crate: owl_functional_parser already parsed its own Annotation(...)'s nested annotationAnnotations and discarded the payload (its own module doc said so), so wiring the already-parsed Vec into the new field was a two-line change plus a matching nested Annotation(...) emission in serialize.rs via the existing fmt_axiom_annotations helper. manchester_parser's grammar uses the generic annotatedList(p) ::= [annotations] p {',' [annotations] p} pattern for annotationAnnotatedList, meaning each annotation list item can carry its own leading Annotations: block -- this needed an actual grammar change (annotation() now calls opt_leading_annotations(ctx) on itself before parsing the property+target), which is mutually recursive with opt_leading_annotations/annotations_section; this is safe in nom combinator-factory style because recursion happens through ordinary function calls returning concrete IResult values at each level, not through the opaque impl-Trait return type itself, so there's no 'recursive opaque type' compile error the way there would be for a literal recursive type alias. owl_xml_parser only got the mechanical Annotation::new(...) fix (no nested-<Annotation> parsing), since #608 is in flight in a separate worktree on that exact file -- filed as follow-up #710 rather than risk colliding with #608's edits. The OWL->RDF and RDF->OWL translation directions (owl2rl2datalog::owl_to_rdf, rdf_owl_translator) were updated to read/construct the new struct fields for the single annotation level, but recursively re-reifying meta-annotations via a further owl:Axiom node isn't defined by the W3C mapping spec's Translation_of_Annotations section the way the single-level case is, so that direction was filed as follow-up #711 instead of guessed at. Hit a disk-full (`No space left on device`) running the full `cargo test --workspace` locally, caused by a concurrent `cargo test` from a different worktree (626) filling the shared 79GB target dir -- confirmed via `ps aux` before concluding not to `cargo clean` while another worktree was mid-build (CLAUDE.md's own caution); validated instead by running fmt/clippy/check across the whole workspace (clean) plus `cargo test` scoped to every crate this change actually touches (owl-ontology, manchester-parser, owl-functional-parser, owl-xml-parser, owl2rl2datalog, rdf-owl-translator, plus the tests/manchester_roundtrip.rs and tests/real_world_ontologies.rs integration tests), all passing, and left the full-workspace run to CI's own disk." ;
+    agp:reasoningFor ghpull:709 ;
+    agp:decisionPoint session:pr709Decision ;
+    prov:wasGeneratedBy session:pr709 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr709Decision a agp:Decision ;
+    agp:summaryText "manchester_parser's annotation() and opt_leading_annotations()/annotations_section() became mutually recursive combinator-factory functions to support nested Annotations: blocks, rather than inventing a separate 'meta-annotation' parser. This mirrors the actual W3C Manchester Syntax grammar (annotationAnnotatedList ::= annotatedList(annotation), and annotatedList(p) ::= [annotations] p {...}) instead of approximating it, and keeps parsing and serialization symmetric: fmt_annotation in both manchester_parser::serialize and owl_functional_parser::serialize recurses into a.annotations via the same helper (ann_prefix / fmt_axiom_annotations) already used for axiom-level annotations, so no new formatting logic was needed for the nested case." ;
+    agp:alternative "Considered giving owl_xml_parser real nested-<Annotation> support in this PR too, since its grammar supports it exactly like the other two syntaxes. Rejected: issue #608 is actively editing owl_xml_parser/src/annotation.rs and related files in a separate, concurrently-running worktree; touching those files here risks a merge collision or silently reverting #608's in-progress work, and the issue instructions explicitly called this out as a coordination risk to avoid. Filed #710 instead, scoped to 'once #608 merges', so the work is tracked without the collision risk." .

@@ -290,9 +290,14 @@ impl<'a> Translator<'a> {
         self.triple_p(reification, OWL_ANNOTATED_SOURCE, subject);
         self.triple_p(reification, OWL_ANNOTATED_PROPERTY, predicate);
         self.triple_p(reification, OWL_ANNOTATED_TARGET, obj);
-        for (ap, av) in annotations {
-            let ap_id = self.full_iri(ap);
-            let av_id = self.annotation_value(av);
+        for ann in annotations {
+            // Meta-annotations (`ann.annotations`) are not reified further
+            // here -- the W3C mapping spec doesn't itself define how to
+            // recursively re-reify an annotation triple, and this needs its
+            // own design decision rather than a guess. See
+            // https://github.com/daghovland/rdf-datalog/issues/711.
+            let ap_id = self.full_iri(&ann.property);
+            let av_id = self.annotation_value(&ann.value);
             self.triple(reification, ap_id, av_id);
         }
     }
@@ -407,9 +412,9 @@ impl<'a> Translator<'a> {
         self.type_triple(node, type_iri);
         let list_head = self.rdf_list(member_ids);
         self.triple_p(node, OWL_MEMBERS, list_head);
-        for (ap, av) in annotations {
-            let ap_id = self.full_iri(ap);
-            let av_id = self.annotation_value(av);
+        for ann in annotations {
+            let ap_id = self.full_iri(&ann.property);
+            let av_id = self.annotation_value(&ann.value);
             self.triple(node, ap_id, av_id);
         }
     }
@@ -846,9 +851,9 @@ impl<'a> Translator<'a> {
             let import_id = self.iri(&import.0);
             self.triple_p(subject, OWL_IMPORT, import_id);
         }
-        for (ap, av) in &ontology.annotations {
-            let ap_id = self.full_iri(ap);
-            let av_id = self.annotation_value(av);
+        for ann in &ontology.annotations {
+            let ap_id = self.full_iri(&ann.property);
+            let av_id = self.annotation_value(&ann.value);
             self.triple(subject, ap_id, av_id);
         }
         Some(subject)
@@ -2532,7 +2537,7 @@ mod tests {
     }
 
     fn annotation(ap: &str, value: &str) -> Annotation {
-        (
+        Annotation::new(
             full(ap),
             AnnotationValue::LiteralAnnotation(GraphElement::GraphLiteral(
                 ingress::RdfLiteral::LangLiteral {
