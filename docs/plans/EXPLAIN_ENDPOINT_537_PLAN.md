@@ -223,11 +223,16 @@ Non-`BGP` components appear as `{"kind": "Optional"/"Union"/"Filter"/...,
   in the error case.
 - **`txId` (transactional read) path.** `run_transactional_query`
   (`query.rs:305`) duplicates the execution logic and does not call
-  `run_select_query`, so it does not see `explain` handling in this PR.
+  `run_select_query`, so it did not see `explain` handling in this PR.
   Rather than silently ignoring the parameter (which would look like a bug
   to a caller combining the two), `explain=true` together with a `txId`
-  parameter returns `400 Bad Request` with a message pointing at the
-  follow-up issue tracking that combination (filed below).
+  parameter originally returned `400 Bad Request` with a message pointing
+  at the follow-up issue tracking that combination (filed below). Resolved
+  by [#574](https://github.com/daghovland/rdf-datalog/issues/574):
+  `run_transactional_query` now calls the same
+  `crate::explain::explain_query_response` core `run_select_query` uses,
+  against its own snapshot+delta view, instead of duplicating the explain
+  plumbing or rejecting the combination.
 - **Form-body POST.** `explain` is read from the URL query-string
   parameters only (`AxumQuery<HashMap<String, String>>`, same extraction
   `txId` already uses), not from an `application/x-www-form-urlencoded`
@@ -379,7 +384,9 @@ each side's subtree is distinguishable without a bare unlabeled pair.
   walking sibling components for the static plan (see Decision 2's "Known
   limitation") — resolved by #573, see that section above.
 - `explain=true` combined with `txId` (transactional reads) — see "Smaller
-  decisions" above.
+  decisions" above — resolved by #574: `run_transactional_query` now calls
+  `explain_query_response` against its snapshot+delta view instead of
+  returning 400.
 
 Filed as GitHub issues (unlabeled, Status Todo, project #11) at the point
 they were identified, per this repo's CLAUDE.md:
