@@ -45,8 +45,8 @@ fi
 title="$(gh pr view "$pr" --json title -q '.title')"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 
-started="$(git log "${base}..HEAD" --format=%aI --reverse | head -1)"
-ended="$(git log "${base}..HEAD" --format=%aI | head -1)"
+started="$(git log "${base}..HEAD" --format=%aI --reverse | sed -n '1p')"
+ended="$(git log "${base}..HEAD" --format=%aI | sed -n '1p')"
 
 if [ -z "$started" ] || [ -z "$ended" ]; then
   echo "no commits found on $branch since $base — check the base-ref argument" >&2
