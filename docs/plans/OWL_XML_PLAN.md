@@ -441,6 +441,21 @@ mis-parsed.
 - Axiom-level `<Annotation>` children on property axioms and `HasKey` —
   #608.
 
+### `<DatatypeDefinition>` (closed by #694)
+
+[#694](https://github.com/daghovland/rdf-datalog/issues/694) closed the one
+piece of #608's gap list that didn't actually need ABox support or
+annotation-threading machinery: `DatatypeDefinition := axiomAnnotations
+Datatype DataRange` maps straight onto the existing
+`owl_ontology::Axiom::AxiomDatatypeDefinition(Vec<Annotation>, Datatype,
+DataRange)` — a leading `<Datatype>` entity reference (resolved the same way
+every other `<Datatype IRI="..."/>` reference in this crate is, via
+`iri::resolve_iri`) followed by one `DataRange`-grammar child, parsed by the
+same `data_range::data_range` function #606 already built in full. Axiom-level
+`<Annotation>` children remain deferred to #608, same as every other
+non-`Declaration` axiom in this crate (`axiom.rs`'s #606, `property_axiom.rs`'s
+#607). New module: `src/datatype_definition.rs`.
+
 ---
 
 ## Deferred follow-up
