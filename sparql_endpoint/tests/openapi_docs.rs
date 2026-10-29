@@ -114,6 +114,85 @@ async fn swagger_ui_redirects_without_trailing_slash() {
     );
 }
 
+/// `GET /api-docs/openapi.json` also documents the routes deferred by the
+/// first pass (#386): SHACL, RML, OTTR, the runtime-ruleset endpoint, and
+/// the proprietary transaction API. See
+/// [`docs/plans/OPENAPI_FRONTEND_386_PLAN.md`](../../docs/plans/OPENAPI_FRONTEND_386_PLAN.md)
+/// and [#517](https://github.com/daghovland/rdf-datalog/issues/517).
+#[tokio::test]
+async fn openapi_json_lists_deferred_386_routes() {
+    let server = common::TestServer::start(TURTLE).await;
+
+    let resp = server
+        .client
+        .get(format!("{}/api-docs/openapi.json", server.base_url))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be valid JSON");
+    let paths = body.get("paths").expect("missing `paths` field");
+
+    for expected in [
+        "/{name}/shacl",
+        "/{name}/rml",
+        "/rml/map",
+        "/{name}/ottr",
+        "/{name}/rules",
+        "/{name}/rules/{ruleset_id}",
+        "/transaction/begin",
+        "/transaction/{txId}/commit",
+        "/transaction/{txId}/rollback",
+    ] {
+        assert!(
+            paths.get(expected).is_some(),
+            "expected path `{expected}` to be documented, got paths: {paths}"
+        );
+    }
+
+    assert!(
+        paths["/{name}/shacl"].get("post").is_some(),
+        "missing POST /{{name}}/shacl"
+    );
+    assert!(
+        paths["/{name}/rml"].get("post").is_some(),
+        "missing POST /{{name}}/rml"
+    );
+    assert!(
+        paths["/rml/map"].get("post").is_some(),
+        "missing POST /rml/map"
+    );
+    assert!(
+        paths["/{name}/ottr"].get("post").is_some(),
+        "missing POST /{{name}}/ottr"
+    );
+    assert!(
+        paths["/{name}/rules"].get("post").is_some(),
+        "missing POST /{{name}}/rules"
+    );
+    assert!(
+        paths["/{name}/rules/{ruleset_id}"].get("post").is_some(),
+        "missing POST /{{name}}/rules/{{ruleset_id}}"
+    );
+    assert!(
+        paths["/{name}/rules/{ruleset_id}"].get("delete").is_some(),
+        "missing DELETE /{{name}}/rules/{{ruleset_id}}"
+    );
+    assert!(
+        paths["/transaction/begin"].get("post").is_some(),
+        "missing POST /transaction/begin"
+    );
+    assert!(
+        paths["/transaction/{txId}/commit"].get("post").is_some(),
+        "missing POST /transaction/{{txId}}/commit"
+    );
+    assert!(
+        paths["/transaction/{txId}/rollback"].get("post").is_some(),
+        "missing POST /transaction/{{txId}}/rollback"
+    );
+}
+
 /// Under `ApiKey { require_for_reads: true, .. }`, the docs routes require
 /// the same Bearer token as every other GET (read) route — no special-cased
 /// public exemption, consistent with the existing `/` frontend's treatment.
