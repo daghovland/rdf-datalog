@@ -595,7 +595,10 @@ corrected to describe this.
   silently dropping it, consistent with this crate's policy elsewhere) but
   points at a separate new follow-up issue, not #608, since fixing it needs
   an `owl_ontology` type-model change shared across all three parsers, out
-  of this crate's scope alone.
+  of this crate's scope alone. **Resolved:** the `owl_ontology` type-model
+  change landed in #709, and `owl_xml_parser`'s own nested-`<Annotation>`
+  parsing in [#710](https://github.com/daghovland/rdf-datalog/issues/710) —
+  see `docs/plans/OWL_META_ANNOTATIONS_695_PLAN.md`.
 
 ---
 
