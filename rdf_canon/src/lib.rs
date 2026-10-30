@@ -21,16 +21,90 @@ use ingress::{
     XSD_BOOLEAN, XSD_DATE, XSD_DATE_TIME, XSD_DECIMAL, XSD_DOUBLE, XSD_DURATION, XSD_FLOAT,
     XSD_INTEGER, XSD_TIME,
 };
-use oxrdf::{BlankNode, Dataset, GraphName, Literal, NamedNode, Quad, Subject, Term};
+use oxrdf::{BlankNode, Dataset, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
 use rdf_canon_upstream::canonicalize;
+
+// ── oxrdf-0.2.4 boundary conversion ───────────────────────────────────────────
+//
+// `rdf-canon-upstream` (the `rdf-canon` crate on crates.io, aliased above) is
+// hard-pinned to oxrdf 0.2.4 upstream with no 0.3-compatible release. The rest
+// of this crate (and the workspace, via `turtle`) targets oxrdf 0.3.3, so we
+// build the `Dataset` we hand to callers' data using 0.3.3 types as usual and
+// convert into a throwaway 0.2.4 `Dataset` only at the two `canonicalize()`
+// call sites below. See #733.
+
+fn graph_name_to_v02(graph_name: &GraphName) -> oxrdf02::GraphName {
+    match graph_name {
+        GraphName::NamedNode(n) => {
+            oxrdf02::GraphName::NamedNode(oxrdf02::NamedNode::new_unchecked(n.as_str()))
+        }
+        GraphName::BlankNode(b) => {
+            oxrdf02::GraphName::BlankNode(oxrdf02::BlankNode::new_unchecked(b.as_str()))
+        }
+        GraphName::DefaultGraph => oxrdf02::GraphName::DefaultGraph,
+    }
+}
+
+fn subject_to_v02(subject: &NamedOrBlankNode) -> oxrdf02::Subject {
+    match subject {
+        NamedOrBlankNode::NamedNode(n) => {
+            oxrdf02::Subject::NamedNode(oxrdf02::NamedNode::new_unchecked(n.as_str()))
+        }
+        NamedOrBlankNode::BlankNode(b) => {
+            oxrdf02::Subject::BlankNode(oxrdf02::BlankNode::new_unchecked(b.as_str()))
+        }
+    }
+}
+
+fn term_to_v02(term: &Term) -> oxrdf02::Term {
+    match term {
+        Term::NamedNode(n) => {
+            oxrdf02::Term::NamedNode(oxrdf02::NamedNode::new_unchecked(n.as_str()))
+        }
+        Term::BlankNode(b) => {
+            oxrdf02::Term::BlankNode(oxrdf02::BlankNode::new_unchecked(b.as_str()))
+        }
+        Term::Literal(l) => oxrdf02::Term::Literal(literal_to_v02(l)),
+        #[allow(unreachable_patterns)]
+        _ => unreachable!("RDF 1.2 triple terms are never constructed by this crate (#143)"),
+    }
+}
+
+fn literal_to_v02(literal: &Literal) -> oxrdf02::Literal {
+    match literal.language() {
+        Some(lang) => {
+            oxrdf02::Literal::new_language_tagged_literal_unchecked(literal.value(), lang)
+        }
+        None => oxrdf02::Literal::new_typed_literal(
+            literal.value(),
+            oxrdf02::NamedNode::new_unchecked(literal.datatype().as_str()),
+        ),
+    }
+}
+
+fn dataset_to_v02(dataset: &Dataset) -> oxrdf02::Dataset {
+    dataset
+        .iter()
+        .map(|q| {
+            oxrdf02::Quad::new(
+                subject_to_v02(&q.subject.into_owned()),
+                oxrdf02::NamedNode::new_unchecked(q.predicate.as_str()),
+                term_to_v02(&q.object.into_owned()),
+                graph_name_to_v02(&q.graph_name.into_owned()),
+            )
+        })
+        .collect()
+}
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
 
-fn resource_to_subject(resource: &RdfResource) -> Subject {
+fn resource_to_subject(resource: &RdfResource) -> NamedOrBlankNode {
     match resource {
-        RdfResource::Iri(iri) => Subject::NamedNode(NamedNode::new_unchecked(iri.0.clone())),
+        RdfResource::Iri(iri) => {
+            NamedOrBlankNode::NamedNode(NamedNode::new_unchecked(iri.0.clone()))
+        }
         RdfResource::AnonymousBlankNode(id) => {
-            Subject::BlankNode(BlankNode::new_unchecked(format!("b{id}")))
+            NamedOrBlankNode::BlankNode(BlankNode::new_unchecked(format!("b{id}")))
         }
     }
 }
@@ -101,7 +175,7 @@ fn literal_to_oxrdf(literal: &RdfLiteral) -> Literal {
     }
 }
 
-fn element_to_subject(element: &GraphElement) -> Option<Subject> {
+fn element_to_subject(element: &GraphElement) -> Option<NamedOrBlankNode> {
     match element {
         GraphElement::NodeOrEdge(r) => Some(resource_to_subject(r)),
         // Literals cannot be subjects in RDF 1.1; triple term subjects require RDF 1.2 (#143).
@@ -198,7 +272,7 @@ fn build_oxrdf_quad(
 /// cycles).
 pub fn canonicalize_dataset(store: &Datastore) -> Result<String, String> {
     let dataset = datastore_to_oxrdf_dataset(store);
-    canonicalize(&dataset).map_err(|e| e.to_string())
+    canonicalize(&dataset_to_v02(&dataset)).map_err(|e| e.to_string())
 }
 
 /// Canonicalize a single named graph to an N-Quads string (RDFC-1.0).
@@ -224,7 +298,7 @@ pub fn canonicalize_graph(store: &Datastore, graph_id: GraphElementId) -> Result
             dataset.insert(&oxquad);
         }
     }
-    canonicalize(&dataset).map_err(|e| e.to_string())
+    canonicalize(&dataset_to_v02(&dataset)).map_err(|e| e.to_string())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

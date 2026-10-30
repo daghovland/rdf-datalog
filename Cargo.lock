@@ -2756,6 +2756,7 @@ dependencies = [
  "dag-rdf",
  "ingress",
  "oxrdf 0.2.4",
+ "oxrdf 0.3.4",
  "rdf-canon",
 ]
 

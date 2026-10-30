@@ -7,5 +7,11 @@ description = "RDF Dataset Canonicalization (RDFC-1.0/URDNA2015) over Dagalog's 
 [dependencies]
 dag-rdf = { path = "../dag_rdf" }
 ingress = { path = "../ingress" }
-oxrdf = "0.2"
+oxrdf = "0.3.3"
+# `rdf-canon` (aliased `rdf-canon-upstream` below) is hard-pinned to oxrdf 0.2.4
+# upstream (https://crates.io/crates/rdf-canon) with no 0.3-compatible release.
+# We build our own `Dataset`/`Quad` values against the workspace-wide oxrdf
+# 0.3.3 (matching `turtle`'s pin) and convert to this 0.2.4 copy only at the
+# call boundary into `canonicalize()`. See #733.
+oxrdf02 = { package = "oxrdf", version = "0.2.4" }
 rdf-canon-upstream = { package = "rdf-canon", version = "0.15" }
