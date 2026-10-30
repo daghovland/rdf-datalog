@@ -18,21 +18,4 @@ ignore = [
     # on untrusted input. Re-check if any future dependency activates
     # rust_decimal's rkyv feature. See #375.
     "RUSTSEC-2026-0235",
-    # RUSTSEC-2026-0367/-0368/-0369: zip 3.0.0's ZipArchive::extract()/
-    # ZipStreamReader::extract() apply Unix permissions (including SUID/SGID
-    # bits) and symlink targets from zip entries without confining them to
-    # the destination directory, when extracting an attacker-controlled
-    # archive. zip is pulled in transitively via utoipa-swagger-ui's
-    # "vendored" feature, which uses it only to unpack utoipa-swagger-ui's
-    # own pinned, build-time-embedded Swagger UI release archive — never
-    # user- or network-supplied zip data. The actual escape vectors in these
-    # advisories are not reachable from this workspace's use of the crate.
-    # Fixed upstream by zip >= 9.0.0, which requires utoipa-swagger-ui >= 10.0
-    # and, in turn, utoipa >= 6.0 — a breaking API bump deferred to #725
-    # (blocked on #517's in-flight PR, which is concurrently editing the one
-    # file utoipa 6.0 would require changes in). Remove these three entries
-    # once #725 lands.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
 ]
