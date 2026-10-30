@@ -247,18 +247,26 @@ pub fn execute_with_profile(
     (result, profile)
 }
 
+/// The top-level `WHERE` clause's component list, regardless of query form.
+/// Shared by `execute_inner` and [`crate::cyclic_bgp`]'s recursive
+/// `{ SELECT ... }` subquery descent.
+pub(crate) fn where_clause_of(query: &Query) -> &[QueryComponent] {
+    match query {
+        Query::Select { where_clause, .. } => where_clause.as_slice(),
+        Query::Ask { where_clause, .. } => where_clause.as_slice(),
+        Query::Construct { where_clause, .. } => where_clause.as_slice(),
+        Query::Describe { where_clause, .. } => where_clause.as_slice(),
+    }
+}
+
 fn execute_inner(
     query: &Query,
     datastore: &Datastore,
     network: NetworkPolicy,
     deadline: &Deadline,
 ) -> Result<QueryResult, ExecError> {
-    let where_clause = match query {
-        Query::Select { where_clause, .. } => where_clause.as_slice(),
-        Query::Ask { where_clause, .. } => where_clause.as_slice(),
-        Query::Construct { where_clause, .. } => where_clause.as_slice(),
-        Query::Describe { where_clause, .. } => where_clause.as_slice(),
-    };
+    let where_clause = where_clause_of(query);
+    crate::cyclic_bgp::warn_on_cyclic_bgps(where_clause);
 
     // Apply network policy to SERVICE clauses.
     match network {

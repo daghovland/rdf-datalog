@@ -21,6 +21,7 @@ Contact: hovlanddag@gmail.com
 
 pub mod ast;
 mod component_ordering;
+mod cyclic_bgp;
 pub mod deadline;
 pub mod error;
 pub mod execute;
@@ -34,6 +35,12 @@ pub use execute::{
     execute_with_base, execute_with_profile, QueryResult, ResolvedTriple, SelectResult,
     SolutionRow,
 };
+// Re-exported solely so `tests/join_reorder_benchmark.rs` can exercise the
+// one real cyclic-BGP-detection implementation directly instead of
+// maintaining a duplicate copy that could silently drift out of sync — see
+// `cyclic_bgp`'s module doc and issue #732. Not part of the intended public
+// API surface, hence `#[doc(hidden)]` on the items themselves.
+pub use cyclic_bgp::{bgp_has_cyclic_join_graph, collect_bgps};
 pub use explain::{explain_query, query_type_label, ExplainPlan, PatternPlan, PlanNode};
 pub use ingress::NetworkPolicy;
 pub use profile::ProfileNode;

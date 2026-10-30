@@ -43,10 +43,10 @@ Contact: hovlanddag@gmail.com
 //!    still avoids the pathological blowup even without Phase D.
 
 use dag_rdf::Datastore;
-use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
+use sparql_parser::ast::{Query, QueryComponent, TriplePattern};
 use sparql_parser::{
-    NetworkPolicy, ParserContext, ProfileNode, QueryResult, execute, execute_with_profile,
-    parse_query,
+    NetworkPolicy, ParserContext, ProfileNode, QueryResult, bgp_has_cyclic_join_graph,
+    collect_bgps, execute, execute_with_profile, parse_query,
 };
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -72,128 +72,14 @@ fn parse_benchmark_tsv(path: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Does this one BGP's join **hypergraph** contain a cycle, in the sense
-/// relevant to worst-case-optimal join literature (no acyclic "join tree"
-/// / GYO reduction)?
-///
-/// Each triple pattern is one *hyperedge* connecting all of its variable
-/// terms — **not** a clique of ordinary pairwise edges. That distinction
-/// matters: a single pattern with three distinct variables (`?s ?p ?o .`,
-/// e.g. the DBLP suite's `number-of-triples` COUNT query) touches three
-/// variables at once, but it is one atom, not a join between atoms — so
-/// it must never be reported as cyclic on its own. Modeling it as a
-/// pairwise clique (an earlier draft of this check did exactly that) gets
-/// this wrong: a 3-variable single pattern looks identical, pairwise, to a
-/// genuine 3-pattern triangle join. Standard hypergraph acyclicity (the
-/// [Graham/Yu-Özsoyoğlu (GYO) reduction](https://en.wikipedia.org/wiki/GYO_algorithm))
-/// avoids this: repeatedly (a) drop a hyperedge that's a subset of
-/// another (redundant — joining through it adds nothing), and (b) drop an
-/// "ear" vertex that occurs in only one remaining hyperedge (it can't be
-/// part of any cycle). The hypergraph is acyclic iff this reduces every
-/// hyperedge away to nothing. Constants and `TripleTerm` subjects don't
-/// contribute vertices — consistent with `join_ordering::bound_count`'s
-/// treatment of what actually drives join selectivity.
-fn bgp_has_cyclic_join_graph(patterns: &[&TriplePattern]) -> bool {
-    use std::collections::HashSet;
-
-    let mut edges: Vec<HashSet<String>> = patterns
-        .iter()
-        .map(|p| {
-            [&p.subject, &p.predicate, &p.object]
-                .into_iter()
-                .filter_map(|t| match t {
-                    Term::Variable(v) => Some(v.clone()),
-                    _ => None,
-                })
-                .collect::<HashSet<String>>()
-        })
-        .filter(|vars| !vars.is_empty())
-        .collect();
-
-    loop {
-        let total_before: usize = edges.iter().map(|e| e.len()).sum();
-        let edges_before = edges.len();
-
-        // (a) Drop any hyperedge that's a subset of another (ties broken
-        // by index so exact duplicates collapse to one survivor).
-        let keep: Vec<bool> = (0..edges.len())
-            .map(|i| {
-                !(0..edges.len()).any(|j| {
-                    i != j
-                        && edges[i].is_subset(&edges[j])
-                        && (edges[i].len() < edges[j].len() || i < j)
-                })
-            })
-            .collect();
-        edges = edges
-            .into_iter()
-            .zip(keep)
-            .filter_map(|(e, k)| k.then_some(e))
-            .collect();
-
-        // (b) Drop every "ear" vertex: one that occurs in only one
-        // remaining hyperedge. It can't be part of a join cycle.
-        let mut vertex_count: HashMap<String, usize> = HashMap::new();
-        for e in &edges {
-            for v in e {
-                *vertex_count.entry(v.clone()).or_insert(0) += 1;
-            }
-        }
-        for e in edges.iter_mut() {
-            e.retain(|v| vertex_count[v] != 1);
-        }
-        edges.retain(|e| !e.is_empty());
-
-        let total_after: usize = edges.iter().map(|e| e.len()).sum();
-        if edges.len() == edges_before && total_after == total_before {
-            break; // fixpoint: nothing changed this pass
-        }
-    }
-
-    !edges.is_empty()
-}
-
-/// Recursively collect every BGP's pattern list reachable from a component
-/// list, descending into every nesting construct (`OPTIONAL`/`UNION`/
-/// `MINUS`/`GRAPH`/`SERVICE`/bare `GROUP`/`{ SELECT ... }` subqueries) —
-/// each is its own evaluation scope but still a place a cyclic BGP could
-/// hide.
-///
-/// All `BGP` entries that are *direct siblings* within one component list
-/// are merged into a single pattern list before being pushed to `out`,
-/// rather than pushed as separate entries. The parser splits a single
-/// textual `{ ... }` block into multiple adjacent `QueryComponent::BGP`
-/// entries whenever a `FILTER`/`BIND` sits between triple patterns (e.g.
-/// `?a :e ?b . FILTER(...) ?b :e ?c . ?c :e ?a .` becomes two `BGP`
-/// siblings), but those patterns are still joined together at evaluation
-/// time — splitting them for this check would hide a real cross-pattern
-/// cycle that only closes across the `FILTER`.
-fn collect_bgps<'a>(components: &'a [QueryComponent], out: &mut Vec<Vec<&'a TriplePattern>>) {
-    let mut merged: Vec<&'a TriplePattern> = Vec::new();
-    for c in components {
-        match c {
-            QueryComponent::BGP(patterns) => merged.extend(patterns.iter()),
-            QueryComponent::Optional(inner)
-            | QueryComponent::Minus(inner)
-            | QueryComponent::Graph(_, inner)
-            | QueryComponent::Service(_, inner, _)
-            | QueryComponent::Group(inner) => collect_bgps(inner, out),
-            QueryComponent::Union(left, right) => {
-                collect_bgps(left, out);
-                collect_bgps(right, out);
-            }
-            QueryComponent::Subquery(q) => collect_bgps(where_clause_of(q), out),
-            QueryComponent::PathPattern(..)
-            | QueryComponent::Filter(_)
-            | QueryComponent::Bind(..)
-            | QueryComponent::Values(..) => {}
-        }
-    }
-    if !merged.is_empty() {
-        out.push(merged);
-    }
-}
-
+// `bgp_has_cyclic_join_graph`/`collect_bgps` moved into
+// `sparql_parser::cyclic_bgp` (issue #732) so the production query-plan
+// path and this benchmark suite share one implementation instead of two
+// copies that could silently drift apart — see that module's doc.
+// `where_clause_of` stays local: it's a trivial 7-line AST-shape match, not
+// algorithmic logic worth the `#[doc(hidden)] pub` exposure the other two
+// needed (`sparql_parser`'s own copy is `pub(crate)`, unreachable from this
+// separately-compiled integration test crate).
 fn where_clause_of(query: &Query) -> &[QueryComponent] {
     match query {
         Query::Select { where_clause, .. }
