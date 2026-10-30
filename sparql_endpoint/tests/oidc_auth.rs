@@ -14,6 +14,7 @@ Contact: hovlanddag@gmail.com
 
 mod common;
 
+use common::{TestClaims, make_token};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rsa::{
     RsaPrivateKey,
