@@ -89,8 +89,6 @@ struct TermDef {
     type_coercion: TypeCoercion,
     /// Container type (@set, @list, @language, @index, @id, @type, @graph).
     container: ContainerType,
-    #[allow(dead_code)]
-    reverse: bool,
     /// Raw @context value for a property-scoped or type-scoped context.
     scoped_context: Option<Value>,
 }
@@ -222,7 +220,6 @@ impl Context {
                             id: expanded,
                             type_coercion: TypeCoercion::None,
                             container: ContainerType::Default,
-                            reverse: false,
                             scoped_context: None,
                         },
                     );
@@ -291,8 +288,6 @@ impl Context {
                     _ => ContainerType::Default,
                 };
 
-                let reverse = def.contains_key("@reverse");
-
                 let scoped_context = def.get("@context").cloned();
 
                 ctx.terms.insert(
@@ -301,7 +296,6 @@ impl Context {
                         id,
                         type_coercion,
                         container,
-                        reverse,
                         scoped_context,
                     },
                 );

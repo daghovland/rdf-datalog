@@ -8,9 +8,11 @@ Contact: hovlanddag@gmail.com
 
 //! Shared helpers for sparql_endpoint integration tests.
 
+use crate::common;
 use dag_rdf::datastore::Datastore;
 use datalog::Rule;
 use ingress::NetworkPolicy;
+use jsonwebtoken::{Algorithm, Header};
 use sparql_endpoint::{AuthConfig, Config, OidcConfig, serve_on_listener};
 use std::path::Path;
 use std::sync::Arc;
@@ -319,7 +321,6 @@ impl TestServer {
     /// (the default, production behavior) must use
     /// [`Self::start_writable_with_network_policy_strict`] instead.
     /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
-    #[allow(dead_code)]
     pub async fn start_writable_with_network_policy(
         turtle: &str,
         network_policy: NetworkPolicy,
@@ -332,7 +333,6 @@ impl TestServer {
     /// stays at its production default (`false`). Use this for tests that
     /// specifically assert loopback addresses are blocked by default.
     /// See [#365](https://github.com/daghovland/rdf-datalog/issues/365).
-    #[allow(dead_code)]
     pub async fn start_writable_with_network_policy_strict(
         turtle: &str,
         network_policy: NetworkPolicy,
@@ -722,6 +722,35 @@ pub struct OidcTestKeys {
     pub encoding_key: jsonwebtoken::EncodingKey,
     pub public_key: rsa::RsaPublicKey,
     pub kid: String,
+}
+
+// ── Shared test RSA key pair (from common) ────────────────────────────────────
+
+#[allow(dead_code)]
+fn oidc_keys() -> &'static common::OidcTestKeys {
+    common::oidc_test_keys()
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize)]
+pub struct TestClaims<'a> {
+    pub iss: &'a str,
+    pub aud: &'a str,
+    pub exp: u64,
+    pub roles: Vec<&'a str>,
+}
+#[allow(dead_code)]
+pub fn make_token(iss: &str, aud: &str, exp: u64, roles: &[&str]) -> String {
+    let keys = oidc_keys();
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(keys.kid.clone());
+    let claims = TestClaims {
+        iss,
+        aud,
+        exp,
+        roles: roles.to_vec(),
+    };
+    jsonwebtoken::encode(&header, &claims, &keys.encoding_key).expect("encode token")
 }
 
 static SHARED_OIDC_KEYS: std::sync::OnceLock<OidcTestKeys> = std::sync::OnceLock::new();
