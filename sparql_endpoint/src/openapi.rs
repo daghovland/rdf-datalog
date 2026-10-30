@@ -361,25 +361,25 @@ fn dataset_data_path_item() -> PathItem {
     item.get = item.get.map(|mut o| {
         o.parameters
             .get_or_insert_with(Vec::new)
-            .insert(0, path_param("name", "Dataset name."));
+            .insert(0, RefOr::T(path_param("name", "Dataset name.")));
         o
     });
     item.put = item.put.map(|mut o| {
         o.parameters
             .get_or_insert_with(Vec::new)
-            .insert(0, path_param("name", "Dataset name."));
+            .insert(0, RefOr::T(path_param("name", "Dataset name.")));
         o
     });
     item.post = item.post.map(|mut o| {
         o.parameters
             .get_or_insert_with(Vec::new)
-            .insert(0, path_param("name", "Dataset name."));
+            .insert(0, RefOr::T(path_param("name", "Dataset name.")));
         o
     });
     item.delete = item.delete.map(|mut o| {
         o.parameters
             .get_or_insert_with(Vec::new)
-            .insert(0, path_param("name", "Dataset name."));
+            .insert(0, RefOr::T(path_param("name", "Dataset name.")));
         o
     });
     item
