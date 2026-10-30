@@ -1,0 +1,33 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log
+# 89881e167f3d55b6853be6a61ee4a82d4c78e974..HEAD` on branch
+# feat/723-openapi-missing-routes).
+
+ghpull:739 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "sparql_endpoint: document missing OpenAPI routes (#723)" ;
+    bl:number 739 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:723 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr739 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:723 ;
+    prov:startedAtTime "2026-10-30T22:41:12Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-30T22:41:12Z"^^xsd:dateTime .
+
+session:pr739Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #723 identified that build_openapi() in sparql_endpoint/src/openapi.rs had fallen behind the routes actually wired in server.rs, and that docs/plans/OPENAPI_FRONTEND_386_PLAN.md's route-coverage list had drifted further and claimed some of those gaps were already covered. Confirmed the gap by reading server.rs's build_router() route-by-route against openapi.rs's PathsBuilder calls: GET/POST /$/ready, GET/HEAD /{name}/get, GET /.well-known/void, POST /upload, GET /describe, GET /id/{path}, GET /ns/agentprov/session, and GET /vqs/productive-values were all wired but undocumented, and HEAD was missing from the GSP-shaped routes (/rdf-graph-store, /rdf-graphs/{path}, /{name}/data) even though server.rs wires .head(...) handlers for all three. Added PathItems for each missing route and a head operation inside gsp_path_item/dataset_data_path_item, following the existing hand-built utoipa::openapi::OpenApiBuilder pattern rather than introducing a new one (op()/item1()/merge() helpers, query_param()/path_param() for parameters, the existing ok_rdf_response/ok_plain_json_response/no_content_response helpers for bodies) so the new entries read the same as the ones #386/#517 already added. /$/ready got its own admin_ready_path_item() rather than reusing simple_get, since (like /$/ping) it is wired with both GET and POST against the same admin_ping handler and simple_get only builds a GET operation. Corrected OPENAPI_FRONTEND_386_PLAN.md's 'Route coverage' list to stop claiming /$/ready and /.well-known/void were covered by the first pass, and added a '## Follow-up coverage (#723)' section mirroring the existing #517 one. Extended sparql_endpoint/tests/openapi_docs.rs with openapi_json_lists_723_routes, an HTTP-level test (hitting GET /api-docs/openapi.json, matching the file's existing test style) asserting each new path+method is present, plus HEAD on the three GSP-shaped paths, so a future route wired in server.rs but missing from build_openapi() is caught by CI rather than relying on another manual side-by-side read." ;
+    agp:reasoningFor ghpull:739 ;
+    prov:wasGeneratedBy session:pr739 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
