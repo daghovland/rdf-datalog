@@ -106,6 +106,7 @@ impl DatalogProgram {
         let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
         let mut neg_rule_map: HashMap<QuadWildcard, Vec<(usize, dag_rdf::QuadPattern)>> =
             HashMap::new();
+        let mut negatively_triggering_rules = std::collections::HashSet::new();
         for (rule_id, rule) in rules.iter().enumerate() {
             for atom in &rule.body {
                 match atom {
@@ -123,6 +124,7 @@ impl DatalogProgram {
                             .entry(wc)
                             .or_default()
                             .push((rule_id, p.clone()));
+                        negatively_triggering_rules.insert(rule_id);
                     }
                     _ => {}
                 }
@@ -132,7 +134,9 @@ impl DatalogProgram {
             rules,
             rule_map,
             neg_rule_map,
-            derived_from: DerivedFromIndex::new(),
+            derived_from: DerivedFromIndex::with_negatively_triggering_rules(
+                negatively_triggering_rules,
+            ),
             materialise_calls: 0,
             disabled_rules: std::collections::HashSet::new(),
         })
@@ -183,6 +187,7 @@ impl DatalogProgram {
                         .entry(wc)
                         .or_default()
                         .push((rule_id, p.clone()));
+                    self.derived_from.mark_negatively_triggering(rule_id);
                 }
                 _ => {}
             }

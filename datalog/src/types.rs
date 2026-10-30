@@ -166,12 +166,49 @@ pub struct DerivedFromIndex {
     /// be derived more than once by the same rule with different body
     /// witnesses; `unrecord` must not drop the quad from the reverse index
     /// while any such derivation still exists.
+    ///
+    /// Only ever populated for `rule_id`s in
+    /// `negatively_triggering_rules` — `negation_invalidated_seeds` only
+    /// ever looks up a `rule_id` that
+    /// [`DatalogProgram::negatively_triggered_rules`][neg] already matched
+    /// (i.e. one that appears in some rule's `NOT` body), so indexing every
+    /// other rule's derivations here would be pure overhead. See
+    /// [#717](https://github.com/daghovland/rdf-datalog/issues/717).
+    ///
+    /// [neg]: crate::reasoner::DatalogProgram::negatively_triggered_rules
     by_rule: std::collections::HashMap<usize, std::collections::HashMap<dag_rdf::Quad, usize>>,
+    /// The set of `rule_id`s that have a `NOT` body atom somewhere — the
+    /// only `rule_id`s `by_rule` ever indexes. See the `by_rule` field doc
+    /// and [#717](https://github.com/daghovland/rdf-datalog/issues/717).
+    negatively_triggering_rules: std::collections::HashSet<usize>,
 }
 
 impl DerivedFromIndex {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Like [`Self::new`], but restricting `by_rule` bookkeeping to only
+    /// `rule_id`s in `negatively_triggering_rules` — see the field doc and
+    /// [#717](https://github.com/daghovland/rdf-datalog/issues/717).
+    pub fn with_negatively_triggering_rules(
+        negatively_triggering_rules: std::collections::HashSet<usize>,
+    ) -> Self {
+        Self {
+            negatively_triggering_rules,
+            ..Default::default()
+        }
+    }
+
+    /// Mark `rule_id` as negatively-triggering after construction (e.g. a
+    /// rule with a `NOT` body atom added via
+    /// [`crate::reasoner::DatalogProgram::add_rule`] after the program —
+    /// and this index — already existed). Must be called before any
+    /// derivation for `rule_id` is `record`ed, otherwise those earlier
+    /// derivations are never indexed into `by_rule`. See
+    /// [#717](https://github.com/daghovland/rdf-datalog/issues/717).
+    pub fn mark_negatively_triggering(&mut self, rule_id: usize) {
+        self.negatively_triggering_rules.insert(rule_id);
     }
 
     /// Record that `derived_quad` was produced by `derivation`.
@@ -191,12 +228,14 @@ impl DerivedFromIndex {
         if !entries.contains(&derivation) {
             let rule_id = derivation.rule_id;
             entries.push(derivation);
-            *self
-                .by_rule
-                .entry(rule_id)
-                .or_default()
-                .entry(derived_quad)
-                .or_insert(0) += 1;
+            if self.negatively_triggering_rules.contains(&rule_id) {
+                *self
+                    .by_rule
+                    .entry(rule_id)
+                    .or_default()
+                    .entry(derived_quad)
+                    .or_insert(0) += 1;
+            }
             true
         } else {
             false
@@ -317,7 +356,7 @@ mod derived_from_index_tests {
     /// [#683](https://github.com/daghovland/rdf-datalog/issues/683).
     #[test]
     fn quads_for_rule_returns_only_matching_rule() {
-        let mut idx = DerivedFromIndex::new();
+        let mut idx = DerivedFromIndex::with_negatively_triggering_rules(HashSet::from([0, 1]));
         idx.record(q(1), derivation(0, q(10)));
         idx.record(q(2), derivation(1, q(11)));
         idx.record(q(3), derivation(0, q(12)));
@@ -338,7 +377,7 @@ mod derived_from_index_tests {
     /// the other derivation still uses that rule_id.
     #[test]
     fn quads_for_rule_dedups_and_survives_partial_unrecord() {
-        let mut idx = DerivedFromIndex::new();
+        let mut idx = DerivedFromIndex::with_negatively_triggering_rules(HashSet::from([0]));
         let d_a = derivation(0, q(10));
         let d_b = derivation(0, q(11));
         idx.record(q(1), d_a.clone());
@@ -388,5 +427,46 @@ mod derived_from_index_tests {
         idx.unrecord(&q(1), &d);
         assert_eq!(idx.quads_for_rule(0).count(), 0);
         assert!(!idx.has_derivation(&q(1)));
+    }
+
+    /// Core scoping property for
+    /// [#717](https://github.com/daghovland/rdf-datalog/issues/717): a
+    /// `rule_id` not passed to `with_negatively_triggering_rules` is never
+    /// indexed into `by_rule`, even though its derivations are still
+    /// recorded in the forward `index` (via `derivations_for`/
+    /// `has_derivation`).
+    #[test]
+    fn quads_for_rule_empty_for_non_negatively_triggering_rule() {
+        let mut idx = DerivedFromIndex::with_negatively_triggering_rules(HashSet::from([0]));
+        idx.record(q(1), derivation(0, q(10)));
+        idx.record(q(2), derivation(1, q(11)));
+
+        // rule 0 is negatively-triggering: indexed as before.
+        let rule0: HashSet<_> = idx.quads_for_rule(0).copied().collect();
+        assert_eq!(rule0, HashSet::from([q(1)]));
+
+        // rule 1 is NOT negatively-triggering: never indexed into by_rule,
+        // even though it was genuinely recorded.
+        assert_eq!(idx.quads_for_rule(1).count(), 0);
+        assert!(idx.has_derivation(&q(2)));
+        assert_eq!(idx.derivations_for(&q(2)).len(), 1);
+    }
+
+    /// `mark_negatively_triggering` lets a rule_id be opted in to `by_rule`
+    /// bookkeeping after construction (mirroring `DatalogProgram::add_rule`
+    /// adding a new rule with a `NOT` body atom to an already-built
+    /// program), as long as it happens before that rule_id's first
+    /// `record` call.
+    #[test]
+    fn mark_negatively_triggering_opts_in_before_recording() {
+        let mut idx = DerivedFromIndex::new();
+        // Not yet negatively-triggering: this derivation is NOT indexed.
+        idx.record(q(1), derivation(5, q(10)));
+        assert_eq!(idx.quads_for_rule(5).count(), 0);
+
+        idx.mark_negatively_triggering(5);
+        idx.record(q(2), derivation(5, q(11)));
+        let rule5: HashSet<_> = idx.quads_for_rule(5).copied().collect();
+        assert_eq!(rule5, HashSet::from([q(2)]));
     }
 }
