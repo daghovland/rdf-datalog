@@ -15,8 +15,9 @@ Contact: hovlanddag@gmail.com
 //! covers and the module layout. CLI/notebook wiring is tracked in
 //! [#609](https://github.com/daghovland/rdf-datalog/issues/609);
 //! `<DatatypeDefinition>` in
-//! [#694](https://github.com/daghovland/rdf-datalog/issues/694). Nested
-//! `<Annotation>` (meta-annotations) support landed in
+//! [#694](https://github.com/daghovland/rdf-datalog/issues/694). A nested
+//! `<Annotation>` child (a meta-annotation) is parsed recursively into
+//! `owl_ontology::Annotation::annotations` — see
 //! [#710](https://github.com/daghovland/rdf-datalog/issues/710), part of the
 //! [#695](https://github.com/daghovland/rdf-datalog/issues/695)
 //! meta-annotations epic.
