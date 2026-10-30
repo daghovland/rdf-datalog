@@ -15,9 +15,11 @@ Contact: hovlanddag@gmail.com
 //! covers and the module layout. CLI/notebook wiring is tracked in
 //! [#609](https://github.com/daghovland/rdf-datalog/issues/609);
 //! `<DatatypeDefinition>` in
-//! [#694](https://github.com/daghovland/rdf-datalog/issues/694); and
-//! meta-annotations (annotations on annotations) in
-//! [#695](https://github.com/daghovland/rdf-datalog/issues/695).
+//! [#694](https://github.com/daghovland/rdf-datalog/issues/694). Nested
+//! `<Annotation>` (meta-annotations) support landed in
+//! [#710](https://github.com/daghovland/rdf-datalog/issues/710), part of the
+//! [#695](https://github.com/daghovland/rdf-datalog/issues/695)
+//! meta-annotations epic.
 
 mod annotation;
 mod assertion;
