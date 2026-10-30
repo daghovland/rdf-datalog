@@ -289,9 +289,9 @@ mod tests {
                  <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#seeAlso"/>
                  <AnonymousIndividual nodeID="b0"/>
                </Annotation>"#);
-        let (_, value) = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
+        let ann = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
         assert!(matches!(
-            value,
+            ann.value,
             AnnotationValue::IndividualAnnotation(Individual::AnonymousIndividual(_))
         ));
     }
