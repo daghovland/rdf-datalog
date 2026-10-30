@@ -9,18 +9,16 @@ Contact: hovlanddag@gmail.com
 //! `SubClassOf` / `EquivalentClasses` / `DisjointClasses` / `DisjointUnion`
 //! -> `owl_ontology::Axiom::AxiomClassAxiom`.
 //!
-//! Axiom-level `<Annotation>` children on these (as opposed to
-//! `<Declaration>`'s own leading annotations, handled by #605) are out of
-//! scope for this issue -- deferred to
-//! [#608](https://github.com/daghovland/rdf-datalog/issues/608) alongside
-//! the rest of non-`Declaration` axiom annotations. Encountering one
-//! produces a clear error rather than being silently dropped.
+//! Axiom-level `<Annotation>` children (the leading `axiomAnnotations` every
+//! `Axiom` alternative carries per the spec) are parsed via
+//! `annotation::split_axiom_annotations` (#608).
 
+use crate::annotation::split_axiom_annotations;
 use crate::class_expr::class_expression;
 use crate::iri::{Prefixes, resolve_iri};
 use owl_ontology::{Axiom, ClassAxiom};
 
-fn element_children<'a>(node: roxmltree::Node<'a, 'a>) -> Vec<roxmltree::Node<'a, 'a>> {
+pub(crate) fn element_children<'a>(node: roxmltree::Node<'a, 'a>) -> Vec<roxmltree::Node<'a, 'a>> {
     node.children().filter(|n| n.is_element()).collect()
 }
 
@@ -31,17 +29,8 @@ pub(crate) fn parse_class_axiom(
     prefixes: &Prefixes,
 ) -> Result<Axiom, String> {
     let tag = node.tag_name().name();
-    let children = element_children(node);
-
-    if let Some(ann) = children
-        .iter()
-        .find(|n| n.tag_name().name() == "Annotation")
-    {
-        let _ = ann;
-        return Err(format!(
-            "<{tag}> axiom-level <Annotation> is not yet supported (see #608)"
-        ));
-    }
+    let all_children = element_children(node);
+    let (anns, children) = split_axiom_annotations(&all_children, prefixes)?;
 
     match tag {
         "SubClassOf" => {
@@ -54,9 +43,7 @@ pub(crate) fn parse_class_axiom(
             let sub = class_expression(children[0], prefixes)?;
             let sup = class_expression(children[1], prefixes)?;
             Ok(Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(
-                Vec::new(),
-                sub,
-                sup,
+                anns, sub, sup,
             )))
         }
         "EquivalentClasses" => {
@@ -71,8 +58,7 @@ pub(crate) fn parse_class_axiom(
                 .map(|c| class_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(
-                Vec::new(),
-                ces,
+                anns, ces,
             )))
         }
         "DisjointClasses" => {
@@ -87,8 +73,7 @@ pub(crate) fn parse_class_axiom(
                 .map(|c| class_expression(c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomClassAxiom(ClassAxiom::DisjointClasses(
-                Vec::new(),
-                ces,
+                anns, ces,
             )))
         }
         "DisjointUnion" => {
@@ -104,9 +89,7 @@ pub(crate) fn parse_class_axiom(
                 .map(|c| class_expression(*c, prefixes))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Axiom::AxiomClassAxiom(ClassAxiom::DisjointUnion(
-                Vec::new(),
-                class,
-                ces,
+                anns, class, ces,
             )))
         }
         other => Err(format!("<{other}> is not a valid ClassAxiom")),
@@ -135,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_axiom_level_annotation() {
+    fn parses_axiom_level_annotation() {
         let d = doc(r#"<SubClassOf>
                  <Annotation>
                    <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
@@ -144,8 +127,13 @@ mod tests {
                  <Class IRI="http://example.org/Pizza"/>
                  <Class IRI="http://example.org/Food"/>
                </SubClassOf>"#);
-        let err = parse_class_axiom(d.root_element(), &Prefixes::new()).unwrap_err();
-        assert!(err.contains("608"));
+        let axiom = parse_class_axiom(d.root_element(), &Prefixes::new()).unwrap();
+        match axiom {
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(anns, _, _)) => {
+                assert_eq!(anns.len(), 1);
+            }
+            other => panic!("expected SubClassOf, got {other:?}"),
+        }
     }
 
     #[test]

@@ -10,13 +10,13 @@ Contact: hovlanddag@gmail.com
 //! -> `owl_ontology::Axiom::AxiomDatatypeDefinition`.
 //!
 //! Axiom-level `<Annotation>` children on `<DatatypeDefinition>` (as opposed
-//! to `<Declaration>`'s own leading annotations, handled by #605) are out of
-//! scope for this issue -- deferred to
-//! [#608](https://github.com/daghovland/rdf-datalog/issues/608), matching
-//! `axiom.rs`'s (#606) and `property_axiom.rs`'s (#607) precedent for every
-//! other non-`Declaration` axiom. Encountering one produces a clear error
-//! rather than being silently dropped.
+//! to `<Declaration>`'s own leading annotations, handled by #605) are parsed
+//! via `annotation::split_axiom_annotations`
+//! ([#608](https://github.com/daghovland/rdf-datalog/issues/608)), the same
+//! helper `axiom.rs`/`property_axiom.rs` use for every other non-
+//! `Declaration` axiom.
 
+use crate::annotation::split_axiom_annotations;
 use crate::data_range::data_range;
 use crate::iri::{Prefixes, resolve_iri};
 use owl_ontology::Axiom;
@@ -32,32 +32,26 @@ pub(crate) fn parse_datatype_definition(
     prefixes: &Prefixes,
 ) -> Result<Axiom, String> {
     let children = element_children(node);
+    let (anns, rest) = split_axiom_annotations(&children, prefixes)?;
 
-    if children.iter().any(|n| n.tag_name().name() == "Annotation") {
-        return Err(
-            "<DatatypeDefinition> axiom-level <Annotation> is not yet supported (see #608)"
-                .to_string(),
-        );
-    }
-
-    if children.len() != 2 {
+    if rest.len() != 2 {
         return Err(format!(
             "<DatatypeDefinition> expects exactly a <Datatype> child followed by one DataRange child, found {} children",
-            children.len()
+            rest.len()
         ));
     }
 
-    if children[0].tag_name().name() != "Datatype" {
+    if rest[0].tag_name().name() != "Datatype" {
         return Err(format!(
             "<DatatypeDefinition>'s first child must be <Datatype>, found <{}>",
-            children[0].tag_name().name()
+            rest[0].tag_name().name()
         ));
     }
 
-    let datatype = resolve_iri(children[0], prefixes)?;
-    let range = data_range(children[1], prefixes)?;
+    let datatype = resolve_iri(rest[0], prefixes)?;
+    let range = data_range(rest[1], prefixes)?;
 
-    Ok(Axiom::AxiomDatatypeDefinition(Vec::new(), datatype, range))
+    Ok(Axiom::AxiomDatatypeDefinition(anns, datatype, range))
 }
 
 #[cfg(test)]
@@ -124,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_axiom_level_annotation() {
+    fn parses_axiom_level_annotation() {
         let d = doc(r#"<DatatypeDefinition>
                  <Annotation>
                    <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
@@ -133,7 +127,10 @@ mod tests {
                  <Datatype IRI="http://example.org/AdultAge"/>
                  <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
                </DatatypeDefinition>"#);
-        let err = parse_datatype_definition(d.root_element(), &Prefixes::new()).unwrap_err();
-        assert!(err.contains("608"));
+        let axiom = parse_datatype_definition(d.root_element(), &Prefixes::new()).unwrap();
+        match axiom {
+            Axiom::AxiomDatatypeDefinition(anns, _, _) => assert_eq!(anns.len(), 1),
+            other => panic!("expected AxiomDatatypeDefinition, got {other:?}"),
+        }
     }
 }
