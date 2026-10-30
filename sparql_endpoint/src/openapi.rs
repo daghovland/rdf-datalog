@@ -746,7 +746,10 @@ fn describe_path_item() -> PathItem {
         ok_rdf_response("Graph contents (format per Accept header)."),
     )
     .response("400", no_content_response("Missing or malformed `uri`."))
-    .response("404", no_content_response("Resource is not known to the store."))
+    .response(
+        "404",
+        no_content_response("Resource is not known to the store."),
+    )
     .build();
     item1(HttpMethod::Get, get)
 }
@@ -807,7 +810,10 @@ fn upload_path_item() -> PathItem {
         "text/turtle",
     )))
     .response("200", no_content_response("Upload applied."))
-    .response("400", no_content_response("Malformed Turtle, or non-absolute graph IRI."))
+    .response(
+        "400",
+        no_content_response("Malformed Turtle, or non-absolute graph IRI."),
+    )
     .response("403", no_content_response("Server is read-only."))
     .build();
     item1(HttpMethod::Post, post)
