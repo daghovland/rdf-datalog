@@ -37,7 +37,7 @@ pub enum ExecError {
     /// ([`ingress::NetworkPolicy::Deny`], the default). `endpoint` is the
     /// `Debug`-formatted SERVICE IRI term.
     ///
-    /// See <https://github.com/daghovland/rdf-datalog/issues/51>.
+    /// See <https://github.com/daghovland/rdf-datalog/issues/741>.
     ServiceDenied {
         /// The rejected SERVICE clause's endpoint term, `Debug`-formatted.
         endpoint: String,
@@ -46,7 +46,7 @@ pub enum ExecError {
     /// `--network=allow`, but SPARQL federation execution itself isn't
     /// implemented yet.
     ///
-    /// See <https://github.com/daghovland/rdf-datalog/issues/51>.
+    /// See <https://github.com/daghovland/rdf-datalog/issues/741>.
     ServiceNotImplemented,
     /// The query's configured wall-clock timeout elapsed before evaluation
     /// completed. Cooperative cancellation — see [`crate::deadline`] for why
@@ -64,12 +64,12 @@ impl fmt::Display for ExecError {
                 f,
                 "SERVICE <{endpoint}> was rejected: remote network access is disabled. \
                  Start the server with --network=allow to enable federated queries. \
-                 See https://github.com/daghovland/rdf-datalog/issues/51"
+                 See https://github.com/daghovland/rdf-datalog/issues/741"
             ),
             ExecError::ServiceNotImplemented => write!(
                 f,
                 "SERVICE federation is not yet implemented even with --network=allow. \
-                 Track progress at https://github.com/daghovland/rdf-datalog/issues/51"
+                 Track progress at https://github.com/daghovland/rdf-datalog/issues/741"
             ),
             ExecError::Timeout => write!(f, "query exceeded the configured timeout"),
         }
