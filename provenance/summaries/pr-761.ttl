@@ -1,0 +1,38 @@
+@prefix agp: <https://dagalog.no/ns/agentprov#> .
+@prefix bl: <https://dagalog.no/ns/backlog#> .
+@prefix ghissues: <https://github.com/daghovland/rdf-datalog/issues/> .
+@prefix ghpull: <https://github.com/daghovland/rdf-datalog/pull/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix session: <https://dagalog.no/ns/agentprov/session#> .
+
+# Timestamps below are real (from `git log
+# 89881e167f3d55b6853be6a61ee4a82d4c78e974..HEAD` on branch
+# docs/437-access-control-plan).
+
+ghpull:761 a bl:PullRequest, bl:WorkItem ;
+    rdfs:label "docs: fine-grained access control design doc" ;
+    bl:number 761 ;
+    bl:state bl:Open ;
+    bl:closesIssue ghissues:437 .
+
+session:claudeSonnet5 a prov:SoftwareAgent ;
+    rdfs:label "Claude Sonnet 5" .
+
+session:pr761 a agp:AgentSession ;
+    prov:wasAssociatedWith session:claudeSonnet5 ;
+    prov:used ghissues:437 ;
+    prov:startedAtTime "2026-10-31T16:36:45Z"^^xsd:dateTime ;
+    prov:endedAtTime "2026-10-31T16:36:45Z"^^xsd:dateTime .
+
+session:pr761Summary a agp:TranscriptSummary ;
+    agp:summaryText "Issue #437 asked for a design doc resolving five open questions about fine-grained, identity-aware access control before any sub-issues could be scoped, explicitly warning against generic triplestore-ACL theory in favor of recommendations grounded in this codebase's actual shape. Work proceeded by reading auth.rs/AUTH.md, dag_rdf's graph model, sparql_parser's AST/executor, sparql_endpoint's SPARQL Update implementation, and the shacl crate directly, then writing docs/plans/ACCESS_CONTROL_PLAN.md. A first draft was reviewed by the advisor tool and found to contain several unverified claims (the AST's full variant list, whether FROM NAMED is actually consulted at evaluation time, whether Extension<Claims> exists outside auth.rs, the exact forwarded-auth header name) and design holes (recursion into nested components and EXISTS/NOT EXISTS, the default-graph/FROM <iri> distinction, cross-graph leaks via SPARQL Update's INSERT/DELETE WHERE templates and DESCRIBE's un-scoped final triple scan, and a dagalog-specific risk where user-authored datalog rules can merge a denied graph's facts into an allowed graph at reasoning time, before any per-request identity exists). A second verification pass against the real code confirmed most of these concerns as real (DESCRIBE's get_quads_with_subject call takes no graph argument; SPARQL Update's PatternUpdate write templates never go through the query executor at all; /{name}/rules has no explicit auth::classify() branch and lands on Admin only by fallback accident) while also finding good news worth keeping (built-in OWL-RL rules are hard-pinned to graph 0 via get_default_graph_pattern, so the inference-leak risk is scoped to user-authored rules, not built-in reasoning; a bare BGP with no GRAPH/FROM only ever matches graph 0, not a union of every graph). The doc was revised accordingly before the PR was opened." ;
+    agp:decisionPoint session:pr761Decision ;
+    agp:reasoningFor ghpull:761 ;
+    prov:wasGeneratedBy session:pr761 ;
+    prov:wasAttributedTo session:claudeSonnet5 .
+
+session:pr761Decision a agp:Decision ;
+    agp:summaryText "Recommended: named-graph-level granularity (zero storage-format change, reuses QuadTable's existing graph-keyed indexes); enforcement built into sparql_parser::execute/execute_with_base/execute_inner itself via an optional access-scope parameter (rather than a separate pre-pass external callers must remember to invoke), specifically because SPARQL Update's eval_where_pattern calls execute() directly and would otherwise bypass a caller-side-only rewrite; RBAC first via a graph_grants role-name-to-graph-IRI mapping (not a dagalog.read.<local-name> naming convention baked into role strings, since two graphs in different namespaces can share a local name), with RDF-native acl:-shaped policy triples as phase 2 and ABAC deliberately not scheduled as its own phase; a small source-agnostic Identity struct (read_graphs/write_graphs) fed by either in-app OIDC claims or an edge-proxy-forwarded header." ;
+    agp:alternative "Considered and rejected: storage-level enforcement (threading identity through every Datastore consumer -- reasoner, parsers, GSP, every crate that touches QuadTable -- confirmed to be a far larger surface than a rewrite plus a short, enumerated list of exceptions); post-filtering query results after full evaluation (confirmed concretely wasteful for the unbound GRAPH ?g case, where the BGP matcher already scans every graph's matching quads with no graph constraint before any Filter could discard rows -- VALUES-injection ahead of the Graph component was preferred instead, since it reaches the ActiveGraph::Fixed per-graph-indexed lookup path rather than the unconstrained-wildcard scan); triple-level ACL via a new Quad field (rejected in favor of reification as a phase-4 escape hatch, since Quad::triple_id is already dual-purposed as the reification ID in the reified_triples table, needing no schema change)." .
