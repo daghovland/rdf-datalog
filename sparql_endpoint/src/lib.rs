@@ -11,6 +11,7 @@ Contact: hovlanddag@gmail.com
 pub mod admin;
 pub mod agentprov_session;
 pub mod auth;
+pub mod azure_snapshot;
 pub mod constraints;
 pub mod dataset_routes;
 pub mod describe;
@@ -38,6 +39,7 @@ pub mod upload;
 pub mod void;
 pub mod vqs_routes;
 
+use azure_snapshot::{AzureBlobSnapshotBackend, AzureBlobSnapshotConfig, SnapshotBackend};
 use dag_rdf::datastore::Datastore;
 use datalog::{IncrementalReasoner, Rule};
 use ingress::NetworkPolicy;
@@ -194,7 +196,7 @@ mod oidc_config_tests {
 }
 
 /// Runtime configuration for the SPARQL endpoint.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     /// Address to bind to (default: 0.0.0.0:3030).
     pub bind_addr: SocketAddr,
@@ -343,6 +345,23 @@ pub struct Config {
     /// never set this — loopback-bound services (admin UIs, metadata
     /// sidecars, etc.) are exactly what SSRF protection exists to block.
     pub allow_loopback_for_ssrf_tests: bool,
+    /// Azure Blob Storage snapshot backend for the `redb` persistence file
+    /// ([#504](https://github.com/daghovland/rdf-datalog/issues/504)): when
+    /// set (together with `data_dir`), a missing local database file is
+    /// restored from this blob at startup, and `POST /$/compact`
+    /// additionally uploads the freshly-compacted file here. `None`
+    /// (default) keeps today's local-disk-only behavior unchanged.
+    /// Authenticates via Azure Managed Identity — see
+    /// [`azure_snapshot::AzureBlobSnapshotBackend`].
+    pub azure_blob_snapshot: Option<AzureBlobSnapshotConfig>,
+    /// **Test-only** escape hatch: inject a fake [`SnapshotBackend`] instead
+    /// of constructing a real `AzureBlobSnapshotBackend` from
+    /// `azure_blob_snapshot`. Mirrors `allow_loopback_for_ssrf_tests` above —
+    /// the only intended callers are this crate's own integration tests
+    /// (`sparql_endpoint/tests/azure_snapshot.rs`), which have no live Azure
+    /// credentials to construct a real backend with. When set, this takes
+    /// priority over `azure_blob_snapshot`.
+    pub snapshot_backend_override: Option<Arc<dyn SnapshotBackend>>,
 }
 
 impl Default for Config {
@@ -364,7 +383,42 @@ impl Default for Config {
             network_policy: NetworkPolicy::Deny,
             cors_allowed_origins: Vec::new(),
             allow_loopback_for_ssrf_tests: false,
+            azure_blob_snapshot: None,
+            snapshot_backend_override: None,
         }
+    }
+}
+
+// Manual `Debug` since `snapshot_backend_override` holds `Arc<dyn
+// SnapshotBackend>`, which has no reason to require `Debug` of every
+// implementation (production `AzureBlobSnapshotBackend` included) just to
+// satisfy a derive here.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("bind_addr", &self.bind_addr)
+            .field("base_iri", &self.base_iri)
+            .field("read_only", &self.read_only)
+            .field("max_query_timeout_secs", &self.max_query_timeout_secs)
+            .field("auth", &self.auth)
+            .field("data_dir", &self.data_dir)
+            .field("max_rml_upload_bytes", &self.max_rml_upload_bytes)
+            .field("max_rdf_upload_bytes", &self.max_rdf_upload_bytes)
+            .field("request_timeout_secs", &self.request_timeout_secs)
+            .field("max_concurrent_writes", &self.max_concurrent_writes)
+            .field("initial_rules", &self.initial_rules)
+            .field("network_policy", &self.network_policy)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field(
+                "allow_loopback_for_ssrf_tests",
+                &self.allow_loopback_for_ssrf_tests,
+            )
+            .field("azure_blob_snapshot", &self.azure_blob_snapshot)
+            .field(
+                "snapshot_backend_override",
+                &self.snapshot_backend_override.is_some(),
+            )
+            .finish()
     }
 }
 
@@ -429,6 +483,13 @@ pub struct AppState {
     ///
     /// Related: [#125](https://github.com/daghovland/rdf-datalog/issues/125)
     pub transactions: Arc<Mutex<TransactionRegistry>>,
+    /// Azure Blob Storage snapshot backend ([#504](https://github.com/daghovland/rdf-datalog/issues/504)),
+    /// constructed once at startup from `config.azure_blob_snapshot` (or
+    /// `config.snapshot_backend_override` in tests). `None` when no blob
+    /// snapshot backend is configured — the server behaves exactly as
+    /// before. `POST /$/compact` uploads to this backend (if present) after
+    /// a successful local compaction; see `admin::admin_compact`.
+    pub snapshot_backend: Option<Arc<dyn SnapshotBackend>>,
 }
 
 /// Start the SPARQL endpoint server.
@@ -452,6 +513,28 @@ pub async fn serve_on_listener(
     config: Config,
     listener: tokio::net::TcpListener,
 ) -> Result<(), std::io::Error> {
+    // Azure Blob Storage snapshot backend (#504) -- see `azure_snapshot` module
+    // doc for the design. Built once here (whether or not a local snapshot
+    // restore is needed below) so `POST /$/compact` can reuse the same
+    // backend later via `AppState::snapshot_backend`.
+    if config.azure_blob_snapshot.is_some() && config.data_dir.is_none() {
+        return Err(std::io::Error::other(
+            "--azure-blob-snapshot requires --data-dir to also be set \
+             (the blob snapshot restores/backs up the local redb file; \
+             there is no local file to restore in in-memory mode)",
+        ));
+    }
+    let snapshot_backend: Option<Arc<dyn SnapshotBackend>> =
+        if let Some(backend) = config.snapshot_backend_override.clone() {
+            Some(backend)
+        } else if let Some(ref az_cfg) = config.azure_blob_snapshot {
+            Some(Arc::new(
+                AzureBlobSnapshotBackend::new(az_cfg).map_err(std::io::Error::other)?,
+            ))
+        } else {
+            None
+        };
+
     // Open the changelog (if configured) and replay it into the existing store.
     // replay_into() layers changelog mutations ON TOP of any pre-loaded data
     // (e.g. from --data files), so both sources are visible.
@@ -463,7 +546,14 @@ pub async fn serve_on_listener(
                 format!("cannot create data-dir {}: {e}", dir.display()),
             )
         })?;
-        let db_path = dir.join("dagalog.redb");
+        let db_path = persistence::changelog_db_path(dir);
+        // Restore from the blob snapshot BEFORE redb ever opens the file --
+        // only when no local file exists yet (a running instance's own
+        // locally-committed data always takes priority over the
+        // disaster-recovery snapshot; see `azure_snapshot::restore_if_missing`).
+        azure_snapshot::restore_if_missing(snapshot_backend.as_deref(), &db_path)
+            .await
+            .map_err(std::io::Error::other)?;
         let cl = QuadChangelog::open(&db_path).map_err(std::io::Error::other)?;
         cl.replay_into(&mut *store.write().await)
             .map_err(std::io::Error::other)?;
@@ -585,6 +675,7 @@ pub async fn serve_on_listener(
         network_policy,
         allow_loopback_for_ssrf_tests,
         transactions: Arc::new(Mutex::new(TransactionRegistry::new())),
+        snapshot_backend,
     };
     let app = server::build_router(state);
     axum::serve(listener, app).await

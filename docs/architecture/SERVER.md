@@ -63,10 +63,34 @@ Two storage modes — selected at startup, cannot be changed at runtime:
 |---|---|---|---|
 | `--data-dir <PATH>` | `DAGALOG_DATA_DIR` | Directory for the `redb` changelog file | *(in-memory)* |
 | `--no-persist` | `DAGALOG_NO_PERSIST=1` | Force in-memory even if `DAGALOG_DATA_DIR` is set | `false` |
+| `--azure-blob-snapshot <account>/<container>/<blob>` | `DAGALOG_AZURE_BLOB_SNAPSHOT` | Opt-in Azure Blob Storage snapshot backend for the local `redb` file (requires `--data-dir`); see below | *(none)* |
 
 Storage locations (local disk, Docker volumes, Kubernetes PVCs) and caveats
 (NFS, cloud object storage) are documented in
 [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md).
+
+#### Azure Blob Storage snapshot backend ([#504](https://github.com/daghovland/rdf-datalog/issues/504))
+
+`redb` always operates on a local file — a Blob Storage object cannot be
+mmap'd or `fsync`'d directly, so this is not an alternative storage *engine*,
+it's a periodic snapshot export/import layered on top of the local-disk mode
+above. When `--azure-blob-snapshot` is set (together with `--data-dir`):
+
+- **Startup**: if no local `redb` file exists yet at `--data-dir` (e.g. a
+  fresh replica with no mounted persistent volume), the latest snapshot is
+  downloaded from the blob before `redb` opens the file. An already-present
+  local file is never overwritten.
+- **`POST /$/compact`**: after the changelog is compacted into its minimal
+  form, the resulting file is uploaded to the blob.
+
+Useful when there's no persistent volume available for `--data-dir` at all,
+or when multiple replicas need to share one durable snapshot location
+without a shared filesystem (at the cost of only being as fresh as the last
+compaction, not continuously durable the way local-disk `--data-dir` is).
+Authenticates via Azure Managed Identity — see
+[`AUTH.md`](../plans/AUTH.md#outgoing-dagalog-calling-azure-services) for the
+credential details and `sparql_endpoint::azure_snapshot` for the
+implementation.
 
 ### Prerequisites
 

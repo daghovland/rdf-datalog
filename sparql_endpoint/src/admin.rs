@@ -350,14 +350,54 @@ pub async fn admin_compact(State(state): State<AppState>) -> axum::response::Res
         .collect();
 
     let mut changelog = changelog_lock.lock().await;
-    match changelog.compact_multi(&datasets) {
-        Ok((before, after)) => {
-            let body = serde_json::json!({
-                "entries_before": before,
-                "entries_after": after,
-            });
-            (StatusCode::OK, Json(body)).into_response()
+    let (before, after) = match changelog.compact_multi(&datasets) {
+        Ok(counts) => counts,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
+    drop(changelog);
+    // Release every dataset's read lock (and the registry read lock) before
+    // the network upload below -- they're no longer needed once
+    // `compact_multi` has returned, and holding them across an awaited HTTP
+    // call to Blob Storage would needlessly block writers/readers on every
+    // dataset for the duration of the upload.
+    drop(datasets);
+    drop(locked);
+    drop(guards);
+    drop(registry);
+
+    // Azure Blob Storage snapshot backend (#504): upload the freshly
+    // compacted local file so a replica with no mounted volume (or a
+    // disaster-recovery restart) can restore from it. A failure here does
+    // NOT roll back the (already-committed, already-durable-locally)
+    // compaction -- it's reported alongside the compaction result instead,
+    // since the local redb file is still fully valid and durable either way.
+    let blob_snapshot_uploaded = if let Some(ref backend) = state.snapshot_backend {
+        // `data_dir` is guaranteed `Some` here: `snapshot_backend` is only
+        // ever constructed when `azure_blob_snapshot` is set, and
+        // `serve_on_listener` refuses to start with `azure_blob_snapshot`
+        // set but `data_dir` unset (see lib.rs).
+        let Some(ref dir) = state.config.data_dir else {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "snapshot_backend is set but data_dir is not -- this should be impossible",
+            )
+                .into_response();
+        };
+        let db_path = crate::persistence::changelog_db_path(dir);
+        match backend.upload(&db_path).await {
+            Ok(()) => Some(serde_json::json!(true)),
+            Err(e) => Some(serde_json::json!({"error": e})),
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    } else {
+        None
+    };
+
+    let mut body = serde_json::json!({
+        "entries_before": before,
+        "entries_after": after,
+    });
+    if let Some(uploaded) = blob_snapshot_uploaded {
+        body["blob_snapshot_uploaded"] = uploaded;
     }
+    (StatusCode::OK, Json(body)).into_response()
 }
