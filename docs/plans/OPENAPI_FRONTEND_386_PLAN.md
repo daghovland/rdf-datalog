@@ -35,7 +35,7 @@ with clear, stable, mostly-textual request/response shapes:
 - `GET/HEAD/PUT/POST/DELETE /rdf-graph-store` (Graph Store Protocol, root)
 - `GET/HEAD/PUT/POST/DELETE /rdf-graphs/{path}` (direct graph identification)
 - `GET/HEAD/PUT/POST/DELETE /{name}/data`, `GET/HEAD /{name}/get`
-- `GET /$/ping`, `GET /$/ready`, `GET /$/server`
+- `GET/POST /$/ping`, `GET/POST /$/ready`, `GET /$/server`
 - `GET/POST /$/datasets`, `GET/DELETE /$/datasets/{name}`, `POST /$/compact`
 - `GET /auth/config`
 - `GET /void`, `GET /.well-known/void`
@@ -45,6 +45,14 @@ SHACL validation, RML/OTTR mapping endpoints, the runtime-ruleset endpoint, and
 the proprietary transaction API — all have request bodies that are either
 multipart, mapping-language-specific, or otherwise awkward to express
 cleanly as a single OpenAPI schema in a first pass.
+
+Several other wired routes were initially left undocumented (some
+incorrectly listed above as already covered, before this list was
+corrected) — `/$/ready`, `/{name}/get`, `/.well-known/void`, `/upload`,
+`/describe`, `/id/{path}`, `/ns/agentprov/session`,
+`/vqs/productive-values`, and `HEAD` on the GSP-shaped routes. These are
+now covered too; see follow-up
+[#723](https://github.com/daghovland/rdf-datalog/issues/723).
 
 ## Where served
 
@@ -101,5 +109,20 @@ same hand-built pattern. Design decisions specific to that follow-up:
   them correctly.
 
 Several other wired routes were found undocumented along the way (some
-incorrectly listed as covered above) and are out of scope for #517 — see
-follow-up [#723](https://github.com/daghovland/rdf-datalog/issues/723).
+incorrectly listed as covered above) and were out of scope for #517 — see
+follow-up [#723](https://github.com/daghovland/rdf-datalog/issues/723),
+resolved below.
+
+## Follow-up coverage ([#723](https://github.com/daghovland/rdf-datalog/issues/723))
+
+The routes #517 found missing (and the "Route coverage" list above
+incorrectly claimed were already covered) were added to `build_openapi()`:
+`GET/POST /$/ready`, `GET/HEAD /{name}/get`, `GET /.well-known/void`,
+`POST /upload`, `GET /describe`, `GET /id/{path}`,
+`GET /ns/agentprov/session`, `GET /vqs/productive-values`, and `HEAD` on
+`/rdf-graph-store`, `/rdf-graphs/{path}`, `/{name}/data`. Also added:
+`sparql_endpoint/tests/openapi_docs.rs::openapi_json_lists_723_routes`, an
+automated check that each of these paths/methods appears in
+`build_openapi()`'s output, so a future "wired in `server.rs` but missing
+from docs" regression is caught by CI instead of needing another manual
+read-through.
