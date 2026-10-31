@@ -3676,7 +3676,9 @@ dependencies = [
 name = "sparql-endpoint"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "azure_core",
  "azure_identity",
  "azure_storage_blob",
  "base64 0.23.1",
