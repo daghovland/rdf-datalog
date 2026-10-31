@@ -98,11 +98,8 @@ impl AzureBlobSnapshotConfig {
     /// segment of the blob name percent-encoded individually (preserving the
     /// blob name's own internal `/`s as path separators, not literal `%2F`).
     pub fn blob_url(&self) -> Result<Url, String> {
-        let mut url = Url::parse(&format!(
-            "https://{}.blob.core.windows.net",
-            self.account
-        ))
-        .map_err(|e| format!("invalid storage account name {:?}: {e}", self.account))?;
+        let mut url = Url::parse(&format!("https://{}.blob.core.windows.net", self.account))
+            .map_err(|e| format!("invalid storage account name {:?}: {e}", self.account))?;
         {
             let mut segments = url
                 .path_segments_mut()
@@ -145,7 +142,7 @@ impl AzureBlobSnapshotBackend {
     pub fn new(config: &AzureBlobSnapshotConfig) -> Result<Self, String> {
         let url = config.blob_url()?;
         let credential: Arc<dyn TokenCredential> = ManagedIdentityCredential::new(None)
-                .map_err(|e| format!("failed to construct ManagedIdentityCredential: {e}"))?;
+            .map_err(|e| format!("failed to construct ManagedIdentityCredential: {e}"))?;
         let client = BlobClient::new(url, Some(credential), None)
             .map_err(|e| format!("failed to construct Azure BlobClient: {e}"))?;
         Ok(Self { client })
@@ -234,8 +231,7 @@ mod tests {
     #[test]
     fn blob_name_may_contain_further_slashes() {
         let cfg =
-            AzureBlobSnapshotConfig::parse("myaccount/mycontainer/snapshots/dagalog.redb")
-                .unwrap();
+            AzureBlobSnapshotConfig::parse("myaccount/mycontainer/snapshots/dagalog.redb").unwrap();
         assert_eq!(cfg.blob, "snapshots/dagalog.redb");
     }
 
@@ -265,8 +261,7 @@ mod tests {
     #[test]
     fn blob_url_preserves_internal_slashes_as_path_separators() {
         let cfg =
-            AzureBlobSnapshotConfig::parse("myaccount/mycontainer/snapshots/dagalog.redb")
-                .unwrap();
+            AzureBlobSnapshotConfig::parse("myaccount/mycontainer/snapshots/dagalog.redb").unwrap();
         let url = cfg.blob_url().unwrap();
         assert_eq!(
             url.as_str(),

@@ -112,7 +112,8 @@ async fn shutdown(handle: tokio::task::JoinHandle<()>) {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 }
 
-const INSERT_UPDATE: &str = "INSERT DATA { <http://example.org/s> <http://example.org/p> \"snapshot-test\" }";
+const INSERT_UPDATE: &str =
+    "INSERT DATA { <http://example.org/s> <http://example.org/p> \"snapshot-test\" }";
 const ASK_QUERY: &str = "ASK { <http://example.org/s> <http://example.org/p> \"snapshot-test\" }";
 
 async fn ask(base_url: &str, client: &reqwest::Client) -> bool {
