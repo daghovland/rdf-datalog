@@ -153,14 +153,16 @@ flag combinations, run once per analysis session. She needs:
 - `--data-dir`/`--no-persist`: durable persistence toggle.
 - `--network`: SSRF-hardening policy for LOAD/`@context`/SERVICE fetches.
 
-**Critical gap confirmed for #401's "multiple scenarios" story:** every one
-of `--data`/`--ontology`/`--rules`/`--mapping`/`--ottr` only ever populates
-the **one** default dataset (`"ds"`) built before `--serve` branches
-(`src/main.rs::run`, lines ~337–466). There is currently no CLI-flag way to
-seed more than one named dataset at startup — the only way to get a second
-dataset today is `POST /$/datasets` (empty) at runtime, followed by
-per-dataset HTTP calls to populate it (`/{name}/data` for triples,
-`/{name}/rules` for Datalog rules only — see 1b above for the OWL gap).
+**Gap confirmed for multi-dataset startup (not required by #401 itself —
+see §3):** every one of `--data`/`--ontology`/`--rules`/`--mapping`/`--ottr`
+only ever populates the **one** default dataset (`"ds"`) built before
+`--serve` branches (`src/main.rs::run`, lines ~337–466). There is currently
+no CLI-flag way to seed more than one named dataset at startup — the only
+way to get a second dataset today is `POST /$/datasets` (empty) at runtime,
+followed by per-dataset HTTP calls to populate it (`/{name}/data` for
+triples, `/{name}/rules` for Datalog rules only — see 1b above for the OWL
+gap). §3 confirms Dexpi2Imf's actual usage never needs this, so it does not
+block the v1 recommendation in §5, but it is a real gap for persona 1a.
 
 **One-shot mode is file-based, not registry-based**: `--query` on a fresh
 process loads files, runs one query, and exits; it never touches the
@@ -178,16 +180,20 @@ files), so both sources are visible" (issue
 [#66](https://github.com/daghovland/rdf-datalog/issues/66)). So **`--data`/
 `--ontology`/`--rules` are effectively re-seeded on every boot**, with the
 durable changelog's own writes (from `/update`, GSP, `/{name}/rules`, etc.)
-replayed on top each time. A config file inherits this as-is unless it says
-otherwise: by default, every dataset entry's `data`/`ontology`/`rules` lists
-are "load every start," not "seed once." Persona 1a (Alice), whose actual
-want is durable state that survives restarts *without* being re-derived from
-a seed file every time, should instead rely on `--data-dir` alone (no file
-lists) for the parts of her dataset that change at runtime, and only use the
-config file's file lists for genuinely static schema/ontology/rules inputs —
+replayed on top each time. **v1's config file inherits this unchanged: every
+profile's `data`/`ontology`/`rules` lists are "load every start," exactly
+like today's `--data`/`--ontology`/`--rules`** — no new "seed once"
+semantics are introduced (see §5/§7). Persona 1a (Alice), whose actual want
+is durable state that survives restarts *without* being re-derived from a
+file every time, should keep relying on `--data-dir` alone (no file lists)
+for the parts of her dataset that change at runtime, and only use a
+profile's file lists for genuinely static schema/ontology/rules inputs —
 this distinction should be called out explicitly in the config-file's own
-documentation (and arguably in a `once: true`/`reload: true` per-entry flag,
-see §5), not left implicit the way plain `--data` leaves it today.
+documentation. A dedicated "seed once, then never reload" per-entry mode is
+a plausible future enhancement but is out of v1's scope as recommended in
+§5, and is not filed as a separate issue here since nothing in §1–§3's
+evidence currently requires it — persona 1a's story is already served by
+`--data-dir` without it.
 
 ### 2b. Admin/HTTP API (`sparql_endpoint/src/*.rs`)
 
@@ -226,11 +232,14 @@ no API at all."
 
 ### 2c. Existing scripting hooks
 
-- **`dagalog-kernel`**: a real Jupyter-protocol kernel (`dagalog-kernel/src/
-  cell/*.rs`) with cell magics `%%load` (Turtle/TriG), `%%rml`, `%%manchester`,
-  `%%functional`, `%%owlxml`, `%%ottr`, `%%datalog`, `%%validate` (SHACL),
-  `%%sparql` — i.e. an interactive, replayable, imperative sequence of
-  operations against one in-process store, cell by cell. This is the closest
+- **`dagalog-kernel`**: a real Jupyter-protocol kernel (confirmed against
+  `dagalog-kernel/src/cell/mod.rs::detect_cell_type`) with cell magics
+  `%%load` (Turtle/TriG), `%%rml`, `%%manchester`, `%%functional`, `%%owlxml`,
+  `%%ottr`, `%%datalog`, `%%turtle`, `%%reason`, `%%validate` (SHACL) — a
+  cell with no recognized `%%` magic (including a cell that's bare SPARQL)
+  falls back to being run as a SPARQL query. I.e. an interactive, replayable,
+  imperative sequence of operations against one in-process store, cell by
+  cell. This is the closest
   thing dagalog already has to RDFox's `.rdfox` script model, but scoped to
   the Jupyter wire protocol rather than a standalone batch file/CLI
   sub-command — it requires a Jupyter frontend (or `jupyter console`/
@@ -243,7 +252,9 @@ no API at all."
 Fetched the verbatim contents of all three scripts from
 [equinor/Dexpi2Imf@explore/rdf-datalog-replacement/dagalog/](https://github.com/equinor/Dexpi2Imf/tree/explore/rdf-datalog-replacement/dagalog)
 (public repo; org SAML blocks the GitHub *API*, but the raw files are
-readable directly). Their actual content:
+readable directly). Annotated excerpt (the `exec` line from each, with the
+preceding `cd`/`DAGALOG=` boilerplate common to all three factored out
+below the block, and a comment added on `boundaries.sh`'s missing `--data`):
 
 ```sh
 # dexpi.sh
@@ -276,9 +287,7 @@ exec "$DAGALOG" --serve --port 3030 \
 (`DAGALOG="${DAGALOG:-dagalog}"` and `cd "$(dirname "$0")"` precede each
 `exec` in all three; `set -e` is also common to all three.)
 
-Corrected reading (the previous draft of this doc paraphrased the sibling
-scripts from a summary and got the specifics wrong — this is the actual,
-verbatim comparison):
+Reading, from the verbatim comparison above:
 - All **three** scripts load the identical three `--ontology` files
   (`dexpi.ttl`, `imf-ontology.owl.ttl`, `boundary.ttl`).
 - `dexpi.sh` and `boundaries.sh` use the **same** rules file
@@ -287,9 +296,23 @@ verbatim comparison):
 - `dexpi.sh` and `connected.sh` load the **same** data file
   (`pandid.trig`); `boundaries.sh` is the one that differs, loading no data
   at all (its backend feeds it via SPARQL Update once serving).
-- `dexpi.sh` and `connected.sh` both forward `"$@"`, so either can be run
-  one-shot via an appended `--query`/`-Q`; `boundaries.sh` does not forward
-  extra args (it's serve-only by design, matching its own comment).
+- `dexpi.sh` and `connected.sh` forward `"$@"`, but **this does not give
+  them a working one-shot mode as written**: `src/main.rs::run` checks
+  `if cli.serve { ... } else if let Some(sparql_str) = &sparql { ... }` —
+  `--serve` is already baked into the `exec` line before `"$@"` is appended,
+  so `./dexpi.sh --query q.sparql` still takes the `--serve` branch and the
+  appended `--query` is silently ignored, never reaching the one-shot
+  branch. The script's own header comment says to use `--query` *instead
+  of* `--serve` — i.e. the caller is expected to edit the fixed command
+  line, not append to it, because there is no way to override an
+  already-passed flag from later args. This is itself evidence for a
+  config-file design: a profile should declare *inputs only* (ontology/
+  rules/data), leaving the serve-vs-one-shot *mode* entirely to whatever
+  flags the caller passes alongside `--profile`, rather than baking `--serve`
+  into the profile the way these scripts bake it into the `exec` line.
+  `boundaries.sh` doesn't forward extra args at all (it's serve-only by
+  design, matching its own comment, and has no one-shot ambiguity to begin
+  with).
 - None of the three take overrides through their own named flags or
   environment variables beyond `DAGALOG` (the binary path) — there is no
   existing per-scenario parameterization to preserve, only the raw
@@ -298,14 +321,14 @@ verbatim comparison):
 This confirms "profiles" in #401 means **alternate, named, fixed invocations
 run one at a time** (pick a scenario, then `--serve` or one-shot `--query`
 it) — not several datasets served simultaneously from one process. But it
-also surfaces a design requirement the earlier draft missed: **the
-duplication #401 complains about is mostly the shared ontology list (and
-partly the shared data file)**, repeated identically across two or three
-scripts, with only one or two fields actually varying per scenario (rules
-file; presence/absence of data). A config-file design that just gives each
-profile its own fully self-contained `[[dataset]]` block (§5 as originally
-drafted) would merely relocate that same duplication into TOML instead of
-removing it — see §5's revision below for how the schema addresses this.
+also surfaces a design requirement: **the duplication #401 complains about
+is mostly the shared ontology list (and partly the shared data file)**,
+repeated identically across two or three scripts, with only one or two
+fields actually varying per scenario (rules file; presence/absence of
+data). A config-file design that just gives each profile its own fully
+self-contained, independent list of inputs would merely relocate that same
+duplication into TOML instead of removing it — §5 below addresses this with
+explicit composition.
 
 ## 4. Evaluating the three directions
 
@@ -349,17 +372,31 @@ distinguish this from a Rust CLI subcommand either, since both are
 cross-platform binaries — the actual portability win here is dropping `.sh`
 specifically) and reuses tested server-side logic instead of
 duplicating it. Its hard limitation: it needs a **running server** to talk
-to, so it cannot serve persona 1d's and 2a's one-shot (`--data ... --query
-...`, no `--serve`) mode at all — that mode has no HTTP surface to drive by
+to, so it cannot serve persona 1d's one-shot (`--data ... --query ...`, no
+`--serve`) mode at all — that mode (§2a) has no HTTP surface to drive by
 construction, and must keep its own flag/config path regardless of what else
 is decided.
 
 ## 5. Recommendation
 
-**Adopt a declarative startup config file, defined so that every entry in it
-is explicitly equivalent to a sequence of operations the admin API (§2b)
-already performs** — not a competing model, but a serialization of the same
-primitives direction 3 would otherwise replay over HTTP. Concretely:
+**Adopt a declarative startup config file, designed so its inputs map onto
+the same underlying operations the admin API (§2b) already performs where
+that equivalence actually holds today** — not a competing model, but a
+serialization of (mostly) the same primitives direction 3 would otherwise
+replay over HTTP. The equivalence is not total, and should not be
+overstated: data/RML/OTTR loading maps to `/{name}/data`/`/{name}/rml`/
+`/{name}/ottr` respectively (not all three to `/{name}/data`), Datalog rules
+map to `/{name}/rules`, but **OWL ontology loading has no runtime HTTP
+counterpart at all** (§1b, §6, #759) — a profile's `ontology` list is
+startup-only until #759 closes that gap, same as `--ontology` is today. At
+startup, ontology and Datalog rules are compiled together into one
+`IncrementalReasoner` in a single pass (`collect_serve_rules`, chosen
+specifically to avoid the dropped-derivation bug in
+[#319](https://github.com/daghovland/rdf-datalog/issues/319)), whereas
+`POST /{name}/rules` only ever replaces the Datalog half of that live. And
+one-shot (non-`--serve`) mode bypasses the admin API, and therefore this
+equivalence, entirely — it stays a pure file-loading path, as it is today
+(§2a, §3). Concretely:
 
 **Explicit v1 scope — profile ≠ dataset.** §3 showed real Dexpi2Imf usage
 never needs more than one dataset per run; §1a's multi-tenant story is a
@@ -380,12 +417,13 @@ startup need shows up later, it should be scoped as its own follow-up
 against this same file format (each current top-level profile becomes one
 of several dataset entries inside a profile, rather than a new format).
 
-- Each profile ≡ the admin-API-equivalent operation sequence `PUT`/`POST
-  /{name}/data` for each data/RML/OTTR source, then the ontology-loading
-  path for OWL files, then `POST /{name}/rules` for Datalog rules — against
-  the implicit default dataset, per the v1 scope above. (`POST
-  /$/datasets` itself is not part of v1's equivalence, since v1 never
-  creates a second dataset — see above.)
+- Each profile conceptually corresponds to: `PUT`/`POST /{name}/data` for
+  each Turtle/TriG data source, `POST /{name}/rml`/`POST /{name}/ottr` for
+  RML/OTTR sources respectively, the startup-only ontology-loading path for
+  OWL files (no `POST`-equivalent yet — see above), then `POST
+  /{name}/rules` for Datalog rules — against the implicit default dataset,
+  per the v1 scope above. (`POST /$/datasets` itself is not part of this,
+  since v1 never creates a second dataset.)
 - **Schema composition, to avoid relocating #401's duplication into TOML**
   (§3's finding): profiles do not each list a fully independent, repeated
   `ontology`/`data`/`rules` set. Instead the schema separates a shared
@@ -421,11 +459,11 @@ of several dataset entries inside a profile, rather than a new format).
 - Named profiles (`--profile dexpi`, matching §3's actual Dexpi2Imf shape)
   select one profile block from the file; omitting `--profile` with only
   one profile defined behaves like today's single-dataset startup.
-- Each profile's file lists default to "load every start" (§2a's confirmed
-  persistence semantics) unless paired with `--data-dir`, in which case the
-  changelog's own replayed writes still layer on top, exactly as `--data`
-  does today — the config file does not change that interaction, it only
-  changes how the file lists are spelled.
+- A profile's file lists always "load every start" (§2a) — this is
+  unchanged from today's `--data`/`--ontology`/`--rules` behavior, not a new
+  mode. When paired with `--data-dir`, the changelog's own replayed writes
+  still layer on top exactly as they do today; the config file only changes
+  how the file lists are spelled, not this interaction.
 - **Precedence: CLI flag > environment variable > config file value**, for
   any setting present in more than one place — consistent with the fact
   that most non-file CLI flags already have an `env = "DAGALOG_*"` binding
@@ -474,9 +512,9 @@ than built speculatively now.
 ### Why not direction 3 as the primary recommendation
 
 It is the lowest-cost option and should still be kept in mind as a natural
-follow-up (see above), but on its own it cannot touch persona 1d's and the
-CLI's one-shot query mode at all (§2a, §4), which direction 1 covers
-directly and at no extra cost beyond the config file itself.
+follow-up (see above), but on its own it cannot touch the CLI's one-shot
+query mode at all (§2a), which direction 1 covers directly and at no extra
+cost beyond the config file itself.
 
 ## 6. Concrete gaps worth closing regardless of which direction is chosen
 
@@ -518,10 +556,14 @@ doesn't need it.
 
 Once reviewed, concrete sub-issues could include:
 1. Define the TOML config schema (shared-inputs block + profile composition
-   per §5, precedence rules, `once`/`reload` persistence semantics per
-   §2a's confirmed behavior) as its own design-doc-plus-tests issue —
-   including picking between the "named shared-inputs block" and "profile
-   inheritance" composition mechanisms sketched in §5.
+   per §5, CLI/env/file precedence, serve-vs-one-shot mode coming from the
+   CLI rather than the profile per §3) as its own design-doc-plus-tests
+   issue — including picking between the "named shared-inputs block" and
+   "profile inheritance" composition mechanisms sketched in §5, and
+   deciding how a repeatable CLI flag (e.g. `--data extra.ttl`) combines
+   with the same list already populated by `--profile` — append to it, or
+   replace it outright — since "CLI > file" (§5) is unambiguous for
+   scalar settings but not yet specified for repeatable ones.
 2. Wire `--config <file>` / `--profile <name>` into `src/main.rs`,
    resolving a chosen profile into the same `--data`/`--ontology`/
    `--mapping`/`--ottr`/`--rules` *file lists* `apply_ontologies`/
@@ -529,11 +571,11 @@ Once reviewed, concrete sub-issues could include:
    scope only (§5): one profile targets the single implicit default
    dataset, so this is a config-parsing-and-field-population change in
    `src/main.rs`, not a `sparql_endpoint`/registry change.
-3. File #759 (already created, Status `Todo`) for review/triage separately
-   — it is not blocking v1 (§5 doesn't touch runtime OWL loading) but
-   should be picked up before any future work that tries to make OWL-RL
-   setups as live-updatable as Datalog-only ones.
+3. Triage #759 (already filed, Status `Todo`) separately — it is not
+   blocking v1 (§5 doesn't touch runtime OWL loading) but should be picked
+   up before any future work that tries to make OWL-RL setups as
+   live-updatable as Datalog-only ones.
 4. Update `docs/user/deployment.md` with the config-file workflow alongside
-   the existing CLI-flag examples, including the `once`/`reload` semantics
-   distinction from §2a so persona 1a's story doesn't get accidentally
-   broken by someone assuming file lists are "seed once" by default.
+   the existing CLI-flag examples, including the "load every start" (not
+   "seed once") persistence behavior from §2a, so persona 1a's story isn't
+   accidentally broken by someone assuming otherwise.
