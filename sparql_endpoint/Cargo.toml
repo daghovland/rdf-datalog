@@ -38,7 +38,7 @@ owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
 reqwest = { version = "0.13", features = ["json", "multipart"] }
 urlencoding = "2"
-thirtyfour = { version = "0.37", default-features = false, features = ["reqwest", "rustls"] }
+thirtyfour = { version = "0.38", default-features = false, features = ["reqwest", "rustls"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 wiremock = "0.6"
