@@ -25,8 +25,8 @@ Contact: hovlanddag@gmail.com
 //! [`crate::ast::PropertyPath`] variant is handled, rather than guessing at
 //! the subset actually reachable inside a `SERVICE` body today — an
 //! unhandled variant should never silently produce wrong/incomplete text.
-//! Triple-pattern and term leaves reuse [`crate::explain::render_triple_pattern`]/
-//! [`crate::explain::render_term`] (which this issue also fixed to render
+//! Triple-pattern and term leaves reuse `crate::explain::render_triple_pattern`/
+//! `crate::explain::render_term` (which this issue also fixed to render
 //! `GraphElement` literals/blank nodes as parseable syntax, not just a debug
 //! label — see that module's `render_graph_element` doc comment); there was
 //! no existing `Expression`-to-text or `PropertyPath`-to-text renderer
