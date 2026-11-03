@@ -81,7 +81,8 @@ Contact: hovlanddag@gmail.com
 use crate::ast::{Query, QueryComponent, Term, TriplePattern};
 use crate::component_ordering::must_bind_vars;
 use crate::join_ordering::{cardinality_and_index, order_patterns};
-use dag_rdf::Datastore;
+use dag_rdf::{Datastore, GraphElement};
+use ingress::{RdfLiteral, RdfResource};
 use std::collections::HashSet;
 
 /// The static plan for a `WHERE` clause (or any nested component list): a
@@ -360,9 +361,99 @@ pub(crate) fn render_triple_pattern(tp: &TriplePattern) -> String {
 pub(crate) fn render_term(term: &Term) -> String {
     match term {
         Term::Variable(v) => format!("?{v}"),
-        Term::Constant(gel) => gel.to_string(),
+        Term::Constant(gel) => render_graph_element(gel),
         Term::TripleTerm(inner) => format!("<<( {} )>>", render_triple_pattern(inner)),
     }
+}
+
+/// Render a `GraphElement` constant as SPARQL concrete syntax, correctly —
+/// unlike `GraphElement`'s own `Display` impl (`ingress::lib::fmt::Display for
+/// GraphElement`), which renders a bare `RdfLiteral::LiteralString` as
+/// `(text)` with no quoting and a blank node as `_:(id)` with parentheses
+/// that are not legal `BLANK_NODE_LABEL` syntax — neither round-trips through
+/// `sparql_parser::parse_query`. This function is the one place in the crate
+/// that renders a `GraphElement` as *parseable* SPARQL text, used both by
+/// `render_term` above (and so by every existing caller of `render_term`/
+/// `render_triple_pattern`, mostly debug-label contexts where the old
+/// behaviour was tolerable but never actually correct) and by
+/// `service_text::service_body_to_sparql_text` (issue
+/// [#743](https://github.com/daghovland/rdf-datalog/issues/743)), where
+/// correctness is the actual requirement.
+///
+/// `GraphElement::TripleTerm` (an RDF 1.2 embedded triple referenced as an
+/// already-interned constant, rather than built from a literal nested
+/// `TriplePattern` the way `Term::TripleTerm` is) cannot be rendered without
+/// a `Datastore` to resolve its interned component IDs back to terms; this
+/// is the same gap already called out on `GraphElement`'s own `Display` impl
+/// and tracked under epic [#143](https://github.com/daghovland/rdf-datalog/issues/143).
+/// It is reached only via a constant term carrying a materialised triple-term
+/// resource directly (not the `<<( s p o )>>` pattern syntax, which uses
+/// `Term::TripleTerm` instead), and is expected to be rare in practice.
+pub(crate) fn render_graph_element(gel: &GraphElement) -> String {
+    match gel {
+        GraphElement::GraphLiteral(lit) => render_literal(lit),
+        GraphElement::NodeOrEdge(RdfResource::AnonymousBlankNode(id)) => format!("_:b{id}"),
+        // `RdfResource::Iri`'s `Display` is already correct (`<iri>`, or the
+        // `a` abbreviation for `rdf:type`); `GraphElement::TripleTerm`'s
+        // `Display` is the known, separately-tracked (#143) non-round-trippable
+        // fallback described above.
+        other => other.to_string(),
+    }
+}
+
+fn render_literal(lit: &RdfLiteral) -> String {
+    match lit {
+        RdfLiteral::LiteralString(s) => format!("\"{}\"", escape_literal_str(s)),
+        RdfLiteral::LangLiteral { lang, literal } => {
+            format!("\"{}\"@{}", escape_literal_str(literal), lang)
+        }
+        RdfLiteral::TypedLiteral { type_iri, literal } => {
+            format!("\"{}\"^^<{}>", escape_literal_str(literal), type_iri)
+        }
+        RdfLiteral::BooleanLiteral(b) => format!("{b}"),
+        RdfLiteral::IntegerLiteral(i) => format!("{i}"),
+        RdfLiteral::DecimalLiteral(d) => format!("{d}"),
+        RdfLiteral::FloatLiteral(f) => {
+            format!("\"{}\"^^<http://www.w3.org/2001/XMLSchema#float>", f.0)
+        }
+        RdfLiteral::DoubleLiteral(d) => {
+            format!("\"{}\"^^<http://www.w3.org/2001/XMLSchema#double>", d.0)
+        }
+        RdfLiteral::DateTimeLiteral(dt) => format!(
+            "\"{}\"^^<http://www.w3.org/2001/XMLSchema#dateTime>",
+            dt.to_rfc3339()
+        ),
+        RdfLiteral::DateLiteral(d) => format!(
+            "\"{}\"^^<http://www.w3.org/2001/XMLSchema#date>",
+            d.format("%Y-%m-%d")
+        ),
+        RdfLiteral::TimeLiteral(t) => format!(
+            "\"{}\"^^<http://www.w3.org/2001/XMLSchema#time>",
+            t.format("%H:%M:%S")
+        ),
+        RdfLiteral::DurationLiteral(dur) => {
+            format!("\"{}\"^^<http://www.w3.org/2001/XMLSchema#duration>", dur)
+        }
+    }
+}
+
+/// Escape a literal's lexical string for use inside a double-quoted SPARQL
+/// `STRING_LITERAL2`. Mirrors `sparql_endpoint::serialize::construct::escape_str`
+/// (duplicated rather than shared: that function lives in `sparql_endpoint`,
+/// which depends on `sparql_parser`, not the other way around).
+fn escape_literal_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
