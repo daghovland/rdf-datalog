@@ -765,10 +765,8 @@ fn collect_service_nodes<'a>(
 ) {
     for comp in components {
         match comp {
-            QueryComponent::Service(endpoint, inner, silent) => {
-                if !silent {
-                    out.push((endpoint, inner));
-                }
+            QueryComponent::Service(endpoint, inner, silent) if !silent => {
+                out.push((endpoint, inner));
                 // Deliberately not recursed into: see doc comment above.
             }
             QueryComponent::Optional(inner)
