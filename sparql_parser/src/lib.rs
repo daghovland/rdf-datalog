@@ -28,6 +28,7 @@ pub mod execute;
 pub mod explain;
 mod join_ordering;
 mod profile;
+pub mod service_text;
 pub use deadline::Deadline;
 pub use error::ExecError;
 pub use execute::{
@@ -44,6 +45,7 @@ pub use cyclic_bgp::{bgp_has_cyclic_join_graph, collect_bgps};
 pub use explain::{explain_query, query_type_label, ExplainPlan, PatternPlan, PlanNode};
 pub use ingress::NetworkPolicy;
 pub use profile::ProfileNode;
+pub use service_text::service_body_to_sparql_text;
 
 use crate::ast::*;
 use dag_rdf::{GraphElement, IriReference, RdfLiteral, RdfResource};
