@@ -35,7 +35,7 @@ pub enum NetworkPolicy {
     ///
     /// Applies to: SPARQL `LOAD` ([#119](https://github.com/daghovland/rdf-datalog/issues/119)),
     /// JSON-LD `@context` URLs ([#82](https://github.com/daghovland/rdf-datalog/issues/82)),
-    /// SPARQL `SERVICE` ([#51](https://github.com/daghovland/rdf-datalog/issues/51)).
+    /// SPARQL `SERVICE` ([#741](https://github.com/daghovland/rdf-datalog/issues/741) — not yet implemented).
     Allow,
     /// Only URLs whose string representation starts with one of the given prefixes are fetched.
     ///

@@ -6,23 +6,22 @@ You should have received a copy of the GNU General Public License along with thi
 Contact: hovlanddag@gmail.com
 */
 
-//! `<Annotation>` -> `owl_ontology::Annotation` (`(AnnotationProperty,
-//! AnnotationValue)`); `axiomAnnotations` (the leading run of `<Annotation>`
-//! children shared by every `Axiom` alternative); and the remaining
-//! `AnnotationAxiom` elements (`<AnnotationAssertion>`,
-//! `<SubAnnotationPropertyOf>`, `<AnnotationPropertyDomain>`,
-//! `<AnnotationPropertyRange>`) (#608).
+//! `<Annotation>` -> `owl_ontology::Annotation` (`property`, `value`, and a
+//! recursive `annotations: Vec<Annotation>` field for meta-annotations);
+//! `axiomAnnotations` (the leading run of `<Annotation>` children shared by
+//! every `Axiom` alternative); and the remaining `AnnotationAxiom` elements
+//! (`<AnnotationAssertion>`, `<SubAnnotationPropertyOf>`,
+//! `<AnnotationPropertyDomain>`, `<AnnotationPropertyRange>`) (#608).
 //!
 //! `AnnotationSubject ::= IRI | AnonymousIndividual` /
 //! `AnnotationValue ::= AnonymousIndividual | IRI | Literal` per the spec's
-//! §10. A nested `<Annotation>` inside another `<Annotation>`'s own leading
-//! annotations (a "meta-annotation") is a genuine type-model gap --
-//! `owl_ontology::Annotation` is a flat `(AnnotationProperty,
-//! AnnotationValue)` pair with no slot for annotations on an annotation,
-//! the same limitation `owl_functional_parser`/`manchester_parser` already
-//! document for their own crates -- so it errors rather than being silently
-//! dropped, pointing at
-//! [#695](https://github.com/daghovland/rdf-datalog/issues/695).
+//! §10. A nested `<Annotation>` inside another `<Annotation>`'s own children
+//! (a "meta-annotation") is parsed recursively and threaded into
+//! `owl_ontology::Annotation::annotations`, mirroring
+//! `owl_functional_parser`'s `annotation()` (`annotationAnnotations` via
+//! `many0_no_sep(annotation(ctx))`) -- see
+//! [#695](https://github.com/daghovland/rdf-datalog/issues/695) and
+//! [#710](https://github.com/daghovland/rdf-datalog/issues/710).
 
 use crate::iri::{Prefixes, resolve_iri};
 use ingress::{GraphElement, IriReference, RdfLiteral, RdfResource};
@@ -121,18 +120,25 @@ pub(crate) fn parse_annotation_filler_as_graph_element(
     }
 }
 
-/// Parse an `<Annotation>` element: an `<AnnotationProperty>` child (the
-/// property), followed by exactly one value child (`<Literal>`, `<IRI>`,
-/// `<AbbreviatedIRI>`, or `<AnonymousIndividual>`).
+/// Parse an `<Annotation>` element: zero or more leading nested
+/// `<Annotation>` children (meta-annotations, per the spec's
+/// `annotationAnnotations := { Annotation }`), then an
+/// `<AnnotationProperty>` child (the property), followed by exactly one
+/// value child (`<Literal>`, `<IRI>`, `<AbbreviatedIRI>`, or
+/// `<AnonymousIndividual>`).
 pub(crate) fn parse_annotation(
     node: roxmltree::Node,
     prefixes: &Prefixes,
 ) -> Result<Annotation, String> {
+    let mut meta = Vec::new();
     let mut property = None;
     let mut value = None;
 
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
+            "Annotation" => {
+                meta.push(parse_annotation(child, prefixes)?);
+            }
             "AnnotationProperty" => {
                 property = Some(resolve_iri(child, prefixes)?);
             }
@@ -151,9 +157,7 @@ pub(crate) fn parse_annotation(
                 ));
             }
             other => {
-                return Err(format!(
-                    "<Annotation> nested inside <{other}> (a meta-annotation) is not representable (see #695)"
-                ));
+                return Err(format!("<{other}> is not a valid <Annotation> child"));
             }
         }
     }
@@ -161,7 +165,7 @@ pub(crate) fn parse_annotation(
     let property =
         property.ok_or_else(|| "<Annotation> has no <AnnotationProperty>".to_string())?;
     let value = value.ok_or_else(|| "<Annotation> has no value element".to_string())?;
-    Ok(Annotation::new(property, value))
+    Ok(Annotation::with_meta(property, value, meta))
 }
 
 /// Split an axiom element's already-collected element children into its
@@ -297,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_meta_annotation_with_695_reference() {
+    fn parses_nested_meta_annotation() {
         let d = doc(r#"<Annotation>
                  <Annotation>
                    <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
@@ -306,8 +310,66 @@ mod tests {
                  <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
                  <Literal>hello</Literal>
                </Annotation>"#);
+        let ann = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
+        assert_eq!(
+            ann.property.0.0,
+            "http://www.w3.org/2000/01/rdf-schema#comment"
+        );
+        assert_eq!(
+            ann.value,
+            AnnotationValue::LiteralAnnotation(GraphElement::GraphLiteral(
+                RdfLiteral::LiteralString("hello".to_string())
+            ))
+        );
+        assert_eq!(ann.annotations.len(), 1);
+        let meta = &ann.annotations[0];
+        assert_eq!(
+            meta.property.0.0,
+            "http://www.w3.org/2000/01/rdf-schema#comment"
+        );
+        assert_eq!(
+            meta.value,
+            AnnotationValue::LiteralAnnotation(GraphElement::GraphLiteral(
+                RdfLiteral::LiteralString("meta".to_string())
+            ))
+        );
+        assert!(meta.annotations.is_empty());
+    }
+
+    #[test]
+    fn parses_two_levels_of_nested_meta_annotation() {
+        let d = doc(r#"<Annotation>
+                 <Annotation>
+                   <Annotation>
+                     <AnnotationProperty IRI="http://example.org/deepest"/>
+                     <Literal>deepest</Literal>
+                   </Annotation>
+                   <AnnotationProperty IRI="http://example.org/middle"/>
+                   <Literal>middle</Literal>
+                 </Annotation>
+                 <AnnotationProperty IRI="http://example.org/outer"/>
+                 <Literal>outer</Literal>
+               </Annotation>"#);
+        let ann = parse_annotation(d.root_element(), &Prefixes::new()).unwrap();
+        assert_eq!(ann.property.0.0, "http://example.org/outer");
+        assert_eq!(ann.annotations.len(), 1);
+        let middle = &ann.annotations[0];
+        assert_eq!(middle.property.0.0, "http://example.org/middle");
+        assert_eq!(middle.annotations.len(), 1);
+        let deepest = &middle.annotations[0];
+        assert_eq!(deepest.property.0.0, "http://example.org/deepest");
+        assert!(deepest.annotations.is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_annotation_child() {
+        let d = doc(r#"<Annotation>
+                 <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+                 <Literal>hello</Literal>
+                 <Bogus/>
+               </Annotation>"#);
         let err = parse_annotation(d.root_element(), &Prefixes::new()).unwrap_err();
-        assert!(err.contains("695"));
+        assert!(err.contains("Bogus"));
     }
 
     #[test]

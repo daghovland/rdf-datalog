@@ -36,13 +36,17 @@ azure_identity = { version = "1.0.0", features = ["tokio"] }
 azure_storage_blob = { version = "1.1.0", features = ["tokio"] }
 async-trait = "0.1.89"
 azure_core = "1.1.0"
+num-bigint = "0.5.1"
+chrono = { version = "0.4.20", features = ["serde"] }
+rust_decimal = "1.41"
+ordered-float = "5.3.0"
 
 [dev-dependencies]
 owl2rl2datalog = { path = "../owl2rl2datalog" }
 rdf-owl-translator = { path = "../rdf_owl_translator" }
 reqwest = { version = "0.13", features = ["json", "multipart"] }
 urlencoding = "2"
-thirtyfour = { version = "0.37", default-features = false, features = ["reqwest", "rustls"] }
+thirtyfour = { version = "0.38", default-features = false, features = ["reqwest", "rustls"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 wiremock = "0.6"

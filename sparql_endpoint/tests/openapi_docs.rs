@@ -193,6 +193,60 @@ async fn openapi_json_lists_deferred_386_routes() {
     );
 }
 
+/// `GET /api-docs/openapi.json` documents every route wired in `server.rs`
+/// that #723 found missing: some were never documented at all, and some
+/// (`/$/ready`, `/.well-known/void`) were incorrectly listed as already
+/// covered in `docs/plans/OPENAPI_FRONTEND_386_PLAN.md`'s route-coverage
+/// list. Also asserts `HEAD` is documented on the GSP-shaped routes, which
+/// `server.rs` wires but the original `gsp_path_item`/`dataset_data_path_item`
+/// helpers only covered GET/PUT/POST/DELETE for.
+#[tokio::test]
+async fn openapi_json_lists_723_routes() {
+    let server = common::TestServer::start(TURTLE).await;
+
+    let resp = server
+        .client
+        .get(format!("{}/api-docs/openapi.json", server.base_url))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("body must be valid JSON");
+    let paths = body.get("paths").expect("missing `paths` field");
+
+    for (path, methods) in [
+        ("/$/ready", &["get", "post"][..]),
+        ("/{name}/get", &["get", "head"][..]),
+        ("/.well-known/void", &["get"][..]),
+        ("/upload", &["post"][..]),
+        ("/describe", &["get"][..]),
+        ("/id/{path}", &["get"][..]),
+        ("/ns/agentprov/session", &["get"][..]),
+        ("/vqs/productive-values", &["get"][..]),
+    ] {
+        let path_item = paths.get(path).unwrap_or_else(|| {
+            panic!("expected path `{path}` to be documented, got paths: {paths}")
+        });
+        for method in methods {
+            assert!(
+                path_item.get(method).is_some(),
+                "expected {method} {path} to be documented, got: {path_item}"
+            );
+        }
+    }
+
+    // HEAD must be documented on every GSP-shaped route, mirroring the HEAD
+    // handlers `server.rs` actually wires for these.
+    for path in ["/rdf-graph-store", "/rdf-graphs/{path}", "/{name}/data"] {
+        let path_item = &paths[path];
+        assert!(
+            path_item.get("head").is_some(),
+            "expected HEAD {path} to be documented, got: {path_item}"
+        );
+    }
+}
+
 /// Under `ApiKey { require_for_reads: true, .. }`, the docs routes require
 /// the same Bearer token as every other GET (read) route — no special-cased
 /// public exemption, consistent with the existing `/` frontend's treatment.

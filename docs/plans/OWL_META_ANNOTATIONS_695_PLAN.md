@@ -58,7 +58,7 @@ consistent with the old `(property, value)` tuple's own comparison order
 |---|---|---|
 | `owl_functional_parser` | Yes — `Annotation ::= 'Annotation' '(' annotationAnnotations AnnotationProperty AnnotationValue ')'`. Already parses its own `annotationAnnotations` recursively and discards the payload (`annotation.rs`'s own module doc says so). | **Real support.** Thread the already-parsed `_meta` into the new `annotations` field. `serialize.rs::fmt_annotation` gains the matching `Annotation(<meta> prop value)` nesting via the existing `fmt_axiom_annotations` helper. |
 | `manchester_parser` | Yes — `annotation ::= annotationPropertyIRI annotationTarget` is used via the generic `annotatedList(p) ::= [annotations] p {',' [annotations] p}` pattern wherever a list of annotations appears (`annotationAnnotatedList ::= annotatedList(annotation)`), i.e. each list item may have its own leading `Annotations:` block. | **Real support.** `annotation()` in `annotation.rs` gains an optional leading `opt_leading_annotations(ctx)` call before the property+target, populating the new field. Mutually recursive with `opt_leading_annotations`/`annotations_section`, which is fine for `nom` combinator-factory functions (recursion happens at runtime through ordinary function calls, not through the opaque `impl Trait` return type, so there's no "recursive opaque type" compile error). `serialize.rs::fmt_annotation` gains the matching nested `Annotations: ... ` prefix via the existing `ann_prefix` helper. |
-| `owl_xml_parser` | Yes — OWL/XML's `<Annotation>` element can contain a nested `<Annotation>` child per the spec, same as Functional-Style Syntax. | **Always-empty only.** This crate's ABox/axiom-annotation work (#608) is in flight in a separate worktree touching these exact files; this PR only makes `owl_xml_parser` compile against the new struct (`Annotation::new(...)`), it does not add nested-`<Annotation>` parsing. A follow-up issue is filed for that (see below) rather than doing it here, to avoid colliding with #608's in-progress edits. |
+| `owl_xml_parser` | Yes — OWL/XML's `<Annotation>` element can contain a nested `<Annotation>` child per the spec, same as Functional-Style Syntax. | **Always-empty only, in this PR.** This crate's ABox/axiom-annotation work (#608) is in flight in a separate worktree touching these exact files; this PR only makes `owl_xml_parser` compile against the new struct (`Annotation::new(...)`), it does not add nested-`<Annotation>` parsing. A follow-up issue is filed for that (see below) rather than doing it here, to avoid colliding with #608's in-progress edits. **Update:** real support landed once #608 merged — see [#710](https://github.com/daghovland/rdf-datalog/issues/710). |
 
 ## RDF translation (`owl2rl2datalog::owl_to_rdf`, `rdf_owl_translator::axiom_parser`)
 
@@ -83,7 +83,9 @@ consistent with the old `(property, value)` tuple's own comparison order
 
 ## Mechanical-only call sites (always-empty, no grammar/feature change)
 
-- `owl_xml_parser/src/annotation.rs` (+ its one test) — see table above.
+- `owl_xml_parser/src/annotation.rs` — mechanical-only in this PR; gained real
+  support in [#710](https://github.com/daghovland/rdf-datalog/issues/710),
+  see the updated table row above.
 - `tests/manchester_roundtrip.rs::ModelRenamer::annotation` — a test helper
   that renames anonymous-individual ids consistently across a
   parse→serialize→parse round trip; updated to use the struct and recurse

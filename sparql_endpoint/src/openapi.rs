@@ -315,6 +315,17 @@ fn gsp_path_item(direct: bool) -> PathItem {
     .response("404", no_content_response("Graph does not exist."))
     .build();
 
+    let head = op(
+        "Check whether a graph exists",
+        "Graph Store HTTP Protocol HEAD: same as GET but returns no body, \
+         for existence checks.",
+        "Graph Store Protocol",
+    )
+    .parameters(Some(params.clone()))
+    .response("200", no_content_response("Graph exists."))
+    .response("404", no_content_response("Graph does not exist."))
+    .build();
+
     let put = op(
         "Replace a graph",
         "Graph Store HTTP Protocol PUT: replaces the graph's contents with the request body.",
@@ -351,6 +362,7 @@ fn gsp_path_item(direct: bool) -> PathItem {
     .build();
 
     let item = item1(HttpMethod::Get, get);
+    let item = merge(item, HttpMethod::Head, head);
     let item = merge(item, HttpMethod::Put, put);
     let item = merge(item, HttpMethod::Post, post);
     merge(item, HttpMethod::Delete, delete)
@@ -359,6 +371,12 @@ fn gsp_path_item(direct: bool) -> PathItem {
 fn dataset_data_path_item() -> PathItem {
     let mut item = gsp_path_item(false);
     item.get = item.get.map(|mut o| {
+        o.parameters
+            .get_or_insert_with(Vec::new)
+            .insert(0, RefOr::T(path_param("name", "Dataset name.")));
+        o
+    });
+    item.head = item.head.map(|mut o| {
         o.parameters
             .get_or_insert_with(Vec::new)
             .insert(0, RefOr::T(path_param("name", "Dataset name.")));
@@ -383,6 +401,39 @@ fn dataset_data_path_item() -> PathItem {
         o
     });
     item
+}
+
+/// `GET/HEAD /{name}/get` — read-only alias for `/{name}/data` (no
+/// PUT/POST/DELETE). See [`crate::dataset_routes::dataset_data_get`] /
+/// [`crate::dataset_routes::dataset_data_head`].
+fn dataset_get_path_item() -> PathItem {
+    let params = vec![path_param("name", "Dataset name.")];
+
+    let get = op(
+        "Fetch the dataset's default graph (read-only alias)",
+        "Read-only alias for `GET /{name}/data` with no `?graph=`/`?default` \
+         query parameters — always returns the dataset's default graph.",
+        "Graph Store Protocol",
+    )
+    .parameters(Some(params.clone()))
+    .response(
+        "200",
+        ok_rdf_response("Graph contents (format per Accept header)."),
+    )
+    .response("404", no_content_response("Dataset does not exist."))
+    .build();
+
+    let head = op(
+        "Check whether the dataset's default graph exists (read-only alias)",
+        "Read-only alias for `HEAD /{name}/data`: same as GET but returns no body.",
+        "Graph Store Protocol",
+    )
+    .parameters(Some(params))
+    .response("200", no_content_response("Dataset exists."))
+    .response("404", no_content_response("Dataset does not exist."))
+    .build();
+
+    merge(item1(HttpMethod::Get, get), HttpMethod::Head, head)
 }
 
 fn admin_datasets_path_item() -> PathItem {
@@ -449,6 +500,23 @@ fn simple_post(summary: &str, description: &str, tag: &str) -> PathItem {
         .response("200", ok_text_response("Success."))
         .build();
     item1(HttpMethod::Post, post)
+}
+
+/// `GET/POST /$/ready` — readiness check (#414), deliberately reusing
+/// `admin::admin_ping` for both methods (same as `/$/ping`). See the doc
+/// comment on [`crate::admin::admin_ping`] for why GET and POST, and
+/// readiness vs. liveness, coincide here.
+fn admin_ready_path_item() -> PathItem {
+    let summary = "Readiness check";
+    let description =
+        "Readiness check (#414); currently equivalent to `/$/ping` (GET and POST both handled).";
+    let get = op(summary, description, "Admin")
+        .response("200", ok_json_response("Success."))
+        .build();
+    let post = op(summary, description, "Admin")
+        .response("200", ok_text_response("Success."))
+        .build();
+    merge(item1(HttpMethod::Get, get), HttpMethod::Post, post)
 }
 
 /// `POST /{name}/shacl` — SHACL validation. See
@@ -662,6 +730,115 @@ fn rules_by_id_path_item() -> PathItem {
     merge(item1(HttpMethod::Post, post), HttpMethod::Delete, delete)
 }
 
+/// `GET /describe?uri=<encoded IRI>` — dereferenceable resource IRIs
+/// (#493). See [`crate::describe::describe_get`].
+fn describe_path_item() -> PathItem {
+    let get = op(
+        "Describe a resource",
+        "Returns every outbound (`<iri> ?p ?o`) and inbound (`?s ?p <iri>`) \
+         triple known about `uri`, merged into a fresh graph (format per \
+         Accept header). Not SPARQL's outbound-only `DESCRIBE <iri>`.",
+        "Discovery",
+    )
+    .parameter(query_param("uri", "The resource IRI to describe.", true))
+    .response(
+        "200",
+        ok_rdf_response("Graph contents (format per Accept header)."),
+    )
+    .response("400", no_content_response("Missing or malformed `uri`."))
+    .response(
+        "404",
+        no_content_response("Resource is not known to the store."),
+    )
+    .build();
+    item1(HttpMethod::Get, get)
+}
+
+/// `GET /id/{*path}` — generic slash-URI namespace that 303-redirects into
+/// `/describe` (#493). See [`crate::describe::id_redirect_get`].
+fn id_redirect_path_item() -> PathItem {
+    let get = op(
+        "Resolve a slash-URI resource IRI",
+        "303-redirects to `GET /describe?uri=<base_iri>/id/<path>`, per the \
+         slash-URI dereferenceable-resource convention.",
+        "Discovery",
+    )
+    .parameter(path_param("path", "Resource path segment(s) under /id/."))
+    .response("303", no_content_response("Redirect to /describe?uri=..."))
+    .build();
+    item1(HttpMethod::Get, get)
+}
+
+/// `GET /ns/agentprov/session` — agent-provenance session hash-URI
+/// namespace document (#567). See
+/// [`crate::agentprov_session::agentprov_session_document_get`].
+fn agentprov_session_path_item() -> PathItem {
+    let get = op(
+        "Agent-provenance session namespace document",
+        "Returns every outbound triple whose subject IRI falls under the \
+         `https://dagalog.no/ns/agentprov/session#` namespace (format per \
+         Accept header). Returns 200 with an empty graph when no sessions \
+         are loaded, unlike `/describe`'s 404 for an unknown resource.",
+        "Discovery",
+    )
+    .response(
+        "200",
+        ok_rdf_response("Namespace document (format per Accept header)."),
+    )
+    .build();
+    item1(HttpMethod::Get, get)
+}
+
+/// `POST /upload` — legacy Turtle upload. See
+/// [`crate::upload::upload_turtle`].
+fn upload_path_item() -> PathItem {
+    let post = op(
+        "Upload a Turtle document",
+        "Legacy convenience endpoint: parses the request body as Turtle and \
+         merges it into the default graph, or into a named graph when \
+         `?graph=<iri>` is given. Superseded by the Graph Store HTTP \
+         Protocol (`/rdf-graph-store`).",
+        "Legacy",
+    )
+    .parameter(query_param(
+        "graph",
+        "Named graph IRI to merge into, instead of the default graph.",
+        false,
+    ))
+    .request_body(Some(text_request_body(
+        "RDF graph (Turtle).",
+        "text/turtle",
+    )))
+    .response("200", no_content_response("Upload applied."))
+    .response(
+        "400",
+        no_content_response("Malformed Turtle, or non-absolute graph IRI."),
+    )
+    .response("403", no_content_response("Server is read-only."))
+    .build();
+    item1(HttpMethod::Post, post)
+}
+
+/// `GET /vqs/productive-values?class=<IRI>&property=<IRI>` — query-builder
+/// VQS support. See [`crate::vqs_routes::productive_values`].
+fn vqs_productive_values_path_item() -> PathItem {
+    let get = op(
+        "Productive data values for a class/property pair",
+        "Returns the productive data values for `property` on instances of \
+         `class`, using the Wld reference configuration, for use by the \
+         query-builder frontend's autocomplete.",
+        "Query Builder",
+    )
+    .parameter(query_param("class", "Class IRI.", true))
+    .parameter(query_param("property", "Property IRI.", true))
+    .response(
+        "200",
+        ok_plain_json_response("`{\"covered\": bool, \"values\": [...]}`."),
+    )
+    .build();
+    item1(HttpMethod::Get, get)
+}
+
 /// `POST /transaction/begin` — begin a transaction. See
 /// [`crate::transaction_routes::transaction_begin`].
 fn transaction_begin_path_item() -> PathItem {
@@ -738,10 +915,12 @@ pub fn build_openapi() -> OpenApi {
         .path("/rdf-graph-store", gsp_path_item(false))
         .path("/rdf-graphs/{path}", gsp_path_item(true))
         .path("/{name}/data", dataset_data_path_item())
+        .path("/{name}/get", dataset_get_path_item())
         .path(
             "/$/ping",
             simple_get("Liveness/readiness ping", "Fuseki-compatible `/$/ping`.", "Admin"),
         )
+        .path("/$/ready", admin_ready_path_item())
         .path(
             "/$/server",
             simple_get(
@@ -772,6 +951,20 @@ pub fn build_openapi() -> OpenApi {
             "/void",
             simple_get("VoID dataset description", "RDF VoID (Vocabulary of Interlinked Datasets) description of this server's datasets.", "Discovery"),
         )
+        .path(
+            "/.well-known/void",
+            simple_get(
+                "VoID dataset description",
+                "RDF VoID (Vocabulary of Interlinked Datasets) description of this \
+                 server's datasets, at the `.well-known` URI (same handler as `/void`).",
+                "Discovery",
+            ),
+        )
+        .path("/describe", describe_path_item())
+        .path("/id/{path}", id_redirect_path_item())
+        .path("/ns/agentprov/session", agentprov_session_path_item())
+        .path("/upload", upload_path_item())
+        .path("/vqs/productive-values", vqs_productive_values_path_item())
         .path("/{name}/shacl", shacl_path_item())
         .path("/{name}/rml", rml_dataset_path_item())
         .path("/rml/map", rml_map_path_item())

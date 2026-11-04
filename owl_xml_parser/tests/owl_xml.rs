@@ -1614,6 +1614,37 @@ fn annotation_axiom_level_annotation() {
     }
 }
 
+#[test]
+fn annotation_axiom_level_meta_annotation() {
+    let src = wrap(
+        "",
+        r#"<SubAnnotationPropertyOf>
+             <Annotation>
+               <Annotation>
+                 <AnnotationProperty IRI="http://example.org/source"/>
+                 <IRI>http://example.org/Textbook</IRI>
+               </Annotation>
+               <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#comment"/>
+               <Literal>why</Literal>
+             </Annotation>
+             <AnnotationProperty IRI="http://example.org/pizza#shortLabel"/>
+             <AnnotationProperty IRI="http://www.w3.org/2000/01/rdf-schema#label"/>
+           </SubAnnotationPropertyOf>"#,
+    );
+    let onto = owl_xml_parser::parse(&src).unwrap();
+    match annotation_axiom(&onto) {
+        AnnotationAxiom::SubAnnotationPropertyOf(anns, _, _) => {
+            assert_eq!(anns.len(), 1);
+            assert_eq!(anns[0].annotations.len(), 1);
+            assert_eq!(
+                anns[0].annotations[0].property.0.0,
+                "http://example.org/source"
+            );
+        }
+        other => panic!("expected SubAnnotationPropertyOf, got {other:?}"),
+    }
+}
+
 // --- Full-document integration ------------------------------------------
 
 #[test]
