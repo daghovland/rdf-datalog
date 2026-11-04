@@ -585,10 +585,42 @@ pub(crate) fn eval_component(
             Ok(join_solutions_with_values(solutions, vars, rows, datastore))
         }
 
-        QueryComponent::Service(_, inner, _) => {
-            // SERVICE not supported; return empty
-            let _ = inner;
-            Ok(Vec::new())
+        QueryComponent::Service(endpoint, inner, _silent) => {
+            // `execute_inner`'s network-policy check (above this call, in
+            // `mod.rs`) has already rejected the query entirely under
+            // `Deny` or an unresolved `Allow`/`AllowList` SERVICE, so by the
+            // time this arm runs there are exactly two possibilities: a
+            // pre-resolved entry exists for this call's key (installed by a
+            // `ServiceResultsGuard` — see `sparql_endpoint`'s
+            // `pre_resolve_services`), or this SERVICE was SILENT/under
+            // `NetworkPolicy::Ignore`, in which case there is correctly no
+            // entry and this falls back to empty results. The executor
+            // itself never inspects `NetworkPolicy` — only "do I have
+            // pre-resolved results for this key or not". See issue #744.
+            let rows = super::service_key(endpoint, inner)
+                .and_then(|key| super::pre_resolved_service_results(&key));
+            let Some(rows) = rows else {
+                return Ok(Vec::new());
+            };
+            // SERVICE establishes its own independent evaluation scope
+            // (SPARQL 1.1 §18.2.2.8): the remote results are natural-joined
+            // back against the outer solutions, exactly like
+            // `eval_independent_then_join` above — never seeded with the
+            // outer bindings.
+            let inner_sols: Vec<PartialSub> = rows
+                .iter()
+                .map(super::solutions::solution_row_to_partial)
+                .collect();
+            let mut result = Vec::new();
+            for outer_sub in &solutions {
+                deadline.check()?;
+                result.extend(
+                    inner_sols
+                        .iter()
+                        .filter_map(|inner_sub| merge_solutions(outer_sub, inner_sub, datastore)),
+                );
+            }
+            Ok(result)
         }
     }
 }

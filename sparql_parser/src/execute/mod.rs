@@ -248,9 +248,9 @@ pub fn execute_with_profile(
 }
 
 /// The top-level `WHERE` clause's component list, regardless of query form.
-/// Shared by `execute_inner` and [`crate::cyclic_bgp`]'s recursive
+/// Shared by `execute_inner` and `crate::cyclic_bgp`'s recursive
 /// `{ SELECT ... }` subquery descent.
-pub(crate) fn where_clause_of(query: &Query) -> &[QueryComponent] {
+pub fn where_clause_of(query: &Query) -> &[QueryComponent] {
     match query {
         Query::Select { where_clause, .. } => where_clause.as_slice(),
         Query::Ask { where_clause, .. } => where_clause.as_slice(),
@@ -271,7 +271,9 @@ fn execute_inner(
     // Apply network policy to SERVICE clauses.
     match network {
         NetworkPolicy::Deny => {
-            if let Some(endpoint) = first_non_silent_service(where_clause) {
+            let mut nodes = Vec::new();
+            collect_service_nodes(where_clause, &mut nodes);
+            if let Some((endpoint, _)) = nodes.first() {
                 return Err(ExecError::ServiceDenied {
                     endpoint: format!("{endpoint:?}"),
                 });
@@ -283,8 +285,24 @@ fn execute_inner(
             // match arm below).
         }
         NetworkPolicy::Allow | NetworkPolicy::AllowList(_) => {
-            if first_non_silent_service(where_clause).is_some() {
-                return Err(ExecError::ServiceNotImplemented);
+            // Every non-SILENT SERVICE call must have a pre-resolved entry
+            // (installed by a `ServiceResultsGuard` around this call — see
+            // `sparql_endpoint`'s `pre_resolve_services`) or this call
+            // errors rather than silently returning empty results for it.
+            // This covers both a caller that never pre-resolves at all
+            // (unwired paths: `shacl`, `sparql_update`'s WHERE evaluation,
+            // plain test callers) and a variable-endpoint SERVICE (which
+            // `collect_service_calls`/`service_key` can never produce an
+            // entry for) — see issue #744.
+            let mut nodes = Vec::new();
+            collect_service_nodes(where_clause, &mut nodes);
+            for (endpoint, inner) in nodes {
+                let resolved = service_key(endpoint, inner)
+                    .map(|k| pre_resolved_service_results(&k).is_some())
+                    .unwrap_or(false);
+                if !resolved {
+                    return Err(ExecError::ServiceNotImplemented);
+                }
             }
         }
     }
@@ -637,41 +655,154 @@ fn is_internal_variable(var: &str) -> bool {
     var.starts_with("__path_") || var.starts_with("__bn_")
 }
 
-/// Returns `Some(endpoint_iri)` for the first non-SILENT SERVICE node found,
-/// or `None` if the query contains no non-SILENT SERVICE.
-fn first_non_silent_service(components: &[QueryComponent]) -> Option<&Term> {
+/// A pre-resolved `SERVICE` call's lookup key: the exact `(endpoint IRI,
+/// serialized query body)` pair that was (or would be) sent over the wire.
+/// Shared by the async pre-resolution walk (`collect_service_calls`, run
+/// from `sparql_endpoint` before `execute_with_base`) and the
+/// `QueryComponent::Service` evaluation arm (`components.rs`), via
+/// [`service_key`] — computing the key independently on each side would risk
+/// a silent mismatch (pre-resolved results present but never found).
+///
+/// See issue [#744](https://github.com/daghovland/rdf-datalog/issues/744),
+/// part of epic [#741](https://github.com/daghovland/rdf-datalog/issues/741).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ServiceKey {
+    /// The SERVICE clause's endpoint IRI (bare string, no `<...>` wrapping).
+    pub endpoint: String,
+    /// The SERVICE body rendered as standalone SPARQL text (via
+    /// [`crate::service_body_to_sparql_text`]).
+    pub body: String,
+}
+
+/// Compute a [`ServiceKey`] for a `SERVICE <endpoint> { inner }` node, or
+/// `None` if `endpoint` is not a constant IRI (a variable endpoint is bound
+/// at evaluation time, not statically pre-resolvable — see issue #744's
+/// "What NOT to build" section).
+pub fn service_key(endpoint: &Term, inner: &[QueryComponent]) -> Option<ServiceKey> {
+    let iri = match endpoint {
+        Term::Constant(GraphElement::NodeOrEdge(ingress::RdfResource::Iri(iri))) => iri.0.clone(),
+        _ => return None,
+    };
+    Some(ServiceKey {
+        endpoint: iri,
+        body: crate::service_body_to_sparql_text(inner),
+    })
+}
+
+thread_local! {
+    /// Async-pre-resolved `SERVICE` results, installed by
+    /// [`ServiceResultsGuard`] around a synchronous [`execute_with_base`]
+    /// call. Empty/absent means "no pre-resolution was done for this call" —
+    /// which is exactly correct for every caller except the one
+    /// `sparql_endpoint` path that actually performs it (SILENT SERVICE and
+    /// `NetworkPolicy::Ignore`/`Deny` never need an entry here). A thread-
+    /// local rather than a new parameter threaded through ~8 call sites and
+    /// every recursive `eval_component` arm — see issue #744's design
+    /// rationale (mirrors [`CURRENT_BASE`] above, #346).
+    static PRE_RESOLVED_SERVICES: RefCell<HashMap<ServiceKey, Vec<SolutionRow>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// RAII guard installing pre-resolved `SERVICE` results for the lifetime of
+/// the guard, restoring whatever was previously installed when dropped
+/// (mirrors `BaseGuard`'s save-and-restore shape, for the same
+/// re-entrancy reason: `EXISTS`/subquery evaluation can recursively re-enter
+/// on the same thread while an outer guard is alive).
+///
+/// Deliberately `!Send` (via the `PhantomData<*const ()>` marker): the
+/// thread-local it installs is only meaningful on the thread that installed
+/// it, and `axum` handler futures must be `Send` — if this guard were ever
+/// (accidentally) held across an `.await` point, that would be a compile
+/// error here rather than a silently-broken runtime behavior on a
+/// multi-thread Tokio runtime. Callers must install it, call
+/// [`execute_with_base`] synchronously, and drop it — all without an
+/// intervening `.await`.
+pub struct ServiceResultsGuard {
+    previous: HashMap<ServiceKey, Vec<SolutionRow>>,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl ServiceResultsGuard {
+    /// Install `results` as the pre-resolved SERVICE map for the lifetime
+    /// of the returned guard.
+    pub fn install(results: HashMap<ServiceKey, Vec<SolutionRow>>) -> Self {
+        let previous = PRE_RESOLVED_SERVICES.with(|c| c.replace(results));
+        ServiceResultsGuard {
+            previous,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Drop for ServiceResultsGuard {
+    fn drop(&mut self) {
+        PRE_RESOLVED_SERVICES.with(|c| *c.borrow_mut() = std::mem::take(&mut self.previous));
+    }
+}
+
+/// Look up pre-resolved results for a `SERVICE` call's key, if any were
+/// installed by a [`ServiceResultsGuard`]. Used by the
+/// `QueryComponent::Service` evaluation arm.
+pub(crate) fn pre_resolved_service_results(key: &ServiceKey) -> Option<Vec<SolutionRow>> {
+    PRE_RESOLVED_SERVICES.with(|c| c.borrow().get(key).cloned())
+}
+
+/// Collect every non-`SILENT` `SERVICE` node reachable from `components`,
+/// recursing into `Optional`/`Minus`/`Graph`/`Union`/`Group` and a
+/// `Subquery`'s own nested `WHERE` clause — but **not** into any `SERVICE`
+/// node's own inner body (silent or not): that body is forwarded as text to
+/// the remote endpoint and evaluated *there*, never separately by this
+/// executor, so a nested `SERVICE` inside it is not "reachable" from here in
+/// the sense this function cares about.
+///
+/// Used both to drive async pre-resolution (`sparql_endpoint`'s
+/// `pre_resolve_services`, via [`collect_service_calls`]) and, here in
+/// `execute_inner`, to decide whether `NetworkPolicy::Deny`/`Allow` should
+/// reject the query.
+fn collect_service_nodes<'a>(
+    components: &'a [QueryComponent],
+    out: &mut Vec<(&'a Term, &'a [QueryComponent])>,
+) {
     for comp in components {
         match comp {
             QueryComponent::Service(endpoint, inner, silent) => {
                 if !silent {
-                    return Some(endpoint);
+                    out.push((endpoint, inner));
                 }
-                if let Some(ep) = first_non_silent_service(inner) {
-                    return Some(ep);
-                }
+                // Deliberately not recursed into: see doc comment above.
             }
-            QueryComponent::Optional(inner) | QueryComponent::Minus(inner) => {
-                if let Some(ep) = first_non_silent_service(inner) {
-                    return Some(ep);
-                }
-            }
-            QueryComponent::Graph(_, inner) => {
-                if let Some(ep) = first_non_silent_service(inner) {
-                    return Some(ep);
-                }
-            }
+            QueryComponent::Optional(inner)
+            | QueryComponent::Minus(inner)
+            | QueryComponent::Group(inner) => collect_service_nodes(inner, out),
+            QueryComponent::Graph(_, inner) => collect_service_nodes(inner, out),
             QueryComponent::Union(left, right) => {
-                if let Some(ep) = first_non_silent_service(left) {
-                    return Some(ep);
-                }
-                if let Some(ep) = first_non_silent_service(right) {
-                    return Some(ep);
-                }
+                collect_service_nodes(left, out);
+                collect_service_nodes(right, out);
+            }
+            QueryComponent::Subquery(query) => {
+                collect_service_nodes(where_clause_of(query), out);
             }
             _ => {}
         }
     }
-    None
+}
+
+/// Every non-`SILENT` `SERVICE` call reachable from `components` whose
+/// endpoint is a constant IRI (fetchable by static pre-resolution), as
+/// `(endpoint_iri, body_text)` pairs — see [`collect_service_nodes`] for the
+/// recursion rules and [`service_key`] for why both fields come from the one
+/// shared function. A variable-endpoint `SERVICE` is silently omitted here
+/// (see [`service_key`]'s doc comment); `execute_inner`'s own
+/// `NetworkPolicy::Allow` check still rejects it at evaluation time via
+/// [`collect_service_nodes`] directly, since no pre-resolved entry will ever
+/// exist for it.
+pub fn collect_service_calls(components: &[QueryComponent]) -> Vec<(String, String)> {
+    let mut nodes = Vec::new();
+    collect_service_nodes(components, &mut nodes);
+    nodes
+        .into_iter()
+        .filter_map(|(endpoint, inner)| service_key(endpoint, inner).map(|k| (k.endpoint, k.body)))
+        .collect()
 }
 
 /// A single variable binding during evaluation.
