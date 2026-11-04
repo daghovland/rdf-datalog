@@ -52,7 +52,8 @@ Contact: hovlanddag@gmail.com
 //! This is correct for the overwhelmingly common case (IRI/literal
 //! bindings), but has two known consequences, deliberately left
 //! unaddressed here and tracked as a follow-up
-//! (see the issue filed alongside this PR, sub-issue of #741):
+//! (see [#772](https://github.com/daghovland/rdf-datalog/issues/772),
+//! sub-issue of #741):
 //!
 //! - A `GraphElement::TripleTerm` binding in a federated result carries
 //!   `GraphElementId`s that only resolve correctly against *that* scratch

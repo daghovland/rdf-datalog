@@ -789,12 +789,12 @@ fn collect_service_nodes<'a>(
 
 /// Every non-`SILENT` `SERVICE` call reachable from `components` whose
 /// endpoint is a constant IRI (fetchable by static pre-resolution), as
-/// `(endpoint_iri, body_text)` pairs — see [`collect_service_nodes`] for the
+/// `(endpoint_iri, body_text)` pairs — see `collect_service_nodes` for the
 /// recursion rules and [`service_key`] for why both fields come from the one
 /// shared function. A variable-endpoint `SERVICE` is silently omitted here
 /// (see [`service_key`]'s doc comment); `execute_inner`'s own
 /// `NetworkPolicy::Allow` check still rejects it at evaluation time via
-/// [`collect_service_nodes`] directly, since no pre-resolved entry will ever
+/// `collect_service_nodes` directly, since no pre-resolved entry will ever
 /// exist for it.
 pub fn collect_service_calls(components: &[QueryComponent]) -> Vec<(String, String)> {
     let mut nodes = Vec::new();
