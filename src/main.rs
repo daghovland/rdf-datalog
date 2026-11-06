@@ -259,6 +259,19 @@ struct Cli {
     #[arg(long = "no-persist", env = "DAGALOG_NO_PERSIST")]
     no_persist: bool,
 
+    /// Azure Blob Storage snapshot backend for persistence, as
+    /// "<account>/<container>/<blob-name>". Requires --data-dir. When set, a
+    /// missing local redb file is restored from this blob at startup, and
+    /// `POST /$/compact` additionally uploads the compacted file here.
+    /// Authenticates via Azure Managed Identity (no credentials are read
+    /// from this flag). See issue #504 and docs/plans/AUTH.md.
+    #[arg(
+        long = "azure-blob-snapshot",
+        value_name = "ACCOUNT/CONTAINER/BLOB",
+        env = "DAGALOG_AZURE_BLOB_SNAPSHOT"
+    )]
+    azure_blob_snapshot: Option<String>,
+
     /// Remote network access policy: deny (default), ignore, allow, or allow:<prefixes>
     ///
     /// deny:               return an error for LOAD, @context URLs, SERVICE (safe default)
@@ -487,6 +500,11 @@ fn run(cli: Cli) -> Result<(), String> {
         } else {
             cli.data_dir.clone()
         };
+        let azure_blob_snapshot = cli
+            .azure_blob_snapshot
+            .as_deref()
+            .map(sparql_endpoint::azure_snapshot::AzureBlobSnapshotConfig::parse)
+            .transpose()?;
         let config = sparql_endpoint::Config {
             bind_addr,
             base_iri,
@@ -504,6 +522,8 @@ fn run(cli: Cli) -> Result<(), String> {
             // No CLI flag exposes this: it's a test-only SSRF escape hatch.
             // See `Config::allow_loopback_for_ssrf_tests` and issue #365.
             allow_loopback_for_ssrf_tests: false,
+            azure_blob_snapshot,
+            snapshot_backend_override: None,
         };
         let store = Arc::new(RwLock::new(datastore));
         let runtime = tokio::runtime::Runtime::new()

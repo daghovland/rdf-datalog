@@ -52,6 +52,15 @@ use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Tab
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// The local `redb` changelog file path for a given `--data-dir`. Shared by
+/// `lib.rs::serve_on_listener` (which opens it) and `admin::admin_compact`
+/// (which, after compaction, hands the same path to the Azure Blob Storage
+/// snapshot backend's `upload` — see [#504](https://github.com/daghovland/rdf-datalog/issues/504)),
+/// so the filename is only ever written in one place.
+pub fn changelog_db_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("dagalog.redb")
+}
+
 // ── redb table schema ─────────────────────────────────────────────────────────
 
 /// Sequential log of quad-change operations.

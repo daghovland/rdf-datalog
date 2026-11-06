@@ -403,23 +403,51 @@ InsufficientRole` — indistinguishable at a glance from a misconfigured
 
 ### Outgoing: dagalog calling Azure services
 
-When dagalog itself needs to reach an Azure service (e.g., load initial data
-from **Azure Blob Storage** on startup, or write persistence snapshots), it can
-use its own Managed Identity rather than storing credentials.
+Implemented in [#504](https://github.com/daghovland/rdf-datalog/issues/504):
+dagalog can durably back up and restore its `redb` persistence file to/from
+**Azure Blob Storage**, authenticated with its own Managed Identity rather
+than any stored credential.
+
+**Two design points worth recording, both forks from this section's original
+pseudocode sketch:**
+
+1. **Snapshot export/import, not a direct blob mount.** The actual
+   persistence backend (`sparql_endpoint/src/persistence.rs`) is a `redb`
+   embedded database: it requires local random-write access and `fsync` on
+   commit, which an HTTPS put/get object store like Blob Storage cannot
+   provide (see `docs/plans/PERSISTENCE_PLAN.md`'s "Cloud object storage ...
+   out of scope" section, which already called this out independently of
+   this issue). So "persistence via Blob Storage" here means: `redb` always
+   operates on a local file (a cache/data-dir path as usual), and that whole
+   file is copied to/from a blob at two points — **startup** (restore into
+   an empty local path, never overwriting an already-present local file) and
+   **`POST /$/compact`** (upload the freshly-compacted file). See
+   `sparql_endpoint::azure_snapshot` for the implementation
+   (`SnapshotBackend` trait, `AzureBlobSnapshotBackend`).
+
+2. **No `DefaultAzureCredential` in the current stable SDK generation.**
+   The type this section originally sketched was removed from
+   `azure_identity` before its `1.0.0` stable release (see that crate's
+   `CHANGELOG.md`). The current generation instead expects an app to name
+   its credential explicitly. Since this issue is specifically about
+   Managed Identity, `sparql_endpoint::azure_snapshot::AzureBlobSnapshotBackend`
+   uses `azure_identity::ManagedIdentityCredential::new(None)` directly —
+   system-assigned by default, user-assigned via
+   `ManagedIdentityCredentialOptions` if ever needed. No credential material
+   is read or stored by dagalog itself; authentication happens via IMDS.
 
 ```rust
-// Pseudocode — requires azure_identity + azure_storage_blobs crates
-let credential = DefaultAzureCredential::default();
-let blob_client = BlobClient::new(account, container, blob, credential);
-let data = blob_client.get().await?;
+// Actual shape (sparql_endpoint::azure_snapshot), not pseudocode:
+let credential: Arc<dyn TokenCredential> = ManagedIdentityCredential::new(None)?;
+let client = BlobClient::new(blob_url, Some(credential), None)?;
+// startup: client.download(...) into the local redb path, only if missing
+// POST /$/compact: client.upload(...) with the freshly-compacted file's bytes
 ```
 
-`DefaultAzureCredential` tries (in order): environment variables,
-workload-identity federation, IMDS managed identity, CLI credentials.
-
-This is most relevant once **Tier 2 (Persistence)** in `SERVER.md` is
-implemented — snapshots can be read/written to Blob Storage instead of local
-disk.
+Configuration: `--azure-blob-snapshot <account>/<container>/<blob-name>` (or
+`DAGALOG_AZURE_BLOB_SNAPSHOT`), which requires `--data-dir` to also be set.
+Opt-in and additive — omitting it keeps today's local-disk-only persistence
+unchanged.
 
 ---
 

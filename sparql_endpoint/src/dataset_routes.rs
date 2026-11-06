@@ -57,6 +57,8 @@ fn dataset_state(state: &AppState, name: &str, entry: DatasetEntry) -> AppState 
         // Transactions are server-wide; per-dataset transactions are not yet supported.
         // See: https://github.com/daghovland/rdf-datalog/issues/125
         transactions: state.transactions.clone(),
+        // The blob snapshot backend is server-wide, same as `changelog`.
+        snapshot_backend: state.snapshot_backend.clone(),
     }
 }
 
