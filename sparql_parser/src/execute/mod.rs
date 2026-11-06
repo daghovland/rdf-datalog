@@ -273,7 +273,7 @@ fn execute_inner(
         NetworkPolicy::Deny => {
             let mut nodes = Vec::new();
             collect_service_nodes(where_clause, &mut nodes);
-            if let Some((endpoint, _)) = nodes.first() {
+            if let Some((endpoint, _, _)) = nodes.iter().find(|(_, _, silent)| !silent) {
                 return Err(ExecError::ServiceDenied {
                     endpoint: format!("{endpoint:?}"),
                 });
@@ -293,10 +293,16 @@ fn execute_inner(
             // (unwired paths: `shacl`, `sparql_update`'s WHERE evaluation,
             // plain test callers) and a variable-endpoint SERVICE (which
             // `collect_service_calls`/`service_key` can never produce an
-            // entry for) — see issue #744.
+            // entry for) — see issue #744. A SILENT SERVICE is exempt from
+            // this check: an unresolved/absent entry for it is exactly the
+            // "treat as zero rows" fallback the `QueryComponent::Service`
+            // arm already implements — see issue #745.
             let mut nodes = Vec::new();
             collect_service_nodes(where_clause, &mut nodes);
-            for (endpoint, inner) in nodes {
+            for (endpoint, inner, silent) in nodes {
+                if silent {
+                    continue;
+                }
                 let resolved = service_key(endpoint, inner)
                     .map(|k| pre_resolved_service_results(&k).is_some())
                     .unwrap_or(false);
@@ -747,13 +753,21 @@ pub(crate) fn pre_resolved_service_results(key: &ServiceKey) -> Option<Vec<Solut
     PRE_RESOLVED_SERVICES.with(|c| c.borrow().get(key).cloned())
 }
 
-/// Collect every non-`SILENT` `SERVICE` node reachable from `components`,
-/// recursing into `Optional`/`Minus`/`Graph`/`Union`/`Group` and a
-/// `Subquery`'s own nested `WHERE` clause — but **not** into any `SERVICE`
-/// node's own inner body (silent or not): that body is forwarded as text to
-/// the remote endpoint and evaluated *there*, never separately by this
-/// executor, so a nested `SERVICE` inside it is not "reachable" from here in
-/// the sense this function cares about.
+/// Collect every `SERVICE` node reachable from `components` (both `SILENT`
+/// and non-`SILENT` — the `bool` is the node's own `SILENT` flag), recursing
+/// into `Optional`/`Minus`/`Graph`/`Union`/`Group` and a `Subquery`'s own
+/// nested `WHERE` clause — but **not** into any `SERVICE` node's own inner
+/// body (silent or not): that body is forwarded as text to the remote
+/// endpoint and evaluated *there*, never separately by this executor, so a
+/// nested `SERVICE` inside it is not "reachable" from here in the sense this
+/// function cares about.
+///
+/// `SILENT` nodes are included (not skipped) because issue #745 fixed a gap
+/// left by #744: a `SILENT SERVICE` against a *healthy* endpoint must still
+/// return the remote's real results, not unconditionally empty rows — only
+/// a *failed* fetch degrades to empty for `SILENT`. Callers that only care
+/// about non-`SILENT` calls (the `Deny`/`Allow` policy checks below) filter
+/// on the bool themselves.
 ///
 /// Used both to drive async pre-resolution (`sparql_endpoint`'s
 /// `pre_resolve_services`, via [`collect_service_calls`]) and, here in
@@ -761,12 +775,12 @@ pub(crate) fn pre_resolved_service_results(key: &ServiceKey) -> Option<Vec<Solut
 /// reject the query.
 fn collect_service_nodes<'a>(
     components: &'a [QueryComponent],
-    out: &mut Vec<(&'a Term, &'a [QueryComponent])>,
+    out: &mut Vec<(&'a Term, &'a [QueryComponent], bool)>,
 ) {
     for comp in components {
         match comp {
-            QueryComponent::Service(endpoint, inner, silent) if !silent => {
-                out.push((endpoint, inner));
+            QueryComponent::Service(endpoint, inner, silent) => {
+                out.push((endpoint, inner, *silent));
                 // Deliberately not recursed into: see doc comment above.
             }
             QueryComponent::Optional(inner)
@@ -785,21 +799,25 @@ fn collect_service_nodes<'a>(
     }
 }
 
-/// Every non-`SILENT` `SERVICE` call reachable from `components` whose
-/// endpoint is a constant IRI (fetchable by static pre-resolution), as
-/// `(endpoint_iri, body_text)` pairs — see `collect_service_nodes` for the
-/// recursion rules and [`service_key`] for why both fields come from the one
-/// shared function. A variable-endpoint `SERVICE` is silently omitted here
-/// (see [`service_key`]'s doc comment); `execute_inner`'s own
-/// `NetworkPolicy::Allow` check still rejects it at evaluation time via
-/// `collect_service_nodes` directly, since no pre-resolved entry will ever
-/// exist for it.
-pub fn collect_service_calls(components: &[QueryComponent]) -> Vec<(String, String)> {
+/// Every `SERVICE` call reachable from `components` whose endpoint is a
+/// constant IRI (fetchable by static pre-resolution), as `(endpoint_iri,
+/// body_text, silent)` triples — see `collect_service_nodes` for the
+/// recursion rules and [`service_key`] for why the first two fields come
+/// from the one shared function. A variable-endpoint `SERVICE` is silently
+/// omitted here (see [`service_key`]'s doc comment); `execute_inner`'s own
+/// `NetworkPolicy::Allow` check still rejects a non-`SILENT` one at
+/// evaluation time via `collect_service_nodes` directly, since no
+/// pre-resolved entry will ever exist for it. `SILENT` calls are included
+/// (see this function's doc comment) so the caller can still attempt the
+/// fetch and fall back to empty only on failure (issue #745).
+pub fn collect_service_calls(components: &[QueryComponent]) -> Vec<(String, String, bool)> {
     let mut nodes = Vec::new();
     collect_service_nodes(components, &mut nodes);
     nodes
         .into_iter()
-        .filter_map(|(endpoint, inner)| service_key(endpoint, inner).map(|k| (k.endpoint, k.body)))
+        .filter_map(|(endpoint, inner, silent)| {
+            service_key(endpoint, inner).map(|k| (k.endpoint, k.body, silent))
+        })
         .collect()
 }
 

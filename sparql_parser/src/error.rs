@@ -63,12 +63,15 @@ pub enum ExecError {
     ServiceNotImplemented,
     /// A non-`SILENT` `SERVICE` clause's pre-resolution HTTP fetch failed
     /// (network error, non-2xx status, malformed `application/sparql-results+json`
-    /// body, or an SSRF-preflight rejection). `SILENT`-vs-error *policy*
-    /// nuance (should a failed fetch instead degrade to empty results?)
-    /// belongs to issue
-    /// [#745](https://github.com/daghovland/rdf-datalog/issues/745); this
-    /// variant is the interim, always-hard-error behavior for issue
-    /// [#744](https://github.com/daghovland/rdf-datalog/issues/744).
+    /// body, or an SSRF-preflight rejection). A `SILENT` SERVICE whose fetch
+    /// fails never produces this variant — it degrades to empty results
+    /// instead (issue [#745](https://github.com/daghovland/rdf-datalog/issues/745),
+    /// resolving the "interim, always-hard-error" limitation this variant's
+    /// doc comment used to describe when it was first added for issue
+    /// [#744](https://github.com/daghovland/rdf-datalog/issues/744)). A
+    /// fetch that failed specifically because the query's configured
+    /// `--timeout` elapsed produces [`ExecError::Timeout`] instead of this
+    /// variant, for consistency with every other timeout.
     ServiceFetchFailed {
         /// The SERVICE endpoint IRI that failed to resolve.
         endpoint: String,
@@ -79,6 +82,13 @@ pub enum ExecError {
     /// completed. Cooperative cancellation — see [`crate::deadline`] for why
     /// — so this is only ever raised at a loop-iteration boundary; work
     /// already in flight between two checks runs to completion first.
+    ///
+    /// Also raised (by `sparql_endpoint`, not this crate — there is no
+    /// `Deadline` to check yet at that point) when a non-`SILENT` `SERVICE`
+    /// fetch's own per-request HTTP timeout — bounded by the same
+    /// configured `--timeout` budget — elapses during async pre-resolution,
+    /// before synchronous evaluation even starts. See issue
+    /// [#745](https://github.com/daghovland/rdf-datalog/issues/745).
     ///
     /// See <https://github.com/daghovland/rdf-datalog/issues/372>.
     Timeout,

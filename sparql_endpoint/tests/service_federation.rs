@@ -141,3 +141,132 @@ async fn test_service_allow_fetch_failure_returns_bad_gateway() {
         .expect("query request failed");
     assert_eq!(resp.status(), 502, "a failed SERVICE fetch must be 502");
 }
+
+/// A `SERVICE SILENT` fetch against a broken endpoint must degrade to empty
+/// results (HTTP 200), not the 502 a non-SILENT failure produces (issue
+/// #745).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_service_silent_fetch_failure_returns_empty_not_error() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&mock_server)
+        .await;
+
+    let service_url = format!("{}/sparql", mock_server.uri());
+    let server =
+        common::TestServer::start_writable_with_network_policy("", NetworkPolicy::Allow).await;
+
+    let query = format!("SELECT * WHERE {{ SERVICE SILENT <{service_url}> {{ ?s ?p ?o }} }}");
+    let resp = server
+        .client
+        .get(server.sparql_query_url(&query))
+        .send()
+        .await
+        .expect("query request failed");
+    assert_eq!(
+        resp.status(),
+        200,
+        "a failed SILENT SERVICE fetch must degrade to empty, not error"
+    );
+    let body: serde_json::Value = resp.json().await.expect("response must be SPARQL JSON");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+    assert!(bindings.is_empty());
+}
+
+/// Regression test for the gap #745 fixes: before this, `SERVICE SILENT`
+/// was never even fetched, so it always returned empty even against a
+/// *healthy* endpoint. A SILENT call must still fetch and join real results
+/// on success — SILENT only changes *failure* handling.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_service_silent_fetches_and_joins_on_success() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(SERVICE_RESULTS_JSON)
+                .insert_header("content-type", "application/sparql-results+json"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let service_url = format!("{}/sparql", mock_server.uri());
+    let server =
+        common::TestServer::start_writable_with_network_policy(LOCAL_TURTLE, NetworkPolicy::Allow)
+            .await;
+
+    let query = format!(
+        "SELECT ?s ?o WHERE {{ ?s <http://example.org/local> ?x . \
+         SERVICE SILENT <{service_url}> {{ ?x <http://example.org/remote> ?o }} }}"
+    );
+    let resp = server
+        .client
+        .get(server.sparql_query_url(&query))
+        .send()
+        .await
+        .expect("query request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("response must be SPARQL JSON");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+    assert_eq!(
+        bindings.len(),
+        2,
+        "the SILENT fetch must have actually succeeded and joined, not been skipped"
+    );
+}
+
+/// A hung remote endpoint must not let a federated query run past the
+/// server's configured `--timeout`: the `SERVICE` fetch's own HTTP request
+/// is bounded by the same budget (issue #745). A non-SILENT `SERVICE` that
+/// times out surfaces as the same `503 Service Unavailable` as any other
+/// query timeout — not the 502 used for other fetch failures — and must
+/// return well before the mock server's artificial 30s delay.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_service_fetch_respects_query_timeout() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(SERVICE_RESULTS_JSON)
+                .insert_header("content-type", "application/sparql-results+json")
+                .set_delay(std::time::Duration::from_secs(30)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let service_url = format!("{}/sparql", mock_server.uri());
+    let server = common::TestServer::start_writable_with_network_policy_and_query_timeout(
+        "",
+        NetworkPolicy::Allow,
+        1,
+    )
+    .await;
+
+    let query = format!("SELECT * WHERE {{ SERVICE <{service_url}> {{ ?s ?p ?o }} }}");
+    let start = std::time::Instant::now();
+    let resp = server
+        .client
+        .get(server.sparql_query_url(&query))
+        .send()
+        .await
+        .expect("query request failed");
+    let elapsed = start.elapsed();
+    assert_eq!(
+        resp.status(),
+        503,
+        "a SERVICE fetch that outlasts --timeout must surface as the same \
+         503 any other query timeout produces"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the fetch must be bounded by the 1s configured timeout, not the \
+         mock server's 30s delay: took {elapsed:?}"
+    );
+}

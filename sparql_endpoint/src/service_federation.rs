@@ -10,9 +10,29 @@ Contact: hovlanddag@gmail.com
 //! executor-wiring glue that feeds the fetched results into a synchronous
 //! `sparql_parser::execute_with_base` call.
 //!
-//! See issue [#744](https://github.com/daghovland/rdf-datalog/issues/744),
-//! part of epic [#741](https://github.com/daghovland/rdf-datalog/issues/741)
-//! — `docs/plans/SPARQL_FEDERATION_PLAN.md`.
+//! See issues [#744](https://github.com/daghovland/rdf-datalog/issues/744)
+//! (the initial wiring) and
+//! [#745](https://github.com/daghovland/rdf-datalog/issues/745) (`SILENT`/
+//! error/timeout policy, below), part of epic
+//! [#741](https://github.com/daghovland/rdf-datalog/issues/741) —
+//! `docs/plans/SPARQL_FEDERATION_PLAN.md`.
+//!
+//! # `SILENT` / error / timeout policy (#745)
+//!
+//! A `SILENT SERVICE` is still fetched — it is *not* skipped outright (that
+//! was a gap left by #744: a SILENT call against a healthy endpoint must
+//! still return the remote's real results). Only a failed fetch degrades to
+//! empty results for it; a non-`SILENT` call's failure still errors the
+//! whole query. "Failed" covers connection failure, a non-2xx status, a
+//! malformed results body, and a timeout; see `collect_or_first_error`
+//! for exactly how each is dispatched, and `FetchFailure` for why timeout
+//! is distinguished from every other failure.
+//!
+//! Each fetch's own HTTP request is bounded by `request_timeout`
+//! (ultimately the query's configured `--timeout` budget, computed once in
+//! `query.rs` and shared with the synchronous evaluator that runs
+//! afterward) so a hung remote endpoint cannot make a federated query
+//! exceed it — see `pre_resolve_services`'s doc comment.
 //!
 //! # Why pre-resolve rather than fetch inline
 //!
@@ -79,44 +99,90 @@ use ingress::NetworkPolicy;
 use sparql_parser::ast::QueryComponent;
 use sparql_parser::{ServiceKey, SolutionRow, collect_service_calls};
 use std::collections::HashMap;
+use std::time::Duration;
 
-/// Fetch every non-SILENT, constant-endpoint `SERVICE` call reachable from
-/// `where_clause_components` concurrently, and return a map ready to hand
-/// to `sparql_parser::execute::ServiceResultsGuard::install`.
-///
-/// Returns one `Result` per distinct `(endpoint, body)` pair found by
+/// Why a SERVICE fetch failed, distinguishing "the configured `--timeout`
+/// elapsed" (maps to [`sparql_parser::ExecError::Timeout`], same as every
+/// other timeout) from every other failure mode (network error, non-2xx,
+/// malformed body, SSRF rejection — maps to
+/// [`sparql_parser::ExecError::ServiceFetchFailed`]). See issue #745.
+#[derive(Debug)]
+pub(crate) enum FetchFailure {
+    /// The per-request timeout passed to `fetch_service_blocking` elapsed.
+    Timeout,
+    /// Any other failure; the message is already human-readable.
+    Other(String),
+}
+
+/// Fetch every constant-endpoint `SERVICE` call (both `SILENT` and
+/// non-`SILENT`) reachable from `where_clause_components` concurrently, and
+/// return one outcome per distinct `(endpoint, body)` pair found by
 /// [`collect_service_calls`] — a single failing endpoint does not prevent
-/// the others from resolving. Call this *before* acquiring any lock on the
-/// real store (see this module's doc comment): it performs real network
-/// I/O and must not be awaited while holding `AppState::store`'s async
-/// `RwLock` read guard.
+/// the others from resolving. The returned `bool` is `true` only if *every*
+/// occurrence of that pair in the query was `SILENT` (a pair appearing both
+/// SILENT and non-SILENT in the same query is treated as non-SILENT for
+/// error-handling purposes, since at least one call site needs the error to
+/// propagate) — see `collect_or_first_error`'s caller for how that `bool`
+/// is used.
+///
+/// Call this *before* acquiring any lock on the real store (see this
+/// module's doc comment): it performs real network I/O and must not be
+/// awaited while holding `AppState::store`'s async `RwLock` read guard.
+///
+/// `request_timeout`, when `Some`, bounds each fetch's own HTTP request —
+/// pass the query's remaining configured `--timeout` budget so a hung
+/// remote endpoint cannot make a federated query exceed it (issue #745).
+/// `None` means no timeout (the production default, 30s, set by
+/// `build_hardened_client` itself, still applies as a hard ceiling).
 ///
 /// Only call this when `network` is [`NetworkPolicy::Allow`] or
 /// [`NetworkPolicy::AllowList`] — same restriction as `LOAD`'s `fetch_rdf`.
-pub async fn pre_resolve_services(
+pub(crate) async fn pre_resolve_services(
     where_clause_components: &[QueryComponent],
     network: &NetworkPolicy,
     allow_loopback: bool,
-) -> Vec<(ServiceKey, Result<Vec<SolutionRow>, String>)> {
+    request_timeout: Option<Duration>,
+) -> Vec<(ServiceKey, bool, Result<Vec<SolutionRow>, FetchFailure>)> {
     let calls = collect_service_calls(where_clause_components);
-    let mut handles = Vec::with_capacity(calls.len());
-    for (endpoint, body) in calls {
+
+    // Dedupe by key first: the same `(endpoint, body)` pair can appear more
+    // than once (e.g. inside both branches of a UNION), and merging here
+    // means it is fetched exactly once. A pair is only SILENT overall if
+    // every occurrence was SILENT.
+    let mut by_key: HashMap<ServiceKey, bool> = HashMap::new();
+    for (endpoint, body, silent) in calls {
+        by_key
+            .entry(ServiceKey { endpoint, body })
+            .and_modify(|all_silent| *all_silent = *all_silent && silent)
+            .or_insert(silent);
+    }
+
+    let mut handles = Vec::with_capacity(by_key.len());
+    for (key, silent) in by_key {
         let network = network.clone();
-        let endpoint_for_task = endpoint.clone();
-        let body_for_task = body.clone();
+        let endpoint_for_task = key.endpoint.clone();
+        let body_for_task = key.body.clone();
         let handle = tokio::task::spawn_blocking(move || {
-            fetch_service_blocking(&endpoint_for_task, &body_for_task, &network, allow_loopback)
+            fetch_service_blocking(
+                &endpoint_for_task,
+                &body_for_task,
+                &network,
+                allow_loopback,
+                request_timeout,
+            )
         });
-        handles.push((ServiceKey { endpoint, body }, handle));
+        handles.push((key, silent, handle));
     }
 
     let mut results = Vec::with_capacity(handles.len());
-    for (key, handle) in handles {
+    for (key, silent, handle) in handles {
         let outcome = match handle.await {
             Ok(r) => r,
-            Err(join_err) => Err(format!("SERVICE fetch task panicked: {join_err}")),
+            Err(join_err) => Err(FetchFailure::Other(format!(
+                "SERVICE fetch task panicked: {join_err}"
+            ))),
         };
-        results.push((key, outcome));
+        results.push((key, silent, outcome));
     }
     results
 }
@@ -126,56 +192,90 @@ pub async fn pre_resolve_services(
 /// then deserialize the response into `SolutionRow`s via a throwaway scratch
 /// `Datastore` (see this module's doc comment for why).
 ///
+/// `request_timeout`, when `Some`, is set as this specific request's
+/// `reqwest` timeout, overriding `build_hardened_client`'s 30s client
+/// default — see `pre_resolve_services`'s doc comment.
+///
 /// Runs inside `tokio::task::spawn_blocking` (see
-/// [`pre_resolve_services`]) — never call this directly from async code
+/// `pre_resolve_services`) — never call this directly from async code
 /// without that wrapper, since it blocks the calling thread on network I/O.
 fn fetch_service_blocking(
     endpoint: &str,
     body: &str,
     network: &NetworkPolicy,
     allow_loopback: bool,
-) -> Result<Vec<SolutionRow>, String> {
+    request_timeout: Option<Duration>,
+) -> Result<Vec<SolutionRow>, FetchFailure> {
     let client =
-        build_hardened_client(endpoint, network, allow_loopback, ssrf_preflight, "SERVICE")?;
+        build_hardened_client(endpoint, network, allow_loopback, ssrf_preflight, "SERVICE")
+            .map_err(FetchFailure::Other)?;
 
-    let resp = client
+    let mut req = client
         .post(endpoint)
         .header(reqwest::header::CONTENT_TYPE, "application/sparql-query")
         .header(reqwest::header::ACCEPT, "application/sparql-results+json")
-        .body(body.to_string())
-        .send()
-        .map_err(|e| format!("HTTP request failed for <{endpoint}>: {e}"))?;
+        .body(body.to_string());
+    if let Some(t) = request_timeout {
+        req = req.timeout(t);
+    }
+    let resp = req.send().map_err(|e| {
+        if e.is_timeout() {
+            FetchFailure::Timeout
+        } else {
+            FetchFailure::Other(format!("HTTP request failed for <{endpoint}>: {e}"))
+        }
+    })?;
 
-    let (bytes, _content_type) = read_capped_response(resp, endpoint, "SERVICE")?;
-    let json_str = String::from_utf8(bytes)
-        .map_err(|e| format!("SERVICE <{endpoint}>: response body is not valid UTF-8: {e}"))?;
+    let (bytes, _content_type) =
+        read_capped_response(resp, endpoint, "SERVICE").map_err(FetchFailure::Other)?;
+    let json_str = String::from_utf8(bytes).map_err(|e| {
+        FetchFailure::Other(format!(
+            "SERVICE <{endpoint}>: response body is not valid UTF-8: {e}"
+        ))
+    })?;
 
     // Scratch store: see this module's doc comment for the triple-term /
     // blank-node limitation this implies.
     let mut scratch = Datastore::new(64);
     let select_result = crate::serialize::sparql_json::from_sparql_json(&json_str, &mut scratch)
-        .map_err(|e| format!("SERVICE <{endpoint}>: malformed SPARQL JSON results: {e:?}"))?;
+        .map_err(|e| {
+            FetchFailure::Other(format!(
+                "SERVICE <{endpoint}>: malformed SPARQL JSON results: {e:?}"
+            ))
+        })?;
     Ok(select_result.rows)
 }
 
 /// Build the `HashMap` [`sparql_parser::ServiceResultsGuard::install`]
-/// expects from [`pre_resolve_services`]'s per-call results, surfacing the
-/// first failure (if any) as an `Err` — a non-SILENT SERVICE whose fetch
-/// fails is a hard error for this issue (#744); `SILENT`/policy nuance is
-/// #745.
-pub fn collect_or_first_error(
-    results: Vec<(ServiceKey, Result<Vec<SolutionRow>, String>)>,
+/// expects from `pre_resolve_services`'s per-call results.
+///
+/// A `SILENT` call (the `bool`) whose fetch failed is simply omitted from
+/// the map rather than erroring — `QueryComponent::Service`'s evaluation arm
+/// already falls back to empty results for any key with no entry, so this
+/// is exactly the "treat as zero rows" behavior issue #745 requires. A
+/// non-`SILENT` call's failure still errors: a timeout maps to
+/// [`sparql_parser::ExecError::Timeout`] (consistent with every other
+/// query-timeout), anything else to
+/// [`sparql_parser::ExecError::ServiceFetchFailed`].
+pub(crate) fn collect_or_first_error(
+    results: Vec<(ServiceKey, bool, Result<Vec<SolutionRow>, FetchFailure>)>,
 ) -> Result<HashMap<ServiceKey, Vec<SolutionRow>>, sparql_parser::ExecError> {
     let mut map = HashMap::with_capacity(results.len());
-    for (key, outcome) in results {
+    for (key, silent, outcome) in results {
         match outcome {
             Ok(rows) => {
                 map.insert(key, rows);
             }
-            Err(reason) => {
-                return Err(sparql_parser::ExecError::ServiceFetchFailed {
-                    endpoint: key.endpoint,
-                    reason,
+            Err(failure) => {
+                if silent {
+                    continue;
+                }
+                return Err(match failure {
+                    FetchFailure::Timeout => sparql_parser::ExecError::Timeout,
+                    FetchFailure::Other(reason) => sparql_parser::ExecError::ServiceFetchFailed {
+                        endpoint: key.endpoint,
+                        reason,
+                    },
                 });
             }
         }

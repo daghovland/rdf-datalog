@@ -345,6 +345,41 @@ impl TestServer {
         network_policy: NetworkPolicy,
         allow_loopback_for_ssrf_tests: bool,
     ) -> Self {
+        Self::start_writable_with_network_policy_and_query_timeout_inner(
+            turtle,
+            network_policy,
+            allow_loopback_for_ssrf_tests,
+            10,
+        )
+        .await
+    }
+
+    /// Same as [`Self::start_writable_with_network_policy`] (loopback bypass
+    /// enabled, for `127.0.0.1`-bound mock servers in tests), but with a
+    /// custom `max_query_timeout_secs` — use this to test a federated
+    /// `SERVICE` query's own HTTP fetch respecting the query's configured
+    /// `--timeout` budget (issue #745), the `SERVICE`-federation analog of
+    /// [`Self::start_writable_with_query_timeout`].
+    pub async fn start_writable_with_network_policy_and_query_timeout(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+        max_query_timeout_secs: u64,
+    ) -> Self {
+        Self::start_writable_with_network_policy_and_query_timeout_inner(
+            turtle,
+            network_policy,
+            true,
+            max_query_timeout_secs,
+        )
+        .await
+    }
+
+    async fn start_writable_with_network_policy_and_query_timeout_inner(
+        turtle: &str,
+        network_policy: NetworkPolicy,
+        allow_loopback_for_ssrf_tests: bool,
+        max_query_timeout_secs: u64,
+    ) -> Self {
         let mut ds = Datastore::new(1024);
         if !turtle.is_empty() {
             parse_turtle(&mut ds, std::io::BufReader::new(turtle.as_bytes()))
@@ -360,7 +395,7 @@ impl TestServer {
             bind_addr: addr,
             base_iri: base_url.clone(),
             read_only: false,
-            max_query_timeout_secs: 10,
+            max_query_timeout_secs,
             auth: AuthConfig::None,
             data_dir: None,
             network_policy,
