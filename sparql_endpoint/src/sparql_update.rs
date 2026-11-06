@@ -1362,9 +1362,12 @@ where
 
 /// Maximum response body size for `LOAD` requests (64 MiB).
 ///
+/// Also reused by `service_federation`'s `SERVICE` fetcher (issue #744) —
+/// the same cap applies to a federated endpoint's response body.
+///
 /// Prevents memory exhaustion from oversized or streaming responses.
 /// Related: <https://github.com/daghovland/rdf-datalog/issues/135>
-const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Fetch an RDF document at `url` using a blocking HTTP client.
 ///
@@ -1416,13 +1419,50 @@ fn fetch_rdf_with_resolver<F>(
 where
     F: FnOnce(&str, bool) -> Result<Vec<std::net::SocketAddr>, String>,
 {
+    let client = build_hardened_client(url, policy, allow_loopback, resolve, "LOAD")?;
+
+    let resp = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/turtle, application/n-triples;q=0.9, \
+             application/ld+json;q=0.8, application/trig;q=0.7, */*;q=0.5",
+        )
+        .send()
+        .map_err(|e| format!("HTTP request failed for <{url}>: {e}"))?;
+
+    read_capped_response(resp, url, "LOAD")
+}
+
+/// Build an SSRF-hardened blocking `reqwest` client for a GET/POST request
+/// to `url`: applies the `AllowList` prefix check, the `resolve`-provided
+/// preflight (host/IP validation), DNS-rebinding pinning (the client's
+/// connection is pinned to exactly the addresses `resolve` validated, never
+/// re-resolving the hostname independently), and cross-host redirect
+/// blocking.
+///
+/// Shared by [`fetch_rdf_with_resolver`] (`LOAD <url>`, a `GET`) and
+/// `service_federation`'s SERVICE fetcher (a `POST`, issue #744) — one SSRF
+/// code path, not two independently-maintained copies. `label` is used only
+/// to prefix error messages (`"LOAD"` vs. `"SERVICE"`) so a SERVICE fetch
+/// failure doesn't confusingly claim to be a LOAD failure.
+pub(crate) fn build_hardened_client<F>(
+    url: &str,
+    policy: &NetworkPolicy,
+    allow_loopback: bool,
+    resolve: F,
+    label: &str,
+) -> Result<reqwest::blocking::Client, String>
+where
+    F: FnOnce(&str, bool) -> Result<Vec<std::net::SocketAddr>, String>,
+{
     // 0. AllowList prefix check: reject URLs not matching any configured prefix.
     //    This runs before the SSRF preflight so the error is unambiguous.
     if let NetworkPolicy::AllowList(prefixes) = policy
         && !prefixes.iter().any(|p| url.starts_with(p.as_str()))
     {
         return Err(format!(
-            "LOAD <{url}>: URL is not in the configured allow-list"
+            "{label} <{url}>: URL is not in the configured allow-list"
         ));
     }
 
@@ -1435,12 +1475,12 @@ where
     let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
     let host = parsed
         .host_str()
-        .ok_or_else(|| format!("LOAD <{url}>: missing host"))?;
+        .ok_or_else(|| format!("{label} <{url}>: missing host"))?;
 
     // 2. Build client with cross-host redirect blocking, pinning the target
     //    host to the addresses validated in step 1 so the actual connection
     //    cannot be redirected to a different IP via a second DNS lookup.
-    let client = reqwest::blocking::Client::builder()
+    reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .resolve_to_addrs(host, &validated_addrs)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -1459,18 +1499,17 @@ where
             }
         }))
         .build()
-        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        .map_err(|e| format!("failed to build HTTP client: {e}"))
+}
 
-    let resp = client
-        .get(url)
-        .header(
-            reqwest::header::ACCEPT,
-            "text/turtle, application/n-triples;q=0.9, \
-             application/ld+json;q=0.8, application/trig;q=0.7, */*;q=0.5",
-        )
-        .send()
-        .map_err(|e| format!("HTTP request failed for <{url}>: {e}"))?;
-
+/// Read a response body with the shared `MAX_BODY_BYTES` cap, returning
+/// `(body_bytes, content_type)` on success. Shared by [`fetch_rdf_with_resolver`]
+/// and `service_federation`'s SERVICE fetcher.
+pub(crate) fn read_capped_response(
+    resp: reqwest::blocking::Response,
+    url: &str,
+    label: &str,
+) -> Result<(Vec<u8>, String), String> {
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("HTTP {status} when fetching <{url}>"));
@@ -1483,13 +1522,13 @@ where
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // 3. Response body cap: check Content-Length first for a fast path,
-    //    then enforce cap while streaming.
+    // Response body cap: check Content-Length first for a fast path, then
+    // enforce cap while streaming.
     if let Some(len) = resp.content_length()
         && len > MAX_BODY_BYTES as u64
     {
         return Err(format!(
-            "LOAD <{url}>: response too large ({len} bytes; limit is {MAX_BODY_BYTES})"
+            "{label} <{url}>: response too large ({len} bytes; limit is {MAX_BODY_BYTES})"
         ));
     }
     use std::io::Read;
@@ -1499,7 +1538,7 @@ where
         .map_err(|e| format!("failed to read response body from <{url}>: {e}"))?;
     if buf.len() > MAX_BODY_BYTES {
         return Err(format!(
-            "LOAD <{url}>: response too large (limit is 64 MiB)"
+            "{label} <{url}>: response too large (limit is 64 MiB)"
         ));
     }
 
@@ -1720,7 +1759,10 @@ fn is_blocked_ip(ip: std::net::IpAddr, allow_loopback: bool) -> bool {
 /// manual form happens to produce a parseable `SocketAddr` string too — but
 /// `socket_addrs` is the API designed for this and avoids relying on that
 /// implementation detail of `host_str`'s output format.
-fn ssrf_preflight(url: &str, allow_loopback: bool) -> Result<Vec<std::net::SocketAddr>, String> {
+pub(crate) fn ssrf_preflight(
+    url: &str,
+    allow_loopback: bool,
+) -> Result<Vec<std::net::SocketAddr>, String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL <{url}>: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}

@@ -30,6 +30,7 @@ pub mod rules_endpoint;
 pub mod serialize;
 pub mod server;
 pub mod service_desc;
+pub mod service_federation;
 pub mod shacl_endpoint;
 pub mod sparql_update;
 pub mod transaction_routes;

@@ -36,9 +36,49 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dag_rdf::Datastore;
-use sparql_parser::{ExecError, ParserContext, QueryResult, execute_with_base, parse_query};
+use sparql_parser::ast::Query;
+use sparql_parser::{
+    ExecError, NetworkPolicy, ParserContext, QueryResult, ServiceKey, ServiceResultsGuard,
+    SolutionRow, collect_service_calls, execute_with_base, parse_query, where_clause_of,
+};
 use std::collections::HashMap;
 use std::time::Duration;
+
+/// If `query` is run under `NetworkPolicy::Allow`/`AllowList` and contains
+/// at least one non-SILENT, constant-endpoint `SERVICE` call, resolve all
+/// of them concurrently and return the map ready for
+/// [`ServiceResultsGuard::install`]. Returns `Ok(None)` (zero overhead: no
+/// network walk, no fetch) for the common case of a query with no `SERVICE`
+/// clause, or when the network policy wouldn't allow it anyway — the
+/// executor's own policy check still runs and produces the right error in
+/// every other case (`Deny`, an unresolved `Allow` SERVICE, SILENT, a
+/// variable endpoint). Must be called (and awaited) *before* acquiring any
+/// lock on `state.store` — this performs real network I/O (issue #744).
+async fn pre_resolve_services_for_query(
+    query: &Query,
+    state: &AppState,
+) -> Result<Option<HashMap<ServiceKey, Vec<SolutionRow>>>, Response> {
+    if !matches!(
+        state.network_policy,
+        NetworkPolicy::Allow | NetworkPolicy::AllowList(_)
+    ) {
+        return Ok(None);
+    }
+    let where_clause = where_clause_of(query);
+    if collect_service_calls(where_clause).is_empty() {
+        return Ok(None);
+    }
+    let results = crate::service_federation::pre_resolve_services(
+        where_clause,
+        &state.network_policy,
+        state.allow_loopback_for_ssrf_tests,
+    )
+    .await;
+    match crate::service_federation::collect_or_first_error(results) {
+        Ok(map) => Ok(Some(map)),
+        Err(e) => Err(query_execution_error_response(&e)),
+    }
+}
 
 /// `GET /sparql?query=<url-encoded SPARQL>`
 pub async fn sparql_get(
@@ -354,6 +394,17 @@ async fn run_transactional_query(
         }
     };
 
+    // Async SERVICE pre-resolution (issue #744) — see
+    // `pre_resolve_services_for_query`'s doc comment. `view` above is
+    // already an owned clone, not a held lock guard, so there's no
+    // lock-across-await concern here; still must happen before installing
+    // the `!Send` guard, same ordering as `run_select_query`.
+    let pre_resolved_services = match pre_resolve_services_for_query(&query, state).await {
+        Ok(m) => m,
+        Err(resp) => return resp,
+    };
+    let _service_guard = pre_resolved_services.map(ServiceResultsGuard::install);
+
     if explain {
         return crate::explain::explain_query_response(
             &query,
@@ -595,7 +646,25 @@ async fn run_select_query(
         }
     };
 
+    // Async SERVICE pre-resolution (issue #744): must happen before
+    // acquiring the store's read lock, since it performs real network I/O
+    // and must never be awaited while holding that lock (see
+    // `pre_resolve_services_for_query`'s doc comment). `Ok(None)` is the
+    // zero-overhead common case: no SERVICE clause, or network policy
+    // doesn't allow it (the executor's own check handles that).
+    let pre_resolved_services = match pre_resolve_services_for_query(&query, state).await {
+        Ok(m) => m,
+        Err(resp) => return resp,
+    };
+
     let store = state.store.read().await;
+
+    // Install the pre-resolved SERVICE results (if any) for the lifetime of
+    // this guard, covering both the `explain` branch and the real
+    // `execute_with_base` call below. The guard is `!Send` and dropped
+    // (end of this scope) strictly before any further `.await` in this
+    // function — see `ServiceResultsGuard`'s doc comment.
+    let _service_guard = pre_resolved_services.map(ServiceResultsGuard::install);
 
     if explain {
         return crate::explain::explain_query_response(
@@ -620,6 +689,7 @@ async fn run_select_query(
         Ok(r) => r,
         Err(e) => return query_execution_error_response(&e),
     };
+    drop(_service_guard);
 
     match result {
         QueryResult::Ask(boolean) => {
@@ -742,6 +812,10 @@ fn query_execution_error_response(err: &ExecError) -> Response {
             format!("Query execution error: {err}"),
         )
             .into_response()
+    } else if matches!(err, ExecError::ServiceFetchFailed { .. }) {
+        // The remote SERVICE endpoint (not this server) is the source of
+        // the failure — 502 Bad Gateway, not 500.
+        (StatusCode::BAD_GATEWAY, format!("Execution error: {err}")).into_response()
     } else {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -43,11 +43,38 @@ pub enum ExecError {
         endpoint: String,
     },
     /// A non-`SILENT` `SERVICE` clause was attempted with
-    /// `--network=allow`, but SPARQL federation execution itself isn't
-    /// implemented yet.
+    /// `--network=allow`/`AllowList`, but no pre-resolved result is
+    /// available for it.
+    ///
+    /// This covers two cases, both deliberately mapped to the same error
+    /// rather than silently returning empty results: (1) the caller never
+    /// ran the async pre-resolution walk at all (e.g. a caller that still
+    /// goes through `execute`/`execute_with_base` directly, without first
+    /// calling `sparql_endpoint`'s `pre_resolve_services` and installing a
+    /// [`crate::execute::ServiceResultsGuard`] — `shacl`'s SPARQL
+    /// constraints, `sparql_update`'s `WHERE`-clause evaluation, and plain
+    /// test callers all currently fall in this bucket); (2) the `SERVICE`
+    /// endpoint is a variable, not a constant IRI, which the static
+    /// pre-resolution walk cannot fetch (see issue
+    /// [#744](https://github.com/daghovland/rdf-datalog/issues/744)'s
+    /// "What NOT to build" section — a follow-up issue tracks real support).
     ///
     /// See <https://github.com/daghovland/rdf-datalog/issues/741>.
     ServiceNotImplemented,
+    /// A non-`SILENT` `SERVICE` clause's pre-resolution HTTP fetch failed
+    /// (network error, non-2xx status, malformed `application/sparql-results+json`
+    /// body, or an SSRF-preflight rejection). `SILENT`-vs-error *policy*
+    /// nuance (should a failed fetch instead degrade to empty results?)
+    /// belongs to issue
+    /// [#745](https://github.com/daghovland/rdf-datalog/issues/745); this
+    /// variant is the interim, always-hard-error behavior for issue
+    /// [#744](https://github.com/daghovland/rdf-datalog/issues/744).
+    ServiceFetchFailed {
+        /// The SERVICE endpoint IRI that failed to resolve.
+        endpoint: String,
+        /// A human-readable reason (HTTP status, network error, etc).
+        reason: String,
+    },
     /// The query's configured wall-clock timeout elapsed before evaluation
     /// completed. Cooperative cancellation — see [`crate::deadline`] for why
     /// — so this is only ever raised at a loop-iteration boundary; work
@@ -71,6 +98,9 @@ impl fmt::Display for ExecError {
                 "SERVICE federation is not yet implemented even with --network=allow. \
                  Track progress at https://github.com/daghovland/rdf-datalog/issues/741"
             ),
+            ExecError::ServiceFetchFailed { endpoint, reason } => {
+                write!(f, "SERVICE <{endpoint}> fetch failed: {reason}")
+            }
             ExecError::Timeout => write!(f, "query exceeded the configured timeout"),
         }
     }

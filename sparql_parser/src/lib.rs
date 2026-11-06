@@ -32,9 +32,9 @@ pub mod service_text;
 pub use deadline::Deadline;
 pub use error::ExecError;
 pub use execute::{
-    eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value, execute,
-    execute_with_base, execute_with_profile, QueryResult, ResolvedTriple, SelectResult,
-    SolutionRow,
+    collect_service_calls, eval_expr_as_filter, eval_expression_bool_filter, eval_expression_value,
+    execute, execute_with_base, execute_with_profile, service_key, where_clause_of, QueryResult,
+    ResolvedTriple, SelectResult, ServiceKey, ServiceResultsGuard, SolutionRow,
 };
 // Re-exported solely so `tests/join_reorder_benchmark.rs` can exercise the
 // one real cyclic-BGP-detection implementation directly instead of
