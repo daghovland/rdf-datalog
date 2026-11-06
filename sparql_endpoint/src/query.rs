@@ -54,9 +54,16 @@ use std::time::Duration;
 /// every other case (`Deny`, an unresolved `Allow` SERVICE, SILENT, a
 /// variable endpoint). Must be called (and awaited) *before* acquiring any
 /// lock on `state.store` — this performs real network I/O (issue #744).
+///
+/// `request_timeout` bounds each SERVICE fetch's own HTTP request — pass
+/// the remaining configured `--timeout` budget (issue #745), computed by
+/// the caller from one shared deadline so this phase and the synchronous
+/// evaluation phase that follows it don't each get the full budget
+/// independently.
 async fn pre_resolve_services_for_query(
     query: &Query,
     state: &AppState,
+    request_timeout: Option<Duration>,
 ) -> Result<Option<HashMap<ServiceKey, Vec<SolutionRow>>>, Response> {
     if !matches!(
         state.network_policy,
@@ -72,6 +79,7 @@ async fn pre_resolve_services_for_query(
         where_clause,
         &state.network_policy,
         state.allow_loopback_for_ssrf_tests,
+        request_timeout,
     )
     .await;
     match crate::service_federation::collect_or_first_error(results) {
@@ -394,15 +402,23 @@ async fn run_transactional_query(
         }
     };
 
+    // One deadline shared by async SERVICE pre-resolution (#744) and the
+    // synchronous evaluation below (#745) — see `request_deadline_instant`'s
+    // doc comment.
+    let deadline_instant = request_deadline_instant(state.config.max_query_timeout_secs);
+
     // Async SERVICE pre-resolution (issue #744) — see
     // `pre_resolve_services_for_query`'s doc comment. `view` above is
     // already an owned clone, not a held lock guard, so there's no
     // lock-across-await concern here; still must happen before installing
     // the `!Send` guard, same ordering as `run_select_query`.
-    let pre_resolved_services = match pre_resolve_services_for_query(&query, state).await {
-        Ok(m) => m,
-        Err(resp) => return resp,
-    };
+    let pre_resolved_services =
+        match pre_resolve_services_for_query(&query, state, remaining_duration(deadline_instant))
+            .await
+        {
+            Ok(m) => m,
+            Err(resp) => return resp,
+        };
     let _service_guard = pre_resolved_services.map(ServiceResultsGuard::install);
 
     if explain {
@@ -411,7 +427,7 @@ async fn run_transactional_query(
             &view,
             state.network_policy.clone(),
             ctx.base.as_deref(),
-            configured_query_timeout(state.config.max_query_timeout_secs),
+            remaining_duration(deadline_instant),
         );
     }
 
@@ -424,7 +440,7 @@ async fn run_transactional_query(
         &view,
         state.network_policy.clone(),
         ctx.base.as_deref(),
-        configured_query_timeout(state.config.max_query_timeout_secs),
+        remaining_duration(deadline_instant),
     ) {
         Ok(r) => r,
         Err(e) => return query_execution_error_response(&e),
@@ -646,16 +662,24 @@ async fn run_select_query(
         }
     };
 
+    // One deadline shared by async SERVICE pre-resolution (#744) and the
+    // synchronous evaluation below (#745) — see `request_deadline_instant`'s
+    // doc comment.
+    let deadline_instant = request_deadline_instant(state.config.max_query_timeout_secs);
+
     // Async SERVICE pre-resolution (issue #744): must happen before
     // acquiring the store's read lock, since it performs real network I/O
     // and must never be awaited while holding that lock (see
     // `pre_resolve_services_for_query`'s doc comment). `Ok(None)` is the
     // zero-overhead common case: no SERVICE clause, or network policy
     // doesn't allow it (the executor's own check handles that).
-    let pre_resolved_services = match pre_resolve_services_for_query(&query, state).await {
-        Ok(m) => m,
-        Err(resp) => return resp,
-    };
+    let pre_resolved_services =
+        match pre_resolve_services_for_query(&query, state, remaining_duration(deadline_instant))
+            .await
+        {
+            Ok(m) => m,
+            Err(resp) => return resp,
+        };
 
     let store = state.store.read().await;
 
@@ -672,7 +696,7 @@ async fn run_select_query(
             &store,
             state.network_policy.clone(),
             ctx.base.as_deref(),
-            configured_query_timeout(state.config.max_query_timeout_secs),
+            remaining_duration(deadline_instant),
         );
     }
 
@@ -684,7 +708,7 @@ async fn run_select_query(
         &store,
         state.network_policy.clone(),
         ctx.base.as_deref(),
-        configured_query_timeout(state.config.max_query_timeout_secs),
+        remaining_duration(deadline_instant),
     ) {
         Ok(r) => r,
         Err(e) => return query_execution_error_response(&e),
@@ -794,6 +818,27 @@ fn configured_query_timeout(max_query_timeout_secs: u64) -> Option<Duration> {
     } else {
         Some(Duration::from_secs(max_query_timeout_secs))
     }
+}
+
+/// An absolute wall-clock point `request_remaining`/`execution_remaining`
+/// are measured against, shared by the async `SERVICE` pre-resolution phase
+/// and the synchronous `execute_with_base` call that follows it in the same
+/// request — so the two phases together never exceed the configured
+/// `--timeout` budget, instead of each independently getting the full
+/// budget (which would let a hung remote endpoint double the effective
+/// timeout). `None` when no timeout is configured. See issue
+/// [#745](https://github.com/daghovland/rdf-datalog/issues/745).
+fn request_deadline_instant(max_query_timeout_secs: u64) -> Option<std::time::Instant> {
+    configured_query_timeout(max_query_timeout_secs).map(|d| std::time::Instant::now() + d)
+}
+
+/// Time remaining until `deadline`, or `None` if there is no deadline.
+/// Saturates at zero rather than going negative (`Instant` has no negative
+/// duration) — an already-elapsed deadline still produces `Some(0)` so a
+/// caller passing this as an HTTP request timeout fails fast rather than
+/// getting an unbounded request.
+fn remaining_duration(deadline: Option<std::time::Instant>) -> Option<Duration> {
+    deadline.map(|d| d.saturating_duration_since(std::time::Instant::now()))
 }
 
 /// Map a query execution error to an HTTP response, giving the cooperative

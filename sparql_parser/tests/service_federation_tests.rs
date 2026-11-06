@@ -55,14 +55,24 @@ fn collect_service_calls_finds_constant_endpoint_non_silent_service() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "http://example.org/svc");
     assert!(calls[0].1.contains("SELECT"));
+    assert!(
+        !calls[0].2,
+        "non-SILENT service must be tagged silent: false"
+    );
 }
 
 #[test]
-fn collect_service_calls_skips_silent_service() {
+fn collect_service_calls_includes_silent_service_tagged() {
+    // A SILENT SERVICE is still collected (so it can still be fetched and
+    // joined on success — issue #745 fixed a gap where SILENT meant "never
+    // even try"), just tagged `silent: true` so a failed fetch can degrade
+    // to empty results instead of erroring the whole query.
     let q = "SELECT * WHERE { SERVICE SILENT <http://example.org/svc> { ?s ?p ?o } }";
     let (_, query) = parse_query(q, &mut ctx()).expect("should parse");
     let calls = collect_service_calls(where_clause_of(&query));
-    assert!(calls.is_empty(), "SILENT SERVICE must not be collected");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "http://example.org/svc");
+    assert!(calls[0].2, "SILENT flag must be preserved");
 }
 
 #[test]
@@ -89,7 +99,7 @@ fn collect_service_calls_recurses_into_optional_union_and_subquery() {
     "#;
     let (_, query) = parse_query(q, &mut ctx()).expect("should parse");
     let calls = collect_service_calls(where_clause_of(&query));
-    let endpoints: Vec<&str> = calls.iter().map(|(e, _)| e.as_str()).collect();
+    let endpoints: Vec<&str> = calls.iter().map(|(e, _, _)| e.as_str()).collect();
     assert!(
         endpoints.contains(&"http://example.org/sub"),
         "{endpoints:?}"
@@ -151,6 +161,55 @@ fn service_allow_without_pre_resolved_results_still_errors() {
 }
 
 #[test]
+fn service_allow_silent_without_pre_resolved_results_returns_empty_not_error() {
+    // A SILENT SERVICE with nothing pre-resolved (e.g. its fetch failed, or
+    // was never attempted) must degrade to empty results, not error — the
+    // whole point of SILENT. This is distinct from the non-SILENT case
+    // above, which must error.
+    let q = "SELECT * WHERE { SERVICE SILENT <http://example.org/svc> { ?s ?p ?o } }";
+    let (_, query) = parse_query(q, &mut ctx()).expect("should parse");
+    let result =
+        execute(&query, &empty_store(), NetworkPolicy::Allow).expect("SILENT must not error");
+    let QueryResult::Select(sel) = result else {
+        panic!("expected SELECT result");
+    };
+    assert!(sel.rows.is_empty());
+}
+
+#[test]
+fn service_allow_silent_with_pre_resolved_results_still_joins() {
+    // Regression test for the gap #745 fixes: before this, a SILENT SERVICE
+    // was never even fetched, so it always returned empty even against a
+    // healthy endpoint. SILENT must only change *failure* handling, not
+    // suppress a successful fetch's real results.
+    let q = "SELECT * WHERE { SERVICE SILENT <http://example.org/svc> { ?x ?p ?o } }";
+    let (_, query) = parse_query(q, &mut ctx()).expect("should parse");
+
+    let calls = collect_service_calls(where_clause_of(&query));
+    assert_eq!(calls.len(), 1, "SILENT SERVICE must still be collected");
+    let (endpoint, body, silent) = calls[0].clone();
+    assert!(silent);
+
+    let mut map = HashMap::new();
+    map.insert(
+        ServiceKey { endpoint, body },
+        vec![row(&[
+            ("x", iri("http://example.org/x1")),
+            ("p", iri("http://example.org/p1")),
+            ("o", iri("http://example.org/o1")),
+        ])],
+    );
+    let _guard = ServiceResultsGuard::install(map);
+
+    let result = execute(&query, &empty_store(), NetworkPolicy::Allow)
+        .expect("pre-resolved SILENT SERVICE must succeed");
+    let QueryResult::Select(sel) = result else {
+        panic!("expected SELECT result");
+    };
+    assert_eq!(sel.rows.len(), 1, "the real pre-resolved row must survive");
+}
+
+#[test]
 fn service_allow_with_pre_resolved_results_joins_on_shared_variable() {
     // Outer BGP binds ?x to two local resources; SERVICE's pre-resolved
     // results bind ?x/?o for three rows, only two of which share an ?x
@@ -185,7 +244,7 @@ fn service_allow_with_pre_resolved_results_joins_on_shared_variable() {
 
     let calls = collect_service_calls(where_clause_of(&query));
     assert_eq!(calls.len(), 1);
-    let (endpoint, body) = calls[0].clone();
+    let (endpoint, body, _silent) = calls[0].clone();
 
     let pre_resolved_rows = vec![
         row(&[
