@@ -24,15 +24,15 @@ Contact: hovlanddag@gmail.com
 //! still return the remote's real results). Only a failed fetch degrades to
 //! empty results for it; a non-`SILENT` call's failure still errors the
 //! whole query. "Failed" covers connection failure, a non-2xx status, a
-//! malformed results body, and a timeout; see [`collect_or_first_error`]
-//! for exactly how each is dispatched, and [`FetchFailure`] for why timeout
+//! malformed results body, and a timeout; see `collect_or_first_error`
+//! for exactly how each is dispatched, and `FetchFailure` for why timeout
 //! is distinguished from every other failure.
 //!
 //! Each fetch's own HTTP request is bounded by `request_timeout`
 //! (ultimately the query's configured `--timeout` budget, computed once in
 //! `query.rs` and shared with the synchronous evaluator that runs
 //! afterward) so a hung remote endpoint cannot make a federated query
-//! exceed it — see [`pre_resolve_services`]'s doc comment.
+//! exceed it — see `pre_resolve_services`'s doc comment.
 //!
 //! # Why pre-resolve rather than fetch inline
 //!
@@ -108,7 +108,7 @@ use std::time::Duration;
 /// [`sparql_parser::ExecError::ServiceFetchFailed`]). See issue #745.
 #[derive(Debug)]
 pub(crate) enum FetchFailure {
-    /// The per-request timeout passed to [`fetch_service_blocking`] elapsed.
+    /// The per-request timeout passed to `fetch_service_blocking` elapsed.
     Timeout,
     /// Any other failure; the message is already human-readable.
     Other(String),
@@ -122,8 +122,8 @@ pub(crate) enum FetchFailure {
 /// occurrence of that pair in the query was `SILENT` (a pair appearing both
 /// SILENT and non-SILENT in the same query is treated as non-SILENT for
 /// error-handling purposes, since at least one call site needs the error to
-/// propagate) — see [`crate::query::collect_or_first_error`]'s caller for
-/// how that `bool` is used.
+/// propagate) — see `collect_or_first_error`'s caller for how that `bool`
+/// is used.
 ///
 /// Call this *before* acquiring any lock on the real store (see this
 /// module's doc comment): it performs real network I/O and must not be
@@ -133,7 +133,7 @@ pub(crate) enum FetchFailure {
 /// pass the query's remaining configured `--timeout` budget so a hung
 /// remote endpoint cannot make a federated query exceed it (issue #745).
 /// `None` means no timeout (the production default, 30s, set by
-/// [`build_hardened_client`] itself, still applies as a hard ceiling).
+/// `build_hardened_client` itself, still applies as a hard ceiling).
 ///
 /// Only call this when `network` is [`NetworkPolicy::Allow`] or
 /// [`NetworkPolicy::AllowList`] — same restriction as `LOAD`'s `fetch_rdf`.
@@ -193,11 +193,11 @@ pub(crate) async fn pre_resolve_services(
 /// `Datastore` (see this module's doc comment for why).
 ///
 /// `request_timeout`, when `Some`, is set as this specific request's
-/// `reqwest` timeout, overriding [`build_hardened_client`]'s 30s client
-/// default — see [`pre_resolve_services`]'s doc comment.
+/// `reqwest` timeout, overriding `build_hardened_client`'s 30s client
+/// default — see `pre_resolve_services`'s doc comment.
 ///
 /// Runs inside `tokio::task::spawn_blocking` (see
-/// [`pre_resolve_services`]) — never call this directly from async code
+/// `pre_resolve_services`) — never call this directly from async code
 /// without that wrapper, since it blocks the calling thread on network I/O.
 fn fetch_service_blocking(
     endpoint: &str,
@@ -247,7 +247,7 @@ fn fetch_service_blocking(
 }
 
 /// Build the `HashMap` [`sparql_parser::ServiceResultsGuard::install`]
-/// expects from [`pre_resolve_services`]'s per-call results.
+/// expects from `pre_resolve_services`'s per-call results.
 ///
 /// A `SILENT` call (the `bool`) whose fetch failed is simply omitted from
 /// the map rather than erroring — `QueryComponent::Service`'s evaluation arm
