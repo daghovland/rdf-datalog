@@ -228,11 +228,7 @@ pub fn run_query(conn: &Connection, sql: &str, row_limit: usize) -> Result<Vec<R
         source: e,
     })?;
 
-    let column_names: Vec<String> = stmt
-        .column_names()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
+    let column_names: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
 
     let mut rows = Vec::new();
     let mut sql_rows = stmt.query([]).map_err(|e| RmlError::Sql {
@@ -281,11 +277,7 @@ pub fn discover_columns(conn: &Connection, base_sql: &str) -> Result<Vec<String>
         context: sql.clone(),
         source: e,
     })?;
-    Ok(stmt
-        .column_names()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect())
+    Ok(stmt.column_names().map(|s| s.to_string()).collect())
 }
 
 /// Synthesize the single SQL query that performs a same-connection SQL/SQL
