@@ -8,27 +8,30 @@ Contact: hovlanddag@gmail.com
 
 //! Regression coverage for issue [#591](https://github.com/daghovland/rdf-datalog/issues/591):
 //! `CLEAR`/`DROP` (default graph, a named graph, `ALL`, `NAMED`) in
-//! `sparql_update.rs::apply_prepared_update_with_options` call
-//! `store.remove_graph(id)` directly and never feed the removed quads into
-//! `pending_deletes` — so the single `apply_reasoner_delta` call at the end
-//! of that function never learns the graph was cleared. `remove_graph`
-//! physically removes both base *and* derived quads from the store (they
-//! are indistinguishable at the storage level), so this looks consistent
-//! immediately afterward — the desync only surfaces on a *later* write,
-//! once the reasoner's own internal bookkeeping (support counts,
-//! derived-from index) has gone stale relative to a store it was never
-//! told had changed.
+//! `sparql_update.rs::apply_prepared_update_with_options` used to call
+//! `store.remove_graph(id)` directly, never notifying the reasoner that the
+//! graph was cleared. When a rule's derived facts happen to land in the
+//! *same* graph as their supporting base facts, a bare `remove_graph`
+//! physically wipes both together, which looks consistent and masks the
+//! bug (see the same-graph tests below, which pass even on the buggy
+//! code). The deterministic case is a derived fact landing in a
+//! *different* graph than its base fact — the common RML-mapped-data
+//! shape (extensional data in a named graph, derived/intensional facts in
+//! the default graph) — where a bare `remove_graph(<g>)` can never touch
+//! the default-graph derived fact at all; only notifying the reasoner can
+//! retract it.
 //!
 //! This is a much better match for the user's real-world report (a
 //! pipeline that reloads a dataset by clearing it and re-running an RML
 //! mapping) than a one-off `DELETE WHERE` would be, since `CLEAR`/`DROP`
 //! is the natural "reload this graph's data" operation.
 //!
-//! Contrast with `graph_store.rs::gsp_delete_inner` (the Graph Store
-//! Protocol `DELETE` route), which performs the semantically equivalent
-//! operation correctly: it collects the graph's quads and routes them
-//! through `apply_reasoner_delta` before letting the `None` branch fall
-//! back to a bare `store.remove_graph`.
+//! Fixed by `sparql_update.rs::clear_graphs_through_reasoner`, which
+//! mirrors `graph_store.rs::gsp_delete_inner` (the Graph Store Protocol
+//! `DELETE` route, which already handled this correctly): collect the
+//! target graph(s)' quads and route them through `apply_reasoner_delta`
+//! before falling back to a bare `store.remove_graph` when no reasoner is
+//! configured.
 
 mod common;
 
@@ -370,4 +373,189 @@ async fn clear_default_and_reinsert_in_one_request_matches_fresh_rebuild() {
              oracle={expected} (issue #591)"
         );
     }
+}
+
+/// Control test: the Graph Store Protocol `DELETE /{name}/data?graph=<g>`
+/// route (`graph_store::gsp_delete_inner`) already routes a cleared
+/// graph's quads through `apply_reasoner_delta`, which is the exact
+/// pattern `clear_graphs_through_reasoner` was fixed to copy. Confirms
+/// that reference pattern genuinely handles the cross-graph case (a
+/// derived fact in the default graph, base fact in a named graph) rather
+/// than this test's own assumptions being wrong.
+#[tokio::test]
+async fn gsp_delete_named_graph_retracts_cross_graph_derived_fact() {
+    let server = common::TestServer::start_writable("").await;
+    load_rules(&server, "ds", CROSS_GRAPH_LINK_RULE).await;
+
+    let graph = format!("{EX}g");
+    let insert = format!(
+        "PREFIX ex: <{EX}>
+         INSERT DATA {{ GRAPH <{graph}> {{ ex:a ex:link ex:b . }} }}"
+    );
+    update(&server, "ds", &insert).await;
+
+    assert!(
+        ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}a> <{EX}linked> <{EX}b> }}")
+        )
+        .await,
+        "derived ex:linked fact must be present in the default graph before DELETE"
+    );
+
+    let resp = server
+        .client
+        .delete(server.dataset_data_graph_url("ds", &graph))
+        .send()
+        .await
+        .expect("GSP DELETE request failed");
+    assert!(
+        resp.status().is_success(),
+        "GSP DELETE must succeed: {}",
+        resp.status()
+    );
+
+    assert!(
+        !ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}a> <{EX}linked> <{EX}b> }}")
+        )
+        .await,
+        "derived ex:linked fact must be retracted after GSP DELETE removed \
+         its sole supporting base fact from <g>"
+    );
+}
+
+/// A `CLEAR GRAPH` request with a reasoner configured must still bump
+/// `store.generation`, even when it's the *only* op in the request (net
+/// inserts/deletes both empty) -- `apply_deletions` removes quads via the
+/// `QuadTable`-level `remove_quad` directly, which doesn't bump it itself,
+/// unlike `Datastore::remove_graph`'s reasoner-less path. Without the bump
+/// in `clear_graphs_through_reasoner`, the If-Match ETag precondition
+/// check would silently treat a `CLEAR`-modified store as unchanged.
+///
+/// Also exercises the incremental (non-fallback) retraction path: the
+/// cross-graph tests above all delete a closure's *only* support, which
+/// trips `datalog::incremental::FALLBACK_THRESHOLD` and routes through
+/// `full_rematerialise` instead of the incremental backward/forward
+/// phases -- so they don't actually prove the incremental path handles a
+/// cross-graph body atom (`ex:link[?x, ?y] ?g`) correctly, only that
+/// *some* path does. Padding with ten unrelated derived facts keeps the
+/// single deletion's share of the closure well under the threshold.
+#[tokio::test]
+async fn clear_graph_with_reasoner_bumps_store_generation() {
+    let server = common::TestServer::start_writable("").await;
+    load_rules(&server, "ds", CROSS_GRAPH_LINK_RULE).await;
+
+    let graph = format!("{EX}g");
+    let other_graph = format!("{EX}h");
+    let insert = format!(
+        "PREFIX ex: <{EX}>
+         INSERT DATA {{ GRAPH <{graph}> {{ ex:a ex:link ex:b . }} }}"
+    );
+    update(&server, "ds", &insert).await;
+
+    // Padding: ten unrelated derived facts in a different graph, so the
+    // one deletion below is well under FALLBACK_THRESHOLD and actually
+    // exercises the incremental backward/forward phases.
+    let padding_triples: String = (0..10)
+        .map(|i| format!("ex:p{i} ex:link ex:q{i} . "))
+        .collect();
+    let insert_padding = format!(
+        "PREFIX ex: <{EX}>
+         INSERT DATA {{ GRAPH <{other_graph}> {{ {padding_triples} }} }}"
+    );
+    update(&server, "ds", &insert_padding).await;
+
+    assert!(
+        ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}p0> <{EX}linked> <{EX}q0> }}")
+        )
+        .await,
+        "padding fact must be derived before the CLEAR"
+    );
+
+    update(&server, "ds", &format!("CLEAR GRAPH <{graph}>")).await;
+
+    // Retraction on the incremental path: the cleared fact's sole
+    // derivation must be gone, but the unrelated padding facts must
+    // survive (no over-retraction).
+    assert!(
+        !ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}a> <{EX}linked> <{EX}b> }}")
+        )
+        .await,
+        "ex:linked fact must be retracted on the incremental path after \
+         CLEAR GRAPH (issue #591)"
+    );
+    assert!(
+        ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}p0> <{EX}linked> <{EX}q0> }}")
+        )
+        .await,
+        "unrelated padding fact must survive -- CLEAR GRAPH <g> must not \
+         over-retract derivations from a different graph"
+    );
+
+    // Isolate the generation-bump check from the retraction above: insert
+    // an unmatched fact into a third graph (no rule fires on it, so
+    // clearing it below produces an empty reasoner delta -- net
+    // inserts/deletes both empty), capture the ETag, then clear that
+    // graph and confirm a stale If-Match is rejected. If `generation`
+    // weren't explicitly bumped in `clear_graphs_through_reasoner`,
+    // nothing else in this request would bump it, since
+    // `apply_deletions`/`apply_insertions` mutate quads via the
+    // `QuadTable` level directly, bypassing `Datastore`'s own bump.
+    let unmatched_graph = format!("{EX}k");
+    let insert_unmatched = format!(
+        "PREFIX ex: <{EX}>
+         INSERT DATA {{ GRAPH <{unmatched_graph}> {{ ex:x ex:unrelated ex:y . }} }}"
+    );
+    update(&server, "ds", &insert_unmatched).await;
+
+    let ask_sparql = "ASK { ?s ?p ?o }";
+    let resp = server
+        .client
+        .get(server.sparql_query_url(ask_sparql))
+        .send()
+        .await
+        .expect("query request failed");
+    let old_etag = resp
+        .headers()
+        .get("etag")
+        .expect("response must carry an ETag")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    update(&server, "ds", &format!("CLEAR GRAPH <{unmatched_graph}>")).await;
+
+    // A trivial no-op update with If-Match on the pre-CLEAR ETag must now
+    // be rejected with 412 Precondition Failed -- if generation wasn't
+    // bumped, the server would wrongly still consider the pre-CLEAR ETag
+    // current and accept this with 200.
+    let resp = server
+        .client
+        .post(server.dataset_update_url("ds"))
+        .header("content-type", "application/sparql-update")
+        .header("if-match", &old_etag)
+        .body("INSERT DATA { <http://ex/noop> <http://ex/noop> <http://ex/noop> . }")
+        .send()
+        .await
+        .expect("POST update failed");
+    assert_eq!(
+        resp.status(),
+        412,
+        "stale If-Match must be rejected after CLEAR GRAPH bumped the \
+         generation (issue #591): got {}",
+        resp.status()
+    );
 }
