@@ -55,6 +55,21 @@ ex:reachable[?x, ?y] ?g :- ex:link[?x, ?y] ?g .
 ex:reachable[?x, ?y] ?g :- ex:link[?x, ?z] ?g, ex:reachable[?z, ?y] ?g .
 "#;
 
+/// `ex:a ex:linked ex:b :- ex:a ex:link ex:b ?g .` (any graph `?g`), with
+/// the derived fact landing in the **default graph** regardless of which
+/// named graph the base fact lives in — the RML-mapped-data shape:
+/// base/extensional facts loaded into a named graph, derived/intensional
+/// facts in the default graph. This is the deterministic case: unlike
+/// `GRAPH_SCOPED_TRANSITIVE_LINK_RULES` (where `remove_graph` physically
+/// wipes base *and* derived facts together, since they share a graph),
+/// here `remove_graph(<g>)` only ever touches the base fact — the
+/// derived default-graph fact can only be retracted by the reasoner
+/// actually being told about the deletion.
+const CROSS_GRAPH_LINK_RULE: &str = r#"
+PREFIX ex: <http://ex/>
+ex:linked[?x, ?y] :- ex:link[?x, ?y] ?g .
+"#;
+
 async fn load_rules(server: &common::TestServer, dataset: &str, rules: &str) {
     let resp = server
         .client
@@ -250,6 +265,109 @@ async fn drop_named_graph_then_reinsert_matches_fresh_rebuild() {
             actual, expected,
             "ex:reachable({s},{o}) mismatch after DROP GRAPH + reinsert: \
              server-under-test={actual}, oracle={expected} (issue #591)"
+        );
+    }
+}
+
+/// Deterministic cross-graph case: base fact lives in a named graph
+/// `<g>`, derived fact lives in the default graph (the RML-mapped-data
+/// shape: extensional data in a named graph, intensional/derived facts
+/// in the default graph). `remove_graph(<g>)` only ever touches `<g>`'s
+/// own quads, so unlike the same-graph tests above, the derived
+/// default-graph fact can *only* be retracted if the reasoner is
+/// actually told about the clear — this isn't masked by `remove_graph`
+/// physically wiping both base and derived facts together, and doesn't
+/// depend on the incremental-vs-full-rebuild fallback threshold either.
+async fn assert_cross_graph_clear_retracts_derived_default_graph_fact(clear_stmt: &str) {
+    let server = common::TestServer::start_writable("").await;
+    load_rules(&server, "ds", CROSS_GRAPH_LINK_RULE).await;
+
+    let graph = format!("{EX}g");
+    let insert = format!(
+        "PREFIX ex: <{EX}>
+         INSERT DATA {{ GRAPH <{graph}> {{ ex:a ex:link ex:b . }} }}"
+    );
+    update(&server, "ds", &insert).await;
+
+    assert!(
+        ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}a> <{EX}linked> <{EX}b> }}")
+        )
+        .await,
+        "derived ex:linked fact must be present in the default graph \
+         before {clear_stmt}"
+    );
+
+    update(&server, "ds", clear_stmt).await;
+
+    assert!(
+        !ask(
+            &server,
+            "ds",
+            &format!("ASK {{ <{EX}a> <{EX}linked> <{EX}b> }}")
+        )
+        .await,
+        "derived ex:linked fact must be retracted from the default graph \
+         after `{clear_stmt}` removed its sole supporting base fact from \
+         <g> -- the reasoner must be notified of the clear, not just see \
+         <g> disappear out from under it (issue #591)"
+    );
+}
+
+#[tokio::test]
+async fn drop_graph_retracts_cross_graph_derived_fact() {
+    assert_cross_graph_clear_retracts_derived_default_graph_fact(&format!("DROP GRAPH <{EX}g>"))
+        .await;
+}
+
+#[tokio::test]
+async fn clear_graph_retracts_cross_graph_derived_fact() {
+    assert_cross_graph_clear_retracts_derived_default_graph_fact(&format!("CLEAR GRAPH <{EX}g>"))
+        .await;
+}
+
+#[tokio::test]
+async fn clear_named_retracts_cross_graph_derived_fact() {
+    assert_cross_graph_clear_retracts_derived_default_graph_fact("CLEAR NAMED").await;
+}
+
+/// A single request that clears a graph and re-inserts base data in the
+/// *same* update — the literal shape of a pipeline reload RML mapping
+/// run — must still end with the reasoner's derived closure matching
+/// what a from-scratch rebuild of the final data would produce. Net
+/// set-semantics within one request (deletes and inserts of the exact
+/// same quad cancel out) must not be confused with the graph-level
+/// `CLEAR`/`DROP` operation never reaching `pending_deletes` at all.
+#[tokio::test]
+async fn clear_default_and_reinsert_in_one_request_matches_fresh_rebuild() {
+    let base = format!(
+        "<{EX}a> <{EX}link> <{EX}b> . \
+         <{EX}b> <{EX}link> <{EX}c> ."
+    );
+    let server = common::TestServer::start_writable(&base).await;
+    load_rules(&server, "ds", TRANSITIVE_LINK_RULES).await;
+
+    let combined = format!(
+        "PREFIX ex: <{EX}>
+         CLEAR DEFAULT ;
+         INSERT DATA {{ ex:a ex:link ex:b . }}"
+    );
+    update(&server, "ds", &combined).await;
+
+    let oracle = common::TestServer::start_writable(&format!("<{EX}a> <{EX}link> <{EX}b> .")).await;
+    load_rules(&oracle, "ds", TRANSITIVE_LINK_RULES).await;
+
+    for (s, o) in [("a", "b"), ("a", "c"), ("b", "c")] {
+        let q = format!("ASK {{ <{EX}{s}> <{EX}reachable> <{EX}{o}> }}");
+        let actual = ask(&server, "ds", &q).await;
+        let expected = ask(&oracle, "ds", &q).await;
+        assert_eq!(
+            actual, expected,
+            "ex:reachable({s},{o}) mismatch after a single CLEAR DEFAULT ; \
+             INSERT DATA request: server-under-test={actual}, \
+             oracle={expected} (issue #591)"
         );
     }
 }
