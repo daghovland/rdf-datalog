@@ -982,6 +982,67 @@ pub(crate) fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> V
 ///
 /// `network` controls how `LOAD` operations are handled.
 ///
+/// Remove every quad in each of `graph_ids` from `store`, routing the
+/// removal through `reasoner` (if present) so derived facts that depended
+/// on those base quads -- even ones living in a *different* graph -- are
+/// correctly retracted too.
+///
+/// Mirrors `graph_store::gsp_delete_inner`'s handling of the semantically
+/// equivalent Graph Store Protocol `DELETE`: a bare `Datastore::remove_graph`
+/// only removes that graph's own physical quads, which happens to look
+/// consistent when a rule's derived facts share a graph with their
+/// supporting base facts (both get wiped together), but silently orphans a
+/// derived fact landing in a *different* graph (e.g. the common
+/// extensional-data-in-a-named-graph / derived-facts-in-the-default-graph
+/// shape), since the reasoner's own bookkeeping is never told the graph was
+/// cleared. All `graph_ids` are collected into a single delta and applied in
+/// one `apply_reasoner_delta` call (rather than one call per graph) so a
+/// rule deriving across the cleared graphs doesn't see a partially-cleared
+/// intermediate state.
+///
+/// `CLEAR`/`DROP` have no separate graph-existence bookkeeping to restore
+/// afterward: [`Datastore::named_graph_exists`] is itself quad-presence
+/// based (except for the always-existing default graph), so removing the
+/// quads *is* the whole operation at the storage level, with or without a
+/// reasoner.
+///
+/// See [#591](https://github.com/daghovland/rdf-datalog/issues/591).
+fn clear_graphs_through_reasoner(
+    store: &mut Datastore,
+    reasoner: Option<&mut IncrementalReasoner>,
+    graph_ids: &[GraphElementId],
+) -> Result<(), UpdateError> {
+    match reasoner {
+        Some(r) => {
+            let quads: Vec<_> = graph_ids
+                .iter()
+                .flat_map(|&id| store.named_graphs.get_graph(id))
+                .collect();
+            apply_reasoner_delta(r, store, &quads, &[]).map_err(|e| match e {
+                DeltaError::Contradiction(m) => UpdateError::Contradiction(m),
+                DeltaError::RollbackFailed(m) => UpdateError::Other(m),
+            })?;
+            // `apply_deletions` (called by `apply_reasoner_delta` above)
+            // removes quads via the `QuadTable`-level `remove_quad`
+            // directly, bypassing `Datastore::remove_quad`'s generation
+            // bump -- unlike the `store.remove_graph` call in the `None`
+            // branch below, which does bump it via `Datastore::remove_graph`.
+            // A request that is *only* a CLEAR/DROP (no other net
+            // inserts/deletes) would otherwise leave `store.generation`
+            // unchanged, silently defeating the If-Match ETag check and a
+            // transaction's optimistic-concurrency generation check.
+            store.generation += 1;
+            Ok(())
+        }
+        None => {
+            for &id in graph_ids {
+                store.remove_graph(id);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Returns the net delta `(net_inserts, net_deletes)` actually applied to
 /// the live store.  Callers such as [`crate::query`] use this to roll back
 /// the transaction if a constraint check (e.g. `owl:Nothing` instances) fails
@@ -1007,7 +1068,7 @@ pub fn apply_prepared_update(
 pub fn apply_prepared_update_with_options(
     store: &mut Datastore,
     ops: Vec<PreparedOp>,
-    reasoner: Option<&mut IncrementalReasoner>,
+    mut reasoner: Option<&mut IncrementalReasoner>,
     network: NetworkPolicy,
     allow_loopback: bool,
 ) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), UpdateError> {
@@ -1038,14 +1099,15 @@ pub fn apply_prepared_update_with_options(
                 pending_deletes.extend(existing);
             }
             PreparedOp::ClearDefault | PreparedOp::DropDefault => {
-                // CLEAR/DROP cannot fail — apply eagerly.
-                store.remove_graph(DEFAULT_GRAPH_ELEMENT_ID);
+                clear_graphs_through_reasoner(
+                    store,
+                    reasoner.as_deref_mut(),
+                    &[DEFAULT_GRAPH_ELEMENT_ID],
+                )?;
             }
             PreparedOp::ClearAll | PreparedOp::DropAll => {
                 let ids: Vec<_> = store.named_graphs.triple_id_index.keys().copied().collect();
-                for id in ids {
-                    store.remove_graph(id);
-                }
+                clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &ids)?;
             }
             PreparedOp::ClearNamed | PreparedOp::DropNamed => {
                 let ids: Vec<_> = store
@@ -1055,13 +1117,11 @@ pub fn apply_prepared_update_with_options(
                     .copied()
                     .filter(|&id| id != DEFAULT_GRAPH_ELEMENT_ID)
                     .collect();
-                for id in ids {
-                    store.remove_graph(id);
-                }
+                clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &ids)?;
             }
             PreparedOp::ClearGraph(iri) | PreparedOp::DropGraph(iri) => {
                 if let Some(id) = store.lookup_named_graph_id(&iri) {
-                    store.remove_graph(id);
+                    clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &[id])?;
                 }
             }
             PreparedOp::CreateGraph(iri) => {
