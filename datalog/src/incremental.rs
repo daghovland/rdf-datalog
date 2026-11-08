@@ -5990,4 +5990,113 @@ mod tests {
              rather than the O(rule's own derivations) indexed lookup"
         );
     }
+
+    /// Inserting a boundary must retract package-membership facts whose only
+    /// derivation crossed that node while it was not yet a boundary.
+    #[test]
+    fn test_insert_boundary_retracts_membership_beyond_boundary() {
+        let (mut ds, g, internal, p, boundary, outside) = setup_store();
+        let mk_pred = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let adjacent_to = mk_pred(&mut ds, "adjacentTo");
+        let selected_internal = mk_pred(&mut ds, "selectedInternal");
+        let is_boundary_of = mk_pred(&mut ds, "isBoundaryOf");
+        let is_in_package = mk_pred(&mut ds, "isInPackage");
+
+        let seed_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("node".to_string()),
+                predicate: Term::Resource(selected_internal),
+                object: Term::Variable("pkg".to_string()),
+            })],
+        };
+        let expansion_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("next".to_string()),
+                predicate: Term::Resource(is_in_package),
+                object: Term::Variable("pkg".to_string()),
+            }),
+            body: vec![
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_in_package),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+                RuleAtom::PositivePattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(adjacent_to),
+                    object: Term::Variable("next".to_string()),
+                }),
+                RuleAtom::NotPattern(QuadPattern {
+                    graph: Term::Resource(g),
+                    subject: Term::Variable("node".to_string()),
+                    predicate: Term::Resource(is_boundary_of),
+                    object: Term::Variable("pkg".to_string()),
+                }),
+            ],
+        };
+        let selected = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: selected_internal,
+            obj: p,
+        };
+        let internal_to_boundary = Quad {
+            triple_id: g,
+            subject: internal,
+            predicate: adjacent_to,
+            obj: boundary,
+        };
+        let boundary_to_outside = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: adjacent_to,
+            obj: outside,
+        };
+        for fact in [selected, internal_to_boundary, boundary_to_outside] {
+            ds.named_graphs.add_quad(fact);
+        }
+
+        let mut reasoner =
+            IncrementalReasoner::new(vec![seed_rule, expansion_rule], &mut ds).unwrap();
+        let package_fact = |subject| Quad {
+            triple_id: g,
+            subject,
+            predicate: is_in_package,
+            obj: p,
+        };
+        assert!(ds.named_graphs.contains(&package_fact(boundary)));
+        assert!(ds.named_graphs.contains(&package_fact(outside)));
+
+        let boundary_fact = Quad {
+            triple_id: g,
+            subject: boundary,
+            predicate: is_boundary_of,
+            obj: p,
+        };
+        reasoner
+            .apply_insertions(&mut ds, &[boundary_fact])
+            .unwrap();
+
+        assert!(ds.named_graphs.contains(&package_fact(boundary)));
+        assert!(
+            !ds.named_graphs.contains(&package_fact(outside)),
+            "inserting isBoundaryOf(boundary,pkg) must invalidate membership \
+             that was derived by traversing outward from that boundary"
+        );
+    }
 }
