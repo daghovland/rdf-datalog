@@ -167,3 +167,47 @@ jobs:
       - name: cargo test — IMF performance tests
         run: cargo test --test performance imf
 
+  # ── Gene Ontology performance tests ─────────────────────────────────────────
+  # Downloads go.owl (a dated, archived release — see
+  # scripts/download_test_ontologies.sh for why it's pinned rather than the
+  # rolling "current" snapshot), converts it to Turtle with Apache Jena's riot,
+  # and runs the Gene Ontology pipeline tests in release mode (debug is
+  # dramatically slower — 25s on a 2021 ThinkPad vs. ~2s release on a recent
+  # Mac — ubuntu-latest's 16GB/4-core runner has plenty of headroom, unlike the
+  # 3.7GB production box these used to be too risky to run on; see #559/#779).
+  # Separate job, like imf-tests, so the download/conversion doesn't block the
+  # core test suite.
+  gene-ontology-tests:
+    name: Gene Ontology Performance Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gene-ontology-tests
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Apache Jena riot
+        run: |
+          JENA_VERSION=5.1.0
+          curl -fL --retry 3 --retry-delay 5 \
+            -o /tmp/jena.tar.gz \
+            "https://archive.apache.org/dist/jena/binaries/apache-jena-${JENA_VERSION}.tar.gz"
+          tar -xzf /tmp/jena.tar.gz -C /tmp
+          echo "/tmp/apache-jena-${JENA_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Download Gene Ontology (dated release) and convert to Turtle
+        run: |
+          mkdir -p tests/testdata
+          curl -fL --retry 3 --retry-delay 5 \
+            -o tests/testdata/go.owl.xml \
+            "https://release.geneontology.org/2026-06-19/ontology/go.owl"
+          riot --output=TURTLE tests/testdata/go.owl.xml > tests/testdata/go.ttl
+          rm tests/testdata/go.owl.xml
+      - name: cargo test — Gene Ontology performance tests (release)
+        run: cargo test --test performance --release gene_ontology -- --ignored --nocapture
+
