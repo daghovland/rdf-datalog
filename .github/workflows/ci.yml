@@ -144,41 +144,27 @@ jobs:
             -e PUBLIC_DOMAIN=dagalog.example.com \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-  # ── IMF performance tests ───────────────────────────────────────────────────
-  # Downloads imf.ttl and runs the IMF ontology pipeline tests.
-  # Kept as a separate job so a slow download does not block the core test suite.
-  imf-tests:
-    name: IMF Performance Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: imf-tests
-      - name: Download IMF ontology
-        run: |
-          mkdir -p tests/testdata
-          curl -fL --retry 3 --retry-delay 5 \
-            -o tests/testdata/imf.ttl \
-            "https://gitlab.com/imf-lab/spec/imf-ontology/-/raw/develop/owl/imf-ontology.owl.ttl?inline=false"
-      - name: cargo test — IMF performance tests
-        run: cargo test --test performance imf
-
-  # ── Gene Ontology performance tests ─────────────────────────────────────────
-  # Downloads go.owl (a dated, archived release — see
+  # ── Performance tests (IMF + Gene Ontology) ─────────────────────────────────
+  # Downloads imf.ttl and go.owl (a dated, archived release — see
   # scripts/download_test_ontologies.sh for why it's pinned rather than the
-  # rolling "current" snapshot), converts it to Turtle with Apache Jena's riot,
-  # and runs the Gene Ontology pipeline tests in release mode (debug is
-  # dramatically slower — 25s on a 2021 ThinkPad vs. ~2s release on a recent
-  # Mac — ubuntu-latest's 16GB/4-core runner has plenty of headroom, unlike the
-  # 3.7GB production box these used to be too risky to run on; see #559/#779).
-  # Separate job, like imf-tests, so the download/conversion doesn't block the
-  # core test suite.
-  gene-ontology-tests:
-    name: Gene Ontology Performance Tests
+  # rolling "current" snapshot), converts go.owl to Turtle with Apache Jena's
+  # riot, and runs both ontologies' pipeline tests, all in release mode (debug
+  # is dramatically slower for Gene Ontology — 25s on a 2021 ThinkPad vs. ~2s
+  # release on a recent Mac — ubuntu-latest's 16GB/4-core runner has plenty of
+  # headroom, unlike the 3.7GB production box these used to be too risky to
+  # run on; see #559/#779).
+  #
+  # One job, not two: the dominant cost for either ontology is compiling the
+  # performance test binary (and its dependency graph) in release mode, not
+  # running the already-compiled test — splitting IMF and Gene Ontology into
+  # separate jobs paid that compile cost twice for no benefit. The build is
+  # its own step (--no-run) so its time shows separately from each test's run
+  # time in the Actions UI, making a future runtime regression in either
+  # ontology's pipeline easy to spot without rebuild noise included.
+  # Kept as its own job (not merged into test-release) so a slow download does
+  # not block the core test suite.
+  performance-tests:
+    name: Performance Tests (IMF + Gene Ontology)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -187,7 +173,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: gene-ontology-tests
+          key: performance-tests
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -200,14 +186,23 @@ jobs:
             "https://archive.apache.org/dist/jena/binaries/apache-jena-${JENA_VERSION}.tar.gz"
           tar -xzf /tmp/jena.tar.gz -C /tmp
           echo "/tmp/apache-jena-${JENA_VERSION}/bin" >> "$GITHUB_PATH"
-      - name: Download Gene Ontology (dated release) and convert to Turtle
+      - name: Download IMF ontology
         run: |
           mkdir -p tests/testdata
+          curl -fL --retry 3 --retry-delay 5 \
+            -o tests/testdata/imf.ttl \
+            "https://gitlab.com/imf-lab/spec/imf-ontology/-/raw/develop/owl/imf-ontology.owl.ttl?inline=false"
+      - name: Download Gene Ontology (dated release) and convert to Turtle
+        run: |
           curl -fL --retry 3 --retry-delay 5 \
             -o tests/testdata/go.owl.xml \
             "https://release.geneontology.org/2026-06-19/ontology/go.owl"
           riot --output=TURTLE tests/testdata/go.owl.xml > tests/testdata/go.ttl
           rm tests/testdata/go.owl.xml
-      - name: cargo test — Gene Ontology performance tests (release)
+      - name: Build performance test binary (release)
+        run: cargo test --test performance --release --no-run
+      - name: Run IMF performance tests
+        run: cargo test --test performance --release imf -- --nocapture
+      - name: Run Gene Ontology performance tests
         run: cargo test --test performance --release gene_ontology -- --ignored --nocapture
 
