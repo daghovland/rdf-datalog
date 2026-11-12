@@ -69,7 +69,7 @@ fn literal_to_csv(lit: &RdfLiteral) -> String {
         RdfLiteral::DateTimeLiteral(dt) => dt.to_rfc3339(),
         RdfLiteral::DateLiteral(d) => d.to_string(),
         RdfLiteral::TimeLiteral(t) => t.to_string(),
-        RdfLiteral::DurationLiteral(dur) => format!("{:?}", dur),
+        RdfLiteral::DurationLiteral(dur) => format!("{}", dur),
     };
     csv_quote(&value)
 }
@@ -80,5 +80,24 @@ fn csv_quote(s: &str) -> String {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test for #769: `literal_to_csv` used to encode
+    // `DurationLiteral` with `{:?}` (chrono::Duration's Debug impl) instead
+    // of its `Display` impl, which is the valid ISO 8601 / xsd:duration
+    // lexical form.
+    #[test]
+    fn duration_literal_value_is_iso8601() {
+        let dur = chrono::Duration::seconds(5);
+        let value = literal_to_csv(&RdfLiteral::DurationLiteral(dur));
+        assert!(
+            value.starts_with('P') || value.starts_with("-P"),
+            "expected ISO 8601 duration lexical form (starting with P or -P), got {value:?}"
+        );
     }
 }

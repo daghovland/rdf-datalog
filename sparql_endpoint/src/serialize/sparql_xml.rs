@@ -144,8 +144,31 @@ fn literal_to_xml(lit: &RdfLiteral) -> String {
             t
         ),
         RdfLiteral::DurationLiteral(dur) => format!(
-            "<literal datatype=\"http://www.w3.org/2001/XMLSchema#duration\">{:?}</literal>",
+            "<literal datatype=\"http://www.w3.org/2001/XMLSchema#duration\">{}</literal>",
             dur
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test for #769: `literal_to_xml` used to encode
+    // `DurationLiteral` with `{:?}` (chrono::Duration's Debug impl) instead
+    // of its `Display` impl, which is the valid ISO 8601 / xsd:duration
+    // lexical form.
+    #[test]
+    fn duration_literal_value_is_iso8601() {
+        let dur = chrono::Duration::seconds(5);
+        let xml = literal_to_xml(&RdfLiteral::DurationLiteral(dur));
+        let value = xml
+            .trim_start_matches(|c| c != '>')
+            .trim_start_matches('>')
+            .trim_end_matches("</literal>");
+        assert!(
+            value.starts_with('P') || value.starts_with("-P"),
+            "expected ISO 8601 duration lexical form (starting with P or -P), got {value:?} (full: {xml:?})"
+        );
     }
 }
