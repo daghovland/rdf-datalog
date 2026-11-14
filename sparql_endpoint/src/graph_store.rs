@@ -650,6 +650,16 @@ pub async fn gsp_delete_inner(
         if let Err(e) = apply_reasoner_delta(&mut reasoner, &mut store, &existing, &[]) {
             return e.into_response();
         }
+        // apply_reasoner_delta's apply_deletions/apply_insertions mutate
+        // quads via the QuadTable level directly (base.named_graphs.remove_quad
+        // / add_quad), bypassing Datastore's own generation-incrementing
+        // wrapper methods entirely, unlike the reasoner-less `remove_graph`
+        // path below. Without this, a GSP DELETE that's the only change to
+        // a dataset in a request would silently leave `store.generation`
+        // unchanged, defeating the If-Match ETag precondition check and a
+        // transaction's optimistic-concurrency generation check. See #781
+        // (the same bug class #774 fixed for sparql_update.rs's CLEAR/DROP).
+        store.generation += 1;
     } else {
         store.remove_graph(graph_id);
     }
