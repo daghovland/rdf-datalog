@@ -87,6 +87,82 @@ pub fn wildcard_quad_pattern(quad: &QuadPattern) -> Vec<QuadWildcard> {
     result
 }
 
+/// The 16 possible "shapes" of a [`QuadWildcard`] — which of its 4 positions
+/// (graph, subject, predicate, object, in that bit order: bit 0 = graph, bit
+/// 1 = subject, bit 2 = predicate, bit 3 = object) are `Wildcard` rather than
+/// a concrete `Resource` — are numbered 0..16 and tracked as a `u16` bitmask
+/// (`1 << shape`) by [`crate::reasoner::DatalogProgram`]'s `rule_map`/
+/// `neg_rule_map`. This lets fact-side lookup
+/// ([`wildcard_quad_pattern_for_shapes`]) build and probe only the shapes
+/// that some rule body atom actually uses, instead of unconditionally
+/// generating and hashing all 16 — see
+/// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+fn quad_wildcard_shape(wc: &QuadWildcard) -> u8 {
+    let mut shape = 0u8;
+    if matches!(wc.graph, ResourceOrWildcard::Wildcard) {
+        shape |= 1;
+    }
+    if matches!(wc.subject, ResourceOrWildcard::Wildcard) {
+        shape |= 2;
+    }
+    if matches!(wc.predicate, ResourceOrWildcard::Wildcard) {
+        shape |= 4;
+    }
+    if matches!(wc.object, ResourceOrWildcard::Wildcard) {
+        shape |= 8;
+    }
+    shape
+}
+
+/// The single-bit mask (`1 << quad_wildcard_shape(wc)`) identifying which of
+/// the 16 shapes `wc` is. Callers OR these together (e.g. while building
+/// `rule_map`) to track the *set* of shapes actually used by some rule body
+/// atom. See the `quad_wildcard_shape` helper (private to this module) and
+/// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+pub fn wildcard_shape_bit(wc: &QuadWildcard) -> u16 {
+    1u16 << quad_wildcard_shape(wc)
+}
+
+/// Like [`wildcard_quad_pattern`], but only generates the combinations whose
+/// shape bit is set in `shapes` (see [`wildcard_shape_bit`]), instead of
+/// unconditionally generating all 16.
+///
+/// `quad` is expected to be fully ground (every term `Term::Resource`, e.g.
+/// via [`constant_quad_pattern`]) — the only way this is called in practice.
+/// A `Term::Variable` position is still treated as a forced-Wildcard
+/// position for safety, matching `wildcard_quad_pattern`'s `expand`, but
+/// since no caller passes a non-ground pattern this is purely defensive.
+///
+/// Skipping shapes no rule body atom uses is sound: `rule_map`/`neg_rule_map`
+/// can only contain a key of a shape nobody inserted, so probing that shape
+/// can never find a match — see
+/// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+pub fn wildcard_quad_pattern_for_shapes(quad: &QuadPattern, shapes: u16) -> Vec<QuadWildcard> {
+    fn pick(term: &Term, wild: bool) -> ResourceOrWildcard {
+        if wild {
+            ResourceOrWildcard::Wildcard
+        } else {
+            match term {
+                Term::Resource(r) => ResourceOrWildcard::Resource(*r),
+                Term::Variable(_) => ResourceOrWildcard::Wildcard,
+            }
+        }
+    }
+    let mut result = Vec::with_capacity(shapes.count_ones() as usize);
+    for shape in 0u8..16 {
+        if shapes & (1u16 << shape) == 0 {
+            continue;
+        }
+        result.push(QuadWildcard {
+            graph: pick(&quad.graph, shape & 1 != 0),
+            subject: pick(&quad.subject, shape & 2 != 0),
+            predicate: pick(&quad.predicate, shape & 4 != 0),
+            object: pick(&quad.object, shape & 8 != 0),
+        });
+    }
+    result
+}
+
 /// Returns variables in the rule head that are not bound in any body atom.
 pub fn get_unsafe_head_variables(rule: &Rule) -> Vec<String> {
     let body_vars: std::collections::HashSet<String> = rule
