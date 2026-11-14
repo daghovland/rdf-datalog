@@ -23,10 +23,28 @@ mkdir -p "$DEST"
 # release available is OWL/XML (go.owl, despite the .owl extension — it is NOT
 # Turtle), which must be converted to Turtle via Apache Jena's riot tool.
 #
+# Pinned to a dated, archived release rather than current.geneontology.org's
+# rolling "current" snapshot: the snapshot's own versionIRI changes over time
+# (observed going from 2026-06-19 to 2026-07-26 between checks), which makes
+# runs non-reproducible, and — more importantly — a freshly-stamped versionIRI
+# isn't necessarily archived under release.geneontology.org yet (2026-07-26
+# 404s there as of writing; 2026-06-19 is the latest confirmed-present date).
+# Bumping this date later: verify the new date is actually live first, e.g.
+#   curl -fsI "https://release.geneontology.org/<date>/ontology/go.owl"
+# (a plain 404 there means it isn't archived yet, even if current.geneontology.org
+# already reports that version) — don't just copy the date out of the versionIRI.
+#
 # go.ttl is validated before being accepted (see is_turtle_file below) so a
 # corrupted or half-written file — e.g. a riot crash, or (the historical bug,
 # https://github.com/daghovland/rdf-datalog/issues/569) go.owl.xml mistakenly
 # saved as go.ttl — cannot get silently reused by a later "already present" skip.
+#
+# License: Gene Ontology data is CC BY 4.0 (attribution required, redistribution
+# permitted) — see https://geneontology.org/docs/go-citation-policy/. Not vendored
+# into this repo (go.owl is ~130MB); the dated URL below is downloaded fresh each
+# time instead. If you cite results produced from this data, name the release
+# date below per GO's citation policy.
+GO_RELEASE_DATE="2026-06-19"
 GO_TTL="$DEST/go.ttl"
 
 if [ -f "$GO_TTL" ]; then
@@ -40,7 +58,7 @@ if [ -f "$GO_TTL" ]; then
         exit 1
     fi
 else
-    GO_OWL_XML_URL="https://current.geneontology.org/ontology/go.owl"
+    GO_OWL_XML_URL="https://release.geneontology.org/${GO_RELEASE_DATE}/ontology/go.owl"
     GO_OWL_XML="$DEST/go.owl.xml"
     GO_TTL_TMP="$DEST/.go.ttl.tmp"
 
@@ -191,8 +209,13 @@ echo ""
 echo "Run IMF tests (no --ignored needed):"
 echo "  cargo test --test performance imf -- --nocapture"
 echo ""
-echo "Run Gene Ontology tests (still ignored — large file):"
-echo "  cargo test --test performance gene_ontology -- --ignored --nocapture"
+echo "Run Gene Ontology tests (still ignored — large file; always use --release,"
+echo "debug is dramatically slower — observed ~25s on a 2021 ThinkPad / ~2s on a"
+echo "recent Mac, both in release mode):"
+echo "  cargo test --test performance --release gene_ontology -- --ignored --nocapture"
+echo ""
+echo "Gene Ontology data is CC BY 4.0 (release ${GO_RELEASE_DATE}) — cite the release"
+echo "date if you publish results derived from it: https://geneontology.org/docs/go-citation-policy/"
 echo ""
 echo "Run Wikidata tests (ignored — large file):"
 echo "  cargo test --test performance wikidata -- --ignored --nocapture"

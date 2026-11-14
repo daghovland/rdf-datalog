@@ -14,7 +14,10 @@ Contact: hovlanddag@gmail.com
 //! Groups A, B, F (Fuseki compatibility).
 //! Spec: <https://jena.apache.org/documentation/fuseki2/fuseki-server-protocol.html>
 
-use crate::{AppState, constraints, graph_store, query, registry::DatasetEntry, sparql_update};
+use crate::{
+    AppState, constraints, graph_store, query, reasoner_delta::apply_reasoner_delta,
+    registry::DatasetEntry, sparql_update,
+};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -304,11 +307,39 @@ pub async fn dataset_update_post(
             if has_reasoner {
                 let violations = constraints::check_owl_nothing(&store, 10, 10);
                 if !violations.is_empty() {
-                    for &q in &net_inserts {
-                        store.remove_quad(q);
-                    }
-                    for &q in &net_deletes {
-                        store.add_quad(q);
+                    // Undo via the reasoner (swapped args: net_inserts are
+                    // now undone as deletions, net_deletes restored as
+                    // insertions) rather than a raw store mutation --
+                    // `apply_deletions`/`apply_insertions` themselves
+                    // remove/add the base quads (see their doc comments) *and*
+                    // cascade-retract/re-derive any dependent derived facts,
+                    // so a raw store-only revert would leave a derived fact
+                    // that depended on the rolled-back insert (e.g. the very
+                    // `owl:Nothing` instance that triggered this check)
+                    // orphaned in the store. This reverts to a state that
+                    // was already known-consistent (the pre-update
+                    // snapshot), so a Contradiction here would indicate a
+                    // bug rather than bad client data; surface it as a 500.
+                    // See https://github.com/daghovland/rdf-datalog/issues/301
+                    // and https://github.com/daghovland/rdf-datalog/issues/591
+                    let reasoner_slot = ds_state.reasoner.read().await;
+                    if let Some(ref reasoner_arc) = *reasoner_slot {
+                        let mut reasoner = reasoner_arc.lock().await;
+                        if let Err(e) = apply_reasoner_delta(
+                            &mut reasoner,
+                            &mut store,
+                            &net_inserts,
+                            &net_deletes,
+                        ) {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!(
+                                    "failed to roll back after owl:Nothing violation \
+                                     (store may be inconsistent): {e}"
+                                ),
+                            )
+                                .into_response();
+                        }
                     }
                     let body = constraints::format_409_body(&violations);
                     return (StatusCode::CONFLICT, body).into_response();

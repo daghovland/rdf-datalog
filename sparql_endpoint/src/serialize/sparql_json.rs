@@ -122,7 +122,7 @@ fn literal_to_json(lit: &RdfLiteral) -> Value {
                     "datatype": "http://www.w3.org/2001/XMLSchema#time" })
         }
         RdfLiteral::DurationLiteral(dur) => {
-            json!({ "type": "literal", "value": format!("{:?}", dur),
+            json!({ "type": "literal", "value": format!("{}", dur),
                     "datatype": "http://www.w3.org/2001/XMLSchema#duration" })
         }
         RdfLiteral::LangLiteral { lang, literal } => {
@@ -422,13 +422,10 @@ fn literal_from_lexical(datatype: &str, lexical: &str) -> RdfLiteral {
 /// callers fall back to `RdfLiteral::TypedLiteral` for — a safe, lossless
 /// choice since `TypedLiteral` preserves the exact lexical form.
 ///
-/// Note: `literal_to_json`'s own encoding of `DurationLiteral` currently uses
-/// `{:?}` (Debug), which is *not* valid ISO 8601 and so cannot round-trip
-/// through this parser at all; this is a pre-existing serializer bug,
-/// tracked separately (not fixed here — out of this issue's scope). This
-/// parser targets the *correct* ISO 8601 form (`chrono::Duration`'s
-/// `Display` impl, and the wire format real SPARQL endpoints send) so it is
-/// ready once the serializer bug is fixed.
+/// `literal_to_json`'s own encoding of `DurationLiteral` now uses `{}`
+/// (Display), the valid ISO 8601 form (fixed by #769), so this parser's
+/// target format round-trips through it correctly (see
+/// `roundtrip_duration_literal` below).
 fn parse_xsd_duration(s: &str) -> Option<chrono::Duration> {
     let mut chars = s.chars().peekable();
     let negative = if chars.peek() == Some(&'-') {
@@ -592,6 +589,45 @@ mod tests {
                     )),
                 ),
             ])],
+        };
+        let json_str = to_sparql_json(&result, &store);
+        let parsed = from_sparql_json(&json_str, &mut store).expect("should parse");
+        assert_eq!(parsed.rows, result.rows);
+    }
+
+    // Regression test for #769: `literal_to_json` used to encode
+    // `DurationLiteral` with `{:?}` (chrono::Duration's Debug impl, e.g.
+    // `TimeDelta { secs: 5, nanos: 0 }`) instead of its `Display` impl,
+    // which is the valid ISO 8601 / xsd:duration lexical form. That made
+    // the JSON value non-conformant and unable to round-trip through
+    // `from_sparql_json`'s `parse_xsd_duration` (added by #742), which
+    // targets the correct ISO 8601 form.
+    #[test]
+    fn duration_literal_value_is_iso8601() {
+        let dur = chrono::Duration::seconds(5);
+        let json = literal_to_json(&RdfLiteral::DurationLiteral(dur));
+        let value = json["value"].as_str().expect("value should be a string");
+        assert!(
+            value.starts_with('P') || value.starts_with("-P"),
+            "expected ISO 8601 duration lexical form (starting with P or -P), got {value:?}"
+        );
+        assert_eq!(
+            json["datatype"],
+            "http://www.w3.org/2001/XMLSchema#duration"
+        );
+    }
+
+    #[test]
+    fn roundtrip_duration_literal() {
+        let mut store = Datastore::new(100);
+        let result = SelectResult {
+            variables: vec!["dur".to_string()],
+            rows: vec![row(&[(
+                "dur",
+                GraphElement::GraphLiteral(RdfLiteral::DurationLiteral(
+                    chrono::Duration::seconds(90) + chrono::Duration::nanoseconds(500_000_000),
+                )),
+            )])],
         };
         let json_str = to_sparql_json(&result, &store);
         let parsed = from_sparql_json(&json_str, &mut store).expect("should parse");
