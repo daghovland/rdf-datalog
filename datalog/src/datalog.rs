@@ -117,7 +117,7 @@ fn quad_wildcard_shape(wc: &QuadWildcard) -> u8 {
 /// The single-bit mask (`1 << quad_wildcard_shape(wc)`) identifying which of
 /// the 16 shapes `wc` is. Callers OR these together (e.g. while building
 /// `rule_map`) to track the *set* of shapes actually used by some rule body
-/// atom. See [`quad_wildcard_shape`] and
+/// atom. See the `quad_wildcard_shape` helper (private to this module) and
 /// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
 pub fn wildcard_shape_bit(wc: &QuadWildcard) -> u16 {
     1u16 << quad_wildcard_shape(wc)
