@@ -38,8 +38,9 @@ use axum::{
 use dag_rdf::Datastore;
 use sparql_parser::ast::Query;
 use sparql_parser::{
-    ExecError, NetworkPolicy, ParserContext, QueryResult, ServiceKey, ServiceResultsGuard,
-    SolutionRow, collect_service_calls, execute_with_base, parse_query, where_clause_of,
+    ExecError, NetworkPolicy, ParseFailureInfo, ParserContext, QueryResult, ServiceKey,
+    ServiceResultsGuard, SolutionRow, collect_service_calls, describe_parse_error,
+    execute_with_base, parse_query, where_clause_of,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -398,7 +399,15 @@ async fn run_transactional_query(
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Parse error: {:?}", e)).into_response();
+            // Extract the owned failure summary before touching `ctx`
+            // again -- see `ParseFailureInfo`'s doc comment (issue #747)
+            // for why this can't be a single expression.
+            let failure = ParseFailureInfo::from_nom_err(&e);
+            let msg = match &failure {
+                Some(f) => describe_parse_error(query_str, f, &ctx.prefixes),
+                None => format!("Parse error: {:?}", e),
+            };
+            return (StatusCode::BAD_REQUEST, msg).into_response();
         }
     };
 
@@ -658,7 +667,15 @@ async fn run_select_query(
     let query = match parse_query(query_str, &mut ctx) {
         Ok((_, q)) => q,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Parse error: {:?}", e)).into_response();
+            // See the other `parse_query` call site above for why the
+            // owned-extraction step can't be collapsed into one expression
+            // (issue #747).
+            let failure = ParseFailureInfo::from_nom_err(&e);
+            let msg = match &failure {
+                Some(f) => describe_parse_error(query_str, f, &ctx.prefixes),
+                None => format!("Parse error: {:?}", e),
+            };
+            return (StatusCode::BAD_REQUEST, msg).into_response();
         }
     };
 

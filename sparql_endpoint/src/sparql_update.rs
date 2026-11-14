@@ -19,7 +19,10 @@ use dag_rdf::ingress::{DEFAULT_GRAPH_ELEMENT_ID, GraphElementId};
 use dag_rdf::{Datastore, GraphElement, IriReference, RdfResource, ingress};
 use datalog::IncrementalReasoner;
 use sparql_parser::ast::{Query, QueryComponent, Term, TriplePattern};
-use sparql_parser::{NetworkPolicy, ParserContext, QueryResult, SolutionRow, execute, parse_query};
+use sparql_parser::{
+    NetworkPolicy, ParseFailureInfo, ParserContext, QueryResult, SolutionRow, describe_parse_error,
+    execute, parse_query,
+};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
@@ -1241,8 +1244,19 @@ fn eval_where_pattern(
         prefixes: prefixes.clone(),
         base: None,
     };
-    let (_, query) = parse_query(&query_text, &mut ctx)
-        .map_err(|e| format!("WHERE clause parse error: {e:?}"))?;
+    let (_, query) = parse_query(&query_text, &mut ctx).map_err(|e| {
+        // Use the caller's own `prefixes` map (not `ctx.prefixes`) so this
+        // closure doesn't need to re-borrow `ctx` -- see `ParseFailureInfo`'s
+        // doc comment (issue #747) for why that would conflict with `e`'s
+        // borrow.
+        match ParseFailureInfo::from_nom_err(&e) {
+            Some(f) => format!(
+                "WHERE clause {}",
+                describe_parse_error(&query_text, &f, prefixes)
+            ),
+            None => format!("WHERE clause parse error: {e:?}"),
+        }
+    })?;
     match execute(&query, store, NetworkPolicy::Deny)
         .map_err(|e| format!("WHERE clause execution error: {e}"))?
     {
@@ -1268,8 +1282,16 @@ fn parse_template(
         prefixes: prefixes.clone(),
         base: None,
     };
-    let (_, query) =
-        parse_query(&query_text, &mut ctx).map_err(|e| format!("template parse error: {e:?}"))?;
+    let (_, query) = parse_query(&query_text, &mut ctx).map_err(|e| {
+        // See `eval_where_pattern` above (issue #747).
+        match ParseFailureInfo::from_nom_err(&e) {
+            Some(f) => format!(
+                "template {}",
+                describe_parse_error(&query_text, &f, prefixes)
+            ),
+            None => format!("template parse error: {e:?}"),
+        }
+    })?;
     let where_clause = match query {
         Query::Select { where_clause, .. } => where_clause,
         _ => return Err("template did not parse as a graph pattern".to_string()),
