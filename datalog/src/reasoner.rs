@@ -8,7 +8,8 @@ Contact: hovlanddag@gmail.com
 
 use crate::datalog::{
     apply_substitution_quad, constant_quad_pattern, direct_wildcard_pattern, empty_substitution,
-    evaluate, get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern,
+    evaluate, get_matches_for_rule, is_fact, is_safe_rule, wildcard_quad_pattern_for_shapes,
+    wildcard_shape_bit,
 };
 use crate::stratifier::RulePartitioner;
 use crate::types::{
@@ -63,6 +64,20 @@ pub struct DatalogProgram {
     /// forward-chaining trigger. See
     /// [#679](https://github.com/daghovland/rdf-datalog/issues/679).
     neg_rule_map: HashMap<QuadWildcard, Vec<(usize, dag_rdf::QuadPattern)>>,
+    /// Bitmask (`1 << shape`, see [`crate::datalog::wildcard_shape_bit`]) of
+    /// every [`QuadWildcard`] "shape" actually used as a `rule_map` key.
+    /// `get_rules_for_fact` uses this to probe only the shapes that could
+    /// possibly be present, instead of unconditionally generating and
+    /// hashing all 16 combinations of a ground fact — the fix for
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777) (a pure
+    /// TBox ontology like the Gene Ontology has no `rdf:type` ABox data, so
+    /// every one of its millions of quads would otherwise still pay the
+    /// full 16-probe cost just to find no match).
+    rule_map_shapes: u16,
+    /// Same as `rule_map_shapes`, but for `neg_rule_map` — used by
+    /// [`Self::negatively_triggered_rules`]. See
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+    neg_rule_map_shapes: u16,
     /// Records for each derived quad how it was produced (rule + body witnesses).
     pub derived_from: DerivedFromIndex,
     /// Number of times [`Self::materialise_seminaive`]/
@@ -106,12 +121,15 @@ impl DatalogProgram {
         let mut rule_map: HashMap<QuadWildcard, Vec<PartialRule>> = HashMap::new();
         let mut neg_rule_map: HashMap<QuadWildcard, Vec<(usize, dag_rdf::QuadPattern)>> =
             HashMap::new();
+        let mut rule_map_shapes: u16 = 0;
+        let mut neg_rule_map_shapes: u16 = 0;
         let mut negatively_triggering_rules = std::collections::HashSet::new();
         for (rule_id, rule) in rules.iter().enumerate() {
             for atom in &rule.body {
                 match atom {
                     RuleAtom::PositivePattern(p) => {
                         let wc = direct_wildcard_pattern(p);
+                        rule_map_shapes |= wildcard_shape_bit(&wc);
                         rule_map.entry(wc).or_default().push(PartialRule {
                             rule: rule.clone(),
                             match_pattern: p.clone(),
@@ -120,6 +138,7 @@ impl DatalogProgram {
                     }
                     RuleAtom::NotPattern(p) => {
                         let wc = direct_wildcard_pattern(p);
+                        neg_rule_map_shapes |= wildcard_shape_bit(&wc);
                         neg_rule_map
                             .entry(wc)
                             .or_default()
@@ -134,6 +153,8 @@ impl DatalogProgram {
             rules,
             rule_map,
             neg_rule_map,
+            rule_map_shapes,
+            neg_rule_map_shapes,
             derived_from: DerivedFromIndex::with_negatively_triggering_rules(
                 negatively_triggering_rules,
             ),
@@ -175,6 +196,7 @@ impl DatalogProgram {
             match atom {
                 RuleAtom::PositivePattern(p) => {
                     let wc = direct_wildcard_pattern(p);
+                    self.rule_map_shapes |= wildcard_shape_bit(&wc);
                     self.rule_map.entry(wc).or_default().push(PartialRule {
                         rule: rule.clone(),
                         match_pattern: p.clone(),
@@ -183,6 +205,7 @@ impl DatalogProgram {
                 }
                 RuleAtom::NotPattern(p) => {
                     let wc = direct_wildcard_pattern(p);
+                    self.neg_rule_map_shapes |= wildcard_shape_bit(&wc);
                     self.neg_rule_map
                         .entry(wc)
                         .or_default()
@@ -197,7 +220,7 @@ impl DatalogProgram {
     }
 
     fn get_rules_for_fact(&self, fact: &dag_rdf::Quad) -> Vec<crate::types::PartialRuleMatch> {
-        wildcard_quad_pattern(&constant_quad_pattern(fact))
+        wildcard_quad_pattern_for_shapes(&constant_quad_pattern(fact), self.rule_map_shapes)
             .iter()
             .filter_map(|wc| self.rule_map.get(wc))
             .flatten()
@@ -215,7 +238,7 @@ impl DatalogProgram {
         &self,
         fact: &dag_rdf::Quad,
     ) -> Vec<(usize, dag_rdf::QuadPattern)> {
-        wildcard_quad_pattern(&constant_quad_pattern(fact))
+        wildcard_quad_pattern_for_shapes(&constant_quad_pattern(fact), self.neg_rule_map_shapes)
             .iter()
             .filter_map(|wc| self.neg_rule_map.get(wc))
             .flatten()
@@ -1085,6 +1108,335 @@ mod tests {
         assert!(
             track.iter().any(|(q, _)| *q == derived_ac),
             "the derivation of (a, p, c) must be recorded in the track buffer"
+        );
+    }
+
+    // ── #777: skip rules whose body atoms have no matching quads ──────────
+
+    /// Build `n` TBox-only rules of the Gene Ontology shape: for distinct
+    /// resource ids `child_i`/`parent_i`, `(?x, type, parent_i) :-
+    /// (?x, type, child_i)`. Every rule's body atom has the SAME shape
+    /// (subject variable, predicate+object constant) — exactly the scenario
+    /// from [#777](https://github.com/daghovland/rdf-datalog/issues/777):
+    /// a pure TBox ontology with no `rdf:type` ABox data, so none of these
+    /// rules can ever fire.
+    fn go_shaped_rules(g: u32, type_pred: u32, n: usize, id_base: u32) -> Vec<Rule> {
+        (0..n)
+            .map(|i| {
+                let child = id_base + 2 * i as u32;
+                let parent = id_base + 2 * i as u32 + 1;
+                Rule {
+                    head: RuleHead::NormalHead(QuadPattern {
+                        graph: Term::Resource(g),
+                        subject: Term::Variable("x".to_string()),
+                        predicate: Term::Resource(type_pred),
+                        object: Term::Resource(parent),
+                    }),
+                    body: vec![RuleAtom::PositivePattern(QuadPattern {
+                        graph: Term::Resource(g),
+                        subject: Term::Variable("x".to_string()),
+                        predicate: Term::Resource(type_pred),
+                        object: Term::Resource(child),
+                    })],
+                }
+            })
+            .collect()
+    }
+
+    /// A TBox-only rule set (every body atom has the same "subject variable,
+    /// predicate+object constant" shape) must produce exactly ONE shape bit
+    /// in `rule_map_shapes`/`neg_rule_map_shapes`, regardless of how many
+    /// rules there are. This is the mechanism
+    /// [`DatalogProgram::get_rules_for_fact`] relies on to probe a handful
+    /// of `QuadWildcard` shapes instead of all 16 for every delta quad — the
+    /// fix for [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+    #[test]
+    fn rule_map_shapes_stays_single_bit_regardless_of_rule_count() {
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+        let type_pred = 1_000_000;
+
+        let small = DatalogProgram::new(go_shaped_rules(g, type_pred, 100, 2_000_000)).unwrap();
+        let large = DatalogProgram::new(go_shaped_rules(g, type_pred, 10_000, 2_000_000)).unwrap();
+
+        assert_eq!(
+            small.rule_map_shapes.count_ones(),
+            1,
+            "100 same-shaped rules should produce exactly one shape bit"
+        );
+        assert_eq!(
+            large.rule_map_shapes.count_ones(),
+            1,
+            "10,000 same-shaped rules should still produce exactly one shape bit \
+             — the probe count per fact must not grow with rule count"
+        );
+        assert_eq!(
+            small.rule_map_shapes, large.rule_map_shapes,
+            "the shape bitmask itself must be identical, not just its count"
+        );
+    }
+
+    /// Deterministic regression counterpart to the issue's wall-clock
+    /// scaling test: [`crate::datalog::wildcard_quad_pattern_for_shapes`]
+    /// must only generate as many `QuadWildcard` combinations as there are
+    /// set bits in the shape mask — never the full, rule-count-independent
+    /// but still wasteful, 16 — for a quad that cannot match any rule. Before
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777)'s fix,
+    /// `get_rules_for_fact` always built and hashed all 16 combinations
+    /// (`wildcard_quad_pattern`) for every delta quad, no matter how narrow
+    /// the rule set's actual shapes were.
+    #[test]
+    fn wildcard_quad_pattern_for_shapes_probes_only_set_bits() {
+        use crate::datalog::{constant_quad_pattern, wildcard_quad_pattern_for_shapes};
+        use dag_rdf::Quad;
+
+        let non_matching_fact = Quad {
+            triple_id: DEFAULT_GRAPH_ELEMENT_ID,
+            subject: 42,
+            predicate: 999,
+            obj: 9999,
+        };
+        let pattern = constant_quad_pattern(&non_matching_fact);
+
+        // Single-shape mask (the GO scenario): exactly one combination is
+        // ever probed, independent of how many rules share that shape.
+        // (Bit layout, see `datalog::quad_wildcard_shape`: bit0=graph,
+        // bit1=subject, bit2=predicate, bit3=object — shape index 2 means
+        // "subject wild, everything else concrete".)
+        let shape_index = 0b0010u8;
+        let mask: u16 = 1u16 << shape_index;
+        let combos = wildcard_quad_pattern_for_shapes(&pattern, mask);
+        assert_eq!(
+            combos.len(),
+            1,
+            "a single-bit shape mask must yield exactly one combination, got {combos:?}"
+        );
+
+        assert_eq!(
+            wildcard_quad_pattern_for_shapes(&pattern, 0).len(),
+            0,
+            "an empty shape mask must yield zero combinations"
+        );
+        assert_eq!(
+            wildcard_quad_pattern_for_shapes(&pattern, u16::MAX).len(),
+            16,
+            "a full shape mask must still yield all 16 combinations (equivalent \
+             to the unrestricted wildcard_quad_pattern)"
+        );
+    }
+
+    /// Correctness guard for the shape-restricted lookup: a rule set that
+    /// mixes a narrow shape (subject variable, predicate+object constant,
+    /// like the GO rules) with a WIDE shape (predicate itself a variable —
+    /// e.g. a generic `part_of`-style rule) must still fire the wide rule.
+    /// Adding the narrow-shaped rules must never turn off matching for the
+    /// wide-shaped one, since `rule_map_shapes` is a union (OR) of every
+    /// shape actually used, not a single "most common shape" guess. See
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+    #[test]
+    fn mixed_shape_rules_all_still_fire() {
+        let (mut ds, g, a, p, b, c) = setup_abpc_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        let fact_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: c,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+        ds.named_graphs.add_quad(fact_bc);
+
+        // Narrow-shaped rule (GO-like): predicate AND object constant.
+        let narrow_parent = 555;
+        let narrow_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Resource(narrow_parent),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Resource(c), // only fires for ?x type c
+            })],
+        };
+
+        // Wide-shaped rule: predicate is itself a VARIABLE (shared across
+        // subject/predicate/object), i.e. a generic "transitive-looking"
+        // rule whose body atom has a different shape than the narrow one.
+        let wide_rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Variable("q".to_string()),
+                object: Term::Variable("z".to_string()),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Variable("q".to_string()),
+                object: Term::Variable("z".to_string()),
+            })],
+        };
+
+        let mut program = DatalogProgram::new(vec![narrow_rule, wide_rule]).unwrap();
+        // Two distinct shapes must be tracked: the mask must not collapse to
+        // a single bit here.
+        assert_eq!(
+            program.rule_map_shapes.count_ones(),
+            2,
+            "narrow (predicate+object constant) and wide (predicate variable) \
+             rules must register two distinct shape bits"
+        );
+
+        program.materialise_seminaive(&mut ds).unwrap();
+
+        // Narrow rule fires: (b, p, c) derives (b, p, narrow_parent).
+        let derived_narrow = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: p,
+            obj: narrow_parent,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived_narrow),
+            "narrow-shaped rule must still fire"
+        );
+
+        // Wide rule fires on every quad, including the derived narrow fact
+        // and base facts — it is a self-loop (head == body) that just
+        // confirms matches were found, which only happens if the body atom
+        // is actually probed despite its shape.
+        assert!(
+            ds.named_graphs.contains(&fact_ab) && ds.named_graphs.contains(&fact_bc),
+            "sanity: original facts remain present"
+        );
+    }
+
+    /// `add_rule` on an already-constructed program must update
+    /// `rule_map_shapes` for the newly-added rule's shape, not just at
+    /// construction time — otherwise a rule added later with a
+    /// never-before-seen shape would be silently unreachable from
+    /// `get_rules_for_fact`. See
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+    #[test]
+    fn add_rule_updates_shape_mask() {
+        let (mut ds, g, a, p, b, _c) = setup_abpc_store();
+        let fact_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: b,
+        };
+        ds.named_graphs.add_quad(fact_ab);
+
+        let mut program = DatalogProgram::new(vec![]).unwrap();
+        assert_eq!(program.rule_map_shapes.count_ones(), 0);
+
+        // A rule whose body atom is fully ground except the subject
+        // (narrow shape, like the GO rules).
+        let new_parent = 777;
+        let rule = Rule {
+            head: RuleHead::NormalHead(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Resource(new_parent),
+            }),
+            body: vec![RuleAtom::PositivePattern(QuadPattern {
+                graph: Term::Resource(g),
+                subject: Term::Variable("x".to_string()),
+                predicate: Term::Resource(p),
+                object: Term::Resource(b),
+            })],
+        };
+        program.add_rule(rule).unwrap();
+        assert_eq!(
+            program.rule_map_shapes.count_ones(),
+            1,
+            "add_rule must register the new rule's shape bit"
+        );
+
+        program.materialise_seminaive(&mut ds).unwrap();
+        let derived = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: p,
+            obj: new_parent,
+        };
+        assert!(
+            ds.named_graphs.contains(&derived),
+            "the rule added via add_rule must actually fire — proves the shape \
+             mask update made it reachable from get_rules_for_fact"
+        );
+    }
+
+    /// Wall-clock version of the issue's literal acceptance criterion:
+    /// materialising a TBox-only (no matching ABox data) rule set should
+    /// take roughly the same wall time for 100 rules as for 10,000 rules,
+    /// not scale up ~100x. Timing-based assertions are inherently
+    /// environment-sensitive (parallel `cargo test --workspace` runs, a
+    /// loaded shared build machine, debug vs. release) so this is `#[ignore]`
+    /// — a manual/CI-optional check, not part of the deterministic gate
+    /// (`rule_map_shapes_stays_single_bit_regardless_of_rule_count` and
+    /// `wildcard_quad_pattern_for_shapes_probes_only_set_bits` above are the
+    /// deterministic regression guards for the same mechanism). Run with:
+    /// `cargo test --release -p datalog --lib -- --ignored --nocapture
+    /// datalog_rule_count_scaling`. See
+    /// [#777](https://github.com/daghovland/rdf-datalog/issues/777).
+    #[test]
+    #[ignore = "wall-clock timing; see #777 — run manually with --release --ignored"]
+    fn datalog_rule_count_scaling_is_not_linear_in_rule_count() {
+        use std::time::Instant;
+
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+        let type_pred = 1_000_000;
+
+        // A fixed set of non-matching quads, present regardless of rule
+        // count, mirroring GO's millions of non-rdf:type/irrelevant-object
+        // triples that must be scanned every iteration without ever
+        // matching a rule body.
+        let mut ds = Datastore::new(100);
+        for i in 0..5000u32 {
+            ds.named_graphs.add_quad(Quad {
+                triple_id: g,
+                subject: 500_000 + i,
+                predicate: type_pred,
+                // A constant object that is never any rule's "Child" —
+                // deliberately disjoint from go_shaped_rules' id range.
+                obj: 999_999_999,
+            });
+        }
+
+        let time_for = |n: usize| -> std::time::Duration {
+            let mut ds = ds.clone();
+            let rules = go_shaped_rules(g, type_pred, n, 2_000_000);
+            let start = Instant::now();
+            let mut program = DatalogProgram::new(rules).unwrap();
+            program.materialise_seminaive(&mut ds).unwrap();
+            start.elapsed()
+        };
+
+        let small = time_for(100);
+        let large = time_for(10_000);
+        println!("100 rules: {small:?}, 10,000 rules: {large:?}");
+
+        // Measured on this machine (release): 100 rules ~0.66ms, 10,000
+        // rules ~12ms — ratio ~18x for a 100x rule-count increase. The
+        // threshold below (40x) keeps real headroom against machine noise
+        // while still failing hard on the ~100x-or-worse scaling this issue
+        // is about.
+        let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-6);
+        assert!(
+            ratio < 40.0,
+            "materialisation time should not scale ~100x with rule count \
+             (100 -> 10,000 rules); got ratio {ratio:.1} ({small:?} -> {large:?})"
         );
     }
 }

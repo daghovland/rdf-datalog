@@ -415,6 +415,47 @@ individuals, no rules fire. SPARQL queries return results from the raw parsed tr
 
 ---
 
+### 2026-11-14 — B11: Shape-restricted fact-side wildcard probing (#777)
+
+**Changed:** `datalog/src/datalog.rs`, `datalog/src/reasoner.rs`
+
+B10 made fact-side rule lookup O(1) per quad instead of O(rules) per quad — but that O(1) cost
+was still "generate all 16 `QuadWildcard` combinations of the ground fact, then do 16 HashMap
+probes", paid for *every* delta quad regardless of how many of those 16 shapes any rule body
+atom actually uses. For a pure-TBox ontology like the Gene Ontology (every rule has the shape
+`(?x, type, Parent) :- (?x, type, Child)` — one fixed shape: subject variable, predicate+object
+constant), 15 of the 16 probes per quad could never find anything, since `rule_map` only ever
+contains keys of that one shape.
+
+`DatalogProgram` now tracks `rule_map_shapes`/`neg_rule_map_shapes`: a `u16` bitmask (one bit
+per of the 16 possible `QuadWildcard` shapes, see `datalog::wildcard_shape_bit`) recording which
+shapes are actually present among `rule_map`/`neg_rule_map`'s keys, updated incrementally by both
+`DatalogProgram::new` and `add_rule`. `get_rules_for_fact`/`negatively_triggered_rules` now call
+the new `wildcard_quad_pattern_for_shapes(pattern, mask)` instead of the unconditional
+`wildcard_quad_pattern`, which only builds and probes the shapes actually present — for GO's
+single-shape rule set this is 1 probe per delta quad instead of 16. Skipping an absent shape is
+sound: if no rule body atom has that shape, `rule_map` cannot contain a key of that shape, so
+probing it can never find a match (see the doc comments on `quad_wildcard_shape`/
+`wildcard_shape_bit` for the exact bit layout).
+
+The old `wildcard_quad_pattern` (and `get_partial_matches`/`merge_partial_match_maps` from B9)
+remain as public API for external callers, just no longer used on the internal fact-side lookup
+hot path.
+
+**Correctness tests added** (`datalog/src/reasoner.rs`): a mixed-shape rule set (one GO-shaped
+narrow rule plus one rule with a variable predicate) proves the mask is a union across shapes,
+not a single guessed shape, and that both rules still fire; `add_rule` after construction with a
+not-yet-seen shape updates the mask and the new rule still fires. See
+[#777](https://github.com/daghovland/rdf-datalog/issues/777).
+
+**Status: DONE.** A direct wall-clock re-measurement of the Gene Ontology pipeline (`cargo test
+--release --ignored gene_ontology_full_pipeline`) was not re-run as part of this PR (the
+existing B10 number above, 7214 ms, predates this change); the fix targets exactly the per-quad
+constant factor that number was dominated by, but re-baselining the full pipeline end-to-end was
+judged out of scope for this PR — see the follow-up filed alongside it.
+
+---
+
 ### 2026-05-31 — B9: O(n) rule_map construction replacing O(n²) reduce
 
 **Changed:** `datalog/src/reasoner.rs`
