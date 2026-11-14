@@ -293,6 +293,140 @@ fn test_if_false_branch() {
     assert_eq!(result, Some(str_literal("no")));
 }
 
+// ── Nested FILTER-only builtins inside IF()/COALESCE() (issue #674) ───────────
+// https://github.com/daghovland/rdf-datalog/issues/674
+//
+// BOUND/REGEX/ISBLANK/ISLITERAL/LANGMATCHES etc. are dispatched through
+// `eval_function_bool` when they appear directly under FILTER/&&/||/!, but
+// `IF(...)`'s condition and branch arguments (and COALESCE's arguments) are
+// evaluated via the *value*-producing path (`eval_expression_value_inner` ->
+// `eval_function_value`), which previously had no entries for these
+// builtins and fell through to `None`. This silently broke the W3C SHACL
+// spec's own worked example:
+//
+//   FILTER (!isBlank($value) &&
+//       IF(bound($flags), regex(str($value), $pattern, $flags),
+//                           regex(str($value), $pattern)))
+//
+// which returned `false` even when the regex genuinely matched, because
+// `bound($flags)` (the IF condition) evaluated to `None` inside
+// `eval_fn_if`, and the `?` early-return made the whole IF -- and therefore
+// the whole FILTER -- `None`/false.
+
+#[test]
+fn test_if_condition_can_use_bound() {
+    // ?flags is unbound, so the IF condition `bound(?flags)` must evaluate
+    // to false and pick the "no" branch -- previously this entire IF
+    // evaluated to None instead.
+    let result = eval_function(r#"SELECT (IF(bound(?flags), "yes", "no") AS ?result) WHERE {}"#);
+    assert_eq!(result, Some(str_literal("no")));
+}
+
+#[test]
+fn test_if_branch_can_use_regex() {
+    // The IF condition is false, so the "else" branch `regex("abc", "^a")`
+    // (a FILTER-only builtin) must be evaluated as a value.
+    let result =
+        eval_function(r#"SELECT (IF(false, "unused", regex("abc", "^a")) AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(true)))
+    );
+}
+
+#[test]
+fn test_coalesce_arg_can_use_bound() {
+    // ?x is unbound, so `bound(?x)` (first COALESCE arg) must evaluate to
+    // `false` -- a bound value -- rather than None, so COALESCE returns it
+    // instead of skipping to the next argument.
+    let result = eval_function(r#"SELECT (COALESCE(bound(?x), "fallback") AS ?result) WHERE {}"#);
+    assert_eq!(
+        result,
+        Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(
+            false
+        )))
+    );
+}
+
+#[test]
+fn test_shacl_spec_if_bound_regex_pattern_true_when_flags_unbound() {
+    // The exact pattern from the W3C SHACL spec's sh:pattern example
+    // (see tests/testdata/shacl_s519_optional_param_shapes.ttl for the
+    // documented rewrite that was needed to work around this bug):
+    //
+    //   FILTER (!isBlank($value) &&
+    //       IF(bound($flags), regex(str($value), $pattern, $flags),
+    //                           regex(str($value), $pattern)))
+    //
+    // Here ?flags is unbound and ?value ("hello") genuinely matches
+    // ?pattern ("^h"), so the ASK must be true.
+    let ds = Datastore::new(100);
+    let sparql = r#"
+        ASK {
+            BIND("hello" AS ?value)
+            BIND("^h" AS ?pattern)
+            FILTER (!isBlank(?value) &&
+                IF(bound(?flags), regex(str(?value), ?pattern, ?flags),
+                                    regex(str(?value), ?pattern)))
+        }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx()).expect("parse failed");
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Ask(b) => assert!(b, "expected ASK to be true (regex genuinely matches)"),
+        _ => panic!("expected ASK"),
+    }
+}
+
+#[test]
+fn test_shacl_spec_if_bound_regex_pattern_true_when_flags_bound() {
+    // Same SHACL-spec pattern, but this time ?flags IS bound, so the IF's
+    // *then*-branch -- the 3-arg `regex(str(?value), ?pattern, ?flags)` --
+    // is the one that must be evaluated as a value. "hello" only matches
+    // "^H" case-insensitively (flag "i"), so this specifically exercises
+    // the bound-flags branch rather than just re-confirming the
+    // unbound-flags (else-branch) case above.
+    let ds = Datastore::new(100);
+    let sparql = r#"
+        ASK {
+            BIND("hello" AS ?value)
+            BIND("^H" AS ?pattern)
+            BIND("i" AS ?flags)
+            FILTER (!isBlank(?value) &&
+                IF(bound(?flags), regex(str(?value), ?pattern, ?flags),
+                                    regex(str(?value), ?pattern)))
+        }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx()).expect("parse failed");
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Ask(b) => assert!(
+            b,
+            "expected ASK to be true (case-insensitive regex genuinely matches)"
+        ),
+        _ => panic!("expected ASK"),
+    }
+}
+
+#[test]
+fn test_shacl_spec_if_bound_regex_pattern_false_when_no_match() {
+    // Same pattern, but the regex genuinely does not match -- confirms the
+    // fix doesn't just make everything true.
+    let ds = Datastore::new(100);
+    let sparql = r#"
+        ASK {
+            BIND("hello" AS ?value)
+            BIND("^z" AS ?pattern)
+            FILTER (!isBlank(?value) &&
+                IF(bound(?flags), regex(str(?value), ?pattern, ?flags),
+                                    regex(str(?value), ?pattern)))
+        }
+    "#;
+    let (_, query) = parse_query(sparql, &mut ctx()).expect("parse failed");
+    match execute(&query, &ds, NetworkPolicy::Deny).expect("execute should succeed") {
+        QueryResult::Ask(b) => assert!(!b, "expected ASK to be false (regex does not match)"),
+        _ => panic!("expected ASK"),
+    }
+}
+
 // ── Remaining missing builtins (issue #52) ────────────────────────────────────
 // https://github.com/daghovland/rdf-datalog/issues/52
 
