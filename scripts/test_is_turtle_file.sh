@@ -2,8 +2,8 @@
 # Regression test for scripts/lib/is_turtle_file.sh, covering the exact
 # corruption this codebase hit in
 # https://github.com/daghovland/rdf-datalog/issues/569: `go.ttl` silently
-# containing RDF/XML (an OWL/XML ontology release saved under the wrong
-# filename), which the Turtle parser then failed on with a confusing
+# containing RDF/XML (the Gene Ontology's actual release format, saved under
+# the wrong filename), which the Turtle parser then failed on with a confusing
 # "Invalid IRI code point ' '" error instead of a clear diagnostic.
 #
 # Run directly:
@@ -50,10 +50,10 @@ assert_true "classic @prefix/@base Turtle is accepted" "$TMP_DIR/classic.ttl"
 printf 'BASE   <http://purl.obolibrary.org/obo/go.owl>\nPREFIX : <http://purl.obolibrary.org/obo/go.owl#>\n:x a :Foo .\n' > "$TMP_DIR/riot-style.ttl"
 assert_true "riot's SPARQL-style BASE/PREFIX Turtle is accepted" "$TMP_DIR/riot-style.ttl"
 
-# ── The actual #569 corruption: RDF/XML (OWL/XML) saved as .ttl ─────────────
+# ── The actual #569 corruption: RDF/XML saved as .ttl ───────────────────────
 
 printf '<?xml version="1.0"?>\n<rdf:RDF xmlns="http://purl.obolibrary.org/obo/go.owl#">\n' > "$TMP_DIR/go-owl-xml-as-ttl.ttl"
-assert_false "OWL/XML with an XML declaration is rejected" "$TMP_DIR/go-owl-xml-as-ttl.ttl"
+assert_false "RDF/XML with an XML declaration is rejected" "$TMP_DIR/go-owl-xml-as-ttl.ttl"
 
 printf '<!DOCTYPE rdf:RDF [\n<!ENTITY go "http://purl.obolibrary.org/obo/GO_">\n]>\n' > "$TMP_DIR/doctype.ttl"
 assert_false "a DOCTYPE preamble is rejected" "$TMP_DIR/doctype.ttl"

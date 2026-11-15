@@ -4,7 +4,7 @@
 #
 # This exists because of https://github.com/daghovland/rdf-datalog/issues/569:
 # scripts/download_test_ontologies.sh used to instruct users (in its riot-not-
-# found fallback message) to save the Gene Ontology's OWL/XML release directly
+# found fallback message) to save the Gene Ontology's RDF/XML release directly
 # as go.ttl. The Turtle parser then failed with a confusing
 # "Invalid IRI code point ' '" error at the very start of the file — the
 # literal bytes of an XML declaration ("<?xml version=\"1.0\"?>") being

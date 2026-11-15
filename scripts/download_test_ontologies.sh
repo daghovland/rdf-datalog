@@ -20,7 +20,7 @@ mkdir -p "$DEST"
 # Source: https://geneontology.org/docs/download-ontology/
 # There is no direct Turtle release: https://current.geneontology.org/ontology/go.ttl
 # and http://purl.obolibrary.org/obo/go.ttl both 403/404 as of writing. The only
-# release available is OWL/XML (go.owl, despite the .owl extension — it is NOT
+# release available is RDF/XML (go.owl, despite the .owl extension — it is NOT
 # Turtle), which must be converted to Turtle via Apache Jena's riot tool.
 #
 # Pinned to a dated, archived release rather than current.geneontology.org's
@@ -33,6 +33,15 @@ mkdir -p "$DEST"
 #   curl -fsI "https://release.geneontology.org/<date>/ontology/go.owl"
 # (a plain 404 there means it isn't archived yet, even if current.geneontology.org
 # already reports that version) — don't just copy the date out of the versionIRI.
+#
+# Confirmed by fetching the live file (see #700): its root element is
+# <rdf:RDF> with <owl:Ontology rdf:about="..."> as a *child*, which is RDF/XML,
+# not OWL 2 XML Serialization (whose root element would be <Ontology> itself,
+# as parsed by owl_xml_parser / this repo's `--ontology` sniffing from #609).
+# RDF/XML is a different, unrelated serialization that this codebase has never
+# supported under any extension (tracked separately as epic #240), so the
+# riot conversion below cannot be dropped in favor of #609's `.owl` CLI
+# wiring — that wiring only applies to genuine OWL/XML Serialization files.
 #
 # go.ttl is validated before being accepted (see is_turtle_file below) so a
 # corrupted or half-written file — e.g. a riot crash, or (the historical bug,
@@ -62,11 +71,11 @@ else
     GO_OWL_XML="$DEST/go.owl.xml"
     GO_TTL_TMP="$DEST/.go.ttl.tmp"
 
-    echo "Downloading Gene Ontology OWL/XML …"
+    echo "Downloading Gene Ontology RDF/XML …"
     curl -fL --progress-bar -o "$GO_OWL_XML" "$GO_OWL_XML_URL"
 
     if command -v riot &>/dev/null; then
-        echo "Converting OWL/XML → Turtle with riot …"
+        echo "Converting RDF/XML → Turtle with riot …"
         rm -f "$GO_TTL_TMP"
         riot --output=TURTLE "$GO_OWL_XML" > "$GO_TTL_TMP"
         if ! is_turtle_file "$GO_TTL_TMP"; then
@@ -85,7 +94,7 @@ else
         echo "WARNING: 'riot' (Apache Jena) not found."
         echo "  Install it from https://jena.apache.org/download/ and re-run."
         echo "  There is no direct Turtle release to fall back to — the only"
-        echo "  published Gene Ontology release is OWL/XML, which riot must convert."
+        echo "  published Gene Ontology release is RDF/XML, which riot must convert."
         echo "  Do NOT copy/rename go.owl(.xml) to go.ttl — it is RDF/XML, not"
         echo "  Turtle, and the Turtle parser will fail on it "
         echo "  (see https://github.com/daghovland/rdf-datalog/issues/569)."
