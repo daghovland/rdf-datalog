@@ -117,12 +117,39 @@ pub struct OidcConfig {
     /// Role value that grants admin access (default: `"dagalog.Admin"`).
     pub admin_role: String,
 
-    /// Browser application client ID for MSAL.js / Google Identity Services.
+    /// Browser application client ID for MSAL.js / the generic OIDC PKCE flow.
     ///
     /// When set, the browser UI shows a provider sign-in button and acquires
     /// tokens automatically.  Leave `None` to fall back to a manual token
     /// input (paste the token obtained from e.g. `gcloud auth print-identity-token`).
     pub browser_client_id: Option<String>,
+
+    /// Which in-browser sign-in flow `browser_client_id` activates.
+    ///
+    /// Defaults to [`BrowserFlow::Msal`] so existing Entra ID deployments
+    /// that already set `browser_client_id` keep their current behaviour
+    /// unchanged. Set [`BrowserFlow::OidcPkce`] for any non-Azure provider
+    /// (Google, Keycloak, Auth0, …) to get a standards-compliant
+    /// Authorization Code + PKCE browser flow instead of MSAL.js — see
+    /// [#531](https://github.com/daghovland/rdf-datalog/issues/531).
+    pub browser_flow: BrowserFlow,
+}
+
+/// Which in-browser interactive sign-in flow `frontend.html` uses when
+/// `OidcConfig::browser_client_id` is set.
+///
+/// `/auth/config` serializes this (lower snake_case) so the frontend can
+/// pick the right code path without any server-side templating.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserFlow {
+    /// Microsoft's MSAL.js library (Azure Entra ID popup/silent-refresh flow).
+    #[default]
+    Msal,
+    /// Generic Authorization Code + PKCE flow, implemented directly against
+    /// any OIDC provider's `/.well-known/openid-configuration` discovery
+    /// document — no provider-specific SDK required.
+    OidcPkce,
 }
 
 impl OidcConfig {
@@ -154,10 +181,21 @@ impl OidcConfig {
             write_role: "dagalog.Write".to_owned(),
             admin_role: "dagalog.Admin".to_owned(),
             browser_client_id: None,
+            browser_flow: BrowserFlow::Msal,
         }
     }
 
     /// Convenience constructor for Google.
+    ///
+    /// `browser_flow` defaults to [`BrowserFlow::OidcPkce`] — Google is not
+    /// Entra ID, so MSAL.js (which only speaks the Microsoft identity
+    /// platform's endpoints) does not apply here; the generic Authorization
+    /// Code + PKCE flow is the one that actually works against Google's
+    /// `/.well-known/openid-configuration`. Per `docs/plans/AUTH.md`'s Tier
+    /// 2b Google example, set `audience` to the OAuth client ID (the ID
+    /// token's `aud` claim), since that flow authenticates with the ID
+    /// token, not an access token — Google's access tokens don't carry an
+    /// `aud` matching an arbitrary resource by default.
     pub fn google(audience: &str) -> Self {
         Self {
             issuer: "https://accounts.google.com".to_owned(),
@@ -168,6 +206,7 @@ impl OidcConfig {
             write_role: "dagalog.Write".to_owned(),
             admin_role: "dagalog.Admin".to_owned(),
             browser_client_id: None,
+            browser_flow: BrowserFlow::OidcPkce,
         }
     }
 }

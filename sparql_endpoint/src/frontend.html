@@ -519,7 +519,9 @@
     // Three modes (detected from GET /auth/config on page load):
     //   "none"    — no auth required, panel hidden
     //   "api_key" — user pastes a Bearer key; stored in sessionStorage
-    //   "oidc"    — JWT from MSAL.js (if browser_client_id set) or manual paste
+    //   "oidc"    — JWT from MSAL.js or the generic OIDC PKCE flow (if
+    //               browser_client_id set; browser_flow picks which), or
+    //               manual paste otherwise
     //
     // getAuthHeaders() injects the right Authorization header into every fetch.
 
@@ -527,10 +529,19 @@
     let msalInstance = null;     // PublicClientApplication (MSAL.js)
     let msalToken = null;        // current OIDC access token (from MSAL or manual)
 
+    // sessionStorage key holding the token acquired via the generic OIDC
+    // Authorization Code + PKCE flow (see "Generic OIDC PKCE flow" below).
+    // sessionStorage (not localStorage) matches the existing API-key/manual
+    // token panels: the token does not persist across browser restarts or
+    // leak to other tabs/origins, and is cleared by sign-out.
+    const PKCE_TOKEN_KEY = 'dagalog-oidc-pkce-token';
+
     function getAuthHeaders() {
       const apiKey = sessionStorage.getItem('dagalog-api-key');
       if (apiKey) return { 'Authorization': 'Bearer ' + apiKey };
       if (msalToken) return { 'Authorization': 'Bearer ' + msalToken };
+      const pkceToken = sessionStorage.getItem(PKCE_TOKEN_KEY);
+      if (pkceToken) return { 'Authorization': 'Bearer ' + pkceToken };
       const manual = sessionStorage.getItem('dagalog-oidc-token');
       if (manual) return { 'Authorization': 'Bearer ' + manual };
       return {};
@@ -567,8 +578,10 @@
       document.getElementById('clear-token-btn').style.display = 'none';
     }
 
-    // MSAL.js sign-in / sign-out (Azure Entra ID + generic OIDC providers)
+    // Sign-in / sign-out button handlers — dispatch to whichever flow
+    // initAuth() wired up (MSAL.js or the generic OIDC PKCE flow below).
     async function oidcSignIn() {
+      if (authConfig?.oidc?.browser_flow === 'oidc_pkce') return pkceSignIn();
       if (!msalInstance) return;
       try {
         const scope = (authConfig.oidc?.audience || '') + '/.default';
@@ -585,11 +598,228 @@
       }
     }
     async function oidcSignOut() {
+      if (authConfig?.oidc?.browser_flow === 'oidc_pkce') return pkceSignOut();
       msalToken = null;
       if (msalInstance) await msalInstance.logoutPopup().catch(() => {});
       document.getElementById('auth-user-name').style.display = 'none';
       document.getElementById('signin-btn').style.display = '';
       document.getElementById('signout-btn').style.display = 'none';
+    }
+
+    // ── Generic OIDC Authorization Code + PKCE flow (issue #531) ───────────────
+    //
+    // Works against any spec-compliant OIDC provider (Google, Keycloak,
+    // Auth0, …) using only the browser's native crypto.subtle — no
+    // provider-specific SDK (no MSAL.js-equivalent dependency). Selected via
+    // `authConfig.oidc.browser_flow === 'oidc_pkce'` (server-injected,
+    // sparql_endpoint/src/lib.rs's `BrowserFlow::OidcPkce`).
+    //
+    // Flow (full-page redirect, not a popup — simpler, and works in browsers
+    // that restrict cross-window postMessage/COOP for popups):
+    //   1. pkceSignIn(): discover the provider's authorization_endpoint,
+    //      generate a PKCE code_verifier + S256 code_challenge and a random
+    //      CSRF `state`, stash them in sessionStorage, and navigate the
+    //      top-level page to the authorization_endpoint.
+    //   2. The provider redirects back to this same page with `?code=...&state=...`.
+    //   3. pkceHandleRedirect() (called from initAuth on every page load):
+    //      verify `state` matches what was stashed (one-time use — deleted
+    //      immediately after reading, so a replayed/bookmarked callback URL
+    //      can't be reused), then POST the code + code_verifier to the
+    //      provider's token_endpoint (public client — no client secret,
+    //      which is why PKCE's code_verifier is the thing that proves this
+    //      page is the one that started the flow, not the authorization code
+    //      alone).
+    //
+    // Token used as the Bearer credential: the **ID token**, not the access
+    // token. Per docs/plans/AUTH.md's Tier 2b Google example, the server's
+    // `audience` config is meant to be set to the OAuth client ID, which is
+    // the ID token's `aud` claim — generic providers' access tokens don't
+    // reliably carry an `aud` matching an arbitrary resource unless a
+    // provider-specific `audience`/`resource` parameter is also configured
+    // server-side (out of scope here; see the PR description's follow-up
+    // note). The frontend's own decoding of the ID token below (nonce/exp
+    // checks) is a UX nicety and defense-in-depth only — it is NOT a
+    // security boundary. The actual signature/issuer/audience validation
+    // that matters happens server-side in sparql_endpoint/src/auth.rs on
+    // every request that presents the token as a Bearer credential.
+    //
+    // sessionStorage (not localStorage) is used throughout, matching the
+    // existing API-key/manual-token panels: nothing here persists across
+    // browser restarts or crosses tabs/origins.
+
+    const PKCE_VERIFIER_KEY = 'dagalog-oidc-pkce-verifier';
+    const PKCE_STATE_KEY = 'dagalog-oidc-pkce-state';
+    const PKCE_NONCE_KEY = 'dagalog-oidc-pkce-nonce';
+    const PKCE_DISCOVERY_KEY = 'dagalog-oidc-pkce-discovery';
+
+    function base64UrlEncode(bytes) {
+      let str = '';
+      for (const b of bytes) str += String.fromCharCode(b);
+      return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function randomBase64Url(numBytes) {
+      const bytes = new Uint8Array(numBytes);
+      crypto.getRandomValues(bytes);
+      return base64UrlEncode(bytes);
+    }
+
+    async function sha256Base64Url(input) {
+      const data = new TextEncoder().encode(input);
+      const digest = await crypto.subtle.digest('SHA-256', data);
+      return base64UrlEncode(new Uint8Array(digest));
+    }
+
+    // Strip any ?code=&state= (and existing query string) so the current
+    // page URL is a stable, replayable redirect_uri across the whole flow.
+    function pkceRedirectUri() {
+      return window.location.origin + window.location.pathname;
+    }
+
+    async function pkceDiscover(issuer) {
+      const resp = await fetch(issuer.replace(/\/$/, '') + '/.well-known/openid-configuration');
+      if (!resp.ok) throw new Error('OIDC discovery failed: ' + resp.status);
+      const meta = await resp.json();
+      if (!meta.authorization_endpoint || !meta.token_endpoint) {
+        throw new Error('OIDC discovery document missing authorization_endpoint/token_endpoint');
+      }
+      return meta;
+    }
+
+    async function pkceSignIn() {
+      try {
+        const issuer = authConfig.oidc.issuer;
+        const clientId = authConfig.oidc.browser_client_id;
+        const meta = await pkceDiscover(issuer);
+        // Cached (not re-fetched) by pkceHandleRedirect after the provider
+        // redirects back — avoids a second discovery round-trip on return.
+        sessionStorage.setItem(PKCE_DISCOVERY_KEY, JSON.stringify(meta));
+
+        const verifier = randomBase64Url(32);   // 256 bits of entropy — RFC 7636 recommends >= 43 base64url chars (32 raw bytes -> 43 chars)
+        const state = randomBase64Url(16);      // CSRF protection: validated byte-for-byte on return, single use
+        const nonce = randomBase64Url(16);      // replay protection for the returned ID token (defense-in-depth; see module comment)
+        sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
+        sessionStorage.setItem(PKCE_STATE_KEY, state);
+        sessionStorage.setItem(PKCE_NONCE_KEY, nonce);
+
+        const challenge = await sha256Base64Url(verifier);
+        const params = new URLSearchParams({
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: pkceRedirectUri(),
+          scope: 'openid profile email',
+          state,
+          nonce,
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        });
+        window.location.assign(meta.authorization_endpoint + '?' + params.toString());
+      } catch (e) {
+        console.error('OIDC PKCE sign-in failed:', e);
+      }
+    }
+
+    function pkceSignOut() {
+      sessionStorage.removeItem(PKCE_TOKEN_KEY);
+      sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+      sessionStorage.removeItem(PKCE_STATE_KEY);
+      sessionStorage.removeItem(PKCE_NONCE_KEY);
+      document.getElementById('auth-user-name').style.display = 'none';
+      document.getElementById('signin-btn').style.display = '';
+      document.getElementById('signout-btn').style.display = 'none';
+    }
+
+    // Decodes a JWT's payload without verifying its signature — the browser
+    // has no trustworthy key material to verify against, and doesn't need
+    // any: the server independently verifies signature/issuer/audience on
+    // every request (see auth.rs). This decode is only for the UX details
+    // below (display name) and the nonce/exp sanity checks, which are
+    // defense-in-depth, not the security boundary.
+    function decodeJwtPayloadUnverified(jwt) {
+      const parts = jwt.split('.');
+      if (parts.length !== 3) throw new Error('not a JWT');
+      const json = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+      return JSON.parse(json);
+    }
+
+    function showPkceSignedIn(name) {
+      document.getElementById('auth-user-name').textContent = name || 'Signed in';
+      document.getElementById('auth-user-name').style.display = '';
+      document.getElementById('signin-btn').style.display = 'none';
+      document.getElementById('signout-btn').style.display = '';
+    }
+
+    // Called once at page load (from initAuth, before the OIDC panel is
+    // shown) to complete a PKCE flow if this page load is the provider's
+    // redirect back (i.e. the URL carries ?code=&state=).
+    async function pkceHandleRedirect() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+      if (!code || !returnedState) {
+        // Not a callback — but a token from an earlier page load in this
+        // tab may still be live in sessionStorage.
+        const existing = sessionStorage.getItem(PKCE_TOKEN_KEY);
+        if (existing) {
+          try {
+            showPkceSignedIn(decodeJwtPayloadUnverified(existing).email
+              || decodeJwtPayloadUnverified(existing).name || 'Signed in');
+          } catch { /* malformed cached token — leave signed-out UI as-is */ }
+        }
+        return;
+      }
+
+      // Scrub ?code=&state= from the address bar immediately — regardless
+      // of outcome below — so the authorization code never lingers in
+      // browser history, and a page refresh doesn't resubmit it.
+      history.replaceState(null, '', pkceRedirectUri());
+
+      const expectedState = sessionStorage.getItem(PKCE_STATE_KEY);
+      const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY);
+      const expectedNonce = sessionStorage.getItem(PKCE_NONCE_KEY);
+      const discoveryJson = sessionStorage.getItem(PKCE_DISCOVERY_KEY);
+      // One-time use: a second callback (e.g. the user hitting back/forward)
+      // must not be able to replay this exchange.
+      sessionStorage.removeItem(PKCE_STATE_KEY);
+      sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+      sessionStorage.removeItem(PKCE_NONCE_KEY);
+
+      if (!expectedState || !verifier || !discoveryJson || returnedState !== expectedState) {
+        console.error('OIDC PKCE: missing or mismatched state — aborting (possible CSRF or stale callback)');
+        return;
+      }
+
+      try {
+        const meta = JSON.parse(discoveryJson);
+        const clientId = authConfig.oidc.browser_client_id;
+        const body = new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: pkceRedirectUri(),
+          client_id: clientId,
+          code_verifier: verifier,
+        });
+        const resp = await fetch(meta.token_endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        if (!resp.ok) throw new Error('token exchange failed: ' + resp.status);
+        const tokenResp = await resp.json();
+        const idToken = tokenResp.id_token;
+        if (!idToken) throw new Error('token response had no id_token');
+
+        const claims = decodeJwtPayloadUnverified(idToken);
+        if (expectedNonce && claims.nonce !== expectedNonce) {
+          throw new Error('ID token nonce mismatch');
+        }
+
+        sessionStorage.setItem(PKCE_TOKEN_KEY, idToken);
+        sessionStorage.removeItem('dagalog-oidc-token'); // supersede any manually-pasted token
+        showPkceSignedIn(claims.email || claims.name || claims.preferred_username || 'Signed in');
+      } catch (e) {
+        console.error('OIDC PKCE token exchange failed:', e);
+      }
     }
 
     // Silently refresh an existing MSAL session
@@ -633,7 +863,12 @@
 
       if (authConfig.mode === 'oidc') {
         const clientId = authConfig.oidc?.browser_client_id;
-        if (clientId) {
+        if (clientId && authConfig.oidc.browser_flow === 'oidc_pkce') {
+          // Generic Authorization Code + PKCE flow (issue #531) — no SDK,
+          // just crypto.subtle against the provider's own discovery doc.
+          document.getElementById('auth-oidc-panel').style.display = '';
+          await pkceHandleRedirect();
+        } else if (clientId) {
           // Load MSAL.js from CDN and initialise.
           document.getElementById('auth-oidc-panel').style.display = '';
           await loadMsal();
