@@ -87,6 +87,150 @@ pub struct ParserContext {
     pub base: Option<String>,
 }
 
+// ── Actionable parse-error reporting (issue #747) ────────────────────────────
+//
+// `parse_prefixed_name` fails hard with `nom::Err::Failure(..., ErrorKind::
+// Verify)` on an undeclared prefix (see its doc comment and issue #389), and
+// that `Failure`'s remaining-input slice already starts at the offending
+// `prefix:local` text. But callers (`sparql_endpoint`) were formatting the
+// raw `{:?}` debug dump of the nom error as the HTTP response body, which
+// never surfaces the prefix name itself -- just an opaque `ErrorKind::
+// Verify` and a byte slice a human has to decode by hand. This section
+// turns that slice back into an actionable message naming the prefix,
+// suggesting the fix, and listing the prefixes that *are* declared (a
+// typo'd prefix is the most likely real-world cause) -- mirroring the
+// specificity of SPARQL Update's equivalent message (surfaced via
+// `turtle_parser`'s own prefix-declaration check).
+//
+// Deliberately a post-processing step over the existing `nom::Err`, not a
+// thread-local side channel or a new `ParserContext` field: a new public
+// field on `ParserContext` would require updating every one of the ~70
+// call sites across the workspace that construct it via a struct literal,
+// and a thread-local would need careful clearing on every entry to avoid
+// misattributing a stale prefix from an unrelated earlier call on the same
+// tokio worker thread.
+
+/// Owned, borrow-free summary of a `parse_query` (or similar) failure.
+///
+/// `nom::Err<nom::error::Error<&'a str>>` borrows from the original input
+/// with the same lifetime parameter `parse_query` uses for its `&mut
+/// ParserContext` argument, so holding onto the raw `nom::Err` value keeps
+/// `ParserContext` mutably borrowed -- which conflicts with then reading
+/// `ctx.prefixes` to build a helpful message. Extracting the handful of
+/// fields actually needed into an owned struct immediately after the parse
+/// call ends that borrow, so the caller is free to read `ctx.prefixes`
+/// afterwards. See issue #747.
+pub struct ParseFailureInfo {
+    /// `true` for `nom::Err::Failure` (a hard, non-backtrackable failure),
+    /// `false` for `nom::Err::Error`.
+    pub is_failure: bool,
+    pub code: nom::error::ErrorKind,
+    /// The error's remaining-input slice, copied to an owned `String`.
+    pub remaining: String,
+}
+
+impl ParseFailureInfo {
+    /// Builds an owned summary from a borrowed `nom::Err`, or `None` for
+    /// `nom::Err::Incomplete` (streaming-only; this crate only parses
+    /// complete input, so this variant is never actually produced, but the
+    /// match must still be exhaustive).
+    pub fn from_nom_err(err: &nom::Err<nom::error::Error<&str>>) -> Option<Self> {
+        match err {
+            nom::Err::Error(e) => Some(ParseFailureInfo {
+                is_failure: false,
+                code: e.code,
+                remaining: e.input.to_string(),
+            }),
+            nom::Err::Failure(e) => Some(ParseFailureInfo {
+                is_failure: true,
+                code: e.code,
+                remaining: e.input.to_string(),
+            }),
+            nom::Err::Incomplete(_) => None,
+        }
+    }
+}
+
+/// If `remaining` starts with `prefix:` for a `prefix` not present in
+/// `declared`, returns that prefix name. Used to recognize
+/// `parse_prefixed_name`'s undeclared-prefix failure from its remaining-input
+/// slice alone (the same `prefix:local` shape it originally matched).
+fn undeclared_prefix_at(remaining: &str, declared: &HashMap<String, String>) -> Option<String> {
+    let prefix_len = remaining
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(remaining.len());
+    let prefix = &remaining[..prefix_len];
+    if remaining[prefix_len..].starts_with(':') && !declared.contains_key(prefix) {
+        Some(prefix.to_string())
+    } else {
+        None
+    }
+}
+
+/// Computes a 1-based (line, column) for the start of `remaining` within
+/// `source`, assuming `remaining` is a suffix of `source` (always true here:
+/// every nom combinator in this crate slices rather than copies).
+fn line_col_of(source: &str, remaining: &str) -> (usize, usize) {
+    let offset = source
+        .len()
+        .saturating_sub(remaining.len())
+        .min(source.len());
+    // `remaining` is expected to be a genuine suffix slice of `source` (true
+    // for every call site here: nom combinators slice rather than copy), in
+    // which case `offset` always lands on a UTF-8 char boundary. Guard
+    // against that assumption ever being violated anyway -- a wrong
+    // line/column in an error message is far preferable to a slicing panic
+    // that would turn a 400 into a 500.
+    if !source.is_char_boundary(offset) {
+        return (1, 1);
+    }
+    let consumed = &source[..offset];
+    let line = consumed.matches('\n').count() + 1;
+    let col = match consumed.rfind('\n') {
+        Some(pos) => consumed[pos + 1..].chars().count() + 1,
+        None => consumed.chars().count() + 1,
+    };
+    (line, col)
+}
+
+/// Builds a human-readable description of a `parse_query` failure.
+///
+/// `query` is the original source text passed to `parse_query` (used to
+/// compute a line/column for the error location), and `declared` is
+/// `ParserContext::prefixes` as it stood after the failed parse (which may
+/// already contain entries from any `PREFIX` declarations that parsed
+/// successfully before the failure). Names the offending prefix and lists
+/// the declared ones when the failure is specifically
+/// `parse_prefixed_name`'s undeclared-prefix check (issue #747); falls back
+/// to the raw nom debug dump for every other kind of parse failure.
+pub fn describe_parse_error(
+    query: &str,
+    failure: &ParseFailureInfo,
+    declared: &HashMap<String, String>,
+) -> String {
+    if failure.is_failure && failure.code == nom::error::ErrorKind::Verify {
+        if let Some(prefix) = undeclared_prefix_at(&failure.remaining, declared) {
+            let (line, col) = line_col_of(query, &failure.remaining);
+            let mut msg = format!(
+                "Parse error at line {line}, column {col}: undeclared prefix '{prefix}:' -- \
+                 add a declaration, e.g. `PREFIX {prefix}: <http://example.org/>`."
+            );
+            if declared.is_empty() {
+                msg.push_str(" No prefixes are currently declared in this query.");
+            } else {
+                let mut names: Vec<&str> = declared.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                msg.push_str(&format!(
+                    " Currently declared prefixes: {}.",
+                    names.join(", ")
+                ));
+            }
+            return msg;
+        }
+    }
+    format!("Parse error: {:?} at {:?}", failure.code, failure.remaining)
+}
+
 // ── Recursion depth guard ─────────────────────────────────────────────────────
 //
 // This is a hand-written recursive-descent parser (nom 7 has no built-in
@@ -788,6 +932,17 @@ fn parse_group_graph_pattern_contents<'a>(
                         remaining = &remaining[1..];
                     }
                 }
+                // A hard `Err::Failure` (e.g. `parse_prefixed_name`'s
+                // undeclared-prefix check, issue #389) must propagate, not
+                // be swallowed as "no more triples here" -- silently
+                // `break`-ing on it turned a would-be clear 400 into a much
+                // more confusing downstream error (or none at all) for
+                // `SELECT`/`ASK`/`CONSTRUCT`, since this loop is how their
+                // group graph patterns parse triple patterns. See issue
+                // #747. A soft `Err::Error` still just ends the loop, since
+                // that's the normal "this isn't a triple pattern, something
+                // else (e.g. the closing `}`) must be next" signal.
+                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
                 Err(_) => break,
             }
         }
@@ -869,6 +1024,10 @@ fn parse_predobj_pairs<'a>(
         let (r, pred_var_opt) = if predicate_is_var {
             let (r, t) = match parse_term(ctx)(r) {
                 Ok(x) => x,
+                // See issue #747: a hard `Err::Failure` (e.g. an undeclared
+                // prefix) must propagate rather than be swallowed as
+                // "end of predicate-object list".
+                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
                 Err(_) => break,
             };
             (r, Some(t))
@@ -878,6 +1037,7 @@ fn parse_predobj_pairs<'a>(
         let (r, path) = if pred_var_opt.is_none() {
             match parse_path_alternative(ctx)(r) {
                 Ok((r, p)) => (r, Some(p)),
+                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
                 Err(_) => break,
             }
         } else {
@@ -2531,6 +2691,10 @@ fn parse_describe_resources<'a>(
                     resources.push(t);
                     rest = r2;
                 }
+                // See issue #747: propagate a hard `Err::Failure` (e.g. an
+                // undeclared prefix in a later DESCRIBE resource) instead
+                // of swallowing it as "end of resource list".
+                Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
                 Err(_) => {
                     rest = r;
                     break;
