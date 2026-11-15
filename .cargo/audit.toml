@@ -18,4 +18,14 @@ ignore = [
     # on untrusted input. Re-check if any future dependency activates
     # rust_decimal's rkyv feature. See #375.
     "RUSTSEC-2026-0235",
+    # RUSTSEC-2026-0194, RUSTSEC-2026-0195: DoS advisories in quick-xml 0.37,
+    # pulled in transitively via oxrdfxml 0.2.5 (turtle crate's new RDF/XML
+    # parser, #750). No newer oxrdfxml release exists yet to pick up a patched
+    # quick-xml. Unlike the ignores above, this dependency genuinely does parse
+    # untrusted input by design (RDF/XML uploads via CLI/LOAD/GSP, #751) --
+    # accepted as a temporary risk per Dag's explicit direction rather than an
+    # unreachable-code argument. Tracked in #807; remove these two ignores once
+    # oxrdfxml bumps its quick-xml dependency past the fix.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]

@@ -8,3 +8,4 @@ dag-rdf = { path = "../dag_rdf" }
 oxttl = { version = "0.2.3", features = ["rdf-12"] }
 oxrdf = "0.3.3"
 log = "0.4"
+oxrdfxml = { version = "0.2.5", features = ["rdf-12"] }
