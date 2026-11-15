@@ -34,6 +34,10 @@
   .freshness.stale { background: #fff8e6; border-color: #e6c766; color: #6b5400; }
   .freshness.fresh { background: #eafaea; border-color: #a8d8a8; color: #1a5c1a; }
   /* Board */
+  .column-toggles { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 0.8rem;
+                    font-size: 0.78rem; color: #555; }
+  .column-toggles .column-toggle { display: inline-flex; align-items: center; gap: 0.3rem;
+                                    cursor: pointer; }
   .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
            gap: 0.9rem; margin-top: 1rem; }
   .board-col { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; }
@@ -193,6 +197,7 @@
     <!-- ── Board view (issue/epic board + epic drill-down) ── -->
     <section id="view-board" class="view active">
       <div id="board-error"></div>
+      <div id="board-column-toggles" class="column-toggles"></div>
       <div id="board" class="board">
         <div class="empty-note">Loading open issues&hellip;</div>
       </div>
@@ -486,11 +491,49 @@
     return card;
   }
 
+  // ── Closed column + hideable columns (#489) ──
+  // The board used to query only bl:state bl:Open, so the moment a PR
+  // actually merges and an issue flips to bl:state bl:Closed, it vanished
+  // from the board entirely -- in practice "Done" (bl:status bl:Done,
+  // meaning "PR open, CI green, not yet merged" per CLAUDE.md's workflow)
+  // was only ever populated in the narrow window before that merge. Per
+  // Dag's follow-up design on #489 (supersedes the issue body's original
+  // "widen Done with a time window" vs. "separate Recently Shipped view"
+  // framing), the fix is: closed issues get their own always-available
+  // column (no recency window -- see docs/plans/BOARD_CONFIGURABLE_COLUMNS_489_PLAN.md),
+  // and every column (including Closed) can be hidden by the viewer, since
+  // Closed only grows monotonically and will eventually want hiding.
+  const CLOSED_COLUMN_IRI = '__closed__';
+  const CLOSED_COLUMN_LABEL = 'Closed';
+  const HIDDEN_COLUMNS_STORAGE_KEY = 'backlog-board-hidden-columns';
+
+  // Per-viewer convenience only (which columns are hidden) -- never load-
+  // bearing, so every access is wrapped in try/catch and the board must
+  // render correctly even if localStorage throws or returns nothing (a
+  // private window, cleared site data, etc.).
+  function loadHiddenColumns() {
+    try {
+      const raw = window.localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  function saveHiddenColumns(hidden) {
+    try {
+      window.localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify(Array.from(hidden)));
+    } catch (e) {
+      // ignore -- this is a convenience, not durable state
+    }
+  }
+
   async function loadBoard() {
     const boardEl = document.getElementById('board');
+    const togglesEl = document.getElementById('board-column-toggles');
     const errEl = document.getElementById('board-error');
     try {
-      const [issuesJson, labelsByIssue] = await Promise.all([
+      const [openJson, closedJson, labelsByIssue] = await Promise.all([
         sparqlFetch(
           PREFIXES +
             'SELECT ?issue ?title ?status WHERE { ' +
@@ -499,24 +542,84 @@
             '  OPTIONAL { ?issue bl:status ?status } ' +
             '}'
         ),
+        sparqlFetch(
+          PREFIXES +
+            'SELECT ?issue ?title WHERE { ' +
+            '  ?issue a bl:Issue ; bl:state bl:Closed ; rdfs:label ?title . ' +
+            '  FILTER NOT EXISTS { ?issue a bl:Epic } ' +
+            '}'
+        ),
         loadLabelsByIssue(),
       ]);
 
-      const columns = new Map();
-      for (const col of STATUS_COLUMNS) columns.set(col.iri, []);
-      columns.set('__none__', []);
+      const openRows = bindingsOf(openJson).map((row) => ({
+        iri: row.issue.value,
+        title: row.title.value,
+        statusIri: row.status ? row.status.value : null,
+      }));
+      const closedRows = bindingsOf(closedJson).map((row) => ({
+        iri: row.issue.value,
+        title: row.title.value,
+      }));
 
-      for (const row of bindingsOf(issuesJson)) {
-        const iri = row.issue.value;
-        const title = row.title.value;
-        const statusIri = row.status ? row.status.value : '__none__';
-        const bucket = columns.has(statusIri) ? statusIri : '__none__';
-        columns.get(bucket).push({ iri, title, labels: labelsByIssue.get(iri) || [] });
+      // Columns are derived from what's actually present in the data, not
+      // a fixed four-column layout: one column per distinct bl:status seen
+      // among open issues, in the vocabulary's own
+      // Todo -> Ready -> InProgress -> Done order (STATUS_COLUMNS), with
+      // any status value outside that known list appended afterward so a
+      // future bl:WorkflowStatus individual this code doesn't know about
+      // yet still gets a column instead of being silently dropped. A
+      // Closed column is always appended last.
+      const presentStatusIris = new Set(
+        openRows.map((r) => r.statusIri).filter((s) => s !== null)
+      );
+      const knownIris = new Set(STATUS_COLUMNS.map((c) => c.iri));
+      const knownColumns = STATUS_COLUMNS.filter((c) => presentStatusIris.has(c.iri));
+      const unknownColumns = Array.from(presentStatusIris)
+        .filter((iri) => !knownIris.has(iri))
+        .map((iri) => ({ iri, label: iri }));
+      const hasNoStatus = openRows.some((r) => r.statusIri === null);
+
+      const allColumns = knownColumns
+        .concat(unknownColumns)
+        .concat(hasNoStatus ? [{ iri: '__none__', label: NO_STATUS_LABEL }] : [])
+        .concat([{ iri: CLOSED_COLUMN_IRI, label: CLOSED_COLUMN_LABEL }]);
+
+      const columns = new Map();
+      for (const col of allColumns) columns.set(col.iri, []);
+
+      for (const row of openRows) {
+        const bucket = row.statusIri !== null ? row.statusIri : '__none__';
+        columns.get(bucket).push({ iri: row.iri, title: row.title, labels: labelsByIssue.get(row.iri) || [] });
+      }
+      for (const row of closedRows) {
+        columns.get(CLOSED_COLUMN_IRI).push({ iri: row.iri, title: row.title, labels: labelsByIssue.get(row.iri) || [] });
+      }
+
+      const hidden = loadHiddenColumns();
+
+      // Toggles are rebuilt every load since the set of available columns
+      // can itself change (e.g. a status with zero open issues drops out).
+      togglesEl.textContent = '';
+      for (const col of allColumns) {
+        const label = el('label', 'column-toggle');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = !hidden.has(col.iri);
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) hidden.delete(col.iri);
+          else hidden.add(col.iri);
+          saveHiddenColumns(hidden);
+          loadBoard();
+        });
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(' ' + col.label));
+        togglesEl.appendChild(label);
       }
 
       boardEl.textContent = '';
-      const allColumns = STATUS_COLUMNS.concat([{ iri: '__none__', label: NO_STATUS_LABEL }]);
       for (const col of allColumns) {
+        if (hidden.has(col.iri)) continue;
         const items = columns.get(col.iri);
         const colEl = el('div', 'board-col');
         const h3 = el('h3');
@@ -525,7 +628,8 @@
         colEl.appendChild(h3);
         const list = el('div', 'card-list');
         if (items.length === 0) {
-          list.appendChild(el('div', 'empty-note', 'No open issues'));
+          const emptyText = col.iri === CLOSED_COLUMN_IRI ? 'No closed issues' : 'No open issues';
+          list.appendChild(el('div', 'empty-note', emptyText));
         } else {
           for (const it of items) {
             list.appendChild(renderItemCard(it.iri, it.title, it.labels));
