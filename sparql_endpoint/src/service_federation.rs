@@ -69,7 +69,7 @@ Contact: hovlanddag@gmail.com
 //! `RwLockReadGuard` on the real store at the point pre-resolution would
 //! otherwise need one, so every fetch for a query is deserialized against a
 //! **throwaway scratch `Datastore`** (shared across every `SERVICE` call in
-//! that one query — see [`deserialize_fetched_bodies`]), not the real query
+//! that one query — see `deserialize_fetched_bodies`), not the real query
 //! datastore. This is correct for the overwhelmingly common case
 //! (IRI/literal bindings), but originally (issue
 //! [#772](https://github.com/daghovland/rdf-datalog/issues/772), sub-issue
@@ -95,9 +95,9 @@ Contact: hovlanddag@gmail.com
 //!   results document and must never be treated as equal across two
 //!   documents). **Fixed by #772**: every `SERVICE` call in one query now
 //!   deserializes against one *shared* scratch store, seeded at
-//!   [`FEDERATED_BLANK_NODE_BASE`] so its blank-node IDs also don't collide
+//!   `FEDERATED_BLANK_NODE_BASE` so its blank-node IDs also don't collide
 //!   with the real store's own, for any realistic dataset size — see
-//!   [`deserialize_fetched_bodies`]'s doc comment for the full reasoning.
+//!   `deserialize_fetched_bodies`'s doc comment for the full reasoning.
 //!
 //! Restructuring the two `query.rs` call sites to pre-resolve before
 //! acquiring *any* store lock (avoiding the scratch-store requirement
@@ -283,10 +283,10 @@ const FEDERATED_BLANK_NODE_BASE: u32 = 1 << 30;
 /// against its own fresh store (the pre-#772 behaviour, just with the
 /// scratch store reused per-call instead of per-query) would have given both
 /// their first blank node the same low numeric ID, making them spuriously
-/// equal under [`GraphElement`]'s derived `PartialEq` wherever two federated
+/// equal under `GraphElement`'s derived `PartialEq` wherever two federated
 /// bindings are compared (e.g. `merge_solutions`' natural join) — the exact
 /// opposite of what per-document label scoping requires. One shared store
-/// (seeded once, at [`FEDERATED_BLANK_NODE_BASE`]) keeps every blank node
+/// (seeded once, at `FEDERATED_BLANK_NODE_BASE`) keeps every blank node
 /// encountered while resolving this query numerically distinct, both from
 /// each other and from the real store's own blank nodes, by construction.
 ///
