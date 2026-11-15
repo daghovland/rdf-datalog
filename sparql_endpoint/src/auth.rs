@@ -548,6 +548,9 @@ pub async fn auth_config_handler(State(state): State<AppState>) -> Response {
         audience: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         browser_client_id: Option<String>,
+        /// "msal" or "oidc_pkce" — see [`crate::BrowserFlow`]. Only meaningful
+        /// when `browser_client_id` is set; the frontend ignores it otherwise.
+        browser_flow: crate::BrowserFlow,
     }
 
     let body = match &state.config.auth {
@@ -572,6 +575,7 @@ pub async fn auth_config_handler(State(state): State<AppState>) -> Response {
                 issuer: cfg.issuer.clone(),
                 audience: cfg.audience.clone(),
                 browser_client_id: cfg.browser_client_id.clone(),
+                browser_flow: cfg.browser_flow,
             }),
         },
     };
@@ -1024,6 +1028,7 @@ mod tests {
             write_role: "dagalog.Write".to_owned(),
             admin_role: "dagalog.Admin".to_owned(),
             browser_client_id: None,
+            browser_flow: crate::BrowserFlow::Msal,
         }
     }
 

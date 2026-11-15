@@ -242,13 +242,26 @@ struct Cli {
     )]
     oidc_admin_role: String,
 
-    /// Browser application client ID for MSAL.js (Azure) or Google Identity Services
+    /// Browser application client ID for the in-browser sign-in flow
+    /// (MSAL.js or the generic OIDC PKCE flow; see --oidc-browser-flow)
     #[arg(
         long = "oidc-browser-client-id",
         value_name = "ID",
         env = "DAGALOG_OIDC_BROWSER_CLIENT_ID"
     )]
     oidc_browser_client_id: Option<String>,
+
+    /// Which in-browser sign-in flow --oidc-browser-client-id activates:
+    /// "msal" (Azure Entra ID via MSAL.js, default) or "oidc-pkce" (generic
+    /// Authorization Code + PKCE flow for Google/Keycloak/Auth0/any
+    /// standards-compliant OIDC provider). See issue #531.
+    #[arg(
+        long = "oidc-browser-flow",
+        value_name = "msal|oidc-pkce",
+        default_value = "msal",
+        env = "DAGALOG_OIDC_BROWSER_FLOW"
+    )]
+    oidc_browser_flow: String,
 
     // ── Persistence ──────────────────────────────────────────────────────────
     /// Directory for durable persistence (redb changelog); omit for in-memory mode
@@ -568,6 +581,15 @@ fn build_auth_config(cli: &Cli) -> Result<AuthConfig, String> {
             .oidc_audience
             .as_ref()
             .ok_or_else(|| "--oidc-audience is required when --oidc-issuer is set".to_string())?;
+        let browser_flow = match cli.oidc_browser_flow.to_ascii_lowercase().as_str() {
+            "msal" => sparql_endpoint::BrowserFlow::Msal,
+            "oidc-pkce" | "oidc_pkce" | "pkce" => sparql_endpoint::BrowserFlow::OidcPkce,
+            other => {
+                return Err(format!(
+                    "unknown --oidc-browser-flow '{other}'; expected 'msal' or 'oidc-pkce'"
+                ));
+            }
+        };
         return Ok(AuthConfig::Oidc(OidcConfig {
             issuer: issuer.clone(),
             jwks_uri: cli.oidc_jwks_uri.clone(),
@@ -577,6 +599,7 @@ fn build_auth_config(cli: &Cli) -> Result<AuthConfig, String> {
             write_role: cli.oidc_write_role.clone(),
             admin_role: cli.oidc_admin_role.clone(),
             browser_client_id: cli.oidc_browser_client_id.clone(),
+            browser_flow,
         }));
     }
 

@@ -108,6 +108,7 @@ fn oidc_config_with_issuer(issuer: &str, jwks_uri: &str) -> OidcConfig {
         write_role: "dagalog.Write".to_owned(),
         admin_role: "dagalog.Admin".to_owned(),
         browser_client_id: None,
+        browser_flow: sparql_endpoint::BrowserFlow::Msal,
     }
 }
 
