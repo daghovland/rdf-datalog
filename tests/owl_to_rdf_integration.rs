@@ -24,6 +24,22 @@ use owl_ontology::{Axiom, ClassAxiom, ClassExpression, FullIri, Ontology};
 use owl2rl2datalog::owl2rdf;
 use rdf_owl_translator::rdf2owl;
 
+/// An OWL 2 Functional-Style Syntax ontology whose `SubClassOf` axiom's own
+/// annotation (`rdfs:label "why"`) itself carries a meta-annotation
+/// (`rdfs:comment "src"`) — see
+/// `owl_functional_parser/tests/serialize_roundtrip.rs::roundtrips_subclassof_with_meta_annotation`
+/// for the same fixture used to pin down parsing/serialization of this
+/// shape.
+const OFN_META_ANNOTATION: &str = r#"
+Ontology(<http://example.org/onto>
+    Declaration(Class(<http://example.org/Dog>))
+    Declaration(Class(<http://example.org/Animal>))
+    Declaration(AnnotationProperty(<http://www.w3.org/2000/01/rdf-schema#label>))
+    Declaration(AnnotationProperty(<http://www.w3.org/2000/01/rdf-schema#comment>))
+    SubClassOf(Annotation(Annotation(<http://www.w3.org/2000/01/rdf-schema#comment> "src") <http://www.w3.org/2000/01/rdf-schema#label> "why") <http://example.org/Dog> <http://example.org/Animal>)
+)
+"#;
+
 const OMN: &str = r#"
 Prefix: : <http://example.org/>
 Ontology:
@@ -111,5 +127,50 @@ fn owl_to_rdf_to_owl_round_trip_recovers_subclass_axiom() {
         recovered.axioms.contains(&expected),
         "rdf2owl must recover SubClassOf(Dog, Animal) from the emitted triples; got {:?}",
         recovered.axioms
+    );
+}
+
+/// A meta-annotation (annotation on an axiom's own annotation, #711/#589):
+/// `owl2rdf` must reify the nested `Annotation(...)` via an
+/// `owl:Annotation`-typed blank node per the W3C mapping spec's recursive
+/// `TANN` rule (<https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations>),
+/// and `rdf_owl_translator::rdf2owl` must recover it symmetrically — not
+/// just the top-level axiom annotation, which the `owl:Axiom` reification
+/// already handled before this issue.
+#[test]
+fn meta_annotation_round_trips_through_rdf() {
+    let ontology = owl_functional_parser::parse(OFN_META_ANNOTATION)
+        .expect("functional-syntax source must parse");
+    let mut ds = Datastore::new(1000);
+    let report = owl2rdf(&mut ds, &ontology);
+    assert!(
+        report.triples_added > 0,
+        "the ontology must produce triples; skipped: {:?}",
+        report.skipped
+    );
+
+    let recovered = rdf2owl(&mut ds).unwrap().ontology;
+    let anns = recovered
+        .axioms
+        .iter()
+        .find_map(|ax| match ax {
+            Axiom::AxiomClassAxiom(ClassAxiom::SubClassOf(anns, _, _)) => Some(anns),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a SubClassOf axiom; got {:?}", recovered.axioms));
+
+    assert_eq!(anns.len(), 1, "exactly one top-level annotation");
+    assert_eq!(
+        anns[0].property.0.0,
+        "http://www.w3.org/2000/01/rdf-schema#label"
+    );
+    assert_eq!(
+        anns[0].annotations.len(),
+        1,
+        "the top-level annotation must carry its own meta-annotation, round-tripped through RDF"
+    );
+    assert_eq!(
+        anns[0].annotations[0].property.0.0,
+        "http://www.w3.org/2000/01/rdf-schema#comment"
     );
 }

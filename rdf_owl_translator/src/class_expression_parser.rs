@@ -413,7 +413,7 @@ fn build_individual_declarations(
 
 fn build_annotations(
     datastore: &Datastore,
-    _ids: &WellKnownIds,
+    ids: &WellKnownIds,
     annotation_properties: &HashMap<GraphElementId, AnnotationProperty>,
     individuals: &HashMap<GraphElementId, Individual>,
 ) -> HashMap<GraphElementId, Vec<Annotation>> {
@@ -424,13 +424,91 @@ fn build_annotations(
             let annotated_obj = tr.subject;
             let obj_gel = datastore.resources.get_graph_element(tr.obj);
             let ann_value = create_annotation_value(individuals, tr.obj, obj_gel);
-            map.entry(annotated_obj)
-                .or_default()
-                .push(Annotation::new(ann_prop.clone(), ann_value));
+            let nested = meta_annotations(
+                datastore,
+                ids,
+                annotation_properties,
+                individuals,
+                annotated_obj,
+                ann_prop_id,
+                tr.obj,
+            );
+            map.entry(annotated_obj).or_default().push(Annotation {
+                property: ann_prop.clone(),
+                value: ann_value,
+                annotations: nested,
+            });
         }
     }
 
     map
+}
+
+/// Recover meta-annotations (annotations on an annotation) for the base
+/// triple `(subject, ann_prop_id, obj)`, the RDF->OWL mirror of
+/// `owl2rl2datalog::owl_to_rdf::Translator::emit_annotation`'s `TANN`
+/// encoding (not an intra-doc link: `rdf_owl_translator` doesn't depend on
+/// `owl2rl2datalog`), per the W3C mapping spec's recursive
+/// [Translation of Annotations](https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations)
+/// rule: find the `owl:Annotation`-typed blank node (if any) whose
+/// `owl:annotatedSource`/`owl:annotatedProperty`/`owl:annotatedTarget`
+/// reify exactly this triple, and recursively collect *its* own
+/// annotation-property triples as the nested `Annotation.annotations`
+/// (which may themselves carry further meta-annotations, reified the same
+/// way one level deeper). See
+/// [#711](https://github.com/daghovland/rdf-datalog/issues/711)
+/// (originally raised as [#589](https://github.com/daghovland/rdf-datalog/issues/589)).
+fn meta_annotations(
+    datastore: &Datastore,
+    ids: &WellKnownIds,
+    annotation_properties: &HashMap<GraphElementId, AnnotationProperty>,
+    individuals: &HashMap<GraphElementId, Individual>,
+    subject: GraphElementId,
+    ann_prop_id: GraphElementId,
+    obj: GraphElementId,
+) -> Vec<Annotation> {
+    let mut result = Vec::new();
+    for src_tr in datastore.get_triples_with_object_predicate(subject, ids.owl_annotated_source_id)
+    {
+        let reification = src_tr.subject;
+        let is_reification_of_this_triple = datastore.contains_triple(&Triple {
+            subject: reification,
+            predicate: ids.rdf_type_id,
+            obj: ids.owl_annotation_id,
+        }) && datastore.contains_triple(&Triple {
+            subject: reification,
+            predicate: ids.owl_annotated_property_id,
+            obj: ann_prop_id,
+        }) && datastore.contains_triple(&Triple {
+            subject: reification,
+            predicate: ids.owl_annotated_target_id,
+            obj,
+        });
+        if !is_reification_of_this_triple {
+            continue;
+        }
+        for (&meta_prop_id, meta_prop) in annotation_properties {
+            for tr in datastore.get_triples_with_subject_predicate(reification, meta_prop_id) {
+                let obj_gel = datastore.resources.get_graph_element(tr.obj);
+                let meta_value = create_annotation_value(individuals, tr.obj, obj_gel);
+                let nested = meta_annotations(
+                    datastore,
+                    ids,
+                    annotation_properties,
+                    individuals,
+                    reification,
+                    meta_prop_id,
+                    tr.obj,
+                );
+                result.push(Annotation {
+                    property: meta_prop.clone(),
+                    value: meta_value,
+                    annotations: nested,
+                });
+            }
+        }
+    }
+    result
 }
 
 fn create_annotation_value(

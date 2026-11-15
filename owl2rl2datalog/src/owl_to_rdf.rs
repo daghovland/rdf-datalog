@@ -69,11 +69,11 @@ use dag_rdf::{Datastore, GraphElementId, RdfResource, Triple};
 use ingress::{
     IriReference, OWL_ALL_DIFFERENT, OWL_ALL_DISJOINT_CLASSES, OWL_ALL_DISJOINT_PROPERTIES,
     OWL_ALL_VALUES_FROM, OWL_ANNOTATED_PROPERTY, OWL_ANNOTATED_SOURCE, OWL_ANNOTATED_TARGET,
-    OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CARDINALITY, OWL_CLASS,
-    OWL_COMPLEMENT_OF, OWL_DATATYPE_COMPLEMENT_OF, OWL_DATATYPE_PROPERTY, OWL_DIFFERENT_FROM,
-    OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS, OWL_EQUIVALENT_PROPERTY,
-    OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_HAS_SELF, OWL_HAS_VALUE, OWL_IMPORT,
-    OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY,
+    OWL_ANNOTATION, OWL_ANNOTATION_PROPERTY, OWL_ASYMMETRIC_PROPERTY, OWL_AXIOM, OWL_CARDINALITY,
+    OWL_CLASS, OWL_COMPLEMENT_OF, OWL_DATATYPE_COMPLEMENT_OF, OWL_DATATYPE_PROPERTY,
+    OWL_DIFFERENT_FROM, OWL_DISJOINT_UNION_OF, OWL_DISJOINT_WITH, OWL_EQUIVALENT_CLASS,
+    OWL_EQUIVALENT_PROPERTY, OWL_FUNCTIONAL_PROPERTY, OWL_HAS_KEY, OWL_HAS_SELF, OWL_HAS_VALUE,
+    OWL_IMPORT, OWL_INTERSECTION_OF, OWL_INVERSE_FUNCTIONAL_PROPERTY, OWL_IRREFLEXIVE_PROPERTY,
     OWL_MAX_CARDINALITY, OWL_MAX_QUALIFIED_CARDINALITY, OWL_MEMBERS, OWL_MIN_CARDINALITY,
     OWL_MIN_QUALIFIED_CARDINALITY, OWL_NAMED_INDIVIDUAL, OWL_OBJECT_INVERSE_OF,
     OWL_OBJECT_PROPERTY, OWL_ON_CLASS, OWL_ON_DATA_RANGE, OWL_ON_DATATYPE, OWL_ON_PROPERTIES,
@@ -291,14 +291,40 @@ impl<'a> Translator<'a> {
         self.triple_p(reification, OWL_ANNOTATED_PROPERTY, predicate);
         self.triple_p(reification, OWL_ANNOTATED_TARGET, obj);
         for ann in annotations {
-            // Meta-annotations (`ann.annotations`) are not reified further
-            // here -- the W3C mapping spec doesn't itself define how to
-            // recursively re-reify an annotation triple, and this needs its
-            // own design decision rather than a guess. See
-            // https://github.com/daghovland/rdf-datalog/issues/711.
-            let ap_id = self.full_iri(&ann.property);
-            let av_id = self.annotation_value(&ann.value);
-            self.triple(reification, ap_id, av_id);
+            self.emit_annotation(reification, ann);
+        }
+    }
+
+    /// `TANN(ann, y)` from the W3C mapping spec's recursive
+    /// [Translation of Annotations](https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations)
+    /// rule: emit the base triple `y <ann.property> T(ann.value)`, and if
+    /// `ann` itself carries meta-annotations (`ann.annotations` is
+    /// non-empty), reify that triple via a fresh `owl:Annotation`-typed
+    /// blank node `_:x` (`owl:annotatedSource`/`owl:annotatedProperty`/
+    /// `owl:annotatedTarget` pointing back at `y`/`ann.property`/
+    /// `ann.value`), then recurse `TANN(meta, _:x)` for each meta-annotation.
+    ///
+    /// `y` is either the subject of a plain top-level annotation assertion,
+    /// or (when called from [`Translator::emit_axiom_annotations`]) the
+    /// `owl:Axiom` reification blank node of an annotated axiom — the spec's
+    /// rule is the same either way, since `y` is just "an IRI or a blank
+    /// node" per the spec text. See
+    /// [#711](https://github.com/daghovland/rdf-datalog/issues/711)
+    /// (originally raised as [#589](https://github.com/daghovland/rdf-datalog/issues/589)).
+    fn emit_annotation(&mut self, y: GraphElementId, ann: &Annotation) {
+        let ap_id = self.full_iri(&ann.property);
+        let av_id = self.annotation_value(&ann.value);
+        self.triple(y, ap_id, av_id);
+        if ann.annotations.is_empty() {
+            return;
+        }
+        let x = self.datastore.new_anonymous_blank_node();
+        self.type_triple(x, OWL_ANNOTATION);
+        self.triple_p(x, OWL_ANNOTATED_SOURCE, y);
+        self.triple_p(x, OWL_ANNOTATED_PROPERTY, ap_id);
+        self.triple_p(x, OWL_ANNOTATED_TARGET, av_id);
+        for meta in &ann.annotations {
+            self.emit_annotation(x, meta);
         }
     }
 
