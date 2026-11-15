@@ -446,8 +446,9 @@ fn build_annotations(
 
 /// Recover meta-annotations (annotations on an annotation) for the base
 /// triple `(subject, ann_prop_id, obj)`, the RDF->OWL mirror of
-/// [`owl2rl2datalog::owl_to_rdf::Translator::emit_annotation`]'s `TANN`
-/// encoding, per the W3C mapping spec's recursive
+/// `owl2rl2datalog::owl_to_rdf::Translator::emit_annotation`'s `TANN`
+/// encoding (not an intra-doc link: `rdf_owl_translator` doesn't depend on
+/// `owl2rl2datalog`), per the W3C mapping spec's recursive
 /// [Translation of Annotations](https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations)
 /// rule: find the `owl:Annotation`-typed blank node (if any) whose
 /// `owl:annotatedSource`/`owl:annotatedProperty`/`owl:annotatedTarget`
