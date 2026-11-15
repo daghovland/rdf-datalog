@@ -43,6 +43,30 @@ pub(crate) fn eval_function_value(
         "STRSTARTS" | "STRENDS" | "CONTAINS" => {
             eval_fn_strstarts_strends_contains(upper.as_str(), args, sub, datastore)
         }
+        // FILTER-only builtins (#674): `BOUND`/`REGEX`/`LANGMATCHES`/
+        // `ISBLANK`/`ISLITERAL`/`ISIRI`/`ISURI`/`IS_LEXICALLY_VALID` were
+        // previously only wired into `eval_function_bool` (the top-level
+        // FILTER/&&/||/! boolean path), not into this value-producing
+        // table. That meant they evaluated to `None` whenever nested
+        // inside `IF(...)`'s condition/branches or `COALESCE(...)`'s
+        // arguments, both of which recurse through
+        // `eval_expression_value_inner` -> `eval_function_value` rather
+        // than `eval_expression_bool`. The W3C SHACL spec's own
+        // `sh:pattern` example nests exactly this
+        // (`IF(bound($flags), regex(...), regex(...))`), so it silently
+        // evaluated to a wrong ASK result. Delegate to
+        // `eval_function_bool` (which already implements each builtin's
+        // real semantics) and wrap the `bool` as an `xsd:boolean` literal,
+        // the same pattern `eval_fn_strstarts_strends_contains` above
+        // already uses. Each of these names is matched by one of
+        // `eval_function_bool`'s own dedicated arms (never falls through
+        // to its `eval_function_value` fallback arm), so this can't
+        // recurse.
+        "BOUND" | "REGEX" | "LANGMATCHES" | "ISBLANK" | "ISLITERAL" | "ISIRI" | "ISURI"
+        | "IS_LEXICALLY_VALID" => {
+            let b = eval_function_bool(upper.as_str(), args, sub, datastore)?;
+            Some(GraphElement::GraphLiteral(RdfLiteral::BooleanLiteral(b)))
+        }
         "STRBEFORE" => eval_fn_strbefore(args, sub, datastore),
         "STRAFTER" => eval_fn_strafter(args, sub, datastore),
         "STR" => eval_fn_str(args, sub, datastore),
