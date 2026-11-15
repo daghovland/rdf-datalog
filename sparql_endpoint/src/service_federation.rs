@@ -67,31 +67,44 @@ Contact: hovlanddag@gmail.com
 //! Datastore` only to intern RDF 1.2 triple-term (`<<( s p o )>>`) bindings
 //! and fresh blank nodes. The async handlers in `query.rs` only hold a
 //! `RwLockReadGuard` on the real store at the point pre-resolution would
-//! otherwise need one, so each fetch is deserialized against a **throwaway,
-//! per-call `Datastore::new(64)`** rather than the real query datastore.
-//! This is correct for the overwhelmingly common case (IRI/literal
-//! bindings), but has two known consequences, deliberately left
-//! unaddressed here and tracked as a follow-up
-//! (see [#772](https://github.com/daghovland/rdf-datalog/issues/772),
-//! sub-issue of #741):
+//! otherwise need one, so every fetch for a query is deserialized against a
+//! **throwaway scratch `Datastore`** (shared across every `SERVICE` call in
+//! that one query — see [`deserialize_fetched_bodies`]), not the real query
+//! datastore. This is correct for the overwhelmingly common case
+//! (IRI/literal bindings), but originally (issue
+//! [#772](https://github.com/daghovland/rdf-datalog/issues/772), sub-issue
+//! of #741) had two known consequences:
 //!
 //! - A `GraphElement::TripleTerm` binding in a federated result carries
 //!   `GraphElementId`s that only resolve correctly against *that* scratch
 //!   store, not the real query datastore — such a binding would silently
 //!   resolve to the wrong (or a dangling) value if ever displayed/joined
-//!   against real data by ID.
-//! - A blank-node binding (`RdfResource::AnonymousBlankNode(n)`) is
-//!   allocated from the scratch store's own blank-node counter, which can
-//!   numerically collide with blank nodes already in the real query
-//!   datastore, causing spurious joins/output clashes.
+//!   against real data by ID. **Still open** — see
+//!   [#809](https://github.com/daghovland/rdf-datalog/issues/809), filed as
+//!   a follow-up when #772 fixed only the blank-node half below: unlike a
+//!   blank node, a triple term's equality depends on its embedded
+//!   `subject`/`predicate`/`obj` IDs matching entries in whichever store
+//!   resolves them later, so neither sharing nor offsetting the scratch
+//!   store's counter helps.
+//! - A blank-node binding (`RdfResource::AnonymousBlankNode(n)`) was
+//!   allocated from a *per-call* scratch store's own blank-node counter,
+//!   which could numerically collide both with blank nodes already in the
+//!   real query datastore and with a *different* `SERVICE` call's blank
+//!   nodes in the same query (the latter being a correctness bug on its own
+//!   terms: per SPARQL 1.1 §15.3, blank node labels are scoped to one
+//!   results document and must never be treated as equal across two
+//!   documents). **Fixed by #772**: every `SERVICE` call in one query now
+//!   deserializes against one *shared* scratch store, seeded at
+//!   [`FEDERATED_BLANK_NODE_BASE`] so its blank-node IDs also don't collide
+//!   with the real store's own, for any realistic dataset size — see
+//!   [`deserialize_fetched_bodies`]'s doc comment for the full reasoning.
 //!
-//! Both are rare in practice (triple terms and blank nodes in federated
-//! SPARQL JSON results are uncommon) and are judged not worth blocking the
-//! common-case feature on; restructuring the two `query.rs` call sites to
-//! pre-resolve before acquiring *any* store lock (avoiding the scratch-store
-//! requirement entirely) was considered and rejected for this issue as a
-//! bigger, separate change — see the PR description's "Non-obvious
-//! decisions" section.
+//! Restructuring the two `query.rs` call sites to pre-resolve before
+//! acquiring *any* store lock (avoiding the scratch-store requirement
+//! entirely, and so fixing the triple-term case too) remains a bigger,
+//! separate change than either #772 or #809's scope — see
+//! [#809](https://github.com/daghovland/rdf-datalog/issues/809)'s own
+//! description for the specific options considered and rejected for it.
 
 use crate::sparql_update::{build_hardened_client, read_capped_response, ssrf_preflight};
 use dag_rdf::Datastore;
@@ -108,7 +121,7 @@ use std::time::Duration;
 /// [`sparql_parser::ExecError::ServiceFetchFailed`]). See issue #745.
 #[derive(Debug)]
 pub(crate) enum FetchFailure {
-    /// The per-request timeout passed to `fetch_service_blocking` elapsed.
+    /// The per-request timeout passed to `fetch_service_body_blocking` elapsed.
     Timeout,
     /// Any other failure; the message is already human-readable.
     Other(String),
@@ -163,7 +176,7 @@ pub(crate) async fn pre_resolve_services(
         let endpoint_for_task = key.endpoint.clone();
         let body_for_task = key.body.clone();
         let handle = tokio::task::spawn_blocking(move || {
-            fetch_service_blocking(
+            fetch_service_body_blocking(
                 &endpoint_for_task,
                 &body_for_task,
                 &network,
@@ -174,7 +187,7 @@ pub(crate) async fn pre_resolve_services(
         handles.push((key, silent, handle));
     }
 
-    let mut results = Vec::with_capacity(handles.len());
+    let mut bodies = Vec::with_capacity(handles.len());
     for (key, silent, handle) in handles {
         let outcome = match handle.await {
             Ok(r) => r,
@@ -182,15 +195,22 @@ pub(crate) async fn pre_resolve_services(
                 "SERVICE fetch task panicked: {join_err}"
             ))),
         };
-        results.push((key, silent, outcome));
+        bodies.push((key, silent, outcome));
     }
-    results
+
+    // Deserialize every successfully-fetched body now, all against one
+    // *shared* scratch `Datastore` (not one scratch store per fetch) — see
+    // `deserialize_fetched_bodies`'s doc comment for why sharing the store
+    // across every call in this one query matters (issue #772).
+    deserialize_fetched_bodies(bodies)
 }
 
 /// Blocking: `POST` the SERVICE body to `endpoint` as
 /// `application/sparql-query`, requesting `application/sparql-results+json`,
-/// then deserialize the response into `SolutionRow`s via a throwaway scratch
-/// `Datastore` (see this module's doc comment for why).
+/// and return the raw response body text — deserialization happens
+/// separately, in [`deserialize_fetched_bodies`], once every concurrent
+/// fetch for this query has completed (see that function's doc comment for
+/// why).
 ///
 /// `request_timeout`, when `Some`, is set as this specific request's
 /// `reqwest` timeout, overriding `build_hardened_client`'s 30s client
@@ -199,13 +219,13 @@ pub(crate) async fn pre_resolve_services(
 /// Runs inside `tokio::task::spawn_blocking` (see
 /// `pre_resolve_services`) — never call this directly from async code
 /// without that wrapper, since it blocks the calling thread on network I/O.
-fn fetch_service_blocking(
+fn fetch_service_body_blocking(
     endpoint: &str,
     body: &str,
     network: &NetworkPolicy,
     allow_loopback: bool,
     request_timeout: Option<Duration>,
-) -> Result<Vec<SolutionRow>, FetchFailure> {
+) -> Result<String, FetchFailure> {
     let client =
         build_hardened_client(endpoint, network, allow_loopback, ssrf_preflight, "SERVICE")
             .map_err(FetchFailure::Other)?;
@@ -234,16 +254,78 @@ fn fetch_service_blocking(
         ))
     })?;
 
-    // Scratch store: see this module's doc comment for the triple-term /
-    // blank-node limitation this implies.
+    Ok(json_str)
+}
+
+/// Blank-node `GraphElementId`s assigned while deserializing federated
+/// `SERVICE` results are seeded starting from this value, so they cannot
+/// numerically collide with blank nodes already present in the real query
+/// datastore at the time the query runs (issue #772). This does not make a
+/// collision mathematically impossible — the real store's own blank-node
+/// counter also starts at 0 and grows without bound as more data is loaded —
+/// but closes the common case (any dataset with fewer than ~1 billion blank
+/// nodes) with no extra lock acquisition on the real store, which is what
+/// made the full fix (restructuring `sparql_endpoint::query`'s handlers to
+/// get real `&mut Datastore` access before/during pre-resolution) too large
+/// for this issue — see this module's doc comment.
+const FEDERATED_BLANK_NODE_BASE: u32 = 1 << 30;
+
+/// Deserialize every successfully-fetched `SERVICE` response body for one
+/// query into [`SolutionRow`]s, all against **one shared** scratch
+/// `Datastore` rather than a separate scratch store per fetch.
+///
+/// Sharing one store across every `SERVICE` call in the query (not just
+/// seeding each store's blank-node counter from the same base) matters
+/// because RDF 1.2/SPARQL 1.1 §15.3 blank node labels are scoped to one
+/// results document: the label `"b0"` in one endpoint's response and the
+/// label `"b0"` in a *different* endpoint's response denote unrelated blank
+/// nodes and must never be joined as equal. Deserializing each response
+/// against its own fresh store (the pre-#772 behaviour, just with the
+/// scratch store reused per-call instead of per-query) would have given both
+/// their first blank node the same low numeric ID, making them spuriously
+/// equal under [`GraphElement`]'s derived `PartialEq` wherever two federated
+/// bindings are compared (e.g. `merge_solutions`' natural join) — the exact
+/// opposite of what per-document label scoping requires. One shared store
+/// (seeded once, at [`FEDERATED_BLANK_NODE_BASE`]) keeps every blank node
+/// encountered while resolving this query numerically distinct, both from
+/// each other and from the real store's own blank nodes, by construction.
+///
+/// Called once `pre_resolve_services` has awaited every concurrent fetch, so
+/// this step is deliberately sequential — these are all pure, non-blocking
+/// `serde_json`-driven parses (the `spawn_blocking` boundary above covers the
+/// actual network I/O, not this), not a source of real concurrency to begin
+/// with.
+///
+/// Triple-term bindings are *not* covered by this fix: a
+/// `GraphElement::TripleTerm`'s `subject`/`predicate`/`obj` are
+/// `GraphElementId`s into whichever store resolves them later, and sharing
+/// the scratch store across calls (or offsetting its counter) does nothing
+/// for a store other than the scratch one — see issue
+/// [#809](https://github.com/daghovland/rdf-datalog/issues/809), filed as a
+/// follow-up, and the `#[ignore]`d regression test in
+/// `sparql_endpoint/tests/service_federation.rs`.
+fn deserialize_fetched_bodies(
+    bodies: Vec<(ServiceKey, bool, Result<String, FetchFailure>)>,
+) -> Vec<(ServiceKey, bool, Result<Vec<SolutionRow>, FetchFailure>)> {
     let mut scratch = Datastore::new(64);
-    let select_result = crate::serialize::sparql_json::from_sparql_json(&json_str, &mut scratch)
-        .map_err(|e| {
-            FetchFailure::Other(format!(
-                "SERVICE <{endpoint}>: malformed SPARQL JSON results: {e:?}"
-            ))
-        })?;
-    Ok(select_result.rows)
+    scratch.resources.anon_resource_count = FEDERATED_BLANK_NODE_BASE;
+
+    bodies
+        .into_iter()
+        .map(|(key, silent, outcome)| {
+            let result = outcome.and_then(|json_str| {
+                crate::serialize::sparql_json::from_sparql_json(&json_str, &mut scratch)
+                    .map(|select_result| select_result.rows)
+                    .map_err(|e| {
+                        FetchFailure::Other(format!(
+                            "SERVICE <{}>: malformed SPARQL JSON results: {e:?}",
+                            key.endpoint
+                        ))
+                    })
+            });
+            (key, silent, result)
+        })
+        .collect()
 }
 
 /// Build the `HashMap` [`sparql_parser::ServiceResultsGuard::install`]
