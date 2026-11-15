@@ -66,13 +66,10 @@ consistent with the old `(property, value)` tuple's own comparison order
   own `Vec<Annotation>` via a single `owl:Axiom` blank node and one triple
   per annotation, per the W3C mapping spec's
   [Translation of Annotations](https://www.w3.org/TR/owl2-mapping-to-rdf/#Translation_of_Annotations).
-  That mapping does not itself define how to further reify annotations *on*
-  an annotation triple (recursively re-reifying the per-annotation triple
-  `(_:x, AP, T(av))` would need its own `owl:Axiom` node with
-  `annotatedSource = _:x`). This PR updates the loop to read the new
-  struct fields (`ap = &a.property`, `av = &a.value`) but does **not** emit
-  reification for `a.annotations` — that's a separate, genuinely spec-level
-  design decision, filed as a follow-up issue rather than guessed at here.
+  This PR updates the loop to read the new struct fields (`ap = &a.property`,
+  `av = &a.value`) but does **not** emit reification for `a.annotations` —
+  that's a separate, genuinely spec-level design decision, filed as a
+  follow-up issue rather than guessed at here.
 - **RDF → OWL** (`axiom_parser.rs`/`class_expression_parser.rs::build_annotations`):
   reads plain `(subject, annotation-property, value)` triples into
   `Vec<Annotation>`, with no awareness of further `owl:Axiom` reification
@@ -80,6 +77,34 @@ consistent with the old `(property, value)` tuple's own comparison order
   `Annotation::new(...)` (always-empty `annotations`); recovering nested
   meta-annotations from RDF is the reverse of the gap above and is covered
   by the same follow-up issue.
+
+**Update ([#711](https://github.com/daghovland/rdf-datalog/issues/711)):**
+the premise above — "the mapping does not itself define how to further
+reify annotations on an annotation triple" — was **wrong**. The spec's
+`TANN` rule (Table 2, §2.2) is explicitly recursive: `Annotation(ann_1 ...
+ann_n AP av)` reifies via a fresh blank node typed `owl:Annotation` (not
+`owl:Axiom` — that type is reserved for axiom-level reification, §2.3) with
+the same `owl:annotatedSource`/`owl:annotatedProperty`/`owl:annotatedTarget`
+shape, and `TANN` is applied recursively to each `ann_i` against that new
+blank node. #711 implemented both directions:
+
+- `owl_to_rdf.rs::Translator::emit_annotation` is the recursive `TANN(ann,
+  y)` helper (`y` is either a plain annotation's subject or, when called
+  from `emit_axiom_annotations`, the `owl:Axiom` blank node — the spec
+  rule doesn't care which, since `y` is just "an IRI or a blank node").
+- `class_expression_parser.rs::meta_annotations` is the RDF → OWL mirror:
+  for a given `(subject, annotation-property, value)` triple, it looks for
+  an `owl:Annotation`-typed blank node reifying exactly that triple and
+  recursively collects *its* own annotation-property triples into the
+  nested `Annotation.annotations` field.
+- Round-trip test: `tests/owl_to_rdf_integration.rs::meta_annotation_round_trips_through_rdf`.
+
+This also resolved [#589](https://github.com/daghovland/rdf-datalog/issues/589),
+whose remaining scope ("add the `owl:Annotation` reification case to
+`emit_axiom_annotations` alongside the existing `owl:Axiom` case") was
+identical to #711's — #589's structural premise (no `Vec<Annotation>` slot
+to even populate) had already gone stale once this PR's own ancestor
+(#695/#709) landed, so #589 is superseded/duplicate once this merges.
 
 ## Mechanical-only call sites (always-empty, no grammar/feature change)
 
