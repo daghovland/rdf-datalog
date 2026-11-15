@@ -742,6 +742,394 @@ mod tbox_retraction_tests {
 }
 
 #[cfg(test)]
+mod abox_deletion_tests {
+    //! Regression coverage for [#780](https://github.com/daghovland/rdf-datalog/issues/780),
+    //! a follow-up from [#591](https://github.com/daghovland/rdf-datalog/issues/591)'s
+    //! deletion-propagation investigation. #590 and #774's regression tests
+    //! (`datalog::incremental`'s test module) all used hand-written
+    //! `datalog::Rule` values mirroring a transitive-closure rule shape by
+    //! hand -- none exercised a rule actually *compiled from an OWL
+    //! ontology* via [`owl2datalog`]. The tests below close that gap for
+    //! two of the rule shapes #780 names as plausible candidates for
+    //! different behaviour: `owl:TransitiveProperty` and
+    //! `owl:equivalentClass`. Lives here (not in `datalog::incremental`'s
+    //! test module), for the same reason `tbox_retraction_tests` above
+    //! does: `owl2rl2datalog` already depends on `datalog`, so the reverse
+    //! would be a dev-dependency cycle.
+    //!
+    //! Both tests use the same oracle-comparison pattern as #590/#774:
+    //! apply the real `IncrementalReasoner::apply_deletions` call, then
+    //! compare the result against a from-scratch rebuild, with
+    //! `IncrementalReasoner::fallback_count()` asserted unchanged so the
+    //! test exercises the true incremental BF path rather than the
+    //! trivially-correct-by-construction `full_rematerialise` fallback.
+    use super::*;
+    use dag_rdf::{DEFAULT_GRAPH_ELEMENT_ID, Datastore, Quad};
+    use datalog::IncrementalReasoner;
+    use ingress::{OntologyVersion, RDF_TYPE};
+
+    /// `owl:TransitiveProperty`, compiled via [`owl2datalog`], interacting
+    /// with `apply_deletions`. Base facts: `connectedTo(a,b)`,
+    /// `connectedTo(b,c)`, `connectedTo(a,e)`, `connectedTo(e,c)` --
+    /// `connectedTo(a,c)` is multiply derived, via both the `a-b-c` and
+    /// `a-e-c` paths.
+    ///
+    /// Step 1 deletes only `connectedTo(a,b)`: `connectedTo(a,c)` must
+    /// *survive* (still supported via `a-e-c`) -- the "is retraction
+    /// over-eager" direction.
+    ///
+    /// Step 2 then also deletes `connectedTo(a,e)`: `connectedTo(a,c)` has
+    /// now lost both supports and must actually be *retracted* -- the
+    /// "is retraction under-eager / stale closure" direction, which is the
+    /// one #591's original bug report was actually about.
+    #[test]
+    fn test_delete_base_fact_through_owl_rl_transitive_property_matches_full_rebuild() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        let prop_iri = IriReference("http://example.org/connectedTo".to_string());
+        let prop_expr = ObjectPropertyExpression::NamedObjectProperty(FullIri(prop_iri.clone()));
+        let transitive_axiom = Axiom::AxiomObjectPropertyAxiom(
+            ObjectPropertyAxiom::TransitiveObjectProperty(vec![], prop_expr),
+        );
+        let ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![transitive_axiom],
+        );
+
+        let rules = owl2datalog(&mut ds.resources, &ontology);
+        assert!(
+            !rules.is_empty(),
+            "owl:TransitiveProperty must compile to at least one OWL2RL rule"
+        );
+
+        let prop = ds.resources.add_node_resource(RdfResource::Iri(prop_iri));
+        let mk = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let a = mk(&mut ds, "a");
+        let b = mk(&mut ds, "b");
+        let c = mk(&mut ds, "c");
+        let e = mk(&mut ds, "e");
+
+        let f_ab = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: prop,
+            obj: b,
+        };
+        let f_bc = Quad {
+            triple_id: g,
+            subject: b,
+            predicate: prop,
+            obj: c,
+        };
+        let f_ae = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: prop,
+            obj: e,
+        };
+        let f_ec = Quad {
+            triple_id: g,
+            subject: e,
+            predicate: prop,
+            obj: c,
+        };
+        for f in [f_ab, f_bc, f_ae, f_ec] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        // Padding: independent two-hop chains (pad_i -> pad2_i -> pad3_i),
+        // each on its own disjoint set of nodes, so the retractions below
+        // stay under FALLBACK_THRESHOLD and actually exercise the
+        // incremental BF path. A *single* edge per padding entry would not
+        // do this: `owl:TransitiveProperty`'s compiled rule only derives a
+        // new fact from a *chain* of two edges, so an isolated single edge
+        // contributes nothing to `total_derived` and the ratio check
+        // (`pd.len() / total_derived`) blows past 25% on even a
+        // one-fact deletion. Each chain here contributes exactly one
+        // derived fact (`pad_i -> pad3_i`), unaffected by the deletions
+        // below (independent nodes).
+        let mut padding = Vec::new();
+        for i in 0..20 {
+            let pn = mk(&mut ds, &format!("pad_{i}"));
+            let pm = mk(&mut ds, &format!("pad2_{i}"));
+            let po = mk(&mut ds, &format!("pad3_{i}"));
+            let f1 = Quad {
+                triple_id: g,
+                subject: pn,
+                predicate: prop,
+                obj: pm,
+            };
+            let f2 = Quad {
+                triple_id: g,
+                subject: pm,
+                predicate: prop,
+                obj: po,
+            };
+            ds.named_graphs.add_quad(f1);
+            ds.named_graphs.add_quad(f2);
+            padding.push(f1);
+            padding.push(f2);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules.clone(), &mut ds).unwrap();
+
+        let f_ac = Quad {
+            triple_id: g,
+            subject: a,
+            predicate: prop,
+            obj: c,
+        };
+        assert!(
+            ds.named_graphs.contains(&f_ac),
+            "sanity: connectedTo(a,c) must be derived transitively (multiply, via \
+             a-b-c and a-e-c)"
+        );
+
+        // ── Step 1: delete connectedTo(a,b). connectedTo(a,c) must SURVIVE.
+        ds.named_graphs.remove_quad(f_ab);
+        let fallback_count_before = reasoner.fallback_count();
+        reasoner.apply_deletions(&mut ds, &[f_ab]).unwrap();
+        assert_eq!(
+            reasoner.fallback_count(),
+            fallback_count_before,
+            "must exercise the incremental BF path, not the full_rematerialise fallback"
+        );
+
+        let mut oracle1 = Datastore::new(100);
+        oracle1.resources = ds.resources.clone();
+        for f in [f_bc, f_ae, f_ec] {
+            oracle1.named_graphs.add_quad(f);
+        }
+        for &f in &padding {
+            oracle1.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules.clone(), &mut oracle1).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&f_ac),
+            oracle1.named_graphs.contains(&f_ac),
+            "multiply-derived connectedTo(a,c) must match the full-rebuild oracle after \
+             deleting only one of its two supports"
+        );
+        assert!(
+            ds.named_graphs.contains(&f_ac),
+            "connectedTo(a,c) must actually survive (not just match a buggy oracle) -- \
+             it is still derivable via a-e-c"
+        );
+
+        // ── Step 2: also delete connectedTo(a,e). Now connectedTo(a,c) has
+        // lost BOTH supports and must actually be RETRACTED.
+        ds.named_graphs.remove_quad(f_ae);
+        let fallback_count_before = reasoner.fallback_count();
+        reasoner.apply_deletions(&mut ds, &[f_ae]).unwrap();
+        assert_eq!(
+            reasoner.fallback_count(),
+            fallback_count_before,
+            "must exercise the incremental BF path, not the full_rematerialise fallback"
+        );
+
+        let mut oracle2 = Datastore::new(100);
+        oracle2.resources = ds.resources.clone();
+        for f in [f_bc, f_ec] {
+            oracle2.named_graphs.add_quad(f);
+        }
+        for &f in &padding {
+            oracle2.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules, &mut oracle2).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&f_ac),
+            oracle2.named_graphs.contains(&f_ac),
+            "connectedTo(a,c) retraction (both supports now gone) must match the \
+             full-rebuild oracle"
+        );
+        assert!(
+            !ds.named_graphs.contains(&f_ac),
+            "connectedTo(a,c) must actually be retracted now -- both derivation paths \
+             are gone"
+        );
+    }
+
+    /// `owl:equivalentClass`, compiled via [`owl2datalog`], interacting with
+    /// `apply_deletions`. `EquivalentClasses(A, B)` compiles to two
+    /// directional rules (`A⊑B` and `B⊑A`), so `x rdf:type A` derives
+    /// `x rdf:type B` and vice versa -- unlike the `TransitiveProperty` test
+    /// above, each derived fact here has exactly one support (there is no
+    /// "multiply derived, survives via the other path" case for a single
+    /// `EquivalentClasses` axiom), so this is the "deletion correctly
+    /// retracts the mutually-derived membership" edge instead.
+    ///
+    /// Base facts: `x rdf:type A`, `y rdf:type B`. Materialising derives
+    /// `x rdf:type B` (via `A⊑B`) and `y rdf:type A` (via `B⊑A`).
+    /// Deleting the base fact `x rdf:type A` must retract `x rdf:type B`
+    /// (its only support), while leaving `y rdf:type A`/`y rdf:type B`
+    /// untouched (independent derivation chain).
+    #[test]
+    fn test_delete_base_fact_through_owl_rl_equivalent_class_matches_full_rebuild() {
+        let mut ds = Datastore::new(100);
+        let g = DEFAULT_GRAPH_ELEMENT_ID;
+
+        let a_iri = IriReference("http://example.org/A".to_string());
+        let b_iri = IriReference("http://example.org/B".to_string());
+        let a_expr = ClassExpression::ClassName(FullIri(a_iri.clone()));
+        let b_expr = ClassExpression::ClassName(FullIri(b_iri.clone()));
+
+        let equiv_axiom =
+            Axiom::AxiomClassAxiom(ClassAxiom::EquivalentClasses(vec![], vec![a_expr, b_expr]));
+        let ontology = Ontology::new(
+            vec![],
+            OntologyVersion::UnNamedOntology,
+            vec![],
+            vec![equiv_axiom.clone()],
+        );
+
+        let rules = owl2datalog(&mut ds.resources, &ontology);
+        // owl2datalog always appends 4 baseline equality rules (symmetry,
+        // subject/object substitution, transitivity -- see
+        // `equality::get_equality_axioms`) regardless of the ontology's own
+        // axioms, so the total program size here is 2 (this axiom's own
+        // A⊑B/B⊑A directional rules) + 4 (baseline), not just 2.
+        assert_eq!(
+            rules.len(),
+            6,
+            "EquivalentClasses(A,B) must compile to its two directional rules \
+             (A⊑B and B⊑A) plus owl2datalog's 4 always-present baseline \
+             equality rules"
+        );
+        let axiom_rules = axiom2datalog(&mut ds.resources, &equiv_axiom);
+        assert_eq!(
+            axiom_rules.len(),
+            2,
+            "EquivalentClasses(A,B) itself must compile to exactly two directional \
+             rules (A⊑B and B⊑A)"
+        );
+
+        let a_cls = ds.resources.add_node_resource(RdfResource::Iri(a_iri));
+        let b_cls = ds.resources.add_node_resource(RdfResource::Iri(b_iri));
+        let rdf_type = ds
+            .resources
+            .add_node_resource(RdfResource::Iri(IriReference(RDF_TYPE.to_string())));
+        let mk = |ds: &mut Datastore, name: &str| {
+            ds.resources
+                .add_node_resource(RdfResource::Iri(IriReference(format!(
+                    "http://example.org/{name}"
+                ))))
+        };
+        let x = mk(&mut ds, "x");
+        let y = mk(&mut ds, "y");
+
+        let f_x_a = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: a_cls,
+        };
+        let f_y_b = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: b_cls,
+        };
+        for f in [f_x_a, f_y_b] {
+            ds.named_graphs.add_quad(f);
+        }
+
+        // Padding: additional individuals asserted `rdf:type A`, so each
+        // one is actually derived `rdf:type B` by the same A⊑B rule under
+        // test, keeping the single-fact retraction below under
+        // FALLBACK_THRESHOLD and exercising the incremental BF path. A
+        // padding fact using an unrelated class (e.g. `PadCls_i`) would not
+        // do this: `EquivalentClasses(A, B)`'s compiled rules are
+        // ground-class-specific (`x rdf:type A -> x rdf:type B`, not a
+        // generic "any equivalent pair" rule), so a fact about an unrelated
+        // class never fires either rule and contributes nothing to
+        // `total_derived`.
+        let mut padding = Vec::new();
+        for i in 0..20 {
+            let pad_ind = mk(&mut ds, &format!("pad_ind_{i}"));
+            let f = Quad {
+                triple_id: g,
+                subject: pad_ind,
+                predicate: rdf_type,
+                obj: a_cls,
+            };
+            ds.named_graphs.add_quad(f);
+            padding.push(f);
+        }
+
+        let mut reasoner = IncrementalReasoner::new(rules.clone(), &mut ds).unwrap();
+
+        let f_x_b = Quad {
+            triple_id: g,
+            subject: x,
+            predicate: rdf_type,
+            obj: b_cls,
+        };
+        let f_y_a = Quad {
+            triple_id: g,
+            subject: y,
+            predicate: rdf_type,
+            obj: a_cls,
+        };
+        assert!(
+            ds.named_graphs.contains(&f_x_b),
+            "sanity: x must be derived to be a B (via A⊑B)"
+        );
+        assert!(
+            ds.named_graphs.contains(&f_y_a),
+            "sanity: y must be derived to be an A (via B⊑A)"
+        );
+
+        ds.named_graphs.remove_quad(f_x_a);
+        let fallback_count_before = reasoner.fallback_count();
+        reasoner.apply_deletions(&mut ds, &[f_x_a]).unwrap();
+        assert_eq!(
+            reasoner.fallback_count(),
+            fallback_count_before,
+            "must exercise the incremental BF path, not the full_rematerialise fallback"
+        );
+
+        let mut oracle = Datastore::new(100);
+        oracle.resources = ds.resources.clone();
+        oracle.named_graphs.add_quad(f_y_b);
+        for &f in &padding {
+            oracle.named_graphs.add_quad(f);
+        }
+        IncrementalReasoner::new(rules, &mut oracle).unwrap();
+
+        assert_eq!(
+            ds.named_graphs.contains(&f_x_b),
+            oracle.named_graphs.contains(&f_x_b),
+            "x rdf:type B must be retracted (its only support, x rdf:type A, was \
+             deleted) -- must match the full-rebuild oracle"
+        );
+        assert!(
+            !ds.named_graphs.contains(&f_x_b),
+            "x rdf:type B must actually be retracted now"
+        );
+        assert_eq!(
+            ds.named_graphs.contains(&f_y_a),
+            oracle.named_graphs.contains(&f_y_a),
+            "y rdf:type A must be unaffected (independent derivation chain) -- must \
+             match the full-rebuild oracle"
+        );
+        assert!(
+            ds.named_graphs.contains(&f_y_a),
+            "y rdf:type A must still hold -- its support (y rdf:type B) was not deleted"
+        );
+    }
+}
+
+#[cfg(test)]
 mod prp_spo2_tests {
     //! Unit-level coverage for `prp-spo2` (property chain sub-property
     //! axioms, [#456](https://github.com/daghovland/rdf-datalog/issues/456))
