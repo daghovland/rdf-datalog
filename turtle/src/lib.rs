@@ -532,6 +532,142 @@ mod tests {
         );
     }
 
+    /// `rdf:ID` on a *property* element (not a node element, as in
+    /// [`parse_rdfxml_id_about_and_resource`]) is RDF/XML's reification
+    /// shorthand: it asserts the triple itself, plus four classic RDF 1.1
+    /// reification triples (`rdf:type rdf:Statement`, `rdf:subject`,
+    /// `rdf:predicate`, `rdf:object`) naming a statement IRI minted from
+    /// `rdf:ID` against the in-scope base, independent of the `rdf-12`
+    /// feature (confirmed empirically against `oxrdfxml` 0.2.5 — this is
+    /// RDF 1.1 reification, not RDF 1.2's newer `rdf:reifies`).
+    #[test]
+    fn parse_rdfxml_id_property_element_reification_shorthand() {
+        let rdf = format!(
+            r#"<?xml version="1.0"?>
+            <rdf:RDF {RDF_NS} xmlns:ex="http://example.org/" xml:base="http://example.org/base/">
+              <rdf:Description rdf:about="http://example.org/Alice">
+                <ex:knows rdf:ID="stmt1" rdf:resource="http://example.org/Bob"/>
+              </rdf:Description>
+            </rdf:RDF>"#
+        );
+        let mut ds = Datastore::new(1000);
+        parse_rdfxml(&mut ds, rdf.as_bytes()).expect("parse should succeed");
+        // 1 asserted triple + 4 reification triples (type/subject/predicate/object)
+        assert_eq!(ds.named_graphs.quad_count, 5);
+        let stmt = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/base/#stmt1".to_string(),
+        )));
+        let rdf_type = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
+        )));
+        let rdf_statement = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement".to_string(),
+        )));
+        assert!(
+            ds.contains_triple(&Triple {
+                subject: stmt,
+                predicate: rdf_type,
+                obj: rdf_statement,
+            }),
+            "rdf:ID on a property element should mint an rdf:Statement reification"
+        );
+    }
+
+    /// `rdf:parseType="Triple"` is an RDF 1.2 extension to RDF/XML
+    /// (distinct from Turtle 1.2's `<<( s p o )>>` syntax) that asserts a
+    /// triple term as a property element's object. Only takes effect when
+    /// the document declares `rdf:version="1.2"` on the root element —
+    /// without it, `oxrdfxml` silently treats the element as parse-type
+    /// `Other` and emits nothing for it (confirmed empirically; this is
+    /// `oxrdfxml`'s own `RdfVersion::supports_triple_term()` gate, not a
+    /// bug in this crate's wiring).
+    #[test]
+    fn parse_rdfxml_parse_type_triple() {
+        let rdf = format!(
+            r#"<?xml version="1.0"?>
+            <rdf:RDF {RDF_NS} xmlns:ex="http://example.org/" rdf:version="1.2">
+              <rdf:Description rdf:about="http://example.org/Alice">
+                <ex:claims rdf:parseType="Triple">
+                  <rdf:Description rdf:about="http://example.org/Bob">
+                    <ex:age rdf:resource="http://example.org/Thirty"/>
+                  </rdf:Description>
+                </ex:claims>
+              </rdf:Description>
+            </rdf:RDF>"#
+        );
+        let mut ds = Datastore::new(1000);
+        parse_rdfxml(&mut ds, rdf.as_bytes()).expect("parse should succeed");
+        // Only the outer (Alice ex:claims <<Bob ex:age Thirty>>) triple is
+        // asserted into the default graph; the inner Bob/age/Thirty triple
+        // is consumed into the triple term, not separately asserted.
+        assert_eq!(ds.named_graphs.quad_count, 1);
+        let bob = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/Bob".to_string(),
+        )));
+        let age = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/age".to_string(),
+        )));
+        let thirty = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/Thirty".to_string(),
+        )));
+        let expected_term = ds.add_triple_term(bob, age, thirty);
+        assert!(
+            ds.get_triples_with_object(expected_term).next().is_some(),
+            "parseType=Triple should intern the nested triple as a triple-term object"
+        );
+    }
+
+    /// A nested `xml:base` on a non-root element overrides the outer one
+    /// for the IRIs resolved within its scope (and only within it).
+    #[test]
+    fn parse_rdfxml_nested_xml_base() {
+        let rdf = format!(
+            r#"<?xml version="1.0"?>
+            <rdf:RDF {RDF_NS} xmlns:ex="http://example.org/" xml:base="http://example.org/outer/">
+              <rdf:Description rdf:about="inner-rel" xml:base="http://example.org/inner/">
+                <ex:name>Nested</ex:name>
+              </rdf:Description>
+            </rdf:RDF>"#
+        );
+        let mut ds = Datastore::new(1000);
+        parse_rdfxml(&mut ds, rdf.as_bytes()).expect("parse should succeed");
+        assert_eq!(ds.named_graphs.quad_count, 1);
+        let nested = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/inner/inner-rel".to_string(),
+        )));
+        assert!(
+            ds.get_triples_with_subject(nested).next().is_some(),
+            "a nested xml:base should override the outer one for IRIs resolved in its scope"
+        );
+    }
+
+    /// An in-document `xml:base` takes precedence over the caller-supplied
+    /// base passed to `parse_rdfxml_with_base` — the caller's base only
+    /// applies before any `xml:base` is seen (or when none is present at
+    /// all), matching `parse_rdfxml_with_base`'s own doc comment.
+    #[test]
+    fn parse_rdfxml_with_base_document_base_wins_over_caller_base() {
+        let rdf = format!(
+            r##"<?xml version="1.0"?>
+            <rdf:RDF {RDF_NS} xmlns:ex="http://example.org/" xml:base="http://example.org/doc-base/">
+              <rdf:Description rdf:about="#alice">
+                <ex:name>Alice</ex:name>
+              </rdf:Description>
+            </rdf:RDF>"##
+        );
+        let mut ds = Datastore::new(1000);
+        parse_rdfxml_with_base(&mut ds, rdf.as_bytes(), "http://example.org/caller-base")
+            .expect("parse should succeed");
+        assert_eq!(ds.named_graphs.quad_count, 1);
+        let alice = ds.add_node_resource(RdfResource::Iri(IriReference(
+            "http://example.org/doc-base/#alice".to_string(),
+        )));
+        assert!(
+            ds.get_triples_with_subject(alice).next().is_some(),
+            "an in-document xml:base should win over the caller-supplied base"
+        );
+    }
+
     /// `xml:lang` applies to a literal and is inherited down the element
     /// tree per XML scoping rules, until overridden by a nested `xml:lang`.
     #[test]

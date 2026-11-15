@@ -56,12 +56,36 @@ shape as `oxttl`'s parsers, so the existing `intern_subject` /
 
 The `rdf-12` feature is enabled on `oxrdfxml` (matching `oxttl`'s existing
 `rdf-12` feature in this crate — PR [#152](https://github.com/daghovland/rdf-datalog/issues/152) added `Term::Triple` handling
-in `intern_term`). RDF/XML 1.1 itself has no syntax for RDF 1.2 triple
-terms, so `oxrdfxml` is not actually expected to ever emit `Term::Triple`
-from real RDF/XML input — enabling the feature just keeps the `oxrdf`
-version/feature set aligned with `oxttl`'s so both parsers share one
-`oxrdf` type (required anyway, since `intern_term` pattern-matches on
-`Term::Triple` only when the feature is on).
+in `intern_term`). Checked directly against `oxrdfxml` 0.2.5's source
+(`parser.rs`) rather than assumed: with the feature on, `oxrdfxml` *does*
+parse genuine RDF 1.2 extensions to RDF/XML, not just type-align with
+`oxttl`:
+- `rdf:parseType="Triple"` is accepted (gated on `cfg(feature =
+  "rdf-12")`) and produces a `Term::Triple` object — this *does* exercise
+  `intern_term`'s `Term::Triple` branch and `Datastore::add_triple_term`,
+  via real RDF/XML syntax, not just Turtle's `<<( )>>`. Confirmed
+  empirically it also needs the document's root element to declare
+  `rdf:version="1.2"` at runtime (`RdfVersion::supports_triple_term()`) —
+  without it `oxrdfxml` silently treats `parseType="Triple"` as an
+  unrecognized parse type and emits nothing for that property element, no
+  error. Covered by a test in this PR
+  (`parse_rdfxml_parse_type_triple`).
+- `rdf:annotation="..."`/`rdf:annotationNodeID="..."` attributes produce
+  `rdf:reifies` triples (RDF 1.2's new reification vocabulary) whose
+  object is a triple term, alongside the classic RDF 1.1 `rdf:ID`
+  reification shorthand (`rdf:type rdf:Statement` + `rdf:subject`/
+  `rdf:predicate`/`rdf:object`), which `oxrdfxml` supports regardless of
+  the `rdf-12` feature.
+- `rdf:version="1.1"/"1.2"` and the `its:dir="ltr"/"rtl"` base-direction
+  attribute on literals are also parsed under this feature. Base
+  direction is *not* round-tripped by this crate today — `convert_literal`
+  only reads `lit.language()`/`lit.datatype()`, with no branch for
+  `lit.direction()`, so a directional literal silently downgrades to a
+  plain `LangLiteral`. This is a pre-existing gap shared by every format
+  `turtle` wraps (Turtle's own `@lang--dir` suffix has the same issue), not
+  something introduced by RDF/XML — tracked as a separate follow-up,
+  [#806](https://github.com/daghovland/rdf-datalog/issues/806) (sub-issue
+  of RDF 1.2 epic [#143](https://github.com/daghovland/rdf-datalog/issues/143)), rather than fixed here.
 
 Literal handling reuses `convert_literal` verbatim (relevant provenance:
 PR [#340](https://github.com/daghovland/rdf-datalog/issues/340), literal round-tripping via `format_literal`/
@@ -87,18 +111,34 @@ Per the epic's 2026-07-22 survey:
    root element (so the lexical form is self-contained independent of its
    original document context) rather than copying the source markup
    byte-for-byte — tests assert against the canonicalized form.
-4. **`rdf:ID` vs `rdf:about` vs `rdf:resource`** — `rdf:ID` mints a
-   fragment IRI relative to the in-scope base and is also used for
-   reification shorthand; `rdf:about` names a subject by (possibly
-   relative) IRI; `rdf:resource` names an object by (possibly relative)
-   IRI, as opposed to a nested element.
-5. **`xml:lang` scoping** — language tags apply to a literal unless
-   overridden/cleared by a nested `xml:lang`, and are inherited down the
-   element tree per XML scoping rules.
+4. **`rdf:ID` vs `rdf:about` vs `rdf:resource`** — `rdf:ID` on a node
+   element mints a fragment IRI relative to the in-scope base
+   (`parse_rdfxml_id_about_and_resource`); `rdf:ID` on a *property*
+   element is RDF/XML's classic RDF 1.1 reification shorthand — it asserts
+   the triple itself plus four `rdf:Statement`/`rdf:subject`/
+   `rdf:predicate`/`rdf:object` triples naming a statement IRI, confirmed
+   independent of the `rdf-12` feature
+   (`parse_rdfxml_id_property_element_reification_shorthand`); `rdf:about`
+   names a subject by (possibly relative) IRI; `rdf:resource` names an
+   object by (possibly relative) IRI, as opposed to a nested element.
+5. **`xml:lang` scoping** — language tags apply to a literal and are
+   inherited down the element tree per XML scoping rules until overridden
+   by a nested `xml:lang` (`parse_rdfxml_lang_scoping`). Checked
+   empirically whether `xml:lang=""` *clears* an inherited tag (a real RDF/
+   XML idiom per the XML spec): `oxrdfxml` 0.2.5 instead rejects it outright
+   as `Err(InvalidLanguageTag { kind: EmptySubtag })` — RFC 5646 requires a
+   non-empty primary subtag, so an empty `xml:lang` is invalid regardless of
+   clearing intent. Not asserted as a passing "clears the tag" test since
+   that is not this parser's actual behavior; left undocumented further
+   since it's a one-line library-level fact, not a repo-specific decision.
 6. **`xml:base` scoping** — relative IRIs resolve against the nearest
    enclosing `xml:base`, which can be set at any element, not just the
-   document root; also tests `parse_rdfxml_with_base`'s caller-supplied
-   base interacting with an in-document `xml:base`.
+   document root (`parse_rdfxml_nested_xml_base`); also tests
+   `parse_rdfxml_with_base`'s caller-supplied base being overridden by an
+   in-document `xml:base`
+   (`parse_rdfxml_with_base_document_base_wins_over_caller_base`) and, in
+   its absence, actually applying
+   (`parse_rdfxml_with_base_resolves_relative_about`).
 7. Plain `rdf:about`/property-element round trip (baseline smoke test,
    analogous to `parse_simple_turtle`).
 8. Bare property attributes (`schema:name="Bar"` directly on the subject
@@ -107,6 +147,10 @@ Per the epic's 2026-07-22 survey:
 10. Malformed input (unclosed tag) returns `Err`, not a panic — baseline
     error-path coverage mirroring the existing `*_rejects_*` tests for
     other formats in this file.
+11. **`rdf:parseType="Triple"`** (RDF 1.2 extension to RDF/XML, distinct
+    from item 4's classic reification) — asserts a triple term as a
+    property element's object; requires `rdf:version="1.2"` on the root
+    element at runtime, confirmed empirically (`parse_rdfxml_parse_type_triple`).
 
 ## TDD phases
 
@@ -124,13 +168,36 @@ Per the epic's 2026-07-22 survey:
 4. Implement `parse_rdfxml_with_base`, un-ignore `xml:base` scoping (#6).
 5. `cargo fmt`/`clippy`/`test --workspace`, open PR.
 
+**Deviation from the strict red→green phasing above, disclosed honestly:**
+`parse_rdfxml`/`parse_rdfxml_with_base` are direct, small mirrors of the
+already-proven `parse_turtle`/`parse_turtle_with_base` pattern (same
+helpers, same shape, only the parser type differs), so this issue's tests
+were written and implemented together rather than `#[ignore]`d first and
+unignored one at a time. The tests were run and passing before being
+committed (see PR for the full test list), so this is "tests alongside
+implementation in one pass," which CLAUDE.md explicitly allows for pure
+refactors/mirrors with no new design risk — not a claim that the stricter
+red→green phasing in steps 2–4 above actually happened step-by-step.
+Several edge cases (item 11's `rdf:version="1.2"` gate on `parseType=
+"Triple"`, item 4's `rdf:ID`-on-property-element reification shape, item
+6's nested-`xml:base`/base-precedence behavior, item 5's `xml:lang=""`
+finding) were only discovered by writing small standalone example
+programs against `oxrdfxml` directly and observing its actual output
+*before* writing the corresponding assertions — so those specific tests
+were evidence-first even though not literally red-then-green against this
+crate's own code.
+
 ## Out of scope (this issue)
 
 - CLI (`-d`/`--data` format detection) and notebook-kernel wiring — #751.
-- `sparql_endpoint` Graph Store Protocol / `LOAD` wiring (currently
-  returns an explicit "not yet supported" error for `application/rdf+xml`
-  in the `LOAD` path, and silently mis-maps to Turtle in the GSP upload
-  path per the epic's noted latent bug) — #751.
+- `sparql_endpoint` Graph Store Protocol / `LOAD` wiring (`LOAD` already
+  returns an explicit "not yet supported" error for `application/rdf+xml`,
+  and the epic's noted "GSP upload path silently mis-maps to Turtle" bug
+  was already fixed independently by #251 — `rdf_upload_format` in
+  `sparql_endpoint/src/graph_store.rs` now falls through to `None`/415 for
+  `application/rdf+xml` rather than mis-mapping it, per that function's own
+  doc comment. What's left for #751 is wiring real RDF/XML parsing into
+  both paths now that this issue adds the parser) — #751.
 - W3C subquery-suite `sq01`–`sq10` un-skip — #752.
 - A serializer (`oxrdfxml` has one, but nothing in the epic or this issue
   asks for RDF/XML output; `turtle`'s own `serialize.rs` only covers

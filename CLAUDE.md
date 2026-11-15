@@ -158,7 +158,7 @@ dagalog (root binary + library)
 ├── eli/                 — EL profile → datalog (ELI2RL)
 ├── owl2rl2datalog/      — OWL 2 RL → datalog (W3C spec §4.3)
 ├── rdf_owl_translator/  — RDF triples → OWL 2 axiom extraction
-├── turtle_parser/       — Turtle/TriG parser (rio_turtle)
+├── turtle/              — Turtle/TriG/N-Triples/N-Quads/RDF-XML parsers (oxttl/oxrdfxml)
 ├── jsonld_parser/       — JSON-LD 1.1 parser + serialiser (serde_json)
 ├── sparql_parser/       — SPARQL 1.2 SELECT parser (nom) + executor
 ├── datalog_parser/      — Datalog rules parser (nom)
@@ -180,6 +180,9 @@ Storage layer on top of `ingress`:
 - `QuadTable` — multi-index store for quads with indexes by predicate, subject+predicate, object+predicate, graph ID, and full-quad dedup.
 - `Datastore` — pairs two `QuadTable`s (`named_graphs` + `reified_triples`) with a `GraphElementManager`. The main data container passed through the whole pipeline.
 - `query.rs` — `Term` (Resource/Variable) and `QuadPattern`, plus `get_default_graph_pattern()` helper.
+
+### `turtle` crate
+Wraps the Oxigraph-family streaming parsers (`oxttl`/`oxrdfxml`, both producing the shared `oxrdf` term model) and interns their output into a `Datastore` via hand-written `oxrdf`→`GraphElement` conversion helpers (`intern_subject`/`intern_named_node`/`intern_term`/`convert_literal`). Despite the crate name, it now covers five RDF serialization formats, not just Turtle: `parse_turtle`/`parse_turtle_with_base` (Turtle), `parse_trig` (TriG), `parse_ntriples` (N-Triples), `parse_nquads` (N-Quads), and `parse_rdfxml`/`parse_rdfxml_with_base` (RDF/XML, via `oxrdfxml` — [#750](https://github.com/daghovland/rdf-datalog/issues/750), part of epic [#240](https://github.com/daghovland/rdf-datalog/issues/240); see [`docs/plans/RDFXML_PARSER_PLAN.md`](docs/plans/RDFXML_PARSER_PLAN.md) for the rationale on why RDF/XML landed here rather than in a new sibling crate). All five share the same `oxrdf::{Triple, NamedOrBlankNode, Term, Literal}` shape, so RDF/XML needed no second term-model adapter. `serialize.rs` (re-exported from the crate root) covers the output direction for Turtle/TriG/N-Quads only — no RDF/XML serializer is currently planned (`oxrdfxml` has one, but nothing has asked for RDF/XML output yet). CLI/`sparql_endpoint` wiring for the new RDF/XML parser is deliberately deferred to [#751](https://github.com/daghovland/rdf-datalog/issues/751), picked up separately once #750 merges — `turtle::parse_rdfxml`/`parse_rdfxml_with_base` is where that work imports from. A known limitation: `oxrdfxml` 0.2.5 (latest on crates.io) pins a `quick-xml` version with two open DoS advisories that can't yet be resolved by bumping (no newer `oxrdfxml` release exists) — tracked in [#807](https://github.com/daghovland/rdf-datalog/issues/807).
 
 ### `datalog` crate
 Datalog evaluation engine:
