@@ -88,7 +88,8 @@ CLI flags take precedence over environment variables.
 | `DAGALOG_OIDC_READ_ROLE` | `--oidc-read-role` | `dagalog.Read` | Role name that grants read access |
 | `DAGALOG_OIDC_WRITE_ROLE` | `--oidc-write-role` | `dagalog.Write` | Role name that grants write access |
 | `DAGALOG_OIDC_ADMIN_ROLE` | `--oidc-admin-role` | `dagalog.Admin` | Role name that grants admin access |
-| `DAGALOG_OIDC_BROWSER_CLIENT_ID` | `--oidc-browser-client-id` | *(none)* | App client ID for the MSAL.js sign-in button in the browser UI |
+| `DAGALOG_OIDC_BROWSER_CLIENT_ID` | `--oidc-browser-client-id` | *(none)* | App client ID for the in-browser sign-in button |
+| `DAGALOG_OIDC_BROWSER_FLOW` | `--oidc-browser-flow` | `msal` | Which sign-in flow `--oidc-browser-client-id` activates: `msal` (Azure Entra ID via MSAL.js) or `oidc-pkce` (generic Authorization Code + PKCE, for Google/Keycloak/Auth0/any OIDC provider) |
 | `DAGALOG_CORS_ALLOW_ORIGIN` | `--cors-allow-origin` | *(none)* | Origin(s) allowed to make cross-origin state-changing requests (comma-separated) |
 
 ---
@@ -224,9 +225,20 @@ curl -H "Authorization: Bearer $TOKEN" \
      "http://localhost:3030/sparql?query=SELECT+*+WHERE+%7B%7D"
 ```
 
-**Browser sign-in (MSAL.js)** — set `--oidc-browser-client-id` to the app registration's
-client ID to enable a *Sign in* button in the browser UI; MSAL.js then handles the
-interactive popup flow and token refresh automatically.
+**Browser sign-in** — set `--oidc-browser-client-id` to the app registration's/OAuth
+client's client ID to enable a *Sign in* button in the browser UI. `--oidc-browser-flow`
+picks which flow it uses:
+
+- `msal` (default) — Microsoft's MSAL.js library; an interactive popup flow with
+  automatic silent token refresh. Only applies to Azure Entra ID.
+- `oidc-pkce` — a standards-compliant Authorization Code + PKCE flow implemented
+  directly against the provider's `/.well-known/openid-configuration` discovery
+  document (no SDK dependency); works against any OIDC provider (Google, Keycloak,
+  Auth0, …). Uses a full-page redirect rather than a popup, and the Bearer credential
+  sent to dagalog is the **ID token**, not the access token — so `--oidc-audience`
+  should be set to the OAuth client ID for this flow (see the Google example above).
+  There is no silent token refresh; re-running sign-in is the only way to renew an
+  expired token. See [issue #531](https://github.com/daghovland/rdf-datalog/issues/531).
 
 ### Managed Identity (Tier 3)
 
@@ -362,6 +374,8 @@ let config = Config {
         write_role:  "dagalog.Write".to_owned(),
         admin_role:  "dagalog.Admin".to_owned(),
         browser_client_id: None,
+        // Generic OIDC PKCE flow (not MSAL.js) — see "Browser sign-in" below.
+        browser_flow: sparql_endpoint::BrowserFlow::OidcPkce,
     }),
     ..Config::default()
 };
