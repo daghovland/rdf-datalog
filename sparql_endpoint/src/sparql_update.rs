@@ -960,25 +960,55 @@ pub(crate) fn translate_to_main_ids(store: &mut Datastore, tmp: &Datastore) -> V
 ///
 /// Uses a **collect-then-apply** strategy for atomicity: `InsertData`,
 /// `DeleteData`, and `PatternUpdate` mutations are buffered into
-/// `pending_inserts` / `pending_deletes` and never touch the live store
-/// until every operation in the sequence has been validated.  If any
-/// operation returns an error (e.g. a rejected `LOAD`), the function returns
-/// immediately and the live store is unmodified — the earlier inserts are
-/// effectively rolled back.
+/// `pending_inserts` / `pending_deletes` and don't touch the live store
+/// immediately. If any operation returns an error (e.g. a rejected
+/// `LOAD`), the function returns immediately; any buffered-but-not-yet-
+/// flushed inserts/deletes never reach the live store, so they are
+/// effectively rolled back (ops already flushed by an earlier `CLEAR`/
+/// `DROP` in the same request, see below, are not retroactively undone —
+/// this matches the pre-existing behaviour where eager ops were never
+/// covered by this atomicity guarantee either).
 ///
 /// `PatternUpdate` WHERE clauses evaluate against a clone of the live store
 /// with the pending delta applied so they see inserts/deletes from earlier
 /// ops in the same request (SPARQL 1.1 Update §3.1.3).
 ///
-/// `CLEAR`, `DROP`, and `CREATE` are applied eagerly because they cannot
-/// fail, so they never compromise the atomicity guarantee.
+/// `CLEAR`, `DROP`, and `CREATE` are applied eagerly (they cannot fail) as
+/// each op is reached in the loop. To preserve SPARQL 1.1 Update's
+/// sequential-operation semantics (§3.1.3: "each update operation ... is
+/// evaluated in turn") when an eager op is interleaved with buffered ones,
+/// the buffered delta accumulated *so far* is flushed to the live store
+/// (via [`flush_pending_delta`]) immediately before each eager `CLEAR`/
+/// `DROP`, and again after the loop for whatever remains buffered. This
+/// means a request with no `CLEAR`/`DROP` at all flushes exactly once, at
+/// the end, exactly as before this scheme was introduced — only a request
+/// that actually mixes `CLEAR`/`DROP` with buffered ops pays for extra
+/// flushes (and extra reasoner calls, one per flush rather than one for
+/// the whole request). See [#782](https://github.com/daghovland/rdf-datalog/issues/782),
+/// which found the previous scheme — buffering `InsertData`/`DeleteData`/
+/// `PatternUpdate` across the *entire* request while applying `CLEAR`/
+/// `DROP` eagerly mid-loop — let a `CLEAR` see a buffered-but-not-yet-
+/// applied insert's *absence*, so `INSERT DATA { x } ; CLEAR DEFAULT`
+/// incorrectly left `x` present (the eager `CLEAR` ran against an empty
+/// store, and the buffered insert of `x` was only applied afterward, with
+/// nothing left to remove it).
 ///
-/// When `reasoner` is `Some`, the reasoner is called **once** at the end
-/// with the net delta to prevent transient wrong inferences.
+/// A naive alternative — moving `CLEAR`/`DROP` into the `pending_deletes`
+/// buffer so it participates in the same end-of-loop net-delta set
+/// arithmetic as other ops — was considered and rejected: see
+/// [#774](https://github.com/daghovland/rdf-datalog/pull/774)'s provenance
+/// summary (`provenance/summaries/pr-774.ttl`, `agp:alternative`), which
+/// found that `CLEAR DEFAULT ; INSERT DATA { same triple }` must still end
+/// with the triple inserted, which batching `CLEAR` into `pending_deletes`
+/// would get wrong (it would cancel against the reinsert instead of
+/// preceding it). The flush-before-each-eager-op scheme above satisfies
+/// both: a `CLEAR`/`DROP` always sees the buffered delta that precedes it
+/// already applied, so it is purely about *order*, never a competing
+/// cancellation in the same net-delta arithmetic.
 ///
-/// Other operation types (CLEAR, DROP, etc.) bypass the reasoner for now —
-/// a full re-materialisation would be needed for those, which is tracked in
-/// [#110](https://github.com/daghovland/rdf-datalog/issues/110).
+/// When `reasoner` is `Some`, the reasoner is called once per flush (see
+/// above) with that flush's net delta, to prevent transient wrong
+/// inferences within a single flush.
 ///
 /// Fixes: [#114](https://github.com/daghovland/rdf-datalog/issues/114),
 ///        [#126](https://github.com/daghovland/rdf-datalog/issues/126)
@@ -1046,6 +1076,58 @@ fn clear_graphs_through_reasoner(
     }
 }
 
+/// Flush `pending_inserts`/`pending_deletes` to the live store using set
+/// semantics (a quad both inserted and deleted since the last flush is a
+/// net no-op), then clear both buffers. Deletions are applied before
+/// insertions so the reasoner's re-derivation step in `apply_deletions`
+/// sees the correct base state. Returns the `(net_inserts, net_deletes)`
+/// actually applied by this flush, which [`apply_prepared_update_with_options`]
+/// accumulates across all flushes in a request for its own return value.
+///
+/// Called both immediately before each eager `CLEAR`/`DROP` op (so it sees
+/// every buffered op that textually precedes it already applied — see
+/// [#782](https://github.com/daghovland/rdf-datalog/issues/782)) and once
+/// more after the op loop finishes, for whatever remains buffered.
+fn flush_pending_delta(
+    store: &mut Datastore,
+    reasoner: Option<&mut IncrementalReasoner>,
+    pending_inserts: &mut Vec<ingress::Quad>,
+    pending_deletes: &mut Vec<ingress::Quad>,
+) -> Result<(Vec<ingress::Quad>, Vec<ingress::Quad>), UpdateError> {
+    let delete_set: HashSet<ingress::Quad> = pending_deletes.iter().copied().collect();
+
+    // Only delete quads that actually exist in the live store.
+    let net_deletes: Vec<_> = delete_set
+        .iter()
+        .copied()
+        .filter(|q| store.named_graphs.contains(q))
+        .collect();
+    for &q in &net_deletes {
+        store.remove_quad(q);
+    }
+
+    // Only insert quads not cancelled by a matching delete.
+    let net_inserts: Vec<_> = pending_inserts
+        .iter()
+        .copied()
+        .filter(|q| !delete_set.contains(q))
+        .collect();
+    for &q in &net_inserts {
+        store.add_quad(q);
+    }
+
+    if let Some(r) = reasoner {
+        apply_reasoner_delta(r, store, &net_deletes, &net_inserts).map_err(|e| match e {
+            DeltaError::Contradiction(m) => UpdateError::Contradiction(m),
+            DeltaError::RollbackFailed(m) => UpdateError::Other(m),
+        })?;
+    }
+
+    pending_inserts.clear();
+    pending_deletes.clear();
+    Ok((net_inserts, net_deletes))
+}
+
 /// Returns the net delta `(net_inserts, net_deletes)` actually applied to
 /// the live store.  Callers such as [`crate::query`] use this to roll back
 /// the transaction if a constraint check (e.g. `owl:Nothing` instances) fails
@@ -1082,6 +1164,15 @@ pub fn apply_prepared_update_with_options(
     let mut pending_inserts: Vec<ingress::Quad> = Vec::new();
     let mut pending_deletes: Vec<ingress::Quad> = Vec::new();
 
+    // Accumulated across every flush in this request (see
+    // `flush_pending_delta`'s doc comment) -- this is the function's own
+    // return value, used by callers such as `crate::query` to roll back a
+    // transaction. A request with no `CLEAR`/`DROP` flushes exactly once,
+    // at the end, so these just become that single flush's result, as
+    // before this scheme was introduced.
+    let mut total_net_inserts: Vec<ingress::Quad> = Vec::new();
+    let mut total_net_deletes: Vec<ingress::Quad> = Vec::new();
+
     for op in ops {
         match op {
             PreparedOp::InsertData(tmp) => {
@@ -1102,6 +1193,14 @@ pub fn apply_prepared_update_with_options(
                 pending_deletes.extend(existing);
             }
             PreparedOp::ClearDefault | PreparedOp::DropDefault => {
+                let (ni, nd) = flush_pending_delta(
+                    store,
+                    reasoner.as_deref_mut(),
+                    &mut pending_inserts,
+                    &mut pending_deletes,
+                )?;
+                total_net_inserts.extend(ni);
+                total_net_deletes.extend(nd);
                 clear_graphs_through_reasoner(
                     store,
                     reasoner.as_deref_mut(),
@@ -1109,10 +1208,26 @@ pub fn apply_prepared_update_with_options(
                 )?;
             }
             PreparedOp::ClearAll | PreparedOp::DropAll => {
+                let (ni, nd) = flush_pending_delta(
+                    store,
+                    reasoner.as_deref_mut(),
+                    &mut pending_inserts,
+                    &mut pending_deletes,
+                )?;
+                total_net_inserts.extend(ni);
+                total_net_deletes.extend(nd);
                 let ids: Vec<_> = store.named_graphs.triple_id_index.keys().copied().collect();
                 clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &ids)?;
             }
             PreparedOp::ClearNamed | PreparedOp::DropNamed => {
+                let (ni, nd) = flush_pending_delta(
+                    store,
+                    reasoner.as_deref_mut(),
+                    &mut pending_inserts,
+                    &mut pending_deletes,
+                )?;
+                total_net_inserts.extend(ni);
+                total_net_deletes.extend(nd);
                 let ids: Vec<_> = store
                     .named_graphs
                     .triple_id_index
@@ -1123,6 +1238,14 @@ pub fn apply_prepared_update_with_options(
                 clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &ids)?;
             }
             PreparedOp::ClearGraph(iri) | PreparedOp::DropGraph(iri) => {
+                let (ni, nd) = flush_pending_delta(
+                    store,
+                    reasoner.as_deref_mut(),
+                    &mut pending_inserts,
+                    &mut pending_deletes,
+                )?;
+                total_net_inserts.extend(ni);
+                total_net_deletes.extend(nd);
                 if let Some(id) = store.lookup_named_graph_id(&iri) {
                     clear_graphs_through_reasoner(store, reasoner.as_deref_mut(), &[id])?;
                 }
@@ -1234,44 +1357,18 @@ pub fn apply_prepared_update_with_options(
         }
     }
 
-    // Apply the pending delta atomically to the live store using set semantics:
-    // a quad that is both inserted and deleted in the same request is a net
-    // no-op.  Deletions are applied before insertions so that the reasoner's
-    // re-derivation step in apply_deletions sees the correct base state.
-    let delete_set: HashSet<ingress::Quad> = pending_deletes.iter().copied().collect();
-
-    // Only delete quads that actually exist in the live store.
-    let net_deletes: Vec<_> = delete_set
-        .iter()
-        .copied()
-        .filter(|q| store.named_graphs.contains(q))
-        .collect();
-    for &q in &net_deletes {
-        store.remove_quad(q);
-    }
-
-    // Only insert quads not cancelled by a matching delete.
-    let net_inserts: Vec<_> = pending_inserts
-        .iter()
-        .copied()
-        .filter(|q| !delete_set.contains(q))
-        .collect();
-    for &q in &net_inserts {
-        store.add_quad(q);
-    }
-
-    // Reason once over the net delta accumulated across the entire request.
-    // On a genuine Contradiction, `apply_reasoner_delta` rolls the delta back
-    // and rebuilds a consistent closure before returning — see
+    // Final flush: whatever is still buffered after the last eager
+    // CLEAR/DROP (or everything, if this request had none at all). On a
+    // genuine Contradiction, `apply_reasoner_delta` (called inside
+    // `flush_pending_delta`) rolls the delta back and rebuilds a
+    // consistent closure before returning — see
     // https://github.com/daghovland/rdf-datalog/issues/301.
-    if let Some(r) = reasoner {
-        apply_reasoner_delta(r, store, &net_deletes, &net_inserts).map_err(|e| match e {
-            DeltaError::Contradiction(m) => UpdateError::Contradiction(m),
-            DeltaError::RollbackFailed(m) => UpdateError::Other(m),
-        })?;
-    }
+    let (net_inserts, net_deletes) =
+        flush_pending_delta(store, reasoner, &mut pending_inserts, &mut pending_deletes)?;
+    total_net_inserts.extend(net_inserts);
+    total_net_deletes.extend(net_deletes);
 
-    Ok((net_inserts, net_deletes))
+    Ok((total_net_inserts, total_net_deletes))
 }
 
 // ── WHERE-form pattern updates ────────────────────────────────────────────────
