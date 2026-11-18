@@ -38,14 +38,24 @@ const FALLBACK_THRESHOLD: f64 = 0.25;
 pub struct IncrementalReasoner {
     /// One `DatalogProgram` per stratum, in topological stratum order.
     programs: Vec<DatalogProgram>,
-    /// Number of times a `full_rematerialise*` fallback has run. Test-only
-    /// instrumentation: unlike `materialise_call_count()` (which increases by
-    /// the same amount on both the incremental and the fallback path — both
-    /// call materialisation exactly once per program — this counter is the
-    /// only thing that actually distinguishes "the 25% `FALLBACK_THRESHOLD`
-    /// guard tripped" from "the incremental BF path ran". See
-    /// [#162](https://github.com/daghovland/rdf-datalog/issues/162).
-    #[cfg(test)]
+    /// Number of times a `full_rematerialise*` fallback has run. Mainly
+    /// test instrumentation: unlike `materialise_call_count()` (which
+    /// increases by the same amount on both the incremental and the
+    /// fallback path — both call materialisation exactly once per program —
+    /// this counter is the only thing that actually distinguishes "the 25%
+    /// `FALLBACK_THRESHOLD` guard tripped" from "the incremental BF path
+    /// ran". See [#162](https://github.com/daghovland/rdf-datalog/issues/162).
+    ///
+    /// Kept unconditionally (not `#[cfg(test)]`) — a plain `usize` bump is
+    /// negligible cost — and exposed via [`Self::fallback_count`] so that
+    /// regression tests living in *other* crates (e.g. tests exercising
+    /// rules compiled via `owl2rl2datalog::owl2datalog`, see
+    /// [#780](https://github.com/daghovland/rdf-datalog/issues/780)) can
+    /// make the same "incremental path, not fallback" assertion that
+    /// `datalog`'s own `#[cfg(test)]` unit tests do. A `#[cfg(test)]` field
+    /// is only visible when *this* crate itself is compiled with
+    /// `--cfg test`, which does not happen when `datalog` is pulled in as a
+    /// dependency of another crate's test binary.
     pub(crate) fallback_count: usize,
 }
 
@@ -71,9 +81,15 @@ impl IncrementalReasoner {
         }
         Ok(IncrementalReasoner {
             programs,
-            #[cfg(test)]
             fallback_count: 0,
         })
+    }
+
+    /// Number of times a `full_rematerialise*` fallback has run so far. See
+    /// the field doc comment above for why this exists and why it's exposed
+    /// even outside `#[cfg(test)]`.
+    pub fn fallback_count(&self) -> usize {
+        self.fallback_count
     }
 
     /// Apply a batch of base-fact deletions using the BF algorithm.
@@ -1045,10 +1061,7 @@ impl IncrementalReasoner {
         base: &mut Datastore,
         deletes: &[Quad],
     ) -> Result<usize, ReasoningError> {
-        #[cfg(test)]
-        {
-            self.fallback_count += 1;
-        }
+        self.fallback_count += 1;
         // Remove base facts.
         for q in deletes {
             base.named_graphs.remove_quad(*q);
@@ -1189,10 +1202,7 @@ impl IncrementalReasoner {
         base: &mut Datastore,
         targets: &[(usize, usize)],
     ) -> Result<usize, ReasoningError> {
-        #[cfg(test)]
-        {
-            self.fallback_count += 1;
-        }
+        self.fallback_count += 1;
 
         let named_graphs_before = base.named_graphs.clone();
         let derived_from_before: Vec<DerivedFromIndex> = self
@@ -5945,7 +5955,6 @@ mod tests {
 
         let reasoner = IncrementalReasoner {
             programs: vec![program],
-            #[cfg(test)]
             fallback_count: 0,
         };
 
@@ -5990,4 +5999,21 @@ mod tests {
              rather than the O(rule's own derivations) indexed lookup"
         );
     }
+
+    // ── OWL-RL-compiled rules × deletion (#780) ──────────────────────────────
+    //
+    // #590 and #774's regression tests (above) all used hand-written
+    // `datalog::Rule` values mirroring a transitive-closure rule shape by
+    // hand. None exercised a rule actually *compiled from an OWL ontology*
+    // via `owl2rl2datalog::owl2datalog`. See `owl2rl2datalog`'s own test
+    // module (`test_delete_base_fact_through_owl_rl_*`) for the regression
+    // tests closing that gap -- they live there, not here, because they
+    // need rules actually compiled via `owl2rl2datalog::owl2datalog`, and
+    // `owl2rl2datalog` depends on `datalog`, not the other way around. They
+    // use the same oracle-comparison pattern as #590/#774: apply the real
+    // `apply_deletions` call, then compare against a from-scratch rebuild,
+    // with [`IncrementalReasoner::fallback_count`] asserted unchanged so the
+    // incremental BF path is what's actually exercised (hence that method
+    // being `pub` rather than `#[cfg(test)]`-only: those tests live in a
+    // different crate from `datalog`'s own unit tests).
 }
