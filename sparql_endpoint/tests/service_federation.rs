@@ -221,6 +221,182 @@ async fn test_service_silent_fetches_and_joins_on_success() {
     );
 }
 
+/// Two distinct `SERVICE` calls, each returning a row whose `?x` binding is
+/// the blank node labelled `"b0"` in that call's own
+/// `application/sparql-results+json` document, must never be treated as the
+/// *same* blank node just because both results were deserialized against
+/// scratch `Datastore`s that happened to assign it the same numeric
+/// `GraphElementId` — per RDF 1.2/SPARQL 1.1 §15.3, blank node labels are
+/// scoped to one results document and never merge across documents ("solution
+/// sequences"). The outer query joins both `SERVICE` calls' results on the
+/// shared variable `?x`; if the two "b0"s are spuriously treated as equal,
+/// the natural join wrongly produces a row. The correct result is zero rows.
+///
+/// Regression test for issue
+/// [#772](https://github.com/daghovland/rdf-datalog/issues/772): before the
+/// fix, `fetch_service_blocking` deserialized each call against its own
+/// fresh, per-call `Datastore::new(64)`, so the first blank node encountered
+/// by *any* call always became the same low numeric ID (e.g. `1`) --
+/// spuriously equal across calls.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_service_blank_nodes_from_different_calls_never_collide() {
+    let mock_server = MockServer::start().await;
+
+    const FIRST_RESULTS_JSON: &str = r#"
+    {
+      "head": { "vars": [ "x", "o1" ] },
+      "results": {
+        "bindings": [
+          { "x": { "type": "bnode", "value": "b0" },
+            "o1": { "type": "uri", "value": "http://example.org/first" } }
+        ]
+      }
+    }
+    "#;
+    const SECOND_RESULTS_JSON: &str = r#"
+    {
+      "head": { "vars": [ "x", "o2" ] },
+      "results": {
+        "bindings": [
+          { "x": { "type": "bnode", "value": "b0" },
+            "o2": { "type": "uri", "value": "http://example.org/second" } }
+        ]
+      }
+    }
+    "#;
+
+    Mock::given(method("POST"))
+        .and(path("/first"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(FIRST_RESULTS_JSON)
+                .insert_header("content-type", "application/sparql-results+json"),
+        )
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/second"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(SECOND_RESULTS_JSON)
+                .insert_header("content-type", "application/sparql-results+json"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let first_url = format!("{}/first", mock_server.uri());
+    let second_url = format!("{}/second", mock_server.uri());
+    let server =
+        common::TestServer::start_writable_with_network_policy("", NetworkPolicy::Allow).await;
+
+    let query = format!(
+        "SELECT ?x ?o1 ?o2 WHERE {{ \
+         SERVICE <{first_url}> {{ ?x <http://example.org/local1> ?o1 }} \
+         SERVICE <{second_url}> {{ ?x <http://example.org/local2> ?o2 }} }}"
+    );
+    let resp = server
+        .client
+        .get(server.sparql_query_url(&query))
+        .send()
+        .await
+        .expect("query request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("response must be SPARQL JSON");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+
+    assert!(
+        bindings.is_empty(),
+        "blank node \"b0\" from two separate SERVICE results documents must \
+         never be joined as the same node; got: {bindings:?}"
+    );
+}
+
+/// A `GraphElement::TripleTerm` binding in a federated `SERVICE` result
+/// carries `GraphElementId`s interned against the scratch `Datastore` used
+/// to deserialize that one response -- not the real query datastore. When
+/// that binding is later resolved for output against the *real* datastore
+/// (which has its own, unrelated resources at those same low IDs, from
+/// `LOCAL_TURTLE`), the serialized triple-term components come out wrong.
+///
+/// This is the still-open half of issue
+/// [#772](https://github.com/daghovland/rdf-datalog/issues/772): fixing it
+/// properly requires either interning federated triple-term bindings into
+/// the real datastore (which needs `&mut Datastore` access the async
+/// pre-resolution step in `query.rs` deliberately does not have -- see
+/// `service_federation`'s module doc comment) or changing
+/// `GraphElement::TripleTerm`'s representation so it no longer depends on
+/// which store's IDs it was built from. Both are out of scope for #772's
+/// partial fix; tracked as a follow-up,
+/// [#809](https://github.com/daghovland/rdf-datalog/issues/809).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "triple-term bindings from SERVICE still resolve against the wrong store's IDs -- see #809"]
+async fn test_service_triple_term_binding_resolves_against_wrong_store() {
+    let mock_server = MockServer::start().await;
+
+    const TRIPLE_TERM_RESULTS_JSON: &str = r#"
+    {
+      "head": { "vars": [ "t" ] },
+      "results": {
+        "bindings": [
+          { "t": { "type": "triple", "value": {
+              "subject": { "type": "uri", "value": "http://example.org/remote-s" },
+              "predicate": { "type": "uri", "value": "http://example.org/remote-p" },
+              "object": { "type": "uri", "value": "http://example.org/remote-o" }
+          } } }
+        ]
+      }
+    }
+    "#;
+
+    Mock::given(method("POST"))
+        .and(path("/sparql"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(TRIPLE_TERM_RESULTS_JSON)
+                .insert_header("content-type", "application/sparql-results+json"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let service_url = format!("{}/sparql", mock_server.uri());
+    // Non-empty local data so the real datastore already has resources
+    // interned at the same low `GraphElementId`s the scratch store assigns
+    // the triple term's subject/predicate/object.
+    let server =
+        common::TestServer::start_writable_with_network_policy(LOCAL_TURTLE, NetworkPolicy::Allow)
+            .await;
+
+    let query =
+        format!("SELECT ?t WHERE {{ SERVICE <{service_url}> {{ ?t ?ignored ?ignored2 }} }}");
+    let resp = server
+        .client
+        .get(server.sparql_query_url(&query))
+        .send()
+        .await
+        .expect("query request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("response must be SPARQL JSON");
+    let bindings = body["results"]["bindings"]
+        .as_array()
+        .expect("bindings array");
+    assert_eq!(bindings.len(), 1);
+    let t = &bindings[0]["t"];
+    assert_eq!(
+        t["type"], "triple",
+        "binding must round-trip as a triple term"
+    );
+    let value = &t["value"];
+    assert_eq!(
+        value["subject"]["value"], "http://example.org/remote-s",
+        "triple term's subject must resolve to the remote endpoint's own \
+         value, not whatever local resource happens to share its scratch-store ID"
+    );
+    assert_eq!(value["predicate"]["value"], "http://example.org/remote-p");
+    assert_eq!(value["object"]["value"], "http://example.org/remote-o");
+}
+
 /// A hung remote endpoint must not let a federated query run past the
 /// server's configured `--timeout`: the `SERVICE` fetch's own HTTP request
 /// is bounded by the same budget (issue #745). A non-SILENT `SERVICE` that
