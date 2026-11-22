@@ -2995,9 +2995,9 @@ dependencies = [
 
 [[package]]
 name = "redb"
-version = "4.5.0"
+version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b317ef681e18f6091efbfab532eaf924a135c492d9d0299d0fbfae07e92a39b"
+checksum = "096b1dd5ec053c9c2a5a26a93aafeadf73ebcb710ea54dc3151f17a8e20535ef"
 dependencies = [
  "libc",
 ]
@@ -3933,9 +3933,9 @@ dependencies = [
 
 [[package]]
 name = "thirtyfour"
-version = "0.38.1"
+version = "0.38.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ee66d96cfd32e01668efd6ec62caf5f7000438d771a9d673bf0c727bc05fbb6"
+checksum = "bd5b97143d859c32e767eb1f57ad64d2319358a2005d39c7d5f13a5e7568349a"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4503,9 +4503,9 @@ checksum = "552a64d6a0d251ae28bc021838800943cce60c9ec2e60ff331f54e79f696268f"
 
 [[package]]
 name = "uuid"
-version = "1.29.1"
+version = "1.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a06f08a856b009bc7bbaf7d3e79808595d032dd19074c0c2ef26e49e03e6bdc"
+checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
